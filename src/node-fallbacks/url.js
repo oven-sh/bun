@@ -203,10 +203,7 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
     }
   }
 
-  if (
-    !hostlessProtocol[proto] &&
-    (slashes || (proto && !slashedProtocol[proto]))
-  ) {
+  if (!hostlessProtocol[proto] && (slashes || (proto && !slashedProtocol[proto]))) {
     // there's a hostname.
     // the first instance of /, ?, ;, or # ends the host.
     //
@@ -270,9 +267,7 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
 
     // if hostname begins with [ and ends with ]
     // assume that it's an IPv6 address.
-    var ipv6Hostname =
-      this.hostname[0] === "[" &&
-      this.hostname[this.hostname.length - 1] === "]";
+    var ipv6Hostname = this.hostname[0] === "[" && this.hostname[this.hostname.length - 1] === "]";
 
     // validate a little.
     if (!ipv6Hostname) {
@@ -423,21 +418,13 @@ Url.prototype.format = function () {
   if (this.host) {
     host = auth + this.host;
   } else if (this.hostname) {
-    host =
-      auth +
-      (this.hostname.indexOf(":") === -1
-        ? this.hostname
-        : "[" + this.hostname + "]");
+    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
     if (this.port) {
       host += ":" + this.port;
     }
   }
 
-  if (
-    this.query &&
-    util_isObject(this.query) &&
-    Object.keys(this.query).length
-  ) {
+  if (this.query && util_isObject(this.query) && Object.keys(this.query).length) {
     query = querystring.stringify(this.query);
   }
 
@@ -447,10 +434,7 @@ Url.prototype.format = function () {
 
   // only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
   // unless they had them to begin with.
-  if (
-    this.slashes ||
-    ((!protocol || slashedProtocol[protocol]) && host !== false)
-  ) {
+  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host !== false)) {
     host = "//" + (host || "");
     if (pathname && pathname.charAt(0) !== "/") pathname = "/" + pathname;
   } else if (!host) {
@@ -515,11 +499,7 @@ Url.prototype.resolveObject = function (relative) {
     }
 
     //urlParse appends trailing / to urls like http://www.example.com
-    if (
-      slashedProtocol[result.protocol] &&
-      result.hostname &&
-      !result.pathname
-    ) {
+    if (slashedProtocol[result.protocol] && result.hostname && !result.pathname) {
       result.path = result.pathname = "/";
     }
 
@@ -576,9 +556,7 @@ Url.prototype.resolveObject = function (relative) {
   }
 
   var isSourceAbs = result.pathname && result.pathname.charAt(0) === "/",
-    isRelAbs =
-      relative.host ||
-      (relative.pathname && relative.pathname.charAt(0) === "/"),
+    isRelAbs = relative.host || (relative.pathname && relative.pathname.charAt(0) === "/"),
     mustEndAbs = isRelAbs || isSourceAbs || (result.host && relative.pathname),
     removeAllDots = mustEndAbs,
     srcPath = (result.pathname && result.pathname.split("/")) || [],
@@ -612,12 +590,8 @@ Url.prototype.resolveObject = function (relative) {
 
   if (isRelAbs) {
     // it's absolute.
-    result.host =
-      relative.host || relative.host === "" ? relative.host : result.host;
-    result.hostname =
-      relative.hostname || relative.hostname === ""
-        ? relative.hostname
-        : result.hostname;
+    result.host = relative.host || relative.host === "" ? relative.host : result.host;
+    result.hostname = relative.hostname || relative.hostname === "" ? relative.hostname : result.hostname;
     result.search = relative.search;
     result.query = relative.query;
     srcPath = relPath;
@@ -639,10 +613,7 @@ Url.prototype.resolveObject = function (relative) {
       //occationaly the auth can get stuck only in host
       //this especially happens in cases like
       //url.resolveObject('mailto:local1@domain1', 'local2@domain2')
-      var authInHost =
-        result.host && result.host.indexOf("@") > 0
-          ? result.host.split("@")
-          : false;
+      var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
       if (authInHost) {
         result.auth = authInHost.shift();
         result.host = result.hostname = authInHost.shift();
@@ -652,9 +623,7 @@ Url.prototype.resolveObject = function (relative) {
     result.query = relative.query;
     //to support http.request
     if (!util_isNull(result.pathname) || !util_isNull(result.search)) {
-      result.path =
-        (result.pathname ? result.pathname : "") +
-        (result.search ? result.search : "");
+      result.path = (result.pathname ? result.pathname : "") + (result.search ? result.search : "");
     }
     result.href = result.format();
     return result;
@@ -679,9 +648,7 @@ Url.prototype.resolveObject = function (relative) {
   // then it must NOT get a trailing slash.
   var last = srcPath.slice(-1)[0];
   var hasTrailingSlash =
-    ((result.host || relative.host || srcPath.length > 1) &&
-      (last === "." || last === "..")) ||
-    last === "";
+    ((result.host || relative.host || srcPath.length > 1) && (last === "." || last === "..")) || last === "";
 
   // strip single dots, resolve double dots to parent dir
   // if the path tries to go above the root, `up` ends up > 0
@@ -706,11 +673,7 @@ Url.prototype.resolveObject = function (relative) {
     }
   }
 
-  if (
-    mustEndAbs &&
-    srcPath[0] !== "" &&
-    (!srcPath[0] || srcPath[0].charAt(0) !== "/")
-  ) {
+  if (mustEndAbs && srcPath[0] !== "" && (!srcPath[0] || srcPath[0].charAt(0) !== "/")) {
     srcPath.unshift("");
   }
 
@@ -718,23 +681,15 @@ Url.prototype.resolveObject = function (relative) {
     srcPath.push("");
   }
 
-  var isAbsolute =
-    srcPath[0] === "" || (srcPath[0] && srcPath[0].charAt(0) === "/");
+  var isAbsolute = srcPath[0] === "" || (srcPath[0] && srcPath[0].charAt(0) === "/");
 
   // put the host back
   if (psychotic) {
-    result.hostname = result.host = isAbsolute
-      ? ""
-      : srcPath.length
-      ? srcPath.shift()
-      : "";
+    result.hostname = result.host = isAbsolute ? "" : srcPath.length ? srcPath.shift() : "";
     //occationaly the auth can get stuck only in host
     //this especially happens in cases like
     //url.resolveObject('mailto:local1@domain1', 'local2@domain2')
-    var authInHost =
-      result.host && result.host.indexOf("@") > 0
-        ? result.host.split("@")
-        : false;
+    var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
     if (authInHost) {
       result.auth = authInHost.shift();
       result.host = result.hostname = authInHost.shift();
@@ -756,9 +711,7 @@ Url.prototype.resolveObject = function (relative) {
 
   //to support request.http
   if (!util_isNull(result.pathname) || !util_isNull(result.search)) {
-    result.path =
-      (result.pathname ? result.pathname : "") +
-      (result.search ? result.search : "");
+    result.path = (result.pathname ? result.pathname : "") + (result.search ? result.search : "");
   }
   result.auth = relative.auth || result.auth;
   result.slashes = result.slashes || relative.slashes;

@@ -1,4 +1,4 @@
-const css = (templ) => templ.toString();
+const css = templ => templ.toString();
 
 const fooNoBracesUTF8 = css`
   before
@@ -25,8 +25,7 @@ const fooUTF16 = css`
 
 `;
 
-const templateLiteralWhichDefinesAFunction = ((...args) =>
-  args[args.length - 1]().toString())`
+const templateLiteralWhichDefinesAFunction = ((...args) => args[args.length - 1]().toString())`
     before
     🙃 ${() => true}
     after
@@ -35,17 +34,11 @@ const templateLiteralWhichDefinesAFunction = ((...args) =>
 
 export function test() {
   for (let foo of [fooNoBracesUT16, fooNoBracesUTF8, fooUTF16, fooUTF8]) {
-    console.assert(
-      foo.includes("before"),
-      `Expected ${foo} to include "before"`,
-    );
+    console.assert(foo.includes("before"), `Expected ${foo} to include "before"`);
     console.assert(foo.includes("after"), `Expected ${foo} to include "after"`);
   }
 
-  console.assert(
-    templateLiteralWhichDefinesAFunction.includes("true"),
-    "Expected fooFunction to include 'true'",
-  );
+  console.assert(templateLiteralWhichDefinesAFunction.includes("true"), "Expected fooFunction to include 'true'");
 
   return testDone(import.meta.url);
 }

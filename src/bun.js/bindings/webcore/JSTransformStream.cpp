@@ -29,7 +29,6 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
-#include "TransformStreamBuiltins.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -153,7 +152,7 @@ void JSTransformStream::destroy(JSC::JSCell* cell)
     thisObject->JSTransformStream::~JSTransformStream();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -168,9 +167,9 @@ JSC::GCClient::IsoSubspace* JSTransformStream::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = std::forward<decltype(space)>(space); });
 }
 
 }

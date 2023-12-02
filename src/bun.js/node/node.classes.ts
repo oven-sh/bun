@@ -1,12 +1,400 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
+  define({
+    name: "FSWatcher",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+      },
+      close: {
+        fn: "doClose",
+        length: 0,
+      },
+    },
+    values: ["listener"],
+  }),
+  define({
+    name: "StatWatcher",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      close: {
+        fn: "doClose",
+        length: 0,
+      },
+    },
+    values: ["listener"],
+  }),
+  define({
+    name: "Timeout",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      refresh: {
+        fn: "doRefresh",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+      },
+      ["@@toPrimitive"]: {
+        fn: "toPrimitive",
+        length: 1,
+      },
+    },
+    values: ["arguments", "callback"],
+  }),
+  define({
+    name: "Stats",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
+
+    proto: {
+      isBlockDevice: {
+        fn: "isBlockDevice_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isCharacterDevice: {
+        fn: "isCharacterDevice_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isDirectory: {
+        fn: "isDirectory_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isFIFO: {
+        fn: "isFIFO_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isFile: {
+        fn: "isFile_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isSocket: {
+        fn: "isSocket_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isSymbolicLink: {
+        fn: "isSymbolicLink_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      dev: {
+        getter: "dev",
+      },
+      ino: {
+        getter: "ino",
+      },
+      mode: {
+        getter: "mode",
+      },
+      nlink: {
+        getter: "nlink",
+      },
+      uid: {
+        getter: "uid",
+      },
+      gid: {
+        getter: "gid",
+      },
+      rdev: {
+        getter: "rdev",
+      },
+      size: {
+        getter: "size",
+      },
+      blksize: {
+        getter: "blksize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      atime: {
+        getter: "atime",
+        cache: true,
+      },
+      mtime: {
+        getter: "mtime",
+        cache: true,
+      },
+      ctime: {
+        getter: "ctime",
+        cache: true,
+      },
+      birthtime: {
+        getter: "birthtime",
+      },
+      atimeMs: {
+        getter: "atimeMs",
+      },
+      mtimeMs: {
+        getter: "mtimeMs",
+      },
+      ctimeMs: {
+        getter: "ctimeMs",
+      },
+      birthtimeMs: {
+        getter: "birthtimeMs",
+      },
+    },
+  }),
+  define({
+    name: "BigIntStats",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
+
+    proto: {
+      isBlockDevice: {
+        fn: "isBlockDevice_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isCharacterDevice: {
+        fn: "isCharacterDevice_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isDirectory: {
+        fn: "isDirectory_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isFIFO: {
+        fn: "isFIFO_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isFile: {
+        fn: "isFile_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isSocket: {
+        fn: "isSocket_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isSymbolicLink: {
+        fn: "isSymbolicLink_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      dev: {
+        getter: "dev",
+      },
+      ino: {
+        getter: "ino",
+      },
+      mode: {
+        getter: "mode",
+      },
+      nlink: {
+        getter: "nlink",
+      },
+      uid: {
+        getter: "uid",
+      },
+      gid: {
+        getter: "gid",
+      },
+      rdev: {
+        getter: "rdev",
+      },
+      size: {
+        getter: "size",
+      },
+      blksize: {
+        getter: "blksize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      atime: {
+        getter: "atime",
+        cache: true,
+      },
+      mtime: {
+        getter: "mtime",
+        cache: true,
+      },
+      ctime: {
+        getter: "ctime",
+        cache: true,
+      },
+      birthtime: {
+        getter: "birthtime",
+        cache: true,
+      },
+      atimeMs: {
+        getter: "atimeMs",
+      },
+      mtimeMs: {
+        getter: "mtimeMs",
+      },
+      ctimeMs: {
+        getter: "ctimeMs",
+      },
+      birthtimeMs: {
+        getter: "birthtimeMs",
+      },
+      atimeNs: {
+        getter: "atimeNs",
+      },
+      mtimeNs: {
+        getter: "mtimeNs",
+      },
+      ctimeNs: {
+        getter: "ctimeNs",
+      },
+      birthtimeNs: {
+        getter: "birthtimeNs",
+      },
+    },
+  }),
   define({
     name: "Dirent",
     construct: true,
     finalize: true,
 
     klass: {},
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
 
     proto: {
       isBlockDevice: {
@@ -64,8 +452,8 @@ export default [
       copyFileSync: { fn: "copyFileSync", length: 3 },
 
       // TODO:
-      // cp: { fn: "cp", length: 4 },
-      // cpSync: { fn: "cpSync", length: 3 },
+      cp: { fn: "cp", length: 2 },
+      cpSync: { fn: "cpSync", length: 2 },
 
       exists: { fn: "exists", length: 2 },
       existsSync: { fn: "existsSync", length: 1 },
@@ -125,15 +513,13 @@ export default [
       symlinkSync: { fn: "symlinkSync", length: 3 },
       truncate: { fn: "truncate", length: 3 },
       truncateSync: { fn: "truncateSync", length: 2 },
-      // TODO:
-      // unwatchFile: { fn: "unwatchFile", length: 2 },
+      unwatchFile: { fn: "unwatchFile", length: 2 },
       unlink: { fn: "unlink", length: 2 },
       unlinkSync: { fn: "unlinkSync", length: 1 },
       utimes: { fn: "utimes", length: 4 },
       utimesSync: { fn: "utimesSync", length: 3 },
-      // TODO:
-      // watch: { fn: "watch", length: 3 },
-      // watchFile: { fn: "watchFile", length: 3 },
+      watch: { fn: "watch", length: 3 },
+      watchFile: { fn: "watchFile", length: 3 },
       writeFile: { fn: "writeFile", length: 4 },
       writeFileSync: { fn: "writeFileSync", length: 3 },
       write: { fn: "write", length: 6 },
@@ -143,7 +529,7 @@ export default [
       // TODO:
       // Dir: { fn: 'Dir', length: 3 },
       Dirent: { getter: "getDirent" },
-      // Stats: { fn: 'Stats', length: 14 },
+      Stats: { getter: "getStats" },
       // ReadStream: { fn: 'ReadStream', length: 2 },
       // WriteStream: { fn: 'WriteStream', length: 2 },
       // FileReadStream: { fn: 'FileReadStream', length: 2 },

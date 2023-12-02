@@ -15,14 +15,14 @@ const Allocator = std.mem.Allocator;
 
 pub const bindgen = true;
 
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 
 const Classes = JSC.GlobalClasses;
 
 pub fn main() anyerror!void {
     var allocator = std.heap.c_allocator;
     const src: std.builtin.SourceLocation = @src();
-    const src_path = comptime @import("bun").Environment.base_path ++ std.fs.path.dirname(src.file).?;
+    const src_path = comptime @import("root").bun.Environment.base_path ++ std.fs.path.dirname(src.file).?;
     {
         const paths = [_][]const u8{ src_path, "headers.h" };
         const paths2 = [_][]const u8{ src_path, "headers-cpp.h" };

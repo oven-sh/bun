@@ -1,20 +1,9 @@
-import {
-  SHA1,
-  SHA256,
-  SHA512,
-  SHA384,
-  SHA512_256,
-  MD5,
-  MD4,
-  RIPEMD160,
-  sha,
-} from "bun";
+import { SHA1, SHA256, SHA512, SHA384, SHA512_256, MD5, MD4, RIPEMD160, sha } from "bun";
 
 const input = "Hello World";
 const [first, second] = input.split(" ");
 
-const log = (name, ...args) =>
-  console.log(`${name}:`.padStart("SHA512_256: ".length), ...args);
+const log = (name, ...args) => console.log(`${name}:`.padStart("SHA512_256: ".length), ...args);
 
 console.log("");
 // This is SHA512-256:

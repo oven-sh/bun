@@ -59,12 +59,6 @@
 namespace WebCore {
 using namespace JSC;
 
-// Functions
-
-static JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener);
-static JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_removeEventListener);
-static JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent);
-
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsEventTargetConstructor);
@@ -106,7 +100,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventTargetPrototype, JSEventTargetPrototy
 
 using JSEventTargetDOMConstructor = JSDOMConstructor<JSEventTarget>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -199,7 +193,7 @@ void JSEventTarget::destroy(JSC::JSCell* cell)
     thisObject->JSEventTarget::~JSEventTarget();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -292,9 +286,9 @@ JSC::GCClient::IsoSubspace* JSEventTarget::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSEventTarget, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForEventTarget.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEventTarget = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEventTarget = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForEventTarget.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForEventTarget = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForEventTarget = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

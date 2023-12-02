@@ -2,20 +2,19 @@ const std = @import("std");
 
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
-const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const constStrToU8 = @import("bun").constStrToU8;
-const bun = @import("bun");
+const constStrToU8 = @import("root").bun.constStrToU8;
+const bun = @import("root").bun;
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
-    return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
+    return (@intFromPtr(&buffer) <= @intFromPtr(slice.ptr) and (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer) + buffer.len));
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    return if (@ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and
-        (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len))
+    return if (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
+        (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len))
         [2]u32{
-            @truncate(u32, @ptrToInt(slice.ptr) - @ptrToInt(buffer.ptr)),
-            @truncate(u32, slice.len),
+            @as(u32, @truncate(@intFromPtr(slice.ptr) - @intFromPtr(buffer.ptr))),
+            @as(u32, @truncate(slice.len)),
         }
     else
         null;
@@ -53,7 +52,6 @@ pub const Result = struct {
         return r.index >= count;
     }
 };
-const Seed = 999;
 
 pub const NotFound = IndexType{
     .index = std.math.maxInt(u31),
@@ -75,7 +73,7 @@ fn OverflowGroup(comptime Block: type) type {
         // ...right?
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
-        const default_allocator = @import("bun").default_allocator;
+        const default_allocator = @import("root").bun.default_allocator;
         used: UsedSize = 0,
         allocated: UsedSize = 0,
         ptrs: [max]*Block = undefined,
@@ -349,7 +347,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            for (_value) |c, i| {
+            for (_value, 0..) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
             }
             var slice = lowercase_append_buf[0.._value.len];
@@ -391,13 +389,13 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                         instance.backing_buf[instance.backing_buf_used - 1] = 0;
                     },
                     []const u8, []u8, [:0]const u8, [:0]u8 => {
-                        std.mem.copy(u8, instance.backing_buf[start .. instance.backing_buf_used - 1], _value);
+                        bun.copy(u8, instance.backing_buf[start .. instance.backing_buf_used - 1], _value);
                         instance.backing_buf[instance.backing_buf_used - 1] = 0;
                     },
                     else => {
                         var remainder = instance.backing_buf[start..];
                         for (_value) |val| {
-                            std.mem.copy(u8, remainder, val);
+                            bun.copy(u8, remainder, val);
                             remainder = remainder[val.len..];
                         }
                         remainder[0] = 0;
@@ -411,12 +409,12 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 switch (comptime AppendType) {
                     EmptyType => {},
                     []const u8, []u8, [:0]const u8, [:0]u8 => {
-                        std.mem.copy(u8, value_buf, _value);
+                        bun.copy(u8, value_buf, _value);
                     },
                     else => {
                         var remainder = value_buf;
                         for (_value) |val| {
-                            std.mem.copy(u8, remainder, val);
+                            bun.copy(u8, remainder, val);
                             remainder = remainder[val.len..];
                         }
                     },
@@ -429,7 +427,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = instance.slice_buf_used > max_index };
 
             if (result.is_overflow) {
-                result.index = @intCast(u31, self.overflow_list.len());
+                result.index = @as(u31, @intCast(self.overflow_list.len()));
             } else {
                 result.index = instance.slice_buf_used;
                 instance.slice_buf_used += 1;
@@ -488,7 +486,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
 
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -516,7 +514,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
             const index = self.index.get(_key) orelse return null;
@@ -577,7 +575,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
 
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
             _ = self.index.remove(_key);
             // const index = self.index.get(_key) orelse return;
             // switch (index) {
@@ -683,7 +681,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 const start = instance.key_list_buffer_used;
                 instance.key_list_buffer_used += key.len;
                 slice = instance.key_list_buffer[start..instance.key_list_buffer_used];
-                std.mem.copy(u8, slice, key);
+                bun.copy(u8, slice, key);
             } else {
                 slice = try self.map.allocator.dupe(u8, key);
             }
@@ -695,7 +693,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             if (!result.index.is_overflow) {
                 instance.key_list_slices[result.index.index] = slice;
             } else {
-                if (@intCast(u31, instance.key_list_overflow.items.len) > result.index.index) {
+                if (@as(u31, @intCast(instance.key_list_overflow.items.len)) > result.index.index) {
                     const existing_slice = instance.key_list_overflow.items[result.index.index];
                     if (!isKeyStaticallyAllocated(existing_slice)) {
                         self.map.allocator.free(existing_slice);

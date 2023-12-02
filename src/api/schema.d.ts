@@ -24,6 +24,9 @@ export const enum Loader {
   toml = 8,
   wasm = 9,
   napi = 10,
+  base64 = 11,
+  dataurl = 12,
+  text = 13,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -46,6 +49,12 @@ export const LoaderKeys: {
   wasm: "wasm";
   10: "napi";
   napi: "napi";
+  11: "base64";
+  base64: "base64";
+  12: "dataurl";
+  dataurl: "dataurl";
+  13: "text";
+  text: "text";
 };
 export const enum FrameworkEntryPointType {
   client = 1,
@@ -126,13 +135,13 @@ export const ResolveModeKeys: {
   4: "bundle";
   bundle: "bundle";
 };
-export const enum Platform {
+export const enum Target {
   browser = 1,
   node = 2,
   bun = 3,
   bun_macro = 4,
 }
-export const PlatformKeys: {
+export const TargetKeys: {
   1: "browser";
   browser: "browser";
   2: "node";
@@ -192,6 +201,7 @@ export const enum DotEnvBehavior {
   disable = 1,
   prefix = 2,
   load_all = 3,
+  load_all_without_inlining = 4,
 }
 export const DotEnvBehaviorKeys: {
   1: "disable";
@@ -200,6 +210,8 @@ export const DotEnvBehaviorKeys: {
   prefix: "prefix";
   3: "load_all";
   load_all: "load_all";
+  4: "load_all_without_inlining";
+  load_all_without_inlining: "load_all_without_inlining";
 };
 export const enum SourceMapMode {
   inline_into_file = 1,
@@ -321,6 +333,16 @@ export const WebsocketCommandKindKeys: {
   manifest: "manifest";
   3: "build_with_file_path";
   build_with_file_path: "build_with_file_path";
+};
+export const enum TestKind {
+  test_fn = 1,
+  describe_fn = 2,
+}
+export const TestKindKeys: {
+  1: "test_fn";
+  test_fn: "test_fn";
+  2: "describe_fn";
+  describe_fn: "describe_fn";
 };
 export interface StackFrame {
   function_name: string;
@@ -525,12 +547,10 @@ export interface TransformOptions {
   external?: string[];
   loaders?: LoaderMap;
   main_fields?: string[];
-  platform?: Platform;
+  target?: Target;
   serve?: boolean;
+  env_files?: string[];
   extension_order?: string[];
-  generate_node_module_bundle?: boolean;
-  node_modules_bundle_path?: string;
-  node_modules_bundle_path_server?: string;
   framework?: FrameworkConfig;
   router?: RouteConfig;
   no_summary?: boolean;
@@ -563,6 +583,7 @@ export interface Scan {
 export interface ScanResult {
   exports: string[];
   imports: ScannedImport[];
+  errors: Message[];
 }
 
 export interface ScannedImport {
@@ -700,230 +721,126 @@ export interface BunInstall {
   disable_manifest_cache?: boolean;
   global_dir?: string;
   global_bin_dir?: string;
+  frozen_lockfile?: boolean;
+  exact?: boolean;
 }
 
-export declare function encodeStackFrame(
-  message: StackFrame,
-  bb: ByteBuffer,
-): void;
+export interface ClientServerModule {
+  moduleId: uint32;
+  inputName: StringPointer;
+  assetName: StringPointer;
+  exportNames: StringPointer;
+}
+
+export interface ClientServerModuleManifest {
+  version: uint32;
+  clientModules: ClientServerModule[];
+  serverModules: ClientServerModule[];
+  ssrModules: ClientServerModule[];
+  exportNames: StringPointer[];
+  contents: Uint8Array;
+}
+
+export interface GetTestsRequest {
+  path: string;
+  contents: Uint8Array;
+}
+
+export interface TestResponseItem {
+  byteOffset: int32;
+  label: StringPointer;
+  kind: TestKind;
+}
+
+export interface GetTestsResponse {
+  tests: TestResponseItem[];
+  contents: Uint8Array;
+}
+
+export declare function encodeStackFrame(message: StackFrame, bb: ByteBuffer): void;
 export declare function decodeStackFrame(buffer: ByteBuffer): StackFrame;
-export declare function encodeStackFramePosition(
-  message: StackFramePosition,
-  bb: ByteBuffer,
-): void;
-export declare function decodeStackFramePosition(
-  buffer: ByteBuffer,
-): StackFramePosition;
-export declare function encodeSourceLine(
-  message: SourceLine,
-  bb: ByteBuffer,
-): void;
+export declare function encodeStackFramePosition(message: StackFramePosition, bb: ByteBuffer): void;
+export declare function decodeStackFramePosition(buffer: ByteBuffer): StackFramePosition;
+export declare function encodeSourceLine(message: SourceLine, bb: ByteBuffer): void;
 export declare function decodeSourceLine(buffer: ByteBuffer): SourceLine;
-export declare function encodeStackTrace(
-  message: StackTrace,
-  bb: ByteBuffer,
-): void;
+export declare function encodeStackTrace(message: StackTrace, bb: ByteBuffer): void;
 export declare function decodeStackTrace(buffer: ByteBuffer): StackTrace;
-export declare function encodeJSException(
-  message: JSException,
-  bb: ByteBuffer,
-): void;
+export declare function encodeJSException(message: JSException, bb: ByteBuffer): void;
 export declare function decodeJSException(buffer: ByteBuffer): JSException;
 export declare function encodeProblems(message: Problems, bb: ByteBuffer): void;
 export declare function decodeProblems(buffer: ByteBuffer): Problems;
 export declare function encodeRouter(message: Router, bb: ByteBuffer): void;
 export declare function decodeRouter(buffer: ByteBuffer): Router;
-export declare function encodeFallbackMessageContainer(
-  message: FallbackMessageContainer,
-  bb: ByteBuffer,
-): void;
-export declare function decodeFallbackMessageContainer(
-  buffer: ByteBuffer,
-): FallbackMessageContainer;
+export declare function encodeFallbackMessageContainer(message: FallbackMessageContainer, bb: ByteBuffer): void;
+export declare function decodeFallbackMessageContainer(buffer: ByteBuffer): FallbackMessageContainer;
 export declare function encodeJSX(message: JSX, bb: ByteBuffer): void;
 export declare function decodeJSX(buffer: ByteBuffer): JSX;
-export declare function encodeStringPointer(
-  message: StringPointer,
-  bb: ByteBuffer,
-): void;
+export declare function encodeStringPointer(message: StringPointer, bb: ByteBuffer): void;
 export declare function decodeStringPointer(buffer: ByteBuffer): StringPointer;
-export declare function encodeJavascriptBundledModule(
-  message: JavascriptBundledModule,
-  bb: ByteBuffer,
-): void;
-export declare function decodeJavascriptBundledModule(
-  buffer: ByteBuffer,
-): JavascriptBundledModule;
-export declare function encodeJavascriptBundledPackage(
-  message: JavascriptBundledPackage,
-  bb: ByteBuffer,
-): void;
-export declare function decodeJavascriptBundledPackage(
-  buffer: ByteBuffer,
-): JavascriptBundledPackage;
-export declare function encodeJavascriptBundle(
-  message: JavascriptBundle,
-  bb: ByteBuffer,
-): void;
-export declare function decodeJavascriptBundle(
-  buffer: ByteBuffer,
-): JavascriptBundle;
-export declare function encodeJavascriptBundleContainer(
-  message: JavascriptBundleContainer,
-  bb: ByteBuffer,
-): void;
-export declare function decodeJavascriptBundleContainer(
-  buffer: ByteBuffer,
-): JavascriptBundleContainer;
-export declare function encodeModuleImportRecord(
-  message: ModuleImportRecord,
-  bb: ByteBuffer,
-): void;
-export declare function decodeModuleImportRecord(
-  buffer: ByteBuffer,
-): ModuleImportRecord;
+export declare function encodeJavascriptBundledModule(message: JavascriptBundledModule, bb: ByteBuffer): void;
+export declare function decodeJavascriptBundledModule(buffer: ByteBuffer): JavascriptBundledModule;
+export declare function encodeJavascriptBundledPackage(message: JavascriptBundledPackage, bb: ByteBuffer): void;
+export declare function decodeJavascriptBundledPackage(buffer: ByteBuffer): JavascriptBundledPackage;
+export declare function encodeJavascriptBundle(message: JavascriptBundle, bb: ByteBuffer): void;
+export declare function decodeJavascriptBundle(buffer: ByteBuffer): JavascriptBundle;
+export declare function encodeJavascriptBundleContainer(message: JavascriptBundleContainer, bb: ByteBuffer): void;
+export declare function decodeJavascriptBundleContainer(buffer: ByteBuffer): JavascriptBundleContainer;
+export declare function encodeModuleImportRecord(message: ModuleImportRecord, bb: ByteBuffer): void;
+export declare function decodeModuleImportRecord(buffer: ByteBuffer): ModuleImportRecord;
 export declare function encodeModule(message: Module, bb: ByteBuffer): void;
 export declare function decodeModule(buffer: ByteBuffer): Module;
-export declare function encodeStringMap(
-  message: StringMap,
-  bb: ByteBuffer,
-): void;
+export declare function encodeStringMap(message: StringMap, bb: ByteBuffer): void;
 export declare function decodeStringMap(buffer: ByteBuffer): StringMap;
-export declare function encodeLoaderMap(
-  message: LoaderMap,
-  bb: ByteBuffer,
-): void;
+export declare function encodeLoaderMap(message: LoaderMap, bb: ByteBuffer): void;
 export declare function decodeLoaderMap(buffer: ByteBuffer): LoaderMap;
-export declare function encodeEnvConfig(
-  message: EnvConfig,
-  bb: ByteBuffer,
-): void;
+export declare function encodeEnvConfig(message: EnvConfig, bb: ByteBuffer): void;
 export declare function decodeEnvConfig(buffer: ByteBuffer): EnvConfig;
-export declare function encodeLoadedEnvConfig(
-  message: LoadedEnvConfig,
-  bb: ByteBuffer,
-): void;
-export declare function decodeLoadedEnvConfig(
-  buffer: ByteBuffer,
-): LoadedEnvConfig;
-export declare function encodeFrameworkConfig(
-  message: FrameworkConfig,
-  bb: ByteBuffer,
-): void;
-export declare function decodeFrameworkConfig(
-  buffer: ByteBuffer,
-): FrameworkConfig;
-export declare function encodeFrameworkEntryPoint(
-  message: FrameworkEntryPoint,
-  bb: ByteBuffer,
-): void;
-export declare function decodeFrameworkEntryPoint(
-  buffer: ByteBuffer,
-): FrameworkEntryPoint;
-export declare function encodeFrameworkEntryPointMap(
-  message: FrameworkEntryPointMap,
-  bb: ByteBuffer,
-): void;
-export declare function decodeFrameworkEntryPointMap(
-  buffer: ByteBuffer,
-): FrameworkEntryPointMap;
-export declare function encodeFrameworkEntryPointMessage(
-  message: FrameworkEntryPointMessage,
-  bb: ByteBuffer,
-): void;
-export declare function decodeFrameworkEntryPointMessage(
-  buffer: ByteBuffer,
-): FrameworkEntryPointMessage;
-export declare function encodeLoadedFramework(
-  message: LoadedFramework,
-  bb: ByteBuffer,
-): void;
-export declare function decodeLoadedFramework(
-  buffer: ByteBuffer,
-): LoadedFramework;
-export declare function encodeLoadedRouteConfig(
-  message: LoadedRouteConfig,
-  bb: ByteBuffer,
-): void;
-export declare function decodeLoadedRouteConfig(
-  buffer: ByteBuffer,
-): LoadedRouteConfig;
-export declare function encodeRouteConfig(
-  message: RouteConfig,
-  bb: ByteBuffer,
-): void;
+export declare function encodeLoadedEnvConfig(message: LoadedEnvConfig, bb: ByteBuffer): void;
+export declare function decodeLoadedEnvConfig(buffer: ByteBuffer): LoadedEnvConfig;
+export declare function encodeFrameworkConfig(message: FrameworkConfig, bb: ByteBuffer): void;
+export declare function decodeFrameworkConfig(buffer: ByteBuffer): FrameworkConfig;
+export declare function encodeFrameworkEntryPoint(message: FrameworkEntryPoint, bb: ByteBuffer): void;
+export declare function decodeFrameworkEntryPoint(buffer: ByteBuffer): FrameworkEntryPoint;
+export declare function encodeFrameworkEntryPointMap(message: FrameworkEntryPointMap, bb: ByteBuffer): void;
+export declare function decodeFrameworkEntryPointMap(buffer: ByteBuffer): FrameworkEntryPointMap;
+export declare function encodeFrameworkEntryPointMessage(message: FrameworkEntryPointMessage, bb: ByteBuffer): void;
+export declare function decodeFrameworkEntryPointMessage(buffer: ByteBuffer): FrameworkEntryPointMessage;
+export declare function encodeLoadedFramework(message: LoadedFramework, bb: ByteBuffer): void;
+export declare function decodeLoadedFramework(buffer: ByteBuffer): LoadedFramework;
+export declare function encodeLoadedRouteConfig(message: LoadedRouteConfig, bb: ByteBuffer): void;
+export declare function decodeLoadedRouteConfig(buffer: ByteBuffer): LoadedRouteConfig;
+export declare function encodeRouteConfig(message: RouteConfig, bb: ByteBuffer): void;
 export declare function decodeRouteConfig(buffer: ByteBuffer): RouteConfig;
-export declare function encodeTransformOptions(
-  message: TransformOptions,
-  bb: ByteBuffer,
-): void;
-export declare function decodeTransformOptions(
-  buffer: ByteBuffer,
-): TransformOptions;
-export declare function encodeFileHandle(
-  message: FileHandle,
-  bb: ByteBuffer,
-): void;
+export declare function encodeTransformOptions(message: TransformOptions, bb: ByteBuffer): void;
+export declare function decodeTransformOptions(buffer: ByteBuffer): TransformOptions;
+export declare function encodeFileHandle(message: FileHandle, bb: ByteBuffer): void;
 export declare function decodeFileHandle(buffer: ByteBuffer): FileHandle;
-export declare function encodeTransform(
-  message: Transform,
-  bb: ByteBuffer,
-): void;
+export declare function encodeTransform(message: Transform, bb: ByteBuffer): void;
 export declare function decodeTransform(buffer: ByteBuffer): Transform;
 export declare function encodeScan(message: Scan, bb: ByteBuffer): void;
 export declare function decodeScan(buffer: ByteBuffer): Scan;
-export declare function encodeScanResult(
-  message: ScanResult,
-  bb: ByteBuffer,
-): void;
+export declare function encodeScanResult(message: ScanResult, bb: ByteBuffer): void;
 export declare function decodeScanResult(buffer: ByteBuffer): ScanResult;
-export declare function encodeScannedImport(
-  message: ScannedImport,
-  bb: ByteBuffer,
-): void;
+export declare function encodeScannedImport(message: ScannedImport, bb: ByteBuffer): void;
 export declare function decodeScannedImport(buffer: ByteBuffer): ScannedImport;
-export declare function encodeOutputFile(
-  message: OutputFile,
-  bb: ByteBuffer,
-): void;
+export declare function encodeOutputFile(message: OutputFile, bb: ByteBuffer): void;
 export declare function decodeOutputFile(buffer: ByteBuffer): OutputFile;
-export declare function encodeTransformResponse(
-  message: TransformResponse,
-  bb: ByteBuffer,
-): void;
-export declare function decodeTransformResponse(
-  buffer: ByteBuffer,
-): TransformResponse;
+export declare function encodeTransformResponse(message: TransformResponse, bb: ByteBuffer): void;
+export declare function decodeTransformResponse(buffer: ByteBuffer): TransformResponse;
 export declare function encodeLocation(message: Location, bb: ByteBuffer): void;
 export declare function decodeLocation(buffer: ByteBuffer): Location;
-export declare function encodeMessageData(
-  message: MessageData,
-  bb: ByteBuffer,
-): void;
+export declare function encodeMessageData(message: MessageData, bb: ByteBuffer): void;
 export declare function decodeMessageData(buffer: ByteBuffer): MessageData;
-export declare function encodeMessageMeta(
-  message: MessageMeta,
-  bb: ByteBuffer,
-): void;
+export declare function encodeMessageMeta(message: MessageMeta, bb: ByteBuffer): void;
 export declare function decodeMessageMeta(buffer: ByteBuffer): MessageMeta;
 export declare function encodeMessage(message: Message, bb: ByteBuffer): void;
 export declare function decodeMessage(buffer: ByteBuffer): Message;
 export declare function encodeLog(message: Log, bb: ByteBuffer): void;
 export declare function decodeLog(buffer: ByteBuffer): Log;
-export declare function encodeWebsocketMessage(
-  message: WebsocketMessage,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketMessage(
-  buffer: ByteBuffer,
-): WebsocketMessage;
-export declare function encodeWebsocketMessageWelcome(
-  message: WebsocketMessageWelcome,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketMessageWelcome(
-  buffer: ByteBuffer,
-): WebsocketMessageWelcome;
+export declare function encodeWebsocketMessage(message: WebsocketMessage, bb: ByteBuffer): void;
+export declare function decodeWebsocketMessage(buffer: ByteBuffer): WebsocketMessage;
+export declare function encodeWebsocketMessageWelcome(message: WebsocketMessageWelcome, bb: ByteBuffer): void;
+export declare function decodeWebsocketMessageWelcome(buffer: ByteBuffer): WebsocketMessageWelcome;
 export declare function encodeWebsocketMessageFileChangeNotification(
   message: WebsocketMessageFileChangeNotification,
   bb: ByteBuffer,
@@ -931,69 +848,36 @@ export declare function encodeWebsocketMessageFileChangeNotification(
 export declare function decodeWebsocketMessageFileChangeNotification(
   buffer: ByteBuffer,
 ): WebsocketMessageFileChangeNotification;
-export declare function encodeWebsocketCommand(
-  message: WebsocketCommand,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketCommand(
-  buffer: ByteBuffer,
-): WebsocketCommand;
-export declare function encodeWebsocketCommandBuild(
-  message: WebsocketCommandBuild,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketCommandBuild(
-  buffer: ByteBuffer,
-): WebsocketCommandBuild;
-export declare function encodeWebsocketCommandManifest(
-  message: WebsocketCommandManifest,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketCommandManifest(
-  buffer: ByteBuffer,
-): WebsocketCommandManifest;
-export declare function encodeWebsocketMessageBuildSuccess(
-  message: WebsocketMessageBuildSuccess,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketMessageBuildSuccess(
-  buffer: ByteBuffer,
-): WebsocketMessageBuildSuccess;
-export declare function encodeWebsocketMessageBuildFailure(
-  message: WebsocketMessageBuildFailure,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketMessageBuildFailure(
-  buffer: ByteBuffer,
-): WebsocketMessageBuildFailure;
+export declare function encodeWebsocketCommand(message: WebsocketCommand, bb: ByteBuffer): void;
+export declare function decodeWebsocketCommand(buffer: ByteBuffer): WebsocketCommand;
+export declare function encodeWebsocketCommandBuild(message: WebsocketCommandBuild, bb: ByteBuffer): void;
+export declare function decodeWebsocketCommandBuild(buffer: ByteBuffer): WebsocketCommandBuild;
+export declare function encodeWebsocketCommandManifest(message: WebsocketCommandManifest, bb: ByteBuffer): void;
+export declare function decodeWebsocketCommandManifest(buffer: ByteBuffer): WebsocketCommandManifest;
+export declare function encodeWebsocketMessageBuildSuccess(message: WebsocketMessageBuildSuccess, bb: ByteBuffer): void;
+export declare function decodeWebsocketMessageBuildSuccess(buffer: ByteBuffer): WebsocketMessageBuildSuccess;
+export declare function encodeWebsocketMessageBuildFailure(message: WebsocketMessageBuildFailure, bb: ByteBuffer): void;
+export declare function decodeWebsocketMessageBuildFailure(buffer: ByteBuffer): WebsocketMessageBuildFailure;
 export declare function encodeWebsocketCommandBuildWithFilePath(
   message: WebsocketCommandBuildWithFilePath,
   bb: ByteBuffer,
 ): void;
-export declare function decodeWebsocketCommandBuildWithFilePath(
-  buffer: ByteBuffer,
-): WebsocketCommandBuildWithFilePath;
-export declare function encodeWebsocketMessageResolveID(
-  message: WebsocketMessageResolveID,
-  bb: ByteBuffer,
-): void;
-export declare function decodeWebsocketMessageResolveID(
-  buffer: ByteBuffer,
-): WebsocketMessageResolveID;
-export declare function encodeNPMRegistry(
-  message: NPMRegistry,
-  bb: ByteBuffer,
-): void;
+export declare function decodeWebsocketCommandBuildWithFilePath(buffer: ByteBuffer): WebsocketCommandBuildWithFilePath;
+export declare function encodeWebsocketMessageResolveID(message: WebsocketMessageResolveID, bb: ByteBuffer): void;
+export declare function decodeWebsocketMessageResolveID(buffer: ByteBuffer): WebsocketMessageResolveID;
+export declare function encodeNPMRegistry(message: NPMRegistry, bb: ByteBuffer): void;
 export declare function decodeNPMRegistry(buffer: ByteBuffer): NPMRegistry;
-export declare function encodeNPMRegistryMap(
-  message: NPMRegistryMap,
-  bb: ByteBuffer,
-): void;
-export declare function decodeNPMRegistryMap(
-  buffer: ByteBuffer,
-): NPMRegistryMap;
-export declare function encodeBunInstall(
-  message: BunInstall,
-  bb: ByteBuffer,
-): void;
+export declare function encodeNPMRegistryMap(message: NPMRegistryMap, bb: ByteBuffer): void;
+export declare function decodeNPMRegistryMap(buffer: ByteBuffer): NPMRegistryMap;
+export declare function encodeBunInstall(message: BunInstall, bb: ByteBuffer): void;
 export declare function decodeBunInstall(buffer: ByteBuffer): BunInstall;
+export declare function encodeClientServerModule(message: ClientServerModule, bb: ByteBuffer): void;
+export declare function decodeClientServerModule(buffer: ByteBuffer): ClientServerModule;
+export declare function encodeClientServerModuleManifest(message: ClientServerModuleManifest, bb: ByteBuffer): void;
+export declare function decodeClientServerModuleManifest(buffer: ByteBuffer): ClientServerModuleManifest;
+export declare function encodeGetTestsRequest(message: GetTestsRequest, bb: ByteBuffer): void;
+export declare function decodeGetTestsRequest(buffer: ByteBuffer): GetTestsRequest;
+export declare function encodeTestResponseItem(message: TestResponseItem, bb: ByteBuffer): void;
+export declare function decodeTestResponseItem(buffer: ByteBuffer): TestResponseItem;
+export declare function encodeGetTestsResponse(message: GetTestsResponse, bb: ByteBuffer): void;
+export declare function decodeGetTestsResponse(buffer: ByteBuffer): GetTestsResponse;

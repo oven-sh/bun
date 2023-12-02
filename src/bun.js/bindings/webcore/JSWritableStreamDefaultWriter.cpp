@@ -31,7 +31,6 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "WebCoreJSClientData.h"
-#include "WritableStreamDefaultWriterBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
@@ -161,7 +160,7 @@ void JSWritableStreamDefaultWriter::destroy(JSC::JSCell* cell)
     thisObject->JSWritableStreamDefaultWriter::~JSWritableStreamDefaultWriter();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -176,8 +175,8 @@ JSC::GCClient::IsoSubspace* JSWritableStreamDefaultWriter::subspaceForImpl(JSC::
     return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); });
 }
 }

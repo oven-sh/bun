@@ -30,7 +30,6 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
-#include "ReadableStreamBYOBRequestBuiltins.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -157,7 +156,7 @@ void JSReadableStreamBYOBRequest::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamBYOBRequest::~JSReadableStreamBYOBRequest();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -172,8 +171,8 @@ JSC::GCClient::IsoSubspace* JSReadableStreamBYOBRequest::subspaceForImpl(JSC::VM
     return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); });
 }
 }

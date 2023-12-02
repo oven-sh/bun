@@ -24,7 +24,7 @@ if (process.env.PROJECT === "bun") {
 
   // bunProcess.stderr.pipe(process.stderr);
   // bunProcess.stdout.pipe(process.stdout);
-  bunProcess.once("error", (err) => {
+  bunProcess.once("error", err => {
     console.error("❌ bun error", err);
     process.exit(1);
   });
@@ -32,19 +32,15 @@ if (process.env.PROJECT === "bun") {
     bunProcess?.kill(0);
   });
 } else if (process.env.PROJECT === "next") {
-  const bunProcess = child_process.spawn(
-    "./node_modules/.bin/next",
-    ["--port", "8080"],
-    {
-      cwd: process.cwd(),
-      stdio: "ignore",
-      env: {
-        ...process.env,
-      },
-
-      shell: false,
+  const bunProcess = child_process.spawn("./node_modules/.bin/next", ["--port", "8080"], {
+    cwd: process.cwd(),
+    stdio: "ignore",
+    env: {
+      ...process.env,
     },
-  );
+
+    shell: false,
+  });
 }
 
 const delay = new Promise((resolve, reject) => {
@@ -111,7 +107,7 @@ async function main() {
   return runPage();
 }
 
-main().catch((error) =>
+main().catch(error =>
   setTimeout(() => {
     throw error;
   }),

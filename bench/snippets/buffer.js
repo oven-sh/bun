@@ -10,18 +10,13 @@ var time = (name, fn) => {
   console.timeEnd(name.padEnd('Buffer.write(string, "latin1")'.length));
 };
 
-console.log(
-  `Run ${new Intl.NumberFormat().format(INTERVAL)} times with a warmup:`,
-  "\n"
-);
+console.log(`Run ${new Intl.NumberFormat().format(INTERVAL)} times with a warmup:`, "\n");
 
 const stringToWrite = "hellooooohellooooo";
 
 time('Buffer.write(string, "utf8")', () => buf.write(stringToWrite, "utf8"));
 time('Buffer.write(string, "ascii")', () => buf.write(stringToWrite, "ascii"));
-time('Buffer.write(string, "latin1")', () =>
-  buf.write(stringToWrite, "latin1")
-);
+time('Buffer.write(string, "latin1")', () => buf.write(stringToWrite, "latin1"));
 time("Buffer.readBigInt64BE     ", () => buf.readBigInt64BE(0));
 // time("DataView.getBigInt64 (BE)", () => view.getBigInt64(0, false));
 // console.log("");

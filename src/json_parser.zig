@@ -1,12 +1,12 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
 const options = @import("options.zig");
-
+const BabyList = @import("./baby_list.zig").BabyList;
 const fs = @import("fs.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -141,8 +141,13 @@ fn JSONLikeParser_(
         lexer: Lexer,
         log: *logger.Log,
         allocator: std.mem.Allocator,
+        list_allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
+            return initWithListAllocator(allocator, allocator, source_, log);
+        }
+
+        pub fn initWithListAllocator(allocator: std.mem.Allocator, list_allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
             Expr.Data.Store.assert();
             Stmt.Data.Store.assert();
 
@@ -150,6 +155,7 @@ fn JSONLikeParser_(
                 .lexer = try Lexer.init(log, source_, allocator),
                 .allocator = allocator,
                 .log = log,
+                .list_allocator = list_allocator,
             };
         }
 
@@ -202,7 +208,7 @@ fn JSONLikeParser_(
                 .t_open_bracket => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var exprs = std.ArrayList(Expr).init(p.allocator);
+                    var exprs = std.ArrayList(Expr).init(p.list_allocator);
 
                     while (p.lexer.token != .t_close_bracket) {
                         if (exprs.items.len > 0) {
@@ -235,20 +241,18 @@ fn JSONLikeParser_(
                 .t_open_brace => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var properties = std.ArrayList(G.Property).init(p.allocator);
+                    var properties = std.ArrayList(G.Property).init(p.list_allocator);
 
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
                     var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
                         HashMapPool.get(p.allocator)
-                    else
-                        void{};
+                    else {};
 
                     var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
                         duplicates_node.data
-                    else
-                        void{};
+                    else {};
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -318,15 +322,6 @@ fn JSONLikeParser_(
                     }
 
                     try p.lexer.unexpected();
-                    if (comptime Environment.isDebug) {
-                        std.io.getStdErr().writer().print("\nThis range: {d} - {d} \n{s}", .{
-                            p.lexer.range().loc.start,
-                            p.lexer.range().end().start,
-                            p.lexer.range().in(p.lexer.source.contents),
-                        }) catch {};
-
-                        @breakpoint();
-                    }
                     return error.ParserError;
                 },
             }
@@ -373,6 +368,8 @@ pub const PackageJSONVersionChecker = struct {
 
     has_found_name: bool = false,
     has_found_version: bool = false,
+
+    name_loc: logger.Loc = logger.Loc.Empty,
 
     const opts = if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else js_lexer.JSONOptions{
         .is_json = true,
@@ -468,6 +465,7 @@ pub const PackageJSONVersionChecker = struct {
                     try p.lexer.expect(.t_string_literal);
 
                     try p.lexer.expect(.t_colon);
+
                     const value = try p.parseExpr();
 
                     if (p.depth == 1) {
@@ -480,15 +478,16 @@ pub const PackageJSONVersionChecker = struct {
                                     p.found_name_buf.len,
                                 );
 
-                                std.mem.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
+                                bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
+                                p.name_loc = value.loc;
                             } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
                                 const len = @min(
                                     value.data.e_string.data.len,
                                     p.found_version_buf.len,
                                 );
-                                std.mem.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
+                                bun.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
                                 p.found_version = p.found_version_buf[0..len];
                                 p.has_found_version = true;
                             }
@@ -547,7 +546,7 @@ pub fn toAST(
             return Expr{
                 .data = .{
                     .e_number = .{
-                        .value = @intToFloat(f64, value),
+                        .value = @as(f64, @floatFromInt(value)),
                     },
                 },
                 .loc = logger.Loc{},
@@ -557,7 +556,7 @@ pub fn toAST(
             return Expr{
                 .data = .{
                     .e_number = .{
-                        .value = @floatCast(f64, value),
+                        .value = @as(f64, @floatCast(value)),
                     },
                 },
                 .loc = logger.Loc{},
@@ -614,7 +613,7 @@ pub fn toAST(
             return Expr.init(
                 js_ast.E.Object,
                 js_ast.E.Object{
-                    .properties = js_ast.BabyList(G.Property).init(properties[0..property_i]),
+                    .properties = BabyList(G.Property).init(properties[0..property_i]),
                     .is_single_line = property_i <= 1,
                 },
                 logger.Loc.Empty,
@@ -631,13 +630,13 @@ pub fn toAST(
             }
         },
         .Enum => {
-            _ = std.meta.intToEnum(Type, @enumToInt(value)) catch {
+            _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, std.mem.span(@errorName(value))),
+        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
         .Union => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {
@@ -680,8 +679,8 @@ pub fn toAST(
     }
 }
 
-const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
-const RemoteJSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
+const JSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
+const RemoteJSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
     .ignore_leading_escape_sequences = true,
     .ignore_trailing_escape_sequences = true,
@@ -927,7 +926,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Stmt.Data.Store.reset();
     }
     var contents = default_allocator.alloc(u8, _contents.len + 1) catch unreachable;
-    std.mem.copy(u8, contents, _contents);
+    bun.copy(u8, contents, _contents);
     contents[contents.len - 1] = ';';
     var log = logger.Log.init(default_allocator);
     defer log.msgs.deinit();

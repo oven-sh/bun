@@ -28,11 +28,12 @@ pub const Mutex = struct {
         }
 
         const cas_fn = comptime switch (strong) {
-            true => "compareAndSwap",
-            else => "tryCompareAndSwap",
+            true => Atomic(u32).compareAndSwap,
+            else => Atomic(u32).tryCompareAndSwap,
         };
 
-        return @field(self.state, cas_fn)(
+        return cas_fn(
+            &self.state,
             UNLOCKED,
             LOCKED,
             .Acquire,
@@ -114,6 +115,12 @@ pub const Lock = struct {
 
     pub inline fn unlock(this: *Lock) void {
         this.mutex.release();
+    }
+
+    pub inline fn assertUnlocked(this: *Lock, comptime message: []const u8) void {
+        if (this.mutex.state.load(.Monotonic) != 0) {
+            @panic(message);
+        }
     }
 };
 

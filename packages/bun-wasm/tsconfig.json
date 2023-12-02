@@ -8,8 +8,10 @@
     "isolatedModules": false,
     "skipLibCheck": true,
     "emitDeclarationOnly": true,
+    "strict": true,
     "outDir": ".",
-    "baseUrl": "."
+    "baseUrl": ".",
+    "types": ["node"]
   },
   "include": [
     "./node_modules/peechy",

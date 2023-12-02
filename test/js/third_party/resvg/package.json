@@ -1,0 +1,6 @@
+{
+  "name": "bun-integration-test-resvg",
+  "dependencies": {
+    "@resvg/resvg-js": "2.4.1"
+  }
+}

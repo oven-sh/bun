@@ -1,6 +1,6 @@
 const std = @import("std");
-const logger = @import("bun").logger;
-const bun = @import("bun");
+const logger = @import("root").bun.logger;
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,7 +13,7 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("bun").HTTP.AsyncHTTP;
+const HTTP = @import("root").bun.http.AsyncHTTP;
 const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
@@ -62,22 +62,26 @@ pub const CrashReportWriter = struct {
 
         var base_dir: []const u8 = ".";
         if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
-            base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (bun.getenvZ("HOME")) |home_dir| {
-            base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
+            base_dir = strings.withoutTrailingSlash(install_dir);
+        } else if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+            base_dir = strings.withoutTrailingSlash(home_dir);
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
             "{s}/.bun-crash/v{s}-{d}.crash",
-            .{ base_dir, Global.package_json_version, @intCast(u64, @max(std.time.milliTimestamp(), 0)) },
+            .{ base_dir, Global.package_json_version, @as(u64, @intCast(@max(std.time.milliTimestamp(), 0))) },
         ) catch return;
 
-        std.fs.cwd().makeDir(std.fs.path.dirname(std.mem.span(file_path)).?) catch {};
-        var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
+        if (bun.path.nextDirname(file_path)) |dirname| {
+            _ = bun.sys.mkdirA(dirname, 0);
+        }
+
+        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
+        var file = std.fs.File{ .handle = bun.fdcast(call) };
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
-        this.file_path = std.mem.span(file_path);
+        this.file_path = bun.asByteSlice(file_path);
     }
 
     pub fn printPath(this: *CrashReportWriter) void {
@@ -85,7 +89,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;
@@ -107,8 +111,8 @@ pub fn printMetadata() void {
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
-    const platform = if (Environment.isMac) "macOS" else "Linux";
-    const arch = if (Environment.isAarch64)
+    const platform = comptime Environment.os.displayString();
+    const arch = comptime if (Environment.isAarch64)
         if (Environment.isMac) "Silicon" else "arm64"
     else
         "x64";
@@ -190,7 +194,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         }
 
         if (msg_) |msg| {
-            const msg_ptr = @ptrToInt(msg.ptr);
+            const msg_ptr = @intFromPtr(msg.ptr);
             if (msg_ptr > 0) {
                 const len = @max(@min(msg.len, 1024), 0);
 
@@ -230,7 +234,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         // It only is a real crash report if it's not coming from Zig
 
-        if (comptime !@import("bun").JSC.is_bindgen) {
+        if (comptime !@import("root").bun.JSC.is_bindgen) {
             std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
             Bun__crashReportDumpStackTrace(&crash_report_writer);
         }
@@ -247,10 +251,21 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 }
 
 var globalError_ranOnce = false;
+var error_return_trace: ?*std.builtin.StackTrace = null;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
-    if (len > 0)
+    if (error_return_trace) |trace| {
+        if (len > 0) {
+            ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
+        } else {
+            ctx.print("{}\n", .{trace});
+        }
+        return;
+    }
+
+    if (len > 0) {
         ctx.print("{s}\n", .{bytes_ptr[0..len]});
+    }
 }
 
 extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
@@ -274,7 +289,11 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
-    if (comptime !@import("bun").JSC.is_bindgen) {
+    if (comptime Environment.isDebug) {
+        error_return_trace = @errorReturnTrace();
+    }
+
+    if (comptime !@import("root").bun.JSC.is_bindgen) {
         std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
         Bun__crashReportDumpStackTrace(&crash_report_writer);
     }
@@ -290,23 +309,29 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
-    if (comptime Environment.isDebug) {
-        if (@errorReturnTrace()) |stack| {
-            std.debug.dumpStackTrace(stack.*);
-        }
+    if (error_return_trace) |trace| {
+        std.debug.dumpStackTrace(trace.*);
     }
-
-    std.c._exit(128 + @truncate(u8, @intCast(u8, @max(signal, 0))));
+    Global.runExitCallbacks();
+    std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
 }
 
-pub noinline fn globalError(err: anyerror) noreturn {
+pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
+
+    error_return_trace = trace_;
 
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
         Global.exit(1);
     }
 
     switch (err) {
+        // error.BrokenPipe => {
+        //     if (comptime Environment.isNative) {
+        //         // if stdout/stderr was closed, we don't need to print anything
+        //         std.c._exit(bun.JSC.getGlobalExitCodeForPipeFailure());
+        //     }
+        // },
         error.SyntaxError => {
             Output.prettyError(
                 "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",
@@ -336,154 +361,50 @@ pub noinline fn globalError(err: anyerror) noreturn {
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed => {
+        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {
-            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
-            if (comptime Environment.isMac) {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\ 
-                    \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                    \\That will only work until you reboot.
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-            } else {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\ 
-                    \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
-                    \\  <cyan>sudo sysctl -p<r>
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
+            if (comptime Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                if (comptime Environment.isMac) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\That will only work until you reboot.
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+                } else {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                        \\  <cyan>sudo sysctl -p<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
 
-                if (bun.getenvZ("USER")) |user| {
-                    if (user.len > 0) {
-                        Output.prettyError(
-                            \\
-                            \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
-                            \\
-                            \\ <cyan>{s} soft nofile 2147483646<r>
-                            \\ <cyan>{s} hard nofile 2147483646<r>
-                            \\
-                        ,
-                            .{ user, user },
-                        );
-                    }
-                }
-            }
-
-            Global.exit(1);
-        },
-        error.@"Invalid Bunfig" => {
-            Global.exit(1);
-        },
-        error.ProcessFdQuotaExceeded => {
-            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
-            if (comptime Environment.isMac) {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\ 
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                    \\You may also need to run:
-                    \\
-                    \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-            } else {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\ 
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                    \\That will only work for the current shell. To fix this for the entire system, run:
-                    \\
-                    \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
-                    \\  <cyan>sudo sysctl -p<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-
-                if (bun.getenvZ("USER")) |user| {
-                    if (user.len > 0) {
-                        Output.prettyError(
-                            \\
-                            \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
-                            \\
-                            \\ <cyan>{s} soft nofile 2147483646<r>
-                            \\ <cyan>{s} hard nofile 2147483646<r>
-                            \\
-                        ,
-                            .{ user, user },
-                        );
-                    }
-                }
-            }
-
-            Global.exit(1);
-        },
-        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
-        error.NotOpenForReading, error.Unexpected => {
-            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
-
-            if (limit.cur > 0 and limit.cur < (8096 * 2)) {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\ 
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-
-                if (Environment.isLinux) {
                     if (bun.getenvZ("USER")) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
@@ -494,20 +415,156 @@ pub noinline fn globalError(err: anyerror) noreturn {
                                 \\ <cyan>{s} hard nofile 2147483646<r>
                                 \\
                             ,
-                                .{
-                                    user,
-                                    user,
-                                },
+                                .{ user, user },
                             );
                         }
                     }
-                } else if (Environment.isMac) {
+                }
+            } else {
+                Output.prettyError(
+                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                ,
+                    .{},
+                );
+            }
+
+            Global.exit(1);
+        },
+        error.@"Invalid Bunfig" => {
+            Global.exit(1);
+        },
+        error.ProcessFdQuotaExceeded => {
+            if (comptime Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                if (comptime Environment.isMac) {
                     Output.prettyError(
                         \\
-                        \\If that still doesn't work, you may need to run:
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\You may also need to run:
                         \\
                         \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
                         \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+                } else {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\That will only work for the current shell. To fix this for the entire system, run:
+                        \\
+                        \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                        \\  <cyan>sudo sysctl -p<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+
+                    if (bun.getenvZ("USER")) |user| {
+                        if (user.len > 0) {
+                            Output.prettyError(
+                                \\
+                                \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                \\
+                                \\ <cyan>{s} soft nofile 2147483646<r>
+                                \\ <cyan>{s} hard nofile 2147483646<r>
+                                \\
+                            ,
+                                .{ user, user },
+                            );
+                        }
+                    }
+                }
+            } else {
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                ,
+                    .{},
+                );
+            }
+
+            Global.exit(1);
+        },
+        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
+        error.NotOpenForReading, error.Unexpected => {
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
+            }
+
+            if (comptime Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+
+                if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+
+                    if (Environment.isLinux) {
+                        if (bun.getenvZ("USER")) |user| {
+                            if (user.len > 0) {
+                                Output.prettyError(
+                                    \\
+                                    \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                    \\
+                                    \\ <cyan>{s} soft nofile 2147483646<r>
+                                    \\ <cyan>{s} hard nofile 2147483646<r>
+                                    \\
+                                ,
+                                    .{
+                                        user,
+                                        user,
+                                    },
+                                );
+                            }
+                        }
+                    } else if (Environment.isMac) {
+                        Output.prettyError(
+                            \\
+                            \\If that still doesn't work, you may need to run:
+                            \\
+                            \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                            \\
+                        ,
+                            .{},
+                        );
+                    }
+                } else {
+                    Output.prettyError(
+                        \\<r><red>error<r>: An unknown error ocurred <d>(<red>Unexpected<r><d>)<r>
                     ,
                         .{},
                     );
@@ -518,7 +575,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
         },
         error.FileNotFound => {
             Output.prettyError(
-                "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nbun could not find a file, and the code that produces this error is missing a better error.\n",
+                "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},
             );
             Output.flush();
@@ -527,35 +584,51 @@ pub noinline fn globalError(err: anyerror) noreturn {
 
             Output.flush();
 
-            print_stacktrace: {
-                var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                var trace = @errorReturnTrace() orelse break :print_stacktrace;
-                Output.disableBuffering();
-                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
             }
 
             Global.exit(1);
         },
         error.MissingPackageJSON => {
             Output.prettyError(
-                "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
+                "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nBun could not find a package.json file.\n",
                 .{},
             );
-            Global.exit(1);
-        },
-        error.MissingValue => {
+
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
+            }
+
             Global.exit(1);
         },
         else => {},
     }
 
     Report.fatal(err, null);
+    if (trace_) |trace| {
+        print_stacktrace: {
+            var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+            Output.disableBuffering();
+            std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+        }
+    }
 
-    print_stacktrace: {
-        var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-        var trace = @errorReturnTrace() orelse break :print_stacktrace;
-        Output.disableBuffering();
-        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
+    if (bun.auto_reload_on_crash) {
+        // attempt to prevent a double panic
+        bun.auto_reload_on_crash = false;
+
+        Output.prettyErrorln("<d>---<r> Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>", .{@max(std.time.milliTimestamp(), 0)});
+        Output.flush();
+        bun.reloadProcess(bun.default_allocator, false);
     }
 
     Global.exit(1);

@@ -48,7 +48,8 @@ enum class CryptoAlgorithmIdentifier {
     SHA_384,
     SHA_512,
     HKDF,
-    PBKDF2
+    PBKDF2,
+    Ed25519
 };
 
 } // namespace WebCore

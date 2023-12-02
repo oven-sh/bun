@@ -1,8 +1,10 @@
 {
   "recommendations": [
-    "AugusteRame.zls-vscode",
+    "ziglang.vscode-zig",
     "esbenp.prettier-vscode",
     "xaver.clang-format",
-    "vadimcn.vscode-lldb"
+    "vadimcn.vscode-lldb",
+    "bierner.comment-tagged-templates",
+    "ms-vscode.cpptools"
   ]
 }

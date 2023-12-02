@@ -12,5 +12,4 @@ bench("return await 1", async function () {
   return await 1;
 });
 
-
 await run();

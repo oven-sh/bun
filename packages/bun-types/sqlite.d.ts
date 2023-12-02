@@ -165,14 +165,14 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType = SQLQueryBindings>(
+    run<ParamsType extends SQLQueryBindings[]>(
       sqlQuery: string,
       ...bindings: ParamsType[]
     ): void;
     /** 
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType = SQLQueryBindings>(
+    exec<ParamsType extends SQLQueryBindings[]>(
       sqlQuery: string,
       ...bindings: ParamsType[]
     ): void;
@@ -202,9 +202,12 @@ declare module "bun:sqlite" {
      * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      */
-    query<ParamsType = SQLQueryBindings, ReturnType = any>(
+    query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
       sqlQuery: string,
-    ): Statement<ParamsType, ReturnType>;
+    ): Statement<
+      ReturnType,
+      ParamsType extends Array<any> ? ParamsType : [ParamsType]
+    >;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
@@ -227,10 +230,16 @@ declare module "bun:sqlite" {
      * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      */
-    prepare<ParamsType = SQLQueryBindings, ReturnType = any>(
-      sql: string,
-      ...params: ParamsType[]
-    ): Statement<ParamsType, ReturnType>;
+    prepare<
+      ReturnType,
+      ParamsType extends SQLQueryBindings | SQLQueryBindings[],
+    >(
+      sqlQuery: string,
+      params?: ParamsType,
+    ): Statement<
+      ReturnType,
+      ParamsType extends Array<any> ? ParamsType : [ParamsType]
+    >;
 
     /**
      * Is the database in a transaction?
@@ -355,6 +364,90 @@ declare module "bun:sqlite" {
        */
       exclusive: (...args: any) => void;
     };
+
+    /**
+     *
+     * Save the database to an in-memory {@link Buffer} object.
+     *
+     * Internally, this calls `sqlite3_serialize`.
+     *
+     * @param name Name to save the database as @default "main"
+     * @returns Buffer containing the serialized database
+     */
+    serialize(name?: string): Buffer;
+
+    /**
+     *
+     * Load a serialized SQLite3 database
+     *
+     * Internally, this calls `sqlite3_deserialize`.
+     *
+     * @param serialized Data to load
+     * @returns `Database` instance
+     *
+     * @example
+     * ```ts
+     * test("supports serialize/deserialize", () => {
+     *     const db = Database.open(":memory:");
+     *     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+     *     db.exec('INSERT INTO test (name) VALUES ("Hello")');
+     *     db.exec('INSERT INTO test (name) VALUES ("World")');
+     *
+     *     const input = db.serialize();
+     *     const db2 = new Database(input);
+     *
+     *     const stmt = db2.prepare("SELECT * FROM test");
+     *     expect(JSON.stringify(stmt.get())).toBe(
+     *       JSON.stringify({
+     *         id: 1,
+     *         name: "Hello",
+     *       }),
+     *     );
+     *
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *       ]),
+     *     );
+     *     db2.exec("insert into test (name) values ('foo')");
+     *     expect(JSON.stringify(stmt.all())).toBe(
+     *       JSON.stringify([
+     *         {
+     *           id: 1,
+     *           name: "Hello",
+     *         },
+     *         {
+     *           id: 2,
+     *           name: "World",
+     *         },
+     *         {
+     *           id: 3,
+     *           name: "foo",
+     *         },
+     *       ]),
+     *     );
+     *
+     *     const db3 = Database.deserialize(input, true);
+     *     try {
+     *       db3.exec("insert into test (name) values ('foo')");
+     *       throw new Error("Expected error");
+     *     } catch (e) {
+     *       expect(e.message).toBe("attempt to write a readonly database");
+     *     }
+     * });
+     * ```
+     */
+    static deserialize(
+      serialized: TypedArray | ArrayBufferLike,
+      isReadOnly?: boolean,
+    ): Database;
   }
 
   /**
@@ -383,7 +476,10 @@ declare module "bun:sqlite" {
    * // => undefined
    * ```
    */
-  export class Statement<ParamsType = SQLQueryBindings, ReturnType = any> {
+  export class Statement<
+    ReturnType = unknown,
+    ParamsType extends SQLQueryBindings[] = any[],
+  > {
     /**
      * Creates a new prepared statement from native code.
      *
@@ -410,7 +506,7 @@ declare module "bun:sqlite" {
      * // => [{bar: "foo"}]
      * ```
      */
-    all(...params: ParamsType[]): ReturnType[];
+    all(...params: ParamsType): ReturnType[];
 
     /**
      * Execute the prepared statement and return **the first** result.
@@ -446,7 +542,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    get(...params: ParamsType[]): ReturnType | null;
+    get(...params: ParamsType): ReturnType | null;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -479,12 +575,14 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    run(...params: ParamsType[]): void;
+    run(...params: ParamsType): void;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
      *
-     * This is a little faster than {@link all}.
+     * In Bun v0.6.7 and earlier, this method returned `null` if there were no
+     * results instead of `[]`. This was changed in v0.6.8 to align
+     * more with what people expect.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      *
@@ -500,12 +598,15 @@ declare module "bun:sqlite" {
      *
      * stmt.values("foo");
      * // => [['foo']]
+     *
+     * stmt.values("not-found");
+     * // => []
      * ```
      *
      * The following types can be used when binding parameters:
      *
      * | JavaScript type | SQLite type |
-     * | -------------- | ----------- |
+     * | ---------------|-------------|
      * | `string` | `TEXT` |
      * | `number` | `INTEGER` or `DECIMAL` |
      * | `boolean` | `INTEGER` (1 or 0) |
@@ -516,7 +617,7 @@ declare module "bun:sqlite" {
      *
      */
     values(
-      ...params: ParamsType[]
+      ...params: ParamsType
     ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**

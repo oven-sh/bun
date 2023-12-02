@@ -31,9 +31,19 @@
 
 #include "JSDOMGlobalObject.h"
 
-#include "JavaScriptCore/ArrayBuffer.h"
+#include <JavaScriptCore/ArrayBuffer.h>
 
-#include "JavaScriptCore/JSArrayBuffer.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
+
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (auto* global = jsDynamicCast<WebCore::JSDOMGlobalObject*>(lexicalGlobalObject)) {
+        return global;
+    }
+
+    return Bun__getDefaultGlobal();
+}
 
 namespace WebCore {
 
@@ -46,11 +56,15 @@ WebCoreTypedArrayController::~WebCoreTypedArrayController() = default;
 
 JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* buffer)
 {
-    return JSC::jsCast<JSC::JSArrayBuffer*>(WebCore::toJS(lexicalGlobalObject, JSC::jsCast<JSDOMGlobalObject*>(globalObject), buffer));
+    return JSC::jsCast<JSC::JSArrayBuffer*>(WebCore::toJS(lexicalGlobalObject, getDefaultGlobal(globalObject), buffer));
 }
 
 void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* native, JSC::JSArrayBuffer* wrapper)
 {
+    // require("vm") can be used to create an ArrayBuffer
+    if (UNLIKELY(!globalObject->inherits<JSDOMGlobalObject>()))
+        return;
+
     cacheWrapper(JSC::jsCast<JSDOMGlobalObject*>(globalObject)->world(), native, wrapper);
 }
 

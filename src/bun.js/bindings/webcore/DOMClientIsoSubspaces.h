@@ -2,8 +2,8 @@
 
 #include "root.h"
 
-#include "wtf/FastMalloc.h"
-#include "wtf/Noncopyable.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -18,6 +18,7 @@ public:
     /* --- bun --- */
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
@@ -29,14 +30,27 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImportMeta;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSModuleMock;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncContextFrame;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalModuleRegistry;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
 
@@ -400,7 +414,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAnimationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAttr;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBeforeUnloadEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBroadcastChannel;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBroadcastChannel;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCDATASection;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCharacterData;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardEvent;
@@ -433,9 +447,9 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForIdleDeadline;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInputEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKeyboardEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMouseEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationObserver;
@@ -850,7 +864,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebFakeXRInputController;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRTest;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDedicatedWorkerGlobalScope;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerGlobalScope;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerLocation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableEvent;

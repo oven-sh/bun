@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
 const Defines = @import("./defines.zig");
@@ -55,51 +55,68 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
-        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+        fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+            const url = URL.parse(str.data);
             var registry = std.mem.zeroes(Api.NpmRegistry);
 
-            switch (expr.data) {
-                .e_string => |str| {
-                    const url = URL.parse(str.data);
-                    // Token
-                    if (url.username.len == 0 and url.password.len > 0) {
-                        registry.token = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
-                    } else if (url.username.len > 0 and url.password.len > 0) {
-                        registry.username = url.username;
-                        registry.password = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
-                    } else {
-                        registry.url = url.href;
-                    }
-                },
-                .e_object => |obj| {
-                    if (obj.get("url")) |url| {
-                        try this.expect(url, .e_string);
-                        registry.url = url.data.e_string.data;
-                    }
+            // Token
+            if (url.username.len == 0 and url.password.len > 0) {
+                registry.token = url.password;
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+            } else if (url.username.len > 0 and url.password.len > 0) {
+                registry.username = url.username;
+                registry.password = url.password;
 
-                    if (obj.get("username")) |username| {
-                        try this.expect(username, .e_string);
-                        registry.username = username.data.e_string.data;
-                    }
-
-                    if (obj.get("password")) |password| {
-                        try this.expect(password, .e_string);
-                        registry.password = password.data.e_string.data;
-                    }
-
-                    if (obj.get("token")) |token| {
-                        try this.expect(token, .e_string);
-                        registry.token = token.data.e_string.data;
-                    }
-                },
-                else => {
-                    try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                },
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = url.href;
             }
 
             return registry;
+        }
+
+        fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
+            var registry = std.mem.zeroes(Api.NpmRegistry);
+
+            if (obj.get("url")) |url| {
+                try this.expect(url, .e_string);
+                const href = url.data.e_string.data;
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = href;
+            }
+
+            if (obj.get("username")) |username| {
+                try this.expect(username, .e_string);
+                registry.username = username.data.e_string.data;
+            }
+
+            if (obj.get("password")) |password| {
+                try this.expect(password, .e_string);
+                registry.password = password.data.e_string.data;
+            }
+
+            if (obj.get("token")) |token| {
+                try this.expect(token, .e_string);
+                registry.token = token.data.e_string.data;
+            }
+
+            return registry;
+        }
+
+        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+            switch (expr.data) {
+                .e_string => |str| {
+                    return this.parseRegistryURLString(str);
+                },
+                .e_object => |obj| {
+                    return this.parseRegistryObject(obj);
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected registry to be a URL string or an object");
+                    return std.mem.zeroes(Api.NpmRegistry);
+                },
+            }
         }
 
         fn loadLogLevel(this: *Parser, expr: js_ast.Expr) !void {
@@ -116,6 +133,32 @@ pub const Bunfig = struct {
                     unreachable;
                 },
             };
+        }
+
+        fn loadPreload(
+            this: *Parser,
+            allocator: std.mem.Allocator,
+            expr: js_ast.Expr,
+        ) !void {
+            if (expr.asArray()) |array_| {
+                var array = array_;
+                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                errdefer preloads.deinit();
+                while (array.next()) |item| {
+                    try this.expect(item, .e_string);
+                    if (item.data.e_string.len() > 0)
+                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                }
+                this.ctx.preloads = preloads.items;
+            } else if (expr.data == .e_string) {
+                if (expr.data.e_string.len() > 0) {
+                    var preloads = try allocator.alloc(string, 1);
+                    preloads[0] = try expr.data.e_string.string(allocator);
+                    this.ctx.preloads = preloads;
+                }
+            } else if (expr.data != .e_null) {
+                try this.addError(expr.loc, "Expected preload to be an array");
+            }
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
@@ -169,25 +212,21 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("preload")) |expr| {
+                    try this.loadPreload(allocator, expr);
+                }
+
+                if (json.get("telemetry")) |expr| {
+                    try this.expect(expr, .e_boolean);
+                    Analytics.disabled = !expr.data.e_boolean.value;
+                }
             }
 
-            if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
-                if (json.get("dev")) |expr| {
-                    if (expr.get("disableBunJS")) |disable| {
-                        this.ctx.debug.fallback_only = disable.asBool() orelse false;
-                    }
-
-                    if (expr.get("logLevel")) |expr2| {
-                        try this.loadLogLevel(expr2);
-                    }
-
-                    if (expr.get("port")) |port| {
-                        try this.expect(port, .e_number);
-                        this.bunfig.port = port.data.e_number.toU16();
-                        if (this.bunfig.port.? == 0) {
-                            this.bunfig.port = 3000;
-                        }
-                    }
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
+                if (json.get("smol")) |expr| {
+                    try this.expect(expr, .e_boolean);
+                    this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                 }
             }
 
@@ -195,6 +234,60 @@ pub const Bunfig = struct {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
                         this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
+                    }
+
+                    if (test_.get("preload")) |expr| {
+                        try this.loadPreload(allocator, expr);
+                    }
+
+                    if (test_.get("smol")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.runtime_options.smol = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverage")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageThreshold")) |expr| outer: {
+                        if (expr.data == .e_number) {
+                            this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fractions.lines = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fractions.stmts = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                            break :outer;
+                        }
+
+                        try this.expect(expr, .e_object);
+                        if (expr.get("functions")) |functions| {
+                            try this.expect(functions, .e_number);
+                            this.ctx.test_options.coverage.fractions.functions = functions.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
+
+                        if (expr.get("lines")) |lines| {
+                            try this.expect(lines, .e_number);
+                            this.ctx.test_options.coverage.fractions.lines = lines.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
+
+                        if (expr.get("statements")) |stmts| {
+                            try this.expect(stmts, .e_number);
+                            this.ctx.test_options.coverage.fractions.stmts = stmts.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
+                    }
+
+                    // This mostly exists for debugging.
+                    if (test_.get("coverageIgnoreSourcemaps")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.ignore_sourcemap = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageSkipTestFiles")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
                 }
             }
@@ -222,6 +315,14 @@ pub const Bunfig = struct {
                         } else {
                             try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
                             return;
+                        }
+                    }
+
+                    if (json.get("exact")) |exact_install_expr| {
+                        try this.expect(exact_install_expr, .e_boolean);
+
+                        if (exact_install_expr.asBool().?) {
+                            install.exact = true;
                         }
                     }
 
@@ -256,7 +357,7 @@ pub const Bunfig = struct {
                             if (name_.len == 0) continue;
                             const name = if (name_[0] == '@') name_[1..] else name_;
                             var index = names.items.len;
-                            for (names.items) |comparator, i| {
+                            for (names.items, 0..) |comparator, i| {
                                 if (strings.eql(name, comparator)) {
                                     index = i;
                                     break;
@@ -285,6 +386,12 @@ pub const Bunfig = struct {
                     if (_bun.get("production")) |production| {
                         if (production.asBool()) |value| {
                             install.production = value;
+                        }
+                    }
+
+                    if (_bun.get("frozenLockfile")) |frozen_lockfile| {
+                        if (frozen_lockfile.asBool()) |value| {
+                            install.frozen_lockfile = value;
                         }
                     }
 
@@ -396,19 +503,14 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunCommand) {
-                    if (_bun.get("saveTo")) |file| {
-                        try this.expect(file, .e_string);
-                        this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
-                    }
-
+                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expect(dir, .e_string);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
                     }
                 }
 
-                if (comptime cmd == .BunCommand) {
+                if (comptime cmd == .BuildCommand) {
                     if (_bun.get("logLevel")) |expr2| {
                         try this.loadLogLevel(expr2);
                     }
@@ -417,7 +519,7 @@ pub const Bunfig = struct {
                         try this.expect(entryPoints, .e_array);
                         const items = entryPoints.data.e_array.items.slice();
                         var names = try this.allocator.alloc(string, items.len);
-                        for (items) |item, i| {
+                        for (items, 0..) |item, i| {
                             try this.expect(item, .e_string);
                             names[i] = try item.data.e_string.string(allocator);
                         }
@@ -523,7 +625,7 @@ pub const Bunfig = struct {
             }
 
             switch (comptime cmd) {
-                .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
+                .AutoCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
                         this.bunfig.router = Api.RouteConfig{
@@ -545,8 +647,13 @@ pub const Bunfig = struct {
             }
 
             if (json.get("macros")) |expr| {
-                // technical debt
-                this.ctx.debug.macros = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source);
+                if (expr.data == .e_boolean) {
+                    if (expr.data.e_boolean.value == false) {
+                        this.ctx.debug.macros = .{ .disable = {} };
+                    }
+                } else {
+                    this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
+                }
                 Analytics.Features.macros = true;
             }
 
@@ -560,7 +667,7 @@ pub const Bunfig = struct {
                     .e_array => |array| {
                         var externals = try allocator.alloc(string, array.items.len);
 
-                        for (array.items.slice()) |item, i| {
+                        for (array.items.slice(), 0..) |item, i| {
                             try this.expect(item, .e_string);
                             externals[i] = try item.data.e_string.string(allocator);
                         }
@@ -584,11 +691,11 @@ pub const Bunfig = struct {
                 var loader_names = try this.allocator.alloc(string, properties.len);
                 var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
 
-                for (properties) |item, i| {
+                for (properties, 0..) |item, i| {
                     var key = item.key.?.asString(allocator).?;
                     if (key.len == 0) continue;
                     if (key[0] != '.') {
-                        try this.addError(item.key.?.loc, "file extension must start with a dot");
+                        try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
                     }
                     var value = item.value.?;
                     try this.expect(value, .e_string);

@@ -238,6 +238,8 @@ NAPI_EXTERN napi_status napi_unwrap(napi_env env, napi_value js_object,
                                     void **result);
 NAPI_EXTERN napi_status napi_remove_wrap(napi_env env, napi_value js_object,
                                          void **result);
+NAPI_EXTERN napi_status napi_create_object(napi_env env, 
+                                             napi_value *result);
 NAPI_EXTERN napi_status napi_create_external(napi_env env, void *data,
                                              napi_finalize finalize_cb,
                                              void *finalize_hint,

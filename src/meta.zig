@@ -7,7 +7,7 @@ pub fn ReturnOf(comptime function: anytype) type {
 }
 
 pub fn ReturnOfType(comptime Type: type) type {
-    const typeinfo: std.builtin.Type.Fn = @typeInfo(Type);
+    const typeinfo: std.builtin.Type.Fn = @typeInfo(Type).Fn;
     return typeinfo.return_type orelse void;
 }
 
@@ -23,4 +23,19 @@ pub fn typeBaseName(comptime fullname: []const u8) []const u8 {
 
     const name = if (idx == null) fullname else fullname[(idx.? + 1)..];
     return comptime std.fmt.comptimePrint("{s}", .{name});
+}
+
+pub fn enumFieldNames(comptime Type: type) []const []const u8 {
+    var names: [std.meta.fields(Type).len][]const u8 = std.meta.fieldNames(Type).*;
+    var i: usize = 0;
+    for (names) |name| {
+        // zig seems to include "_" or an empty string in the list of enum field names
+        // it makes sense, but humans don't want that
+        if (@import("root").bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
+            continue;
+        }
+        names[i] = name;
+        i += 1;
+    }
+    return names[0..i];
 }

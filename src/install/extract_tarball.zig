@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const default_allocator = bun.default_allocator;
 const Global = bun.Global;
 const json_parser = bun.JSON;
@@ -6,9 +6,7 @@ const logger = bun.logger;
 const Output = bun.Output;
 const FileSystem = @import("../fs.zig").FileSystem;
 const Install = @import("./install.zig");
-const Features = Install.Features;
-const Lockfile = Install.Lockfile;
-const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 const Integrity = @import("./integrity.zig").Integrity;
 const Npm = @import("./npm.zig");
@@ -21,24 +19,28 @@ const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
 resolution: Resolution,
-registry: string,
 cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
-package_id: PackageID,
+dependency_id: DependencyID,
 skip_verify: bool = false,
-integrity: Integrity = Integrity{},
-url: string = "",
+integrity: Integrity = .{},
+url: strings.StringOrTinyString,
 package_manager: *PackageManager,
 
-pub inline fn run(this: ExtractTarball, task_id: u64, bytes: []const u8) !Install.ExtractData {
+pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
-            Output.prettyErrorln("<r><red>Integrity check failed<r> for tarball: {s}", .{this.name.slice()});
-            Output.flush();
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "Integrity check failed<r> for tarball: {s}",
+                .{this.name.slice()},
+            ) catch unreachable;
             return error.IntegrityCheckFailed;
         }
     }
-    return this.extract(bytes, task_id);
+    return this.extract(bytes);
 }
 
 pub fn buildURL(
@@ -107,7 +109,7 @@ pub fn buildURLWithPrinter(
 
     var name = full_name;
     if (name[0] == '@') {
-        if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+        if (strings.indexOfChar(name, '/')) |i| {
             name = name[i + 1 ..];
         }
     }
@@ -151,23 +153,31 @@ threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !Install.ExtractData {
+fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
-    var tmpname_buf: [256]u8 = undefined;
+    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
-
-    var basename = this.name.slice();
-    if (basename[0] == '@') {
-        if (std.mem.indexOfScalar(u8, basename, '/')) |i| {
-            basename = basename[i + 1 ..];
+    const basename = brk: {
+        if (name[0] == '@') {
+            if (strings.indexOfChar(name, '/')) |i| {
+                break :brk name[i + 1 ..];
+            }
         }
-    }
+        break :brk name;
+    };
 
     var resolved: string = "";
     var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
         var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
-            Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "{s} when create temporary directory named \"{s}\" (while extracting \"{s}\")",
+                .{ @errorName(err), tmpname, name },
+            ) catch unreachable;
+            return error.InstallFailed;
         };
 
         defer extract_destination.close();
@@ -185,14 +195,14 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
 
         var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
         zlib_entry.readAll() catch |err| {
-            Output.prettyErrorln(
-                "<r><red>Error {s}<r> decompressing {s}",
-                .{
-                    @errorName(err),
-                    name,
-                },
-            );
-            Global.crash();
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "{s} decompressing \"{s}\"",
+                .{ @errorName(err), name },
+            ) catch unreachable;
+            return error.InstallFailed;
         };
         switch (this.resolution.tag) {
             .github => {
@@ -207,32 +217,19 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
                 };
                 var dirname_reader = DirnameReader{ .outdirname = &resolved };
 
-                _ = if (PackageManager.verbose_install)
-                    try Archive.extractToDir(
+                switch (PackageManager.verbose_install) {
+                    inline else => |log| _ = try Archive.extractToDir(
                         zlib_pool.data.list.items,
                         extract_destination,
                         null,
                         *DirnameReader,
                         &dirname_reader,
-                        // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
+                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                         1,
                         true,
-                        true,
-                    )
-                else
-                    try Archive.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        *DirnameReader,
-                        &dirname_reader,
-                        // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
-                        1,
-                        true,
-                        false,
-                    );
+                        log,
+                    ),
+                }
 
                 // This tag is used to know which version of the package was
                 // installed from GitHub. package.json version becomes sort of
@@ -245,49 +242,30 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
                     };
                 }
             },
-            else => {
-                _ = if (PackageManager.verbose_install)
-                    try Archive.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        void,
-                        void{},
-                        // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
-                        1,
-                        true,
-                        true,
-                    )
-                else
-                    try Archive.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        void,
-                        void{},
-                        // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
-                        1,
-                        true,
-                        false,
-                    );
+            else => switch (PackageManager.verbose_install) {
+                inline else => |log| _ = try Archive.extractToDir(
+                    zlib_pool.data.list.items,
+                    extract_destination,
+                    null,
+                    void,
+                    {},
+                    // for npm packages, the root dir is always "package"
+                    1,
+                    true,
+                    log,
+                ),
             },
         }
 
         if (PackageManager.verbose_install) {
-            Output.prettyErrorln(
-                "[{s}] Extracted<r>",
-                .{
-                    name,
-                },
-            );
+            Output.prettyErrorln("[{s}] Extracted<r>", .{name});
             Output.flush();
         }
     }
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
+        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice()),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -301,30 +279,31 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
     }
 
     // Now that we've extracted the archive, we rename.
-    std.os.renameatZ(tmpdir.fd, tmpname, cache_dir.fd, folder_name) catch |err| {
-        Output.prettyErrorln(
-            "<r><red>Error {s}<r> moving {s} to cache dir:\n   From: {s}    To: {s}",
-            .{
-                @errorName(err),
-                name,
-                tmpname,
-                folder_name,
-            },
-        );
-        Global.crash();
-    };
+    switch (bun.sys.renameat(tmpdir.fd, bun.sliceTo(tmpname, 0), cache_dir.fd, folder_name)) {
+        .err => |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                .{ name, err, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
+        },
+        .result => {},
+    }
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
     var final_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |err| {
-        Output.prettyErrorln(
-            "<r><red>Error {s}<r> failed to verify cache dir for {s}",
-            .{
-                @errorName(err),
-                name,
-            },
-        );
-        Global.crash();
+        this.package_manager.log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            this.package_manager.allocator,
+            "failed to verify cache dir for \"{s}\": {s}",
+            .{ name, @errorName(err) },
+        ) catch unreachable;
+        return error.InstallFailed;
     };
 
     defer final_dir.close();
@@ -333,18 +312,18 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {
-        Output.prettyErrorln(
-            "<r><red>Error {s}<r> failed to verify cache dir for {s}",
-            .{
-                @errorName(err),
-                name,
-            },
-        );
-        Global.crash();
+        this.package_manager.log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            this.package_manager.allocator,
+            "failed to resolve cache dir for \"{s}\": {s}",
+            .{ name, @errorName(err) },
+        ) catch unreachable;
+        return error.InstallFailed;
     };
 
     // create an index storing each version of a package installed
-    create_index: {
+    if (strings.indexOfChar(basename, '/') == null) create_index: {
         var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
         defer index_dir.close();
         index_dir.dir.symLink(
@@ -362,47 +341,49 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
     var json_path: []u8 = "";
     var json_buf: []u8 = "";
     var json_len: usize = 0;
-    switch (this.resolution.tag) {
-        .github => {
-            var json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
-                Output.prettyErrorln("<r><red>Error {s}<r> failed to open package.json for {s}", .{
-                    @errorName(err),
-                    name,
-                });
-                Global.crash();
-            };
-            defer json_file.close();
-            var json_stat = try json_file.stat();
-            json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
-            json_len = try json_file.preadAll(json_buf, 0);
+    if (switch (this.resolution.tag) {
+        // TODO remove extracted files not matching any globs under "files"
+        .github, .local_tarball, .remote_tarball => true,
+        else => this.package_manager.lockfile.trusted_dependencies.contains(@as(u32, @truncate(Semver.String.Builder.stringHash(name)))),
+    }) {
+        const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "\"package.json\" for \"{s}\" failed to open: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
+        defer json_file.close();
+        const json_stat_size = try json_file.getEndPos();
+        json_buf = try this.package_manager.allocator.alloc(u8, json_stat_size + 64);
+        json_len = try json_file.preadAll(json_buf, 0);
 
-            json_path = bun.getFdPath(
-                json_file.handle,
-                &json_path_buf,
-            ) catch |err| {
-                Output.prettyErrorln(
-                    "<r><red>Error {s}<r> failed to open package.json for {s}",
-                    .{
-                        @errorName(err),
-                        name,
-                    },
-                );
-                Global.crash();
-            };
-            // TODO remove extracted files not matching any globs under "files"
-        },
-        else => {},
+        json_path = bun.getFdPath(
+            json_file.handle,
+            &json_path_buf,
+        ) catch |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "\"package.json\" for \"{s}\" failed to resolve: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
     }
 
-    const ret_final_path = try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
+    const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
+
     return .{
-        .url = this.url,
+        .url = url,
         .resolved = resolved,
-        .final_path = ret_final_path,
         .json_path = ret_json_path,
         .json_buf = json_buf,
         .json_len = json_len,
-        .task_id = task_id,
     };
 }

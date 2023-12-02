@@ -30,7 +30,6 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
-#include "ReadableByteStreamControllerBuiltins.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -159,7 +158,7 @@ void JSReadableByteStreamController::destroy(JSC::JSCell* cell)
     thisObject->JSReadableByteStreamController::~JSReadableByteStreamController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -174,8 +173,8 @@ JSC::GCClient::IsoSubspace* JSReadableByteStreamController::subspaceForImpl(JSC:
     return WebCore::subspaceForImpl<JSReadableByteStreamController, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForReadableByteStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableByteStreamController = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableByteStreamController = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForReadableByteStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableByteStreamController = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableByteStreamController = std::forward<decltype(space)>(space); });
 }
 }

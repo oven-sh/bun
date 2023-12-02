@@ -1,13 +1,24 @@
 import { expectType } from "tsd";
 
+declare module "bun" {
+  export interface Env {
+    FOO: "FOO";
+  }
+}
+
 declare global {
-  namespace Bun {
-    interface Env {
-      WHATEVER: "WHATEVER";
+  namespace NodeJS {
+    interface ProcessEnv {
+      BAR: "BAR";
     }
   }
 }
 
-expectType<"WHATEVER">(process.env.WHATEVER);
+expectType<"FOO">(process.env.FOO);
+expectType<"BAR">(process.env.BAR);
 
-export {};
+process.env.FOO;
+process.env.BAR;
+process.env.OTHER;
+Bun.env.FOO;
+Bun.env.BAR;

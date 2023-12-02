@@ -931,7 +931,11 @@ declare module "assert" {
      * instance of an `Error` then it will be thrown instead of the `AssertionError`.
      */
     // FIXME: assert.doesNotMatch is typed, but not in the browserify polyfill?
-    // function doesNotMatch(value: string, regExp: RegExp, message?: string | Error): void;
+    function doesNotMatch(
+      value: string,
+      regExp: RegExp,
+      message?: string | Error,
+    ): void;
 
     const strict: Omit<
       typeof assert,

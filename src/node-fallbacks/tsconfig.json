@@ -12,7 +12,7 @@
       "https": ["node_modules/https-browserify"],
       "os": ["node_modules/os-browserify/browser"],
       "path": ["node_modules/path-browserify"],
-      "punycode": ["node_modules/punycode"],
+      "punycode": ["node_modules/punycode/punycode.es6.js"],
       "process": ["node_modules/process/browser"],
       "querystring": ["node_modules/querystring-es3"],
       "stream": ["node_modules/stream-browserify"],
@@ -23,6 +23,8 @@
       "url": ["node_modules/url"],
       "util": ["node_modules/util"],
       "zlib": ["node_modules/browserify-zlib"]
-    }
+    },
+    "noEmit": true,
+    "allowJs": true
   }
 }

@@ -16,7 +16,7 @@ const os = struct {
     pub const ESPIPE = 29;
 };
 
-const SystemErrno = @import("bun").C.SystemErrno;
+const SystemErrno = @import("root").bun.C.SystemErrno;
 pub const Errno = error{
     EPERM,
     ENOENT,
@@ -241,16 +241,16 @@ pub const errno_map: [108]Errno = brk: {
 const socket_t = os.socket_t;
 const sockaddr = darwin.sockaddr;
 const socklen_t = darwin.socklen_t;
-const system = darwin;
+pub const system = darwin;
 
 pub fn asError(err: anytype) Errno {
     const int = if (@typeInfo(@TypeOf(err)) == .Enum)
-        @enumToInt(err)
+        @intFromEnum(err)
     else
         err;
 
     return switch (int) {
-        1...errno_map.len => |val| errno_map[@intCast(u8, val)],
+        1...errno_map.len => |val| errno_map[@as(u8, @intCast(val))],
         else => error.Unexpected,
     };
 }
@@ -259,7 +259,7 @@ const fd_t = os.fd_t;
 const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
-const bun = @import("bun");
+const bun = @import("root").bun;
 pub const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
@@ -271,9 +271,14 @@ pub const darwin = struct {
     pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
     pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
     pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
+    pub extern "c" fn @"openat$NOCANCEL"(fd: c.fd_t, path: [*:0]const u8, oflag: c_uint, ...) c_int;
     pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
     pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
+    pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32) isize;
     pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
+    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec_const, count: i32) isize;
+    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec_const, count: i32, offset: c.off_t) isize;
 };
 pub const OpenError = error{
     /// In WASI, this error may occur when the file descriptor does
@@ -334,7 +339,7 @@ pub const OpenError = error{
 pub const Syscall = struct {
     pub fn close(fd: std.os.fd_t) CloseError!void {
         return switch (darwin.getErrno(darwin.@"close$NOCANCEL"(fd))) {
-            .SUCCESS => void{},
+            .SUCCESS => {},
             .BADF => error.FileDescriptorInvalid,
             .IO => error.InputOutput,
             else => |err| asError(err),
@@ -397,7 +402,7 @@ pub const Syscall = struct {
     pub fn fcntl(fd: fd_t, cmd: i32, arg: usize) Errno!usize {
         const rc = darwin.@"fcntl$NOCANCEL"(fd, cmd, arg);
         return switch (darwin.getErrno(rc)) {
-            .SUCCESS => @intCast(usize, rc),
+            .SUCCESS => @as(usize, @intCast(rc)),
             else => |err| asError(err),
         };
     }
@@ -440,7 +445,7 @@ pub const Syscall = struct {
     } || Errno;
 
     pub fn setsockopt(fd: socket_t, level: u32, optname: u32, opt: []const u8) SetSockOptError!void {
-        switch (darwin.getErrno(darwin.setsockopt(fd, level, optname, opt.ptr, @intCast(socklen_t, opt.len)))) {
+        switch (darwin.getErrno(darwin.setsockopt(fd, level, optname, opt.ptr, @as(socklen_t, @intCast(opt.len))))) {
             .SUCCESS => {},
             .DOM => return error.TimeoutTooBig,
             .ISCONN => return error.AlreadyConnected,
@@ -457,7 +462,7 @@ pub const Syscall = struct {
         const rc = darwin.socket(domain, filtered_sock_type, protocol);
         switch (darwin.getErrno(rc)) {
             .SUCCESS => {
-                const fd = @intCast(fd_t, rc);
+                const fd = @as(fd_t, @intCast(rc));
                 try setSockFlags(fd, socket_type);
                 return fd;
             },
@@ -507,7 +512,9 @@ pub const Waker = struct {
 
     const zeroed = std.mem.zeroes([16]Kevent64);
 
-    pub fn wake(this: *Waker) !void {
+    pub fn wake(this: *Waker) void {
+        bun.JSC.markBinding(@src());
+
         if (io_darwin_schedule_wakeup(this.machport)) {
             this.has_pending_wake = false;
             return;
@@ -515,10 +522,11 @@ pub const Waker = struct {
         this.has_pending_wake = true;
     }
 
-    pub fn wait(this: Waker) !usize {
+    pub fn wait(this: Waker) void {
+        bun.JSC.markBinding(@src());
         var events = zeroed;
 
-        const count = std.os.system.kevent64(
+        _ = std.os.system.kevent64(
             this.kq,
             &events,
             0,
@@ -527,12 +535,6 @@ pub const Waker = struct {
             0,
             null,
         );
-
-        if (count < 0) {
-            return asError(std.c.getErrno(count));
-        }
-
-        return @intCast(usize, count);
     }
 
     extern fn io_darwin_create_machport(
@@ -551,6 +553,7 @@ pub const Waker = struct {
     }
 
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
+        bun.JSC.markBinding(@src());
         assert(kq > -1);
         var machport_buf = try allocator.alloc(u8, 1024);
         const machport = io_darwin_create_machport(
@@ -573,6 +576,7 @@ pub const UserFilterWaker = struct {
     ident: u64 = undefined,
 
     pub fn wake(this: UserFilterWaker) !void {
+        bun.JSC.markBinding(@src());
         var events = zeroed;
         events[0].ident = this.ident;
         events[0].filter = c.EVFILT_USER;
@@ -617,7 +621,7 @@ pub const UserFilterWaker = struct {
             return asError(std.c.getErrno(errno));
         }
 
-        return @intCast(u64, errno);
+        return @as(u64, @intCast(errno));
     }
 
     pub fn init(_: std.mem.Allocator) !UserFilterWaker {
@@ -636,7 +640,7 @@ pub const UserFilterWaker = struct {
             &events,
             1,
             &events,
-            @intCast(c_int, events.len),
+            @as(c_int, @intCast(events.len)),
             0,
             &timespec,
         );
@@ -732,16 +736,16 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
 
     // We need to wait (not poll) on kevent if there's nothing to submit or complete.
     if (next_timeout) |timeout_ns| {
-        ts.tv_nsec = @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
-        ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
+        ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
+        ts.tv_sec = @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
     }
 
     const new_events_ = std.os.system.kevent64(
         self.waker.kq,
         &events,
-        @intCast(c_int, change_events),
+        @as(c_int, @intCast(change_events)),
         &events,
-        @intCast(c_int, events.len),
+        @as(c_int, @intCast(events.len)),
         0,
         if (next_timeout != null) &ts else null,
     );
@@ -749,7 +753,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
     if (new_events_ < 0) {
         return std.debug.panic("kevent() failed {s}", .{@tagName(std.c.getErrno(new_events_))});
     }
-    const new_events = @intCast(usize, new_events_);
+    const new_events = @as(usize, @intCast(new_events_));
 
     // Mark the io events submitted only after kevent() successfully processed them
     self.io_pending.out = io_pending;
@@ -766,7 +770,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
             continue;
         }
 
-        const completion = @intToPtr(*Completion, kevent.udata);
+        const completion = @as(*Completion, @ptrFromInt(kevent.udata));
         completion.next = null;
         self.completed.push(completion);
     }
@@ -782,7 +786,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
 }
 
 fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
-    for (events) |*kevent, flushed| {
+    for (events, 0..) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
         const event_info = switch (completion.operation) {
@@ -826,12 +830,12 @@ fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
 
         kevent.* = .{
             .ext = [2]u64{ 0, 0 },
-            .ident = @intCast(u32, event_info[0]),
-            .filter = @intCast(i16, event_info[1]),
-            .flags = @intCast(u16, event_info[2]),
+            .ident = @as(u32, @intCast(event_info[0])),
+            .filter = @as(i16, @intCast(event_info[1])),
+            .flags = @as(u16, @intCast(event_info[2])),
             .fflags = 0,
             .data = 0,
-            .udata = @ptrToInt(completion),
+            .udata = @intFromPtr(completion),
         };
     }
 
@@ -989,7 +993,7 @@ fn submitWithIncrementPending(
 
             // Complete the Completion
             return callback(
-                @intToPtr(Context, @ptrToInt(_completion.context)),
+                @as(Context, @ptrFromInt(@intFromPtr(_completion.context))),
                 _completion,
                 result,
             );
@@ -1013,7 +1017,7 @@ pub const AcceptError = os.AcceptError || os.SetSockOptError;
 
 // -- NOT DONE YET
 pub fn eventfd(self: *IO) os.fd_t {
-    return @intCast(os.fd_t, self.last_event_fd.fetchAdd(1, .Monotonic));
+    return @as(os.fd_t, @intCast(self.last_event_fd.fetchAdd(1, .Monotonic)));
 }
 
 // -- NOT DONE YET
@@ -1194,11 +1198,11 @@ pub fn connect(
                     true => brk: {
                         var err_code: i32 = undefined;
                         var size: u32 = @sizeOf(u32);
-                        const rc = system.getsockopt(op.socket, os.SOL.SOCKET, os.SO.ERROR, @ptrCast([*]u8, &err_code), &size);
+                        const rc = system.getsockopt(op.socket, os.SOL.SOCKET, os.SO.ERROR, @as([*]u8, @ptrCast(&err_code)), &size);
                         assert(size == 4);
                         break :brk switch (darwin.getErrno(rc)) {
-                            .SUCCESS => switch (@intToEnum(os.E, err_code)) {
-                                .SUCCESS => void{},
+                            .SUCCESS => switch (@as(os.E, @enumFromInt(err_code))) {
+                                .SUCCESS => {},
                                 .ACCES => error.PermissionDenied,
                                 .PERM => error.PermissionDenied,
                                 .ADDRINUSE => error.AddressInUse,
@@ -1220,7 +1224,7 @@ pub fn connect(
                         };
                     },
                     else => switch (darwin.getErrno(darwin.@"connect$NOCANCEL"(op.socket, &op.address.any, op.address.getOsSockLen()))) {
-                        .SUCCESS => void{},
+                        .SUCCESS => {},
                         .ACCES => error.PermissionDenied,
                         .PERM => error.PermissionDenied,
                         .ADDRINUSE => error.AddressInUse,
@@ -1296,7 +1300,7 @@ pub fn openSync(
     file_path: [:0]const u8,
     flags: os.mode_t,
 ) OpenError!fd_t {
-    return Syscall.open(file_path, @intCast(c_uint, flags));
+    return Syscall.open(file_path, @as(c_uint, @intCast(flags)));
 }
 
 pub const ReadError = error{
@@ -1333,20 +1337,26 @@ pub fn read(
         .{
             .fd = fd,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
             .offset = offset_,
             .positional = offset != null,
         },
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
+                    if (op.positional) {
+                        const rc = os.system.lseek(op.fd, @intCast(op.offset), 0);
+                        if (rc == -1) {
+                            return error.Unseekable;
+                        }
+                    }
                     const rc = os.system.read(
                         op.fd,
                         op.buf,
                         op.len,
                     );
-                    return switch (@enumToInt(os.errno(rc))) {
-                        0 => @intCast(usize, rc),
+                    return switch (@intFromEnum(os.errno(rc))) {
+                        0 => @as(usize, @intCast(rc)),
                         os.EINTR => continue,
                         os.EAGAIN => error.WouldBlock,
                         os.EBADF => error.NotOpenForReading,
@@ -1395,13 +1405,13 @@ pub fn recv(
         .{
             .socket = socket,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
         },
         struct {
             fn doOperation(op: anytype) RecvError!usize {
                 const rc = system.@"recvfrom$NOCANCEL"(op.socket, op.buf, op.len, 0, null, null);
                 return switch (system.getErrno(rc)) {
-                    .SUCCESS => @intCast(usize, rc),
+                    .SUCCESS => @as(usize, @intCast(rc)),
                     .AGAIN => error.WouldBlock,
                     .NOMEM => error.SystemResources,
                     .CONNREFUSED => error.ConnectionRefused,
@@ -1453,14 +1463,14 @@ pub fn send(
         .{
             .socket = socket,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
             .flags = 0,
         },
         struct {
             fn doOperation(op: anytype) SendError!usize {
                 const rc = system.@"sendto$NOCANCEL"(op.socket, op.buf, op.len, op.flags, null, 0);
                 return switch (system.getErrno(rc)) {
-                    .SUCCESS => @intCast(usize, rc),
+                    .SUCCESS => @as(usize, @intCast(rc)),
                     .ACCES => error.AccessDenied,
                     .AGAIN => error.WouldBlock,
                     .ALREADY => error.FastOpenAlreadyInProgress,
@@ -1568,7 +1578,7 @@ pub fn write(
         .{
             .fd = fd,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
             .offset = offset,
         },
         struct {

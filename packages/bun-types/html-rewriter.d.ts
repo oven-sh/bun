@@ -50,6 +50,14 @@ declare namespace HTMLRewriterTypes {
     tagName: string;
     readonly attributes: IterableIterator<string[]>;
     readonly removed: boolean;
+    /** Whether the element is explicitly self-closing, e.g. `<foo />` */
+    readonly selfClosing: boolean;
+    /**
+     * Whether the element can have inner content. Returns `true` unless
+     * - the element is an [HTML void element](https://html.spec.whatwg.org/multipage/syntax.html#void-elements)
+     * - or it's self-closing in a foreign context (eg. in SVG, MathML).
+     */
+    readonly canHaveContent: boolean;
     readonly namespaceURI: string;
     getAttribute(name: string): string | null;
     hasAttribute(name: string): boolean;

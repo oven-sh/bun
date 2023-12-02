@@ -5,6 +5,7 @@
  * @since v17.0.0
  */
 declare module "readline/promises" {
+  import { Readable, Writable } from "node:stream";
   import {
     Interface as _Interface,
     ReadLineOptions,
@@ -56,7 +57,7 @@ declare module "readline/promises" {
     /**
      * @param stream A TTY stream.
      */
-    constructor(stream: WritableStream, options?: { autoCommit?: boolean });
+    constructor(stream: Writable, options?: { autoCommit?: boolean });
     /**
      * The `rl.clearLine()` method adds to the internal list of pending action an action that clears current line of the associated `stream` in a specified direction identified by `dir`.
      * Call `rl.commit()` to see the effect of this method, unless `autoCommit: true` was passed to the constructor.
@@ -137,8 +138,8 @@ declare module "readline/promises" {
    * ```
    */
   function createInterface(
-    input: ReadableStream,
-    output?: WritableStream,
+    input: Readable,
+    output?: Writable,
     completer?: Completer | AsyncCompleter,
     terminal?: boolean,
   ): Interface;

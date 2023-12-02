@@ -35,40 +35,26 @@ async function test(log) {
   {
     const a = performance.now();
     await tests.async(0);
-    if (log)
-      console.log(
-        `async/await: ${(report.async = (performance.now() - a).toFixed(4))}ms`
-      );
+    if (log) console.log(`async/await: ${(report.async = (performance.now() - a).toFixed(4))}ms`);
   }
 
   {
     const a = performance.now();
     tests.callback(0, function () {
-      if (log)
-        console.log(
-          `callback: ${(report.callback = (performance.now() - a).toFixed(
-            4
-          ))}ms`
-        );
+      if (log) console.log(`callback: ${(report.callback = (performance.now() - a).toFixed(4))}ms`);
     });
   }
 
   {
     const a = performance.now();
     await tests.then(0);
-    if (log)
-      console.log(
-        `then: ${(report.then = (performance.now() - a).toFixed(4))}ms`
-      );
+    if (log) console.log(`then: ${(report.then = (performance.now() - a).toFixed(4))}ms`);
   }
 
   {
     const a = performance.now();
     tests.sync(0);
-    if (log)
-      console.log(
-        `sync: ${(report.sync = (performance.now() - a).toFixed(4))}ms`
-      );
+    if (log) console.log(`sync: ${(report.sync = (performance.now() - a).toFixed(4))}ms`);
   }
 }
 

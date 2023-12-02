@@ -27,6 +27,10 @@
 
 namespace WebCore {
 
+JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener);
+JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_removeEventListener);
+JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent);
+
 class JSEventTarget : public JSDOMWrapper<EventTarget> {
 public:
     using Base = JSDOMWrapper<EventTarget>;

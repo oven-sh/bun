@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSByteLengthQueuingStrategy.h"
 
-#include "ByteLengthQueuingStrategyBuiltins.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -156,7 +155,7 @@ void JSByteLengthQueuingStrategy::destroy(JSC::JSCell* cell)
     thisObject->JSByteLengthQueuingStrategy::~JSByteLengthQueuingStrategy();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -171,8 +170,8 @@ JSC::GCClient::IsoSubspace* JSByteLengthQueuingStrategy::subspaceForImpl(JSC::VM
     return WebCore::subspaceForImpl<JSByteLengthQueuingStrategy, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategy = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategy = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); });
 }
 }

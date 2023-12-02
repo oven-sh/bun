@@ -65,12 +65,12 @@ public:
 
     void removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType);
     void copyEventListenersNotCreatedFromMarkupToTarget(EventTarget*);
-    
+
     template<typename Visitor> void visitJSEventListeners(Visitor&);
     Lock& lock() { return m_lock; }
 
 private:
-    Vector<std::pair<AtomString, EventListenerVector>> m_entries;
+    Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
 };
 

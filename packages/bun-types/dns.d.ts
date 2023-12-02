@@ -331,10 +331,7 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "ANY",
-    callback: (
-      err: ErrnoException | null,
-      addresses: AnyRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: AnyRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -344,18 +341,12 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "MX",
-    callback: (
-      err: ErrnoException | null,
-      addresses: MxRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "NAPTR",
-    callback: (
-      err: ErrnoException | null,
-      addresses: NaptrRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -375,18 +366,12 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "SRV",
-    callback: (
-      err: ErrnoException | null,
-      addresses: SrvRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "TXT",
-    callback: (
-      err: ErrnoException | null,
-      addresses: string[][],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: string[][]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -716,10 +701,10 @@ declare module "dns" {
    * one of the `DNS error codes`.
    * @since v0.1.16
    */
-  // export function reverse(
-  //   ip: string,
-  //   callback: (err: ErrnoException | null, hostnames: string[]) => void,
-  // ): void;
+  export function reverse(
+    ip: string,
+    callback: (err: ErrnoException | null, hostnames: string[]) => void,
+  ): void;
   /**
    * Sets the IP address and port of servers to be used when performing DNS
    * resolution. The `servers` argument is an array of [RFC 5952](https://tools.ietf.org/html/rfc5952#section-6) formatted
@@ -764,7 +749,7 @@ declare module "dns" {
    * ```
    * @since v0.11.3
    */
-  // export function getServers(): string[];
+  export function getServers(): string[];
   /**
    * Set the default value of `verbatim` in {@link lookup} and `dnsPromises.lookup()`. The value could be:
    *
@@ -856,7 +841,7 @@ declare module "dns" {
      * @since v8.3.0
      */
     cancel(): void;
-    // getServers: typeof getServers;
+    getServers: typeof getServers;
     resolve: typeof resolve;
     resolve4: typeof resolve4;
     resolve6: typeof resolve6;
@@ -869,7 +854,7 @@ declare module "dns" {
     resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;
     resolveTxt: typeof resolveTxt;
-    // reverse: typeof reverse;
+    reverse: typeof reverse;
     /**
      * The resolver instance will send its requests from the specified IP address.
      * This allows programs to specify outbound interfaces when used on multi-homed

@@ -1,13 +1,10 @@
 import { fetchCSV } from "macro:fetchCSV";
 
 export const Covid19 = () => {
-  const rows = fetchCSV(
-    "https://covid19.who.int/WHO-COVID-19-global-data.csv",
-    {
-      last: 100,
-      columns: ["New_cases", "Date_reported", "Country"],
-    },
-  );
+  const rows = fetchCSV("https://covid19.who.int/WHO-COVID-19-global-data.csv", {
+    last: 100,
+    columns: ["New_cases", "Date_reported", "Country"],
+  });
 
   return (
     <div>

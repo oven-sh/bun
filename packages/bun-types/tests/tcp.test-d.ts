@@ -26,10 +26,6 @@ await Bun.connect({
   },
   hostname: "adsf",
   port: 324,
-  tls: {
-    certFile: "asdf",
-    keyFile: "adsf",
-  },
 });
 
 await Bun.connect({
@@ -87,6 +83,25 @@ Bun.listen({
   tls: {
     certFile: "asdf",
     keyFile: "adsf",
+  },
+});
+
+Bun.listen({
+  data: { arg: "asdf" },
+  socket: {
+    data(socket) {
+      socket.data.arg.toLowerCase();
+    },
+    open() {
+      console.log("asdf");
+    },
+  },
+  hostname: "adsf",
+  port: 324,
+  tls: {
+    cert: "asdf",
+    key: Bun.file("adsf"),
+    ca: Buffer.from("asdf"),
   },
 });
 

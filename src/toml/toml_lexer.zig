@@ -1,8 +1,8 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const js_ast = bun.JSAst;
 
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -150,7 +150,7 @@ pub const Lexer = struct {
         const code_point = switch (slice.len) {
             0 => -1,
             1 => @as(CodePoint, slice[0]),
-            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @intCast(u3, slice.len), CodePoint, strings.unicode_replacement),
+            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), CodePoint, strings.unicode_replacement),
         };
 
         it.end = it.current;
@@ -166,7 +166,7 @@ pub const Lexer = struct {
     inline fn step(lexer: *Lexer) void {
         lexer.code_point = lexer.nextCodepoint();
 
-        lexer.line_number += @as(u32, @boolToInt(lexer.code_point == '\n'));
+        lexer.line_number += @as(u32, @intFromBool(lexer.code_point == '\n'));
     }
 
     pub const Error = error{
@@ -464,9 +464,9 @@ pub const Lexer = struct {
                 // Parse a 32-bit integer (very fast path);
                 var number: u32 = 0;
                 for (text) |c| {
-                    number = number * 10 + @intCast(u32, c - '0');
+                    number = number * 10 + @as(u32, @intCast(c - '0'));
                 }
-                lexer.number = @intToFloat(f64, number);
+                lexer.number = @as(f64, @floatFromInt(number));
             } else {
                 // Parse a double-precision floating-point number;
                 if (std.fmt.parseFloat(f64, text)) |num| {
@@ -910,10 +910,10 @@ pub const Lexer = struct {
                                 },
                             }
 
-                            iter.c = @intCast(i32, value);
+                            iter.c = @as(i32, @intCast(value));
                             if (is_bad) {
                                 lexer.addRangeError(
-                                    logger.Range{ .loc = .{ .start = @intCast(i32, octal_start) }, .len = @intCast(i32, iter.i - octal_start) },
+                                    logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
                                     "Invalid legacy octal literal",
                                     .{},
                                     false,
@@ -1025,7 +1025,7 @@ pub const Lexer = struct {
 
                                 if (is_out_of_range) {
                                     try lexer.addRangeError(
-                                        .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, (iter.i - hex_start)) },
+                                        .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast((iter.i - hex_start))) },
                                         "Unicode escape sequence is out of range",
                                         .{},
                                         true,
@@ -1064,7 +1064,7 @@ pub const Lexer = struct {
                                 }
                             }
 
-                            iter.c = @truncate(CodePoint, value);
+                            iter.c = @as(CodePoint, @truncate(value));
                         },
                         '\r' => {
                             if (comptime !allow_multiline) {
@@ -1098,7 +1098,7 @@ pub const Lexer = struct {
             switch (iter.c) {
                 -1 => return try lexer.addDefaultError("Unexpected end of file"),
                 0...127 => {
-                    buf.append(@intCast(u8, iter.c)) catch unreachable;
+                    buf.append(@as(u8, @intCast(iter.c))) catch unreachable;
                 },
                 else => {
                     var part: [4]u8 = undefined;
@@ -1115,7 +1115,7 @@ pub const Lexer = struct {
 
     pub fn unexpected(lexer: *Lexer) !void {
         const found = finder: {
-            lexer.start = std.math.min(lexer.start, lexer.end);
+            lexer.start = @min(lexer.start, lexer.end);
 
             if (lexer.start == lexer.source.contents.len) {
                 break :finder "end of file";
@@ -1215,5 +1215,5 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
 }
 
 inline fn float64(num: anytype) f64 {
-    return @intToFloat(f64, num);
+    return @as(f64, @floatFromInt(num));
 }

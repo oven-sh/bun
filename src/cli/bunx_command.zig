@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,11 +9,34 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-
+const Command = @import("../cli.zig").Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 pub const BunxCommand = struct {
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+    /// clones the string
+    pub fn addCreatePrefix(allocator: std.mem.Allocator, input: []const u8) ![:0]const u8 {
+        const prefixLength = "create-".len;
+
+        if (input.len == 0) return try allocator.dupeZ(u8, input);
+
+        var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
+        if (input[0] == '@') {
+            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
+                const index = slashIndex + 1;
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "create-");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+        }
+
+        @memcpy(new_str[0..prefixLength], "create-");
+        @memcpy(new_str[prefixLength..], input);
+
+        return new_str;
+    }
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: std.os.fd_t, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try std.os.openatZ(dir_fd, subpath_z, std.os.O.RDONLY, 0);
@@ -66,7 +89,7 @@ pub const BunxCommand = struct {
                             .result => |result| result,
                         } orelse break;
 
-                        if (current.kind == .File) {
+                        if (current.kind == .file) {
                             if (current.name.len == 0) continue;
                             return try bundler.allocator.dupe(u8, current.name.slice());
                         }
@@ -81,7 +104,7 @@ pub const BunxCommand = struct {
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: std.os.fd_t, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
         subpath[0.."node_modules/".len].* = "node_modules/".*;
-        @memcpy(subpath["node_modules/".len..], package_name.ptr, package_name.len);
+        @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
         subpath["node_modules/".len + package_name.len] = std.fs.path.sep;
         subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
         subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;
@@ -97,7 +120,7 @@ pub const BunxCommand = struct {
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
         ) catch unreachable;
-        return try getBinNameFromSubpath(bundler, std.os.AT.FDCWD, subpath_z);
+        return try getBinNameFromSubpath(bundler, std.fs.cwd().fd, subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -118,15 +141,19 @@ pub const BunxCommand = struct {
         };
     }
 
-    pub fn exec(ctx: bun.CLI.Command.Context) !void {
+    fn exit_with_usage() noreturn {
+        Command.Tag.printHelp(.BunxCommand, false);
+        Global.exit(1);
+    }
+
+    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
+        var ctx = ctx_;
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
-        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, std.os.argv.len -| 1);
+        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
         var package_name_for_update_request = [1]string{""};
         {
-            var argv = std.mem.span(std.os.argv)[1..];
-
             var found_subcommand_name = false;
 
             for (argv) |positional_| {
@@ -158,7 +185,10 @@ pub const BunxCommand = struct {
             }
         }
 
-        const passthrough = passthrough_list.items;
+        // check if package_name_for_update_request is empty string or " "
+        if (package_name_for_update_request[0].len == 0) {
+            exit_with_usage();
+        }
 
         var update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
@@ -169,22 +199,7 @@ pub const BunxCommand = struct {
         );
 
         if (update_requests.len == 0) {
-            Output.prettyErrorln(
-                \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
-                \\
-                \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
-                \\
-                \\example<d>:<r>
-                \\
-                \\  <cyan>bunx bun-repl<r>
-                \\  <cyan>bunx prettier foo.js<r>
-                \\
-                \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
-                \\
-                \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
-                \\
-            , .{});
-            Global.exit(1);
+            exit_with_usage();
         }
 
         // this shouldn't happen
@@ -192,6 +207,9 @@ pub const BunxCommand = struct {
             Output.prettyErrorln("<r><red>error<r><d>:<r> Only one package can be installed & run at a time right now", .{});
             Global.exit(1);
         }
+
+        // Don't log stuff
+        ctx.debug.silent = true;
 
         var update_request = update_requests[0];
 
@@ -204,6 +222,10 @@ pub const BunxCommand = struct {
 
         const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (update_request.version.tag == .github)
+            update_request.version.value.github.repo.slice(update_request.version_buf)
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
+            update_request.name[index + 1 ..]
         else
             update_request.name;
 
@@ -228,92 +250,123 @@ pub const BunxCommand = struct {
         else
             update_request.version.literal.slice(update_request.version_buf);
 
+        const package_fmt = brk: {
+            if (update_request.version.tag == .github) {
+                break :brk update_request.version.literal.slice(update_request.version_buf);
+            }
+
+            break :brk try std.fmt.allocPrint(
+                ctx.allocator,
+                "{s}@{s}",
+                .{
+                    update_request.name,
+                    display_version,
+                },
+            );
+        };
+
         const PATH_FOR_BIN_DIRS = PATH;
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx/node_modules/.bin:{s}",
-                .{ update_request.name, display_version, PATH },
+                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin:{s}",
+                .{ package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx/node_modules/.bin",
-                .{ update_request.name, display_version },
+                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin",
+                .{package_fmt},
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx@".len + update_request.name.len + display_version.len];
+        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
-        // Similar to "npx":
-        //
-        //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-        if (bun.which(
-            &path_buf,
-            PATH_FOR_BIN_DIRS,
-            this_bundler.fs.top_level_dir,
-            initial_bin_name,
-        ) orelse bun.which(
-            &path_buf,
-            bunx_cache_dir,
-            this_bundler.fs.top_level_dir,
-            absolute_in_cache_dir,
-        )) |destination| {
-            const out = std.mem.span(destination);
-            _ = try Run.runBinary(
-                ctx,
-                try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
-                this_bundler.fs.top_level_dir,
-                this_bundler.env,
-                passthrough,
-            );
-            // we are done!
-            Global.exit(0);
-        }
+        const passthrough = passthrough_list.items;
 
-        // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
-            // if we check the bin name and its actually the same, we don't need to check $PATH here again
-            if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) {
+            var destination_: ?[:0]const u8 = null;
 
-                if (bun.which(
+            // Only use the system-installed version if there is no version specified
+            if (update_request.version.literal.isEmpty()) {
+                destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
                     this_bundler.fs.top_level_dir,
-                    package_name_for_bin,
-                ) orelse bun.which(
-                    &path_buf,
-                    bunx_cache_dir,
-                    this_bundler.fs.top_level_dir,
-                    absolute_in_cache_dir,
-                )) |destination| {
-                    const out = std.mem.span(destination);
-                    _ = try Run.runBinary(
-                        ctx,
-                        try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
-                        this_bundler.fs.top_level_dir,
-                        this_bundler.env,
-                        passthrough,
-                    );
-                    // we are done!
-                    Global.exit(0);
-                }
+                    initial_bin_name,
+                );
             }
-        } else |err| {
-            if (err == error.NoBinFound) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
-                Global.exit(1);
+
+            // Similar to "npx":
+            //
+            //  1. Try the bin in the current node_modules and then we try the bin in the global cache
+            if (destination_ orelse bun.which(
+                &path_buf,
+                bunx_cache_dir,
+                this_bundler.fs.top_level_dir,
+                absolute_in_cache_dir,
+            )) |destination| {
+                const out = bun.asByteSlice(destination);
+                _ = try Run.runBinary(
+                    ctx,
+                    try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    this_bundler.fs.top_level_dir,
+                    this_bundler.env,
+                    passthrough,
+                );
+                // we are done!
+                Global.exit(0);
+            }
+
+            // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
+            if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                // if we check the bin name and its actually the same, we don't need to check $PATH here again
+                if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+
+                    // Only use the system-installed version if there is no version specified
+                    if (update_request.version.literal.isEmpty()) {
+                        destination_ = bun.which(
+                            &path_buf,
+                            PATH_FOR_BIN_DIRS,
+                            this_bundler.fs.top_level_dir,
+                            package_name_for_bin,
+                        );
+                    }
+
+                    if (destination_ orelse bun.which(
+                        &path_buf,
+                        bunx_cache_dir,
+                        this_bundler.fs.top_level_dir,
+                        absolute_in_cache_dir,
+                    )) |destination| {
+                        const out = bun.asByteSlice(destination);
+                        _ = try Run.runBinary(
+                            ctx,
+                            try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            passthrough,
+                        );
+                        // we are done!
+                        Global.exit(0);
+                    }
+                }
+            } else |err| {
+                if (err == error.NoBinFound) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
+                    Global.exit(1);
+                }
             }
         }
 
         var bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx",
-            .{ update_request.name, display_version },
+            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
+            .{package_fmt},
         );
 
         // TODO: fix this after zig upgrade
@@ -322,22 +375,22 @@ pub const BunxCommand = struct {
 
         create_package_json: {
             // create package.json, but only if it doesn't exist
-            var package_json = bunx_install_dir.createFileZ("package.json", .{ .truncate = false }) catch break :create_package_json;
+            var package_json = bunx_install_dir.createFileZ("package.json", .{ .truncate = true }) catch break :create_package_json;
             defer package_json.close();
             package_json.writeAll("{}\n") catch {};
         }
 
         var args_buf = [_]string{
-            try std.fs.selfExePathAlloc(ctx.allocator), "add", "--no-summary", try std.fmt.allocPrint(
-                ctx.allocator,
-                "{s}@{s}",
-                .{
-                    update_request.name,
-                    display_version,
-                },
-            ),
+            try std.fs.selfExePathAlloc(ctx.allocator), "add",        "--no-summary",
+            package_fmt,
+            // disable the manifest cache when a tag is specified
+            // so that @latest is fetched from the registry
+                                           "--no-cache",
         };
-        var child_process = std.ChildProcess.init(&args_buf, default_allocator);
+
+        const argv_to_use: []const string = args_buf[0 .. args_buf.len - @as(usize, @intFromBool(update_request.version.tag != .dist_tag))];
+
+        var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
         child_process.cwd = bunx_install_dir_path;
         child_process.cwd_dir = bunx_install_dir;
         const env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
@@ -354,10 +407,10 @@ pub const BunxCommand = struct {
                 }
             },
             .Signal => |signal| {
-                Global.exit(@truncate(u7, signal));
+                Global.exit(@as(u7, @truncate(signal)));
             },
             .Stopped => |signal| {
-                Global.exit(@truncate(u7, signal));
+                Global.exit(@as(u7, @truncate(signal)));
             },
             // shouldn't happen
             else => {
@@ -365,23 +418,19 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         // Similar to "npx":
         //
-        //  1. Try the bin in the current node_modules and then we try the bin in the global cache
+        //  1. Try the bin in the global cache
+        //     Do not try $PATH because we already checked it above if we should
         if (bun.which(
-            &path_buf,
-            PATH_FOR_BIN_DIRS,
-            this_bundler.fs.top_level_dir,
-            initial_bin_name,
-        ) orelse bun.which(
             &path_buf,
             bunx_cache_dir,
             this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
-            const out = std.mem.span(destination);
+            const out = bun.asByteSlice(destination);
             _ = try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
@@ -395,23 +444,16 @@ pub const BunxCommand = struct {
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, update_request.name)) |package_name_for_bin| {
-
-            // if we check the bin name and its actually the same, we don't need to check $PATH here again
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,
-                    PATH_FOR_BIN_DIRS,
-                    this_bundler.fs.top_level_dir,
-                    package_name_for_bin,
-                ) orelse bun.which(
-                    &path_buf,
                     bunx_cache_dir,
                     this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
-                    const out = std.mem.span(destination);
+                    const out = bun.asByteSlice(destination);
                     _ = try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),

@@ -37,8 +37,7 @@ var runtime = (function (exports) {
 
   function wrap(innerFn, outerFn, self, tryLocsList) {
     // If outerFn provided and outerFn.prototype is a Generator, then outerFn.prototype instanceof Generator.
-    var protoGenerator =
-      outerFn && outerFn.prototype instanceof Generator ? outerFn : Generator;
+    var protoGenerator = outerFn && outerFn.prototype instanceof Generator ? outerFn : Generator;
     var generator = Object.create(protoGenerator.prototype);
     var context = new Context(tryLocsList || []);
 
@@ -104,18 +103,11 @@ var runtime = (function (exports) {
     IteratorPrototype = NativeIteratorPrototype;
   }
 
-  var Gp =
-    (GeneratorFunctionPrototype.prototype =
-    Generator.prototype =
-      Object.create(IteratorPrototype));
+  var Gp = (GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(IteratorPrototype));
   GeneratorFunction.prototype = GeneratorFunctionPrototype;
   define(Gp, "constructor", GeneratorFunctionPrototype);
   define(GeneratorFunctionPrototype, "constructor", GeneratorFunction);
-  GeneratorFunction.displayName = define(
-    GeneratorFunctionPrototype,
-    toStringTagSymbol,
-    "GeneratorFunction",
-  );
+  GeneratorFunction.displayName = define(GeneratorFunctionPrototype, toStringTagSymbol, "GeneratorFunction");
 
   // Helper for defining the .next, .throw, and .return methods of the
   // Iterator interface in terms of a single ._invoke method.
@@ -164,11 +156,7 @@ var runtime = (function (exports) {
       } else {
         var result = record.arg;
         var value = result.value;
-        if (
-          value &&
-          typeof value === "object" &&
-          hasOwn.call(value, "__await")
-        ) {
+        if (value && typeof value === "object" && hasOwn.call(value, "__await")) {
           return PromiseImpl.resolve(value.__await).then(
             function (value) {
               invoke("next", value, resolve, reject);
@@ -245,10 +233,7 @@ var runtime = (function (exports) {
   exports.async = function (innerFn, outerFn, self, tryLocsList, PromiseImpl) {
     if (PromiseImpl === void 0) PromiseImpl = Promise;
 
-    var iter = new AsyncIterator(
-      wrap(innerFn, outerFn, self, tryLocsList),
-      PromiseImpl,
-    );
+    var iter = new AsyncIterator(wrap(innerFn, outerFn, self, tryLocsList), PromiseImpl);
 
     return exports.isGeneratorFunction(outerFn)
       ? iter // If outerFn is a generator, return the full iterator.
@@ -358,9 +343,7 @@ var runtime = (function (exports) {
         }
 
         context.method = "throw";
-        context.arg = new TypeError(
-          "The iterator does not provide a 'throw' method",
-        );
+        context.arg = new TypeError("The iterator does not provide a 'throw' method");
       }
 
       return ContinueSentinel;
@@ -551,11 +534,7 @@ var runtime = (function (exports) {
       if (!skipTempReset) {
         for (var name in this) {
           // Not sure about the optimal order of these conditions:
-          if (
-            name.charAt(0) === "t" &&
-            hasOwn.call(this, name) &&
-            !isNaN(+name.slice(1))
-          ) {
+          if (name.charAt(0) === "t" && hasOwn.call(this, name) && !isNaN(+name.slice(1))) {
             this[name] = undefined;
           }
         }
@@ -634,11 +613,7 @@ var runtime = (function (exports) {
     abrupt: function (type, arg) {
       for (var i = this.tryEntries.length - 1; i >= 0; --i) {
         var entry = this.tryEntries[i];
-        if (
-          entry.tryLoc <= this.prev &&
-          hasOwn.call(entry, "finallyLoc") &&
-          this.prev < entry.finallyLoc
-        ) {
+        if (entry.tryLoc <= this.prev && hasOwn.call(entry, "finallyLoc") && this.prev < entry.finallyLoc) {
           var finallyEntry = entry;
           break;
         }

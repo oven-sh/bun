@@ -7,11 +7,11 @@ export default () => (
     </head>
     <body>
       <h1>
-        <a href="/one" >one</a>
+        <a href="/one">one</a>
       </h1>
       <h1>
-        <a href="/two" >two</a>
+        <a href="/two">two</a>
       </h1>
     </body>
   </html>
-)
+);

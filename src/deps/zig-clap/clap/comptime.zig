@@ -1,4 +1,5 @@
 const clap = @import("../clap.zig");
+const bun = @import("root").bun;
 const std = @import("std");
 
 const debug = std.debug;
@@ -50,7 +51,7 @@ pub fn ComptimeClap(
         pub fn parse(iter: anytype, opt: clap.ParseOptions) !@This() {
             const allocator = opt.allocator;
             var multis = [_]std.ArrayList([]const u8){undefined} ** multi_options;
-            for (multis) |*multi| {
+            for (&multis) |*multi| {
                 multi.* = std.ArrayList([]const u8).init(allocator);
             }
 
@@ -69,6 +70,7 @@ pub fn ComptimeClap(
             var stream = clap.StreamingClap(usize, @typeInfo(@TypeOf(iter)).Pointer.child){
                 .params = converted_params,
                 .iter = iter,
+                .diagnostic = opt.diagnostic,
             };
 
             while (try stream.next()) |arg| {
@@ -76,12 +78,7 @@ pub fn ComptimeClap(
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
                     if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {
-                        const bun = @import("bun");
-                        if (comptime bun.Environment.isWindows) @compileError(
-                            "TODO: implement stop_after_positional_at on windows",
-                        );
-
-                        var remaining_ = std.os.argv[@min(std.os.argv.len, stream.iter.args.inner.index)..];
+                        var remaining_ = stream.iter.remain;
                         const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
                         if (first.len > 0 and std.mem.eql(u8, first, "--")) {
                             remaining_ = remaining_[1..];
@@ -109,7 +106,7 @@ pub fn ComptimeClap(
                 }
             }
 
-            for (multis) |*multi, i|
+            for (&multis, 0..) |*multi, i|
                 res.multi_options[i] = try multi.toOwnedSlice();
             res.pos = try pos.toOwnedSlice();
             res.passthrough_positionals = try passthrough_positionals.toOwnedSlice();

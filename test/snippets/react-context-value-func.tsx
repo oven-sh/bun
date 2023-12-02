@@ -12,7 +12,7 @@ const ContextProvider = ({ children }) => {
 
 const ContextValue = ({}) => (
   <Context.Consumer>
-    {(foo) => {
+    {foo => {
       if (foo) {
         return <div>Worked!</div>;
       }

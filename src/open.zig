@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -17,21 +17,21 @@ const opener = switch (@import("builtin").target.os.tag) {
     else => "xdg-open",
 };
 
-pub fn openURL(url: string) !void {
-    if (comptime Environment.isWasi) {
-        Output.prettyln("-> {s}", .{url});
-        Output.flush();
-        return;
-    }
+fn fallback(url: string) void {
+    Output.prettyln("-> {s}", .{url});
+    Output.flush();
+}
+
+pub fn openURL(url: string) void {
+    if (comptime Environment.isWasi) return fallback(url);
 
     var args_buf = [_]string{ opener, url };
     var child_process = std.ChildProcess.init(&args_buf, default_allocator);
     child_process.stderr_behavior = .Pipe;
     child_process.stdin_behavior = .Ignore;
     child_process.stdout_behavior = .Pipe;
-    try child_process.spawn();
-    _ = try child_process.wait();
-    return;
+    child_process.spawn() catch return fallback(url);
+    _ = child_process.wait() catch return fallback(url);
 }
 
 pub const Editor = enum(u8) {
@@ -96,7 +96,7 @@ pub const Editor = enum(u8) {
         inline for (default_preference_list) |editor| {
             if (bin_name.get(editor)) |path| {
                 if (which(buf, PATH, cwd, path)) |bin| {
-                    out.* = std.mem.span(bin);
+                    out.* = bun.asByteSlice(bin);
                     return editor;
                 }
             }
@@ -111,7 +111,7 @@ pub const Editor = enum(u8) {
         if (bin_name.get(editor)) |path| {
             if (path.len > 0) {
                 if (which(buf, PATH, cwd, path)) |bin| {
-                    out.* = std.mem.span(bin);
+                    out.* = bun.asByteSlice(bin);
                     return true;
                 }
             }
@@ -126,7 +126,7 @@ pub const Editor = enum(u8) {
                 if (std.os.open(path, 0, 0)) |opened| {
                     std.os.close(opened);
                     if (out != null) {
-                        out.?.* = std.mem.span(path);
+                        out.?.* = bun.asByteSlice(path);
                     }
                     return true;
                 } else |_| {}
@@ -350,7 +350,7 @@ pub const EditorContext = struct {
         var basename_buf: [512]u8 = undefined;
         var basename = std.fs.path.basename(id);
         if (strings.endsWith(basename, ".bun") and basename.len < 499) {
-            std.mem.copy(u8, &basename_buf, basename);
+            bun.copy(u8, &basename_buf, basename);
             basename_buf[basename.len..][0..3].* = ".js".*;
             basename = basename_buf[0 .. basename.len + 3];
         }

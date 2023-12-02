@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -25,11 +25,10 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
-const JSC = @import("bun").JSC;
-const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
+const JSC = @import("root").bun.JSC;
+const AsyncHTTP = @import("root").bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -37,31 +36,42 @@ const VirtualMachine = JSC.VirtualMachine;
 
 var run: Run = undefined;
 pub const Run = struct {
-    file: std.fs.File,
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
     arena: Arena = undefined,
     any_unhandled: bool = false,
 
-    pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
+    pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
+        var ctx = ctx_;
         JSC.markBinding(@src());
-        @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
+        bun.JSC.initialize();
+
+        var graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        graph_ptr.* = graph;
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();
 
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
+
         run = .{
-            .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
-            .file = file,
+            .vm = try VirtualMachine.initWithModuleGraph(.{
+                .allocator = arena.allocator(),
+                .log = ctx.log,
+                .graph = graph_ptr,
+            }),
             .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
         };
+
         var vm = run.vm;
         var b = &vm.bundler;
-
+        vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
@@ -76,8 +86,124 @@ pub const Run = struct {
         b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
         b.resolver.env_loader = b.env;
 
-        if (ctx.debug.macros) |macros| {
-            b.options.macro_remap = macros;
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
+
+        switch (ctx.debug.macros) {
+            .disable => {
+                b.options.no_macros = true;
+            },
+            .map => |macros| {
+                b.options.macro_remap = macros;
+            },
+            .unspecified => {},
+        }
+
+        b.options.env.behavior = .load_all_without_inlining;
+
+        b.configureRouter(false) catch {
+            if (Output.enable_ansi_colors_stderr) {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("\n", .{});
+            Global.exit(1);
+        };
+        b.configureDefines() catch {
+            if (Output.enable_ansi_colors_stderr) {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("\n", .{});
+            Global.exit(1);
+        };
+
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+
+        vm.loadExtraEnv();
+        vm.is_main_thread = true;
+        JSC.VirtualMachine.is_main_thread_vm = true;
+
+        var callback = OpaqueWrap(Run, Run.start);
+        vm.global.vm().holdAPILock(&run, callback);
+    }
+
+    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
+        var ctx = ctx_;
+        JSC.markBinding(@src());
+        bun.JSC.initialize();
+
+        js_ast.Expr.Data.Store.create(default_allocator);
+        js_ast.Stmt.Data.Store.create(default_allocator);
+        var arena = try Arena.init();
+
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
+
+        run = .{
+            .vm = try VirtualMachine.init(
+                .{
+                    .allocator = arena.allocator(),
+                    .log = ctx.log,
+                    .args = ctx.args,
+                    .store_fd = ctx.debug.hot_reload != .none,
+                    .smol = ctx.runtime_options.smol,
+                    .debugger = ctx.runtime_options.debugger,
+                },
+            ),
+            .arena = arena,
+            .ctx = ctx,
+            .entry_path = entry_path,
+        };
+
+        var vm = run.vm;
+        var b = &vm.bundler;
+        vm.preload = ctx.preloads;
+        vm.argv = ctx.passthrough;
+        vm.arena = &run.arena;
+        vm.allocator = arena.allocator();
+
+        if (ctx.runtime_options.eval_script.len > 0) {
+            vm.module_loader.eval_script = ptr: {
+                var v = try bun.default_allocator.create(logger.Source);
+                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
+                break :ptr v;
+            };
+        }
+
+        b.options.install = ctx.install;
+        b.resolver.opts.install = ctx.install;
+        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        b.options.global_cache = b.resolver.opts.global_cache;
+        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.resolver.env_loader = b.env;
+
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        b.options.env.behavior = .load_all_without_inlining;
+        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
+
+        switch (ctx.debug.macros) {
+            .disable => {
+                b.options.no_macros = true;
+            },
+            .map => |macros| {
+                b.options.macro_remap = macros;
+            },
+            .unspecified => {},
         }
 
         b.configureRouter(false) catch {
@@ -98,37 +224,21 @@ pub const Run = struct {
             Output.prettyErrorln("\n", .{});
             Global.exit(1);
         };
-        AsyncHTTP.max_simultaneous_requests = 255;
 
-        if (b.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
-            load: {
-                AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
-                    vm.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
-                        .{max_http_requests},
-                    ) catch unreachable;
-                    break :load;
-                };
-
-                if (AsyncHTTP.max_simultaneous_requests == 0) {
-                    vm.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
-                        .{},
-                    ) catch unreachable;
-                    AsyncHTTP.max_simultaneous_requests = 255;
-                }
-            }
-        }
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Allow setting a custom timezone
+        if (vm.bundler.env.get("TZ")) |tz| {
+            if (tz.len > 0) {
+                _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
+            }
+        }
+
+        vm.bundler.env.loadTracy();
 
         var callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
@@ -139,33 +249,77 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+
     pub fn start(this: *Run) void {
         var vm = this.vm;
-        if (this.ctx.debug.hot_reload) {
-            JSC.HotReloader.enableHotModuleReloading(vm);
-        }
-        var promise = vm.loadEntryPoint(this.entry_path) catch return;
+        vm.hot_reload = this.ctx.debug.hot_reload;
+        vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.runErrorHandler(promise.result(vm.global.vm()), null);
-            Global.exit(1);
+        if (this.ctx.runtime_options.eval_script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
         }
 
-        _ = promise.result(vm.global.vm());
+        switch (this.ctx.debug.hot_reload) {
+            .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+            .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+            else => {},
+        }
 
-        if (vm.log.msgs.items.len > 0) {
-            if (Output.enable_ansi_colors) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.bundler.fs.top_level_dir;
+        }
+
+        if (vm.loadEntryPoint(this.entry_path)) |promise| {
+            if (promise.status(vm.global.vm()) == .Rejected) {
+                vm.runErrorHandler(promise.result(vm.global.vm()), null);
+
+                if (vm.hot_reload != .none) {
+                    vm.eventLoop().tick();
+                    vm.eventLoop().tickPossiblyForever();
+                } else {
+                    vm.exit_handler.exit_code = 1;
+                    vm.onExit();
+                    Global.exit(1);
+                }
             }
-            Output.prettyErrorln("\n", .{});
-            Output.flush();
+
+            _ = promise.result(vm.global.vm());
+
+            if (vm.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                vm.log.msgs.items.len = 0;
+                Output.prettyErrorln("\n", .{});
+                Output.flush();
+            }
+        } else |err| {
+            if (vm.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                Output.flush();
+            } else {
+                Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
+            }
+
+            if (vm.hot_reload != .none) {
+                vm.eventLoop().tick();
+                vm.eventLoop().tickPossiblyForever();
+            } else {
+                vm.exit_handler.exit_code = 1;
+                vm.onExit();
+                Global.exit(1);
+            }
         }
 
         // don't run the GC if we don't actually need to
-        if (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or
-            vm.uws_event_loop.?.active > 0 or
+        if (vm.isEventLoopAlive() or
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
@@ -181,17 +335,28 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
 
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                    vm.tick();
+                while (true) {
+                    while (vm.isEventLoopAlive()) {
+                        vm.tick();
 
-                    // Report exceptions in hot-reloaded modules
+                        // Report exceptions in hot-reloaded modules
+                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                            prev_promise = this.vm.pending_internal_promise;
+                            vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                            continue;
+                        }
+
+                        vm.eventLoop().autoTickActive();
+                    }
+
+                    vm.onBeforeExit();
+
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
                         vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
-                        continue;
                     }
 
-                    vm.eventLoop().autoTickActive();
+                    vm.eventLoop().tickPossiblyForever();
                 }
 
                 if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
@@ -199,10 +364,12 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }
+
+                vm.onBeforeExit();
             }
 
             if (vm.log.msgs.items.len > 0) {
@@ -218,10 +385,14 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
+        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+            this.vm.exit_handler.exit_code = 1;
+        }
+        const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(@boolToInt(this.any_unhandled));
+        Global.exit(exit_code);
     }
 };

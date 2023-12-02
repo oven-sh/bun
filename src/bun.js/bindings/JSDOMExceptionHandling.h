@@ -27,7 +27,7 @@
 
 #include "ExceptionDetails.h"
 #include "ExceptionOr.h"
-#include "JavaScriptCore/ThrowScope.h"
+#include <JavaScriptCore/ThrowScope.h>
 
 namespace JSC {
 class CatchScope;

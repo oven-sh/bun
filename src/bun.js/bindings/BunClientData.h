@@ -13,17 +13,17 @@ class DOMWrapperWorld;
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
-// #include "DOMWrapperWorld.h"
 #include "BunBuiltinNames.h"
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
-#include "wtf/Function.h"
-#include "wtf/HashSet.h"
-#include "wtf/RefPtr.h"
-#include "JavaScriptCore/WeakInlines.h"
-#include "JavaScriptCore/IsoSubspacePerVM.h"
-
+#include <wtf/Function.h>
+#include <wtf/HashSet.h>
+#include <wtf/RefPtr.h>
+#include <JavaScriptCore/WeakInlines.h>
+#include <JavaScriptCore/IsoSubspacePerVM.h>
+#include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
+#include "JSCTaskScheduler.h"
 
 namespace Zig {
 }
@@ -80,7 +80,7 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*);
+    static void create(JSC::VM*, void*);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -106,6 +106,9 @@ public:
         for (auto* space : m_outputConstraintSpaces)
             func(*space);
     }
+
+    void* bunVM;
+    Bun::JSCTaskScheduler deferredWorkTimer;
 
 private:
     BunBuiltinNames m_builtinNames;
@@ -148,7 +151,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
                 uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, T);
         }
         space = uniqueSubspace.get();
-        setServer(subspaces, uniqueSubspace);
+        setServer(subspaces, WTFMove(uniqueSubspace));
 
         IGNORE_WARNINGS_BEGIN("unreachable-code")
         IGNORE_WARNINGS_BEGIN("tautological-compare")
@@ -162,7 +165,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
 
     auto uniqueClientSubspace = makeUnique<JSC::GCClient::IsoSubspace>(*space);
     auto* clientSpace = uniqueClientSubspace.get();
-    setClient(clientSubspaces, uniqueClientSubspace);
+    setClient(clientSubspaces, WTFMove(uniqueClientSubspace));
     return clientSpace;
 }
 

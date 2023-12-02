@@ -9,7 +9,7 @@ const BUN_VERSION = (
   process.env.BUN_VERSION ||
   Bun.version ||
   process.versions.bun
-).replace(/^v/, "");
+).replace(/^.*v/, "");
 const folder = resolve(process.argv.at(-1)!);
 if (folder.endsWith("bundle.ts")) {
   throw new Error("Pass a folder");
@@ -23,7 +23,7 @@ try {
 
 const header = await file(join(import.meta.dir, "..", "header.txt")).text();
 const filesToCat = (await getDotTsFiles("./")).filter(
-  (f) => !["./index.d.ts"].some((tf) => f === tf),
+  f => f !== "./index.d.ts",
 );
 
 const fileContents: string[] = [];
@@ -47,10 +47,11 @@ await write(destination, text);
 const packageJSON = {
   name: process.env.PACKAGE_NAME || "bun-types",
   version: BUN_VERSION,
+  license: "MIT",
   description:
     "Type definitions for Bun, an incredibly fast JavaScript runtime",
   types: "types.d.ts",
-  files: ["types.d.ts", "README.md"],
+  files: ["types.d.ts", "README.md", "tsconfig.json"],
   private: false,
   keywords: ["bun", "bun.js", "types"],
   repository: "https://github.com/oven-sh/bun",
@@ -60,6 +61,33 @@ const packageJSON = {
 await write(
   resolve(folder, "package.json"),
   JSON.stringify(packageJSON, null, 2) + "\n",
+);
+
+const tsConfig = {
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "ESNext",
+    moduleResolution: "bundler",
+    moduleDetection: "force",
+    resolveJsonModule: true,
+    strict: true,
+    downlevelIteration: true,
+    skipLibCheck: true,
+    jsx: "react-jsx",
+    allowImportingTsExtensions: true,
+    noEmit: true,
+    composite: true,
+    allowSyntheticDefaultImports: true,
+    forceConsistentCasingInFileNames: true,
+    allowJs: true,
+    types: ["bun-types"],
+  },
+};
+
+await write(
+  resolve(folder, "tsconfig.json"),
+  JSON.stringify(tsConfig, null, 2) + "\n",
 );
 
 await write(

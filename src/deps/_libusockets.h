@@ -139,7 +139,7 @@ typedef void (*uws_get_headers_server_handler)(const char *header_name,
                                                void *user_data);
 
 // Basic HTTP
-uws_app_t *uws_create_app(int ssl, struct us_socket_context_options_t options);
+uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options);
 
 void uws_app_destroy(int ssl, uws_app_t *app);
 void uws_app_get(int ssl, uws_app_t *app, const char *pattern,
@@ -191,7 +191,7 @@ void uws_remove_server_name(int ssl, uws_app_t *app,
 void uws_add_server_name(int ssl, uws_app_t *app, const char *hostname_pattern);
 void uws_add_server_name_with_options(
     int ssl, uws_app_t *app, const char *hostname_pattern,
-    struct us_socket_context_options_t options);
+    struct us_bun_socket_context_options_t options);
 void uws_missing_server_name(int ssl, uws_app_t *app,
                              uws_missing_server_handler handler,
                              void *user_data);
@@ -264,7 +264,7 @@ void uws_res_write_header(int ssl, uws_res_t *res, const char *key,
 
 void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
                               size_t key_length, uint64_t value);
-void uws_res_end_without_body(int ssl, uws_res_t *res);
+void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection);
 void uws_res_end_stream(int ssl, uws_res_t *res, bool close_connection);
 bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length);
 uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res);
@@ -293,7 +293,7 @@ void uws_res_upgrade(int ssl, uws_res_t *res, void *data,
 // Request
 bool uws_req_is_ancient(uws_req_t *res);
 bool uws_req_get_yield(uws_req_t *res);
-void uws_req_set_field(uws_req_t *res, bool yield);
+void uws_req_set_yield(uws_req_t *res, bool yield);
 size_t uws_req_get_url(uws_req_t *res, const char **dest);
 size_t uws_req_get_method(uws_req_t *res, const char **dest);
 size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
@@ -303,7 +303,6 @@ size_t uws_req_get_query(uws_req_t *res, const char *key, size_t key_length,
 size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
                              const char **dest);
 void uws_req_for_each_header(uws_req_t *res, uws_get_headers_server_handler handler, void *user_data);
-
 
 struct us_loop_t *uws_get_loop();
 struct us_loop_t *uws_get_loop_with_native(void* existing_native_loop);

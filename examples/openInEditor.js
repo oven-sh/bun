@@ -3,8 +3,8 @@ import { parse } from "querystring";
 
 export default {
   fetch(req) {
-    if (req.url === "/favicon.ico")
-      return new Response("nooo dont open favicon in editor", { status: 404 });
+    const url = new URL(req.url);
+    if (url.pathname === "/favicon.ico") return new Response("nooo dont open favicon in editor", { status: 404 });
 
     var pathname = req.url.substring(1);
     const q = pathname.indexOf("?");

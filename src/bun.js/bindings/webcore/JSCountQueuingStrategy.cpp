@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSCountQueuingStrategy.h"
 
-#include "CountQueuingStrategyBuiltins.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -156,7 +155,7 @@ void JSCountQueuingStrategy::destroy(JSC::JSCell* cell)
     thisObject->JSCountQueuingStrategy::~JSCountQueuingStrategy();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -171,9 +170,9 @@ JSC::GCClient::IsoSubspace* JSCountQueuingStrategy::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); });
 }
 
 }

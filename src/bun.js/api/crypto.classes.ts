@@ -1,20 +1,12 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
-const names = [
-  "SHA1",
-  "MD5",
-  "MD4",
-  "SHA224",
-  "SHA512",
-  "SHA384",
-  "SHA256",
-  "SHA512_256",
-];
-const named = names.map((name) => {
+const names = ["SHA1", "MD5", "MD4", "SHA224", "SHA512", "SHA384", "SHA256", "SHA512_256"];
+const named = names.map(name => {
   return define({
     name: name,
     construct: true,
     finalize: true,
+    configurable: false,
     klass: {
       hash: {
         fn: "hash",
@@ -42,6 +34,49 @@ const named = names.map((name) => {
 });
 
 export default [
+  define({
+    name: "Crypto",
+    construct: true,
+    finalize: false,
+
+    proto: {
+      getRandomValues: {
+        fn: "getRandomValues",
+        DOMJIT: {
+          returns: "JSValue",
+          "pure": false,
+          args: ["JSUint8Array"],
+        },
+      },
+      randomUUID: {
+        fn: "randomUUID",
+        length: 1,
+        DOMJIT: {
+          returns: "JSString",
+          "pure": false,
+          args: [],
+        },
+      },
+      timingSafeEqual: {
+        fn: "timingSafeEqual",
+        DOMJIT: {
+          returns: "JSValue",
+          "pure": false,
+          args: ["JSUint8Array", "JSUint8Array"],
+        },
+        length: 2,
+      },
+      randomInt: {
+        fn: "randomInt",
+        length: 2,
+      },
+      scryptSync: {
+        fn: "doScryptSync",
+        length: 2,
+      },
+    },
+    klass: {},
+  }),
   ...named,
   define({
     name: "CryptoHasher",
@@ -70,6 +105,10 @@ export default [
       update: {
         fn: "update",
         length: 2,
+      },
+      copy: {
+        fn: "copy",
+        length: 0,
       },
       byteLength: {
         getter: "getByteLength",

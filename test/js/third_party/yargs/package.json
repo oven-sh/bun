@@ -1,0 +1,7 @@
+{
+  "name": "yargs-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "yargs": "17.7.2"
+  }
+}

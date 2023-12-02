@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -18,6 +18,23 @@ const MimeType = @This();
 value: string,
 category: Category,
 
+pub const Map = bun.StringHashMap(MimeType);
+
+pub fn createHashTable(allocator: std.mem.Allocator) !Map {
+    @setCold(true);
+
+    const decls = comptime std.meta.declarations(all);
+
+    var map = Map.init(allocator);
+    try map.ensureTotalCapacity(@as(u32, @truncate(decls.len)));
+    @setEvalBranchQuota(4000);
+    inline for (decls) |decl| {
+        map.putAssumeCapacityNoClobber(decl.name, @field(all, decl.name));
+    }
+
+    return map;
+}
+
 pub fn canOpenInEditor(this: MimeType) bool {
     if (this.category == .text or this.category.isCode())
         return true;
@@ -30,6 +47,7 @@ pub fn canOpenInEditor(this: MimeType) bool {
 }
 
 pub const Category = enum {
+    none,
     image,
     text,
     html,
@@ -71,6 +89,7 @@ pub const Category = enum {
     }
 };
 
+pub const none = MimeType.initComptime("", .none);
 pub const other = MimeType.initComptime("application/octet-stream", .other);
 pub const css = MimeType.initComptime("text/css", .css);
 pub const javascript = MimeType.initComptime("text/javascript;charset=utf-8", .javascript);
@@ -91,7 +110,7 @@ fn initComptime(comptime str: string, t: Category) MimeType {
     };
 }
 
-pub fn init(str_: string) MimeType {
+pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) MimeType {
     var str = str_;
     if (std.mem.indexOfScalar(u8, str, '/')) |slash| {
         const category_ = str[0..slash];
@@ -114,7 +133,7 @@ pub fn init(str_: string) MimeType {
                     }
                 }
 
-                if (strings.eqlComptimeIgnoreLen(str, "octet-stream")) {
+                if (strings.eqlComptime(str, "octet-stream")) {
                     return other;
                 }
 
@@ -122,12 +141,17 @@ pub fn init(str_: string) MimeType {
                     return wasm;
                 }
 
-                return MimeType{ .value = str_, .category = .application };
+                if (allocated != null and allocator != null) allocated.?.* = true;
+                return MimeType{
+                    .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                    .category = .application,
+                };
             },
             "font".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .font,
                     };
                 }
@@ -149,27 +173,34 @@ pub fn init(str_: string) MimeType {
                         return all.@"text/plain";
                     }
 
-                    return MimeType{ .value = str_, .category = .text };
+                    if (allocated != null and allocator != null) allocated.?.* = true;
+                    return MimeType{
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .category = .text,
+                    };
                 }
             },
             "image".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .image,
                     };
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .audio,
                     };
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "video")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .video,
                     };
                 }
@@ -178,7 +209,11 @@ pub fn init(str_: string) MimeType {
         }
     }
 
-    return MimeType{ .value = str_, .category = .other };
+    if (allocated != null and allocator != null) allocated.?.* = true;
+    return MimeType{
+        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+        .category = .other,
+    };
 }
 
 // TODO: improve this
@@ -1844,7 +1879,7 @@ pub const all = struct {
     pub const @"application/x-virtualbox-vmdk": MimeType = MimeType{ .category = .application, .value = "application/x-virtualbox-vmdk" };
     pub const @"application/x-wais-source": MimeType = MimeType{ .category = .application, .value = "application/x-wais-source" };
     pub const @"application/x-web-app-manifest+json": MimeType = MimeType{ .category = .application, .value = "application/x-web-app-manifest+json" };
-    pub const @"application/x-www-form-urlencoded": MimeType = MimeType{ .category = .application, .value = "application/x-www-form-urlencoded" };
+    pub const @"application/x-www-form-urlencoded": MimeType = MimeType{ .category = .application, .value = "application/x-www-form-urlencoded;charset=UTF-8" };
     pub const @"application/x-x509-ca-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-ca-cert" };
     pub const @"application/x-x509-ca-ra-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-ca-ra-cert" };
     pub const @"application/x-x509-next-ca-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-next-ca-cert" };
@@ -2497,7 +2532,7 @@ pub const all = struct {
 // TODO: do a comptime static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn byName(name: []const u8) MimeType {
-    return MimeType.init(name);
+    return MimeType.init(name, null, null);
 }
 
 pub const extensions = ComptimeStringMap(MimeType, .{

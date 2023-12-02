@@ -1,5 +1,5 @@
 const options = @import("./options.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -38,14 +38,14 @@ pub const ErrorCSS = struct {
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
+                resolve_path.joinAbsString(dirname, &paths, .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
                 content.error_css,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return content.error_css;
         }
@@ -61,14 +61,14 @@ pub const ErrorJS = struct {
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
+                resolve_path.joinAbsString(dirname, &paths, .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
                 content.error_js,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return content.error_js;
         }
@@ -105,11 +105,11 @@ pub const Fallback = struct {
                     acc_len += 8;
                     while (acc_len >= 6) {
                         acc_len -= 6;
-                        try writer.writeByte(alphabet_chars[@truncate(u6, (acc >> acc_len))]);
+                        try writer.writeByte(alphabet_chars[@as(u6, @truncate((acc >> acc_len)))]);
                     }
                 }
                 if (acc_len > 0) {
-                    try writer.writeByte(alphabet_chars[@truncate(u6, (acc << 6 - acc_len))]);
+                    try writer.writeByte(alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))]);
                 }
             }
         };
@@ -133,16 +133,16 @@ pub const Fallback = struct {
                 ProdSourceContent,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContent;
         }
     }
-    pub const version_hash = @embedFile("./fallback.version");
+    pub const version_hash = @import("build_options").fallback_html_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+            version_hash_int = @as(u32, @truncate(std.fmt.parseInt(u64, version(), 16) catch unreachable));
         }
         return version_hash_int;
     }
@@ -220,7 +220,7 @@ pub const Runtime = struct {
                 ProdSourceContent,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContent;
         }
@@ -257,30 +257,19 @@ pub const Runtime = struct {
                 ProdSourceContentWithRefresh,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContentWithRefresh;
         }
     }
 
-    pub const version_hash = @embedFile("./runtime.version");
+    pub const version_hash = @import("build_options").runtime_js_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+            version_hash_int = @as(u32, @truncate(version_hash));
         }
         return version_hash_int;
-    }
-
-    pub inline fn version() string {
-        return version_hash;
-    }
-
-    const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
-    var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
-
-    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?bun.StoredFileDescriptorType {
-        return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
     }
 
     pub const Features = struct {
@@ -291,6 +280,18 @@ pub const Runtime = struct {
         auto_import_jsx: bool = false,
         allow_runtime: bool = true,
         inlining: bool = false,
+
+        inject_jest_globals: bool = false,
+
+        no_macros: bool = false,
+
+        commonjs_named_exports: bool = true,
+
+        minify_syntax: bool = false,
+        minify_identifiers: bool = false,
+        dead_code_elimination: bool = true,
+
+        set_breakpoint_on_first_line: bool = false,
 
         /// Instead of jsx("div", {}, void 0)
         /// ->
@@ -308,7 +309,7 @@ pub const Runtime = struct {
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
-        should_fold_numeric_constants: bool = false,
+        should_fold_typescript_constant_expressions: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
@@ -316,7 +317,56 @@ pub const Runtime = struct {
 
         replace_exports: ReplaceableExport.Map = .{},
 
-        hoist_bun_plugin: bool = false,
+        dont_bundle_twice: bool = false,
+
+        /// This is a list of packages which even when require() is used, we will
+        /// instead convert to ESM import statements.
+        ///
+        /// This is not normally a safe transformation.
+        ///
+        /// So we have a list of packages which we know are safe to do this with.
+        unwrap_commonjs_packages: []const string = &.{},
+
+        commonjs_at_runtime: bool = false,
+
+        emit_decorator_metadata: bool = false,
+
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+        const hash_fields_for_runtime_transpiler = .{
+            .top_level_await,
+            .auto_import_jsx,
+            .allow_runtime,
+            .inlining,
+            .commonjs_named_exports,
+            .minify_syntax,
+            .minify_identifiers,
+            .dead_code_elimination,
+            .set_breakpoint_on_first_line,
+            .trim_unused_imports,
+            .should_fold_typescript_constant_expressions,
+            .dynamic_require,
+            .dont_bundle_twice,
+            .commonjs_at_runtime,
+            .emit_decorator_metadata,
+
+            // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+        };
+
+        pub fn hashForRuntimeTranspiler(this: *const Features, hasher: *std.hash.Wyhash) void {
+            std.debug.assert(this.runtime_transpiler_cache != null);
+
+            var bools: [std.meta.fieldNames(@TypeOf(hash_fields_for_runtime_transpiler)).len]bool = undefined;
+            inline for (hash_fields_for_runtime_transpiler, 0..) |field, i| {
+                bools[i] = @field(this, @tagName(field));
+            }
+
+            hasher.update(std.mem.asBytes(&bools));
+        }
+
+        pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
+            return package_name.len > 0 and strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null;
+        }
 
         pub const ReplaceableExport = union(enum) {
             delete: void,
@@ -358,8 +408,10 @@ pub const Runtime = struct {
         __exportDefault: ?GeneratedSymbol = null,
         __FastRefreshRuntime: ?GeneratedSymbol = null,
         __merge: ?GeneratedSymbol = null,
-        __decorateClass: ?GeneratedSymbol = null,
-        __decorateParam: ?GeneratedSymbol = null,
+        __legacyDecorateClassTS: ?GeneratedSymbol = null,
+        __legacyDecorateParamTS: ?GeneratedSymbol = null,
+        __legacyMetadataTS: ?GeneratedSymbol = null,
+        @"$$typeof": ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             // __HMRClient goes first
@@ -380,9 +432,39 @@ pub const Runtime = struct {
             "__exportDefault",
             "__FastRefreshRuntime",
             "__merge",
-            "__decorateClass",
-            "__decorateParam",
+            "__legacyDecorateClassTS",
+            "__legacyDecorateParamTS",
+            "__legacyMetadataTS",
+            "$$typeof",
         };
+        const all_sorted: [all.len]string = brk: {
+            @setEvalBranchQuota(1000000);
+            var list = all;
+            const Sorter = struct {
+                fn compare(_: void, a: []const u8, b: []const u8) bool {
+                    return std.mem.order(u8, a, b) == .lt;
+                }
+            };
+            std.sort.block(string, &list, {}, Sorter.compare);
+            break :brk list;
+        };
+
+        /// When generating the list of runtime imports, we sort it for determinism.
+        /// This is a lookup table so we don't need to resort the strings each time
+        pub const all_sorted_index = brk: {
+            var out: [all.len]usize = undefined;
+            inline for (all, 0..) |name, i| {
+                for (all_sorted, 0..) |cmp, j| {
+                    if (strings.eqlComptime(name, cmp)) {
+                        out[i] = j;
+                        break;
+                    }
+                }
+            }
+
+            break :brk out;
+        };
+
         pub const Name = "bun:wrap";
         pub const alt_name = "bun:wrap";
 
@@ -491,6 +573,16 @@ pub const Runtime = struct {
                                 return Entry{ .key = 17, .value = val.ref };
                             }
                         },
+                        18 => {
+                            if (@field(this.runtime_imports, all[18])) |val| {
+                                return Entry{ .key = 18, .value = val.ref };
+                            }
+                        },
+                        19 => {
+                            if (@field(this.runtime_imports, all[19])) |val| {
+                                return Entry{ .key = 19, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -553,6 +645,8 @@ pub const Runtime = struct {
                 15 => (@field(imports, all[15]) orelse return null).ref,
                 16 => (@field(imports, all[16]) orelse return null).ref,
                 17 => (@field(imports, all[17]) orelse return null).ref,
+                18 => (@field(imports, all[18]) orelse return null).ref,
+                19 => (@field(imports, all[19]) orelse return null).ref,
                 else => null,
             };
         }

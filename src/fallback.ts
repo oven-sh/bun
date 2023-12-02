@@ -1,15 +1,10 @@
 declare var document: any;
 import { ByteBuffer } from "peechy";
 import { FallbackStep } from "./api/schema";
-import {
-  decodeFallbackMessageContainer,
-  FallbackMessageContainer,
-} from "./api/schema";
+import { decodeFallbackMessageContainer, FallbackMessageContainer } from "./api/schema";
 
 function getFallbackInfo(): FallbackMessageContainer {
-  const binary_string = globalThis.atob(
-    document.getElementById("__bunfallback").textContent.trim(),
-  );
+  const binary_string = globalThis.atob(document.getElementById("__bunfallback").textContent.trim());
 
   var len = binary_string.length;
   var bytes = new Uint8Array(len);

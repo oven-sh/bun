@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -7,6 +7,7 @@ export default [
     noConstructor: true,
     finalize: true,
     hasPendingActivity: true,
+    configurable: false,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -41,6 +42,11 @@ export default [
       unref: {
         fn: "doUnref",
         length: 0,
+      },
+
+      send: {
+        fn: "doSend",
+        length: 1,
       },
 
       kill: {

@@ -7,14 +7,8 @@ function runner(ready) {
     for (let i = 0; i < size; i++) {
       rand[i] = (Math.random() * 1024 * 1024) | 0;
     }
-    const dest = `/tmp/fs-test-copy-file-${(
-      (Math.random() * 10000000 + 100) |
-      0
-    ).toString(32)}`;
-    const src = `/tmp/fs-test-copy-file-${(
-      (Math.random() * 10000000 + 100) |
-      0
-    ).toString(32)}`;
+    const dest = `/tmp/fs-test-copy-file-${((Math.random() * 10000000 + 100) | 0).toString(32)}`;
+    const src = `/tmp/fs-test-copy-file-${((Math.random() * 10000000 + 100) | 0).toString(32)}`;
     writeFileSync(src, Buffer.from(rand.buffer), { encoding: "buffer" });
     const { size: fileSize } = statSync(src);
     if (fileSize !== rand.byteLength) {
@@ -35,6 +29,6 @@ runner((src, dest, rand) =>
     //     );
     //   }
     // }
-  })
+  }),
 );
 await run();

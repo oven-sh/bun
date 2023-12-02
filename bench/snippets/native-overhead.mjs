@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "./runner.mjs";
 
 // These are no-op C++ functions that are exported to JS.
 const lazy = globalThis[Symbol.for("Bun.lazy")];

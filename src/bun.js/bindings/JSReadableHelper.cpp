@@ -12,6 +12,8 @@
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JavaScriptCore/StrongInlines.h"
+#include "BunClientData.h"
+
 namespace WebCore {
 using namespace JSC;
 
@@ -36,7 +38,7 @@ static bool callRead(JSValue stream, JSFunction* read, JSC::MarkedArgumentBuffer
 {
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
     JSC::CallData callData = JSC::getCallData(read);
-    JSValue ret = JSC::call(lexicalGlobalObject, read, callData, JSValue(stream), WTFMove(args), exceptionPtr);
+    JSValue ret = call(lexicalGlobalObject, read, callData, JSValue(stream), WTFMove(args), exceptionPtr);
     if (auto* exception = exceptionPtr.get()) {
         JSC::Identifier errorEventName = JSC::Identifier::fromString(vm, "error"_s);
         if (emitter.hasEventListeners(errorEventName)) {

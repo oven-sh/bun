@@ -1,0 +1,6 @@
+{
+  "arrowParens": "avoid",
+  "printWidth": 80,
+  "trailingComma": "all",
+  "useTabs": false
+}

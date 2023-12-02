@@ -51,6 +51,7 @@ enum class CryptoKeyClass {
     AES,
     EC,
     HMAC,
+    OKP,
     RSA,
     Raw,
 };
@@ -94,8 +95,11 @@ WebCoreOpaqueRoot root(CryptoKey*);
 } // namespace WebCore
 
 #define SPECIALIZE_TYPE_TRAITS_CRYPTO_KEY(ToClassName, KeyClass) \
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToClassName) \
-    static bool isType(const WebCore::CryptoKey& key) { return key.keyClass() == WebCore::KeyClass; } \
-SPECIALIZE_TYPE_TRAITS_END()
+    SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToClassName)           \
+    static bool isType(const WebCore::CryptoKey& key)            \
+    {                                                            \
+        return key.keyClass() == WebCore::KeyClass;              \
+    }                                                            \
+    SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(WEB_CRYPTO)

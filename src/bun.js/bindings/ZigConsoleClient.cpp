@@ -1,12 +1,18 @@
 #include "helpers.h"
 #include "headers.h"
 
-#include "JavaScriptCore/ConsoleClient.h"
-#include "JavaScriptCore/ConsoleMessage.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/ScriptArguments.h"
+#include <JavaScriptCore/ConsoleClient.h>
+#include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/ScriptArguments.h>
 #include "ZigConsoleClient.h"
-#include "wtf/text/WTFString.h"
+#include <wtf/text/WTFString.h>
+
+#undef ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS
+
+#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
+#include <JavaScriptCore/ConsoleClient.h>
 
 #include "GCDefferalContext.h"
 
@@ -24,6 +30,11 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
     JSC::JSGlobalObject* globalObject,
     Ref<ScriptArguments>&& arguments)
 {
+    if (globalObject->inspectable()) {
+        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+            client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
+        }
+    }
     JSC::VM& vm = globalObject->vm();
     auto args = arguments.ptr();
     JSC__JSValue jsArgs[255];
@@ -75,7 +86,16 @@ void Zig::ConsoleClient::timeLog(JSGlobalObject* globalObject, const String& lab
     Ref<ScriptArguments>&& arguments)
 {
     auto input = label.tryGetUTF8().value();
-    Zig__ConsoleClient__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), arguments.ptr());
+
+    auto args = arguments.ptr();
+    JSC__JSValue jsArgs[255];
+    auto count = std::min(args->argumentCount(), (size_t)255);
+    for (size_t i = 0; i < count; i++) {
+        auto val = args->argumentAt(i);
+        jsArgs[i] = JSC::JSValue::encode(val);
+    }
+
+    Zig__ConsoleClient__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), jsArgs, count);
 }
 void Zig::ConsoleClient::timeEnd(JSGlobalObject* globalObject, const String& label)
 {

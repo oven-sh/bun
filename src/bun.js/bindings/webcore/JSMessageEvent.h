@@ -70,6 +70,7 @@ public:
     {
         return static_cast<MessageEvent&>(Base::wrapped());
     }
+
 protected:
     JSMessageEvent(JSC::Structure*, JSDOMGlobalObject&, Ref<MessageEvent>&&);
 
@@ -86,6 +87,5 @@ template<> struct JSDOMWrapperConverterTraits<MessageEvent> {
     using ToWrappedReturnType = MessageEvent*;
 };
 template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
-
 
 } // namespace WebCore

@@ -29,7 +29,7 @@ serve({
 
     if (req.headers.has("range")) {
       opts.code = 206;
-      let [x, y] = req.headers.get("range").replace("bytes=", "").split("-");
+      let [x, y] = req.headers.get("range")!.replace("bytes=", "").split("-");
       let end = (opts.end = parseInt(y, 10) || stats.size - 1);
       let start = (opts.start = parseInt(x, 10) || 0);
 

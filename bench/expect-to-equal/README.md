@@ -10,7 +10,7 @@ To run in Bun:
 
 ```bash
 # so it doesn't run the vitest one
-bun wiptest expect-to-equal.test.js
+bun test expect-to-equal.test.js
 ```
 
 To run in Jest:

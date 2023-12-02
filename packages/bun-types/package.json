@@ -1,19 +1,23 @@
 {
   "name": "bun-types",
-  "types": "index.d.ts",
-  "private": true,
   "repository": "https://github.com/oven-sh/bun",
+  "license": "MIT",
+  "devDependencies": {
+    "conditional-type-checks": "^1.0.6",
+    "prettier": "^2.4.1",
+    "tsd": "^0.22.0",
+    "typescript": "^5.0.2"
+  },
+  "private": true,
   "scripts": {
+    "prebuild": "echo $(pwd)",
     "build": "rm -rf ./dist && bun run bundle && bun run fmt",
     "bundle": "bun scripts/bundle.ts ./dist",
-    "test": "tsd",
-    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'"
-  },
-  "devDependencies": {
-    "tsd": "^0.22.0",
-    "prettier": "^2.4.1"
+    "test": "tsc",
+    "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
   },
   "tsd": {
     "directory": "tests"
-  }
+  },
+  "types": "index.d.ts"
 }

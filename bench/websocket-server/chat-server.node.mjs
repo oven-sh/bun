@@ -1,6 +1,6 @@
 // See ./README.md for instructions on how to run this benchmark.
 const port = process.env.PORT || 4001;
-const CLIENTS_TO_WAIT_FOR = parseInt(process.env.CLIENTS_COUNT || "", 10) || 16;
+const CLIENTS_TO_WAIT_FOR = parseInt(process.env.CLIENTS_COUNT || "", 10) || 32;
 
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -16,12 +16,8 @@ var WebSocketServer = require("ws").Server,
 var clients = [];
 
 wss.on("connection", function (ws, { url }) {
-  const name = new URL(new URL(url, "http://localhost:3000")).searchParams.get(
-    "name"
-  );
-  console.log(
-    `${name} connected (${CLIENTS_TO_WAIT_FOR - clients.length} remain)`
-  );
+  const name = new URL(new URL(url, "http://localhost:3000")).searchParams.get("name");
+  console.log(`${name} connected (${CLIENTS_TO_WAIT_FOR - clients.length} remain)`);
   clients.push(ws);
 
   ws.on("message", function (message) {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,18 +9,18 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-pub usingnamespace @import("bun");
+pub usingnamespace @import("root").bun;
 
 const clap = bun.clap;
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.http.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const HTTPThread = @import("bun").HTTP.HTTPThread;
-const HTTP = @import("bun").HTTP;
+const HTTPThread = @import("root").bun.http.HTTPThread;
+const HTTP = @import("root").bun.http;
 fn noop_resolver(in: string) !string {
     return in;
 }
@@ -91,7 +91,7 @@ pub const Arguments = struct {
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
-            raw_args = .{ .capacity = positionals.len, .items = @intToPtr([*][]const u8, @ptrToInt(positionals.ptr))[0..positionals.len] };
+            raw_args = .{ .capacity = positionals.len, .items = @as([*][]const u8, @ptrFromInt(@intFromPtr(positionals.ptr)))[0..positionals.len] };
         } else {
             raw_args = .{};
         }
@@ -108,7 +108,7 @@ pub const Arguments = struct {
         if (args.option("--file")) |file_path| {
             if (file_path.len > 0) {
                 var cwd = try std.process.getCwd(&cwd_buf);
-                var parts = [_]string{std.mem.span(file_path)};
+                var parts = [_]string{file_path};
                 var absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
                 file_path_buf[absolute_path.len] = 0;
                 file_path_buf[absolute_path.len + 1] = 0;
@@ -132,7 +132,7 @@ pub const Arguments = struct {
             var raw_arg_i: usize = 0;
             while (raw_arg_i < raw_args.items.len) : (raw_arg_i += 1) {
                 const arg = raw_args.items[raw_arg_i];
-                if (MethodNames.get(std.mem.span(arg))) |method_| {
+                if (MethodNames.get(arg[0..])) |method_| {
                     method = method_;
                     _ = raw_args.swapRemove(raw_arg_i);
                 }
@@ -195,8 +195,8 @@ pub fn main() anyerror!void {
             args.headers_buf,
             response_body_string,
             args.body,
-
             0,
+            HTTP.FetchRedirect.follow,
         ),
     };
     ctx.http.callback = HTTP.HTTPChannelContext.callback;

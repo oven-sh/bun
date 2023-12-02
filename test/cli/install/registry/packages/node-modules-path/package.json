@@ -1,0 +1,64 @@
+{
+	"name": "node-modules-path",
+	"versions": {
+		"1.0.0": {
+			"name": "node-modules-path",
+			"version": "1.0.0",
+			"bin": {
+				"get-node-modules-path": "bin.js"
+			},
+			"_id": "node-modules-path@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ssjJrS0T1YEQ//Mj63OVpORvPoSXz037HSuyB2hTM07hInJViASqN8mEDehyDYA1z19+3hEPmIiZSQtpfIBJPQ==",
+				"shasum": "5068efa16674a682287dcb65d785031b1203d066",
+				"tarball": "http://localhost:4873/node-modules-path/-/node-modules-path-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "node-modules-path",
+			"version": "2.0.0",
+			"bin": {
+				"get-node-modules-path": "bin.js"
+			},
+			"_id": "node-modules-path@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-1B15FEiMETMplb++Tf6zI56QCJaxPkQ6bFBu8qXkcuN2hZVK9vTwpZgWvTklt3w69NZ8UH3jB47K3kHQX5peBw==",
+				"shasum": "bc909520bb8575d9ee1cdcc3cf6d4444ae58beab",
+				"tarball": "http://localhost:4873/node-modules-path/-/node-modules-path-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:22.937Z",
+		"created": "2023-11-01T22:05:22.649Z",
+		"1.0.0": "2023-11-01T22:05:22.649Z",
+		"2.0.0": "2023-11-01T22:05:22.937Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"node-modules-path-1.0.0.tgz": {
+			"shasum": "5068efa16674a682287dcb65d785031b1203d066",
+			"version": "1.0.0"
+		},
+		"node-modules-path-2.0.0.tgz": {
+			"shasum": "bc909520bb8575d9ee1cdcc3cf6d4444ae58beab",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "6-dbd6196b7eb7ad5b",
+	"_id": "node-modules-path",
+	"readme": "ERROR: No README data found!"
+}

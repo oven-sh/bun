@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Codeblog Corp
+ * Copyright (C) 2023 Codeblog Corp
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,18 +28,30 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 
+#ifndef LAZY_LOAD_SQLITE_DEFAULT_SETTING
 #if defined(__APPLE__)
-#define LAZY_LOAD_SQLITE 1
+#define LAZY_LOAD_SQLITE_DEFAULT_SETTING 1
+#endif
 #endif
 
-#ifdef LAZY_LOAD_SQLITE
+#ifndef LAZY_LOAD_SQLITE
+#ifdef LAZY_LOAD_SQLITE_DEFAULT_SETTING
+#define LAZY_LOAD_SQLITE LAZY_LOAD_SQLITE_DEFAULT_SETTING
+#endif
+#endif
+
+#ifndef LAZY_LOAD_SQLITE
+#define LAZY_LOAD_SQLITE 0
+#endif
+
+#if LAZY_LOAD_SQLITE
 #include "sqlite3.h"
 #else
 #include "sqlite3_local.h"
@@ -47,48 +59,28 @@
 
 namespace WebCore {
 
-class VersionSqlite3 {
-public:
-  explicit VersionSqlite3(sqlite3* db) : db(db), version(0) {}
-  sqlite3* db;
-  std::atomic<uint64_t> version;
-};
-
 class JSSQLStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
     static JSSQLStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 
     DECLARE_INFO;
-    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSSQLStatementConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLStatementConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSQLStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLStatementConstructor = WTFMove(space); });
-    }
 
-    static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
-
-    Vector<VersionSqlite3*> databases;
-    Vector<std::atomic<uint64_t>> schema_versions;
 
 private:
     JSSQLStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, native, globalObject, structure)
-        , databases()
     {
     }
 
     void finishCreation(JSC::VM&);
 };
+static_assert(sizeof(JSSQLStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLStatementConstructor in JSFunction IsoSubspace");
 
 }

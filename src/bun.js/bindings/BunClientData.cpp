@@ -4,23 +4,24 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
-#include "JavaScriptCore/FastMallocAlignedMemoryAllocator.h"
-#include "JavaScriptCore/HeapInlines.h"
-#include "JavaScriptCore/IsoHeapCellType.h"
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-// #include "JavaScriptCore/MarkingConstraint.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "JavaScriptCore/VM.h"
-#include "wtf/MainThread.h"
+#include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/IsoHeapCellType.h>
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+// #include <JavaScriptCore/MarkingConstraint.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/VM.h>
+#include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
 #include "JSDOMBuiltinConstructorBase.h"
 
 #include "BunGCOutputConstraint.h"
 #include "WebCoreTypedArrayController.h"
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JSCInlines.h>
 
 #include "JSDOMWrapper.h"
+#include <JavaScriptCore/DeferredWorkTimer.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -69,9 +70,14 @@ JSVMClientData::~JSVMClientData()
     ASSERT(m_normalWorld->hasOneRef());
     m_normalWorld = nullptr;
 }
-void JSVMClientData::create(VM* vm)
+void JSVMClientData::create(VM* vm, void* bunVM)
 {
     JSVMClientData* clientData = new JSVMClientData(*vm);
+    clientData->bunVM = bunVM;
+    vm->deferredWorkTimer->onAddPendingWork = Bun::JSCTaskScheduler::onAddPendingWork;
+    vm->deferredWorkTimer->onScheduleWorkSoon = Bun::JSCTaskScheduler::onScheduleWorkSoon;
+    vm->deferredWorkTimer->onCancelPendingWork = Bun::JSCTaskScheduler::onCancelPendingWork;
+
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
 

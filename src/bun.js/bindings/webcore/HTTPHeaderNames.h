@@ -238,7 +238,7 @@ template<> struct EnumTraits<WebCore::HTTPHeaderName> {
         WebCore::HTTPHeaderName::XXSSProtection>;
 };
 
-static StaticStringImpl* staticHeaderNames[] = {
+static const NeverDestroyed<String> staticHeaderNames[] = {
     MAKE_STATIC_STRING_IMPL("accept"),
     MAKE_STATIC_STRING_IMPL("accept-charset"),
     MAKE_STATIC_STRING_IMPL("accept-encoding"),
@@ -334,7 +334,7 @@ static StaticStringImpl* staticHeaderNames[] = {
     MAKE_STATIC_STRING_IMPL("x-xss-protection"),
 };
 
-static WTF::StaticStringImpl* httpHeaderNameStringImpl(WebCore::HTTPHeaderName headerName)
+static const WTF::String& httpHeaderNameStringImpl(WebCore::HTTPHeaderName headerName)
 {
     return staticHeaderNames[static_cast<size_t>(headerName)];
 }

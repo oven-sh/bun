@@ -1,4 +1,4 @@
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "./runner.mjs";
 import * as assert from "assert";
 
 bench("deepEqual", () => {
@@ -6,10 +6,7 @@ bench("deepEqual", () => {
 });
 
 bench("deepStrictEqual", () => {
-  assert.deepStrictEqual(
-    { foo: "123", beep: "boop" },
-    { foo: "123", beep: "boop" },
-  );
+  assert.deepStrictEqual({ foo: "123", beep: "boop" }, { foo: "123", beep: "boop" });
 });
 
 await run();

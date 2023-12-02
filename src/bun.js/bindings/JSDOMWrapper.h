@@ -25,8 +25,8 @@
 #include "JSDOMGlobalObject.h"
 #include "ZigGlobalObject.h"
 #include "NodeConstants.h"
-#include "JavaScriptCore/JSDestructibleObject.h"
-#include "wtf/SignedPtr.h"
+#include <JavaScriptCore/JSDestructibleObject.h>
+#include <wtf/SignedPtr.h>
 
 namespace WebCore {
 using namespace Zig;
@@ -58,6 +58,7 @@ static const uint8_t JSCommentNodeType = JSNodeType | NodeConstants::COMMENT_NOD
 static const uint8_t JSCDATASectionNodeType = JSNodeType | NodeConstants::CDATA_SECTION_NODE;
 static const uint8_t JSAttrNodeType = JSNodeType | NodeConstants::ATTRIBUTE_NODE;
 static const uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NODE;
+static const uint8_t JSAsJSONType = JSElementType;
 
 static_assert(JSDOMWrapperType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
 static_assert(NodeConstants::LastNodeType <= JSNodeTypeMask, "NodeType should be represented in 4bit.");

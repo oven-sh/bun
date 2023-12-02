@@ -5,12 +5,12 @@ class GlobalObject;
 }
 
 #include "root.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 
 namespace JSC {
 class JSGlobalObject;
@@ -56,9 +56,9 @@ public:
         return WebCore::subspaceForImpl<JSFFIFunction, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForFFIFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFFIFunction = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFFIFunction = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForFFIFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFFIFunction = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForFFIFunction = std::forward<decltype(space)>(space); });
     }
 
     DECLARE_EXPORT_INFO;

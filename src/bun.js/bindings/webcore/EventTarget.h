@@ -126,6 +126,13 @@ protected:
 
     virtual void eventListenersDidChange() {}
 
+    enum OnDidChangeListenerKind {
+        Add,
+        Remove,
+        Clear,
+    };
+    WTF::Function<void(EventTarget&, const AtomString& eventName, OnDidChangeListenerKind kind)> onDidChangeListener = WTF::Function<void(EventTarget&, const AtomString& eventName, OnDidChangeListenerKind kind)>(nullptr);
+
 private:
     virtual void refEventTarget() = 0;
     virtual void derefEventTarget() = 0;

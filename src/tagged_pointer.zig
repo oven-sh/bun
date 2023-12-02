@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -23,29 +23,29 @@ pub const TaggedPointer = packed struct {
             @compileError(@typeName(Ptr) ++ " must be a ptr, received: " ++ @tagName(@typeInfo(Ptr)));
         }
 
-        const address = @ptrToInt(ptr);
+        const address = @intFromPtr(ptr);
 
         return TaggedPointer{
-            ._ptr = @truncate(AddressableSize, address),
+            ._ptr = @as(AddressableSize, @truncate(address)),
             .data = data,
         };
     }
 
     pub inline fn get(this: TaggedPointer, comptime Type: type) *Type {
-        return @intToPtr(*Type, @intCast(usize, this._ptr));
+        return @as(*Type, @ptrFromInt(@as(usize, @intCast(this._ptr))));
     }
 
     pub inline fn from(val: anytype) TaggedPointer {
         const ValueType = @TypeOf(val);
         return switch (ValueType) {
-            f64, i64, u64 => @bitCast(TaggedPointer, val),
-            ?*anyopaque, *anyopaque => @bitCast(TaggedPointer, @ptrToInt(val)),
+            f64, i64, u64 => @as(TaggedPointer, @bitCast(val)),
+            ?*anyopaque, *anyopaque => @as(TaggedPointer, @bitCast(@intFromPtr(val))),
             else => @compileError("Unsupported type: " ++ @typeName(ValueType)),
         };
     }
 
     pub inline fn to(this: TaggedPointer) *anyopaque {
-        return @intToPtr(*anyopaque, @bitCast(u64, this));
+        return @as(*anyopaque, @ptrFromInt(@as(u64, @bitCast(this))));
     }
 };
 
@@ -55,7 +55,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
             var decls = [_]std.builtin.Type.Declaration{};
 
-            inline for (Types) |field, i| {
+            inline for (Types, 0..) |field, i| {
                 enumFields[i] = .{
                     .name = comptime typeBaseName(@typeName(field)),
                     .value = 1024 - i,
@@ -75,7 +75,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             var enumFields: [Fields.len]std.builtin.Type.EnumField = undefined;
             var decls = [_]std.builtin.Type.Declaration{};
 
-            inline for (Fields) |field, i| {
+            inline for (Fields, 0..) |field, i| {
                 enumFields[i] = .{
                     .name = comptime typeBaseName(@typeName(field.default_value.?)),
                     .value = 1024 - i,
@@ -97,6 +97,8 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub const Tag = TagType;
         repr: TaggedPointer,
 
+        pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
+
         const This = @This();
         fn assert_type(comptime Type: type) void {
             var name = comptime typeBaseName(@typeName(Type));
@@ -111,7 +113,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         }
 
         pub inline fn tag(this: This) TagType {
-            return @intToEnum(TagType, this.repr.data);
+            return @as(TagType, @enumFromInt(this.repr.data));
         }
 
         /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
@@ -122,7 +124,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn is(this: This, comptime Type: type) bool {
             comptime assert_type(Type);
-            return this.repr.data == comptime @enumToInt(@field(Tag, typeBaseName(@typeName(Type))));
+            return this.repr.data == comptime @intFromEnum(@field(Tag, typeBaseName(@typeName(Type))));
         }
 
         pub fn set(this: *@This(), _ptr: anytype) void {
@@ -135,9 +137,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn isValid(this: This) bool {
             return switch (this.repr.data) {
-                @enumToInt(
+                @intFromEnum(
                     @field(Tag, typeBaseName(@typeName(Types[Types.len - 1]))),
-                )...@enumToInt(
+                )...@intFromEnum(
                     @field(Tag, typeBaseName(@typeName(Types[0]))),
                 ) => true,
                 else => false,
@@ -159,10 +161,18 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn init(_ptr: anytype) This {
             const Type = std.meta.Child(@TypeOf(_ptr));
+            return initWithType(Type, _ptr);
+        }
+
+        pub inline fn initWithType(comptime Type: type, _ptr: anytype) This {
             const name = comptime typeBaseName(@typeName(Type));
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
-            return This{ .repr = TaggedPointer.init(_ptr, @enumToInt(@field(Tag, name))) };
+            return This{ .repr = TaggedPointer.init(_ptr, @intFromEnum(@field(Tag, name))) };
+        }
+
+        pub inline fn isNull(this: This) bool {
+            return this.repr._ptr == 0;
         }
     };
 }

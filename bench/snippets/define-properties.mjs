@@ -19,14 +19,7 @@ const properties = {
   writable: {
     get() {
       const w = this._writableState;
-      return (
-        !!w &&
-        w.writable !== false &&
-        !w.destroyed &&
-        !w.errored &&
-        !w.ending &&
-        !w.ended
-      );
+      return !!w && w.writable !== false && !w.destroyed && !w.errored && !w.ending && !w.ended;
     },
     set(val) {
       if (this._writableState) {

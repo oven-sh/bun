@@ -1,18 +1,14 @@
 import { readFileSync } from "fs";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
-import { bench, run, group } from "mitata";
+import { bench, run, group } from "./runner.mjs";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const esbuild_ = require("esbuild/lib/main");
 const swc_ = require("@swc/core");
 const babel_ = require("@babel/core");
 
-const code = readFileSync(
-  dirname(fileURLToPath(import.meta.url)) +
-    "/../../src/test/fixtures/simple.jsx",
-  "utf-8",
-);
+const code = readFileSync(dirname(fileURLToPath(import.meta.url)) + "/../../src/test/fixtures/simple.jsx", "utf-8");
 
 async function getWithName(name) {
   let transformSync;

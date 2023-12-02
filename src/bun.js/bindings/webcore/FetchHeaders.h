@@ -62,9 +62,16 @@ public:
     ExceptionOr<void> fill(const FetchHeaders&);
     void filterAndFill(const HTTPHeaderMap&, Guard);
 
+    size_t memoryCost() const;
+
     inline uint32_t size()
     {
         return m_headers.size();
+    }
+
+    inline uint32_t sizeAfterJoiningSetCookieHeader()
+    {
+        return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
     }
 
     String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }

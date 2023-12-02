@@ -34,23 +34,23 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             self.available.unset(index);
         }
 
-        pub fn indexOf(self: *const Self, value: *const T) ?u63 {
+        pub fn indexOf(self: *const Self, value: *const T) ?u32 {
             const start = &self.buffer;
-            const end = @ptrCast([*]const T, start) + capacity;
-            if (!(@ptrToInt(value) >= @ptrToInt(start) and @ptrToInt(value) < @ptrToInt(end)))
+            const end = @as([*]const T, @ptrCast(start)) + capacity;
+            if (!(@intFromPtr(value) >= @intFromPtr(start) and @intFromPtr(value) < @intFromPtr(end)))
                 return null;
 
             // aligned to the size of T
-            const index = (@ptrToInt(value) - @ptrToInt(start)) / @sizeOf(T);
+            const index = (@intFromPtr(value) - @intFromPtr(start)) / @sizeOf(T);
             assert(index < capacity);
             assert(&self.buffer[index] == value);
-            return @truncate(u63, index);
+            return @as(u32, @intCast(index));
         }
 
         pub fn in(self: *const Self, value: *const T) bool {
             const start = &self.buffer;
-            const end = @ptrCast([*]const T, start) + capacity;
-            return (@ptrToInt(value) >= @ptrToInt(start) and @ptrToInt(value) < @ptrToInt(end));
+            const end = @as([*]const T, @ptrCast(start)) + capacity;
+            return (@intFromPtr(value) >= @intFromPtr(start) and @intFromPtr(value) < @intFromPtr(end));
         }
 
         pub fn put(self: *Self, value: *T) bool {
@@ -84,6 +84,23 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                 }
 
                 return self.allocator.create(T) catch unreachable;
+            }
+
+            pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
+                if (self.hive.get()) |value| {
+                    new.* = false;
+                    return value;
+                }
+
+                return self.allocator.create(T) catch unreachable;
+            }
+
+            pub fn tryGet(self: *This) !*T {
+                if (self.hive.get()) |value| {
+                    return value;
+                }
+
+                return try self.allocator.create(T);
             }
 
             pub fn put(self: *This, value: *T) void {

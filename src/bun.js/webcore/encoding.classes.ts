@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -6,6 +6,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
+    configurable: false,
     klass: {},
     proto: {
       encoding: {
@@ -14,6 +15,9 @@ export default [
       },
       fatal: {
         getter: "getFatal",
+      },
+      ignoreBOM: {
+        getter: "getIgnoreBOM",
       },
 
       decode: {

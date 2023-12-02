@@ -33,6 +33,7 @@
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/readline.js)
  */
 declare module "readline" {
+  import { Readable, Writable } from "node:stream";
   import { Abortable, EventEmitter } from "node:events";
   import * as promises from "node:readline/promises";
 
@@ -103,8 +104,8 @@ declare module "readline" {
      * @see https://nodejs.org/dist/latest-v10.x/docs/api/readline.html#readline_class_interface
      */
     protected constructor(
-      input: ReadableStream,
-      output?: WritableStream,
+      input: Readable,
+      output?: Writable,
       completer?: Completer | AsyncCompleter,
       terminal?: boolean,
     );
@@ -344,8 +345,8 @@ declare module "readline" {
   ) => void;
   export type CompleterResult = [string[], string];
   export interface ReadLineOptions {
-    input: ReadableStream;
-    output?: WritableStream | undefined;
+    input: Readable;
+    output?: Writable | undefined;
     completer?: Completer | AsyncCompleter | undefined;
     terminal?: boolean | undefined;
     /**
@@ -405,8 +406,8 @@ declare module "readline" {
    * @since v0.1.98
    */
   export function createInterface(
-    input: ReadableStream,
-    output?: WritableStream,
+    input: Readable,
+    output?: Writable,
     completer?: Completer | AsyncCompleter,
     terminal?: boolean,
   ): Interface;
@@ -533,7 +534,7 @@ declare module "readline" {
    * @since v0.7.7
    */
   export function emitKeypressEvents(
-    stream: ReadableStream,
+    stream: Readable,
     readlineInterface?: Interface,
   ): void;
   export type Direction = -1 | 0 | 1;
@@ -549,7 +550,7 @@ declare module "readline" {
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
   export function clearLine(
-    stream: WritableStream,
+    stream: Writable,
     dir: Direction,
     callback?: () => void,
   ): boolean;
@@ -561,7 +562,7 @@ declare module "readline" {
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
   export function clearScreenDown(
-    stream: WritableStream,
+    stream: Writable,
     callback?: () => void,
   ): boolean;
   /**
@@ -572,7 +573,7 @@ declare module "readline" {
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
   export function cursorTo(
-    stream: WritableStream,
+    stream: Writable,
     x: number,
     y?: number,
     callback?: () => void,
@@ -688,7 +689,7 @@ declare module "readline" {
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
   export function moveCursor(
-    stream: WritableStream,
+    stream: Writable,
     dx: number,
     dy: number,
     callback?: () => void,

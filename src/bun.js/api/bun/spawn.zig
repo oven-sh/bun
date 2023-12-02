@@ -1,5 +1,5 @@
-const JSC = @import("bun").JSC;
-const bun = @import("bun");
+const JSC = @import("root").bun.JSC;
+const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
 
@@ -30,13 +30,13 @@ const errno = std.os.errno;
 const mode_t = std.os.mode_t;
 const unexpectedErrno = std.os.unexpectedErrno;
 
-pub const WaitPidResult = struct {
-    pid: pid_t,
-    status: u32,
-};
-
 // mostly taken from zig's posix_spawn.zig
 pub const PosixSpawn = struct {
+    pub const WaitPidResult = struct {
+        pid: pid_t,
+        status: u32,
+    };
+
     pub const Attr = struct {
         attr: system.posix_spawnattr_t,
 
@@ -62,19 +62,27 @@ pub const PosixSpawn = struct {
         pub fn get(self: Attr) !u16 {
             var flags: c_short = undefined;
             switch (errno(system.posix_spawnattr_getflags(&self.attr, &flags))) {
-                .SUCCESS => return @bitCast(u16, flags),
+                .SUCCESS => return @as(u16, @bitCast(flags)),
                 .INVAL => unreachable,
                 else => |err| return unexpectedErrno(err),
             }
         }
 
         pub fn set(self: *Attr, flags: u16) !void {
-            switch (errno(system.posix_spawnattr_setflags(&self.attr, @bitCast(c_short, flags)))) {
+            switch (errno(system.posix_spawnattr_setflags(&self.attr, @as(c_short, @bitCast(flags))))) {
                 .SUCCESS => return,
                 .INVAL => unreachable,
                 else => |err| return unexpectedErrno(err),
             }
         }
+
+        pub fn resetSignals(this: *Attr) !void {
+            if (posix_spawnattr_reset_signals(&this.attr) != 0) {
+                return error.SystemResources;
+            }
+        }
+
+        extern fn posix_spawnattr_reset_signals(attr: *system.posix_spawnattr_t) c_int;
     };
 
     pub const Actions = struct {
@@ -107,7 +115,7 @@ pub const PosixSpawn = struct {
         }
 
         pub fn openZ(self: *Actions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @bitCast(c_int, flags), mode))) {
+            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @as(c_int, @bitCast(flags)), mode))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -206,24 +214,25 @@ pub const PosixSpawn = struct {
             envp,
         );
         if (comptime bun.Environment.allow_assert)
-            JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
-                path, rc, pid,
+            bun.sys.syslog("posix_spawn({s}) = {d} ({d})", .{
+                path,
+                rc,
+                pid,
             });
 
-        if (comptime bun.Environment.isLinux) {
-            // rc is negative because it's libc errno
-            if (rc > 0) {
-                if (Maybe(pid_t).errnoSysP(-rc, .posix_spawn, path)) |err| {
-                    return err;
-                }
-            }
-        } else {
-            if (Maybe(pid_t).errnoSysP(rc, .posix_spawn, path)) |err| {
-                return err;
-            }
+        // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
+        // That is why std.c.getErrno() is not used here, since that checks for -1.
+        if (rc == 0) {
+            return Maybe(pid_t){ .result = pid };
         }
 
-        return Maybe(pid_t){ .result = pid };
+        return Maybe(pid_t){
+            .err = .{
+                .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
+                .syscall = .posix_spawn,
+                .path = bun.asByteSlice(path),
+            },
+        };
     }
 
     pub fn spawnp(
@@ -279,14 +288,14 @@ pub const PosixSpawn = struct {
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
         const Status = c_int;
-        var status: Status = undefined;
+        var status: Status = 0;
         while (true) {
-            const rc = system.waitpid(pid, &status, @intCast(c_int, flags));
+            const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {
                 .SUCCESS => return Maybe(WaitPidResult){
                     .result = .{
-                        .pid = @intCast(pid_t, rc),
-                        .status = @bitCast(u32, status),
+                        .pid = @as(pid_t, @intCast(rc)),
+                        .status = @as(u32, @bitCast(status)),
                     },
                 },
                 .INTR => continue,

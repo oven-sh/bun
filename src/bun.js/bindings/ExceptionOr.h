@@ -29,9 +29,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "root.h"
 
 #include "Exception.h"
-#include "wtf/CrossThreadCopier.h"
-#include "wtf/Expected.h"
-#include "wtf/StdLibExtras.h"
+#include <wtf/CrossThreadCopier.h>
+#include <wtf/Expected.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {
 
@@ -116,25 +116,21 @@ template<typename ReturnType> inline bool ExceptionOr<ReturnType>::hasException(
 
 template<typename ReturnType> inline const Exception& ExceptionOr<ReturnType>::exception() const
 {
-    ASSERT(!m_wasReleased);
     return m_value.error();
 }
 
 template<typename ReturnType> inline Exception ExceptionOr<ReturnType>::releaseException()
 {
-    ASSERT(!std::exchange(m_wasReleased, true));
     return WTFMove(m_value.error());
 }
 
 template<typename ReturnType> inline const ReturnType& ExceptionOr<ReturnType>::returnValue() const
 {
-    ASSERT(!m_wasReleased);
     return m_value.value();
 }
 
 template<typename ReturnType> inline ReturnType ExceptionOr<ReturnType>::releaseReturnValue()
 {
-    ASSERT(!std::exchange(m_wasReleased, true));
     return WTFMove(m_value.value());
 }
 
@@ -185,13 +181,11 @@ inline bool ExceptionOr<void>::hasException() const
 
 inline const Exception& ExceptionOr<void>::exception() const
 {
-    ASSERT(!m_wasReleased);
     return m_value.error();
 }
 
 inline Exception ExceptionOr<void>::releaseException()
 {
-    ASSERT(!std::exchange(m_wasReleased, true));
     return WTFMove(m_value.error());
 }
 

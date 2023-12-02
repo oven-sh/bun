@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -95,7 +95,7 @@ pub const Arguments = struct {
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
-            raw_args = .{ .capacity = positionals.len, .items = @intToPtr([*][]const u8, @ptrToInt(positionals.ptr))[0..positionals.len] };
+            raw_args = .{ .capacity = positionals.len, .items = @as([*][]const u8, @ptrFromInt(@intFromPtr(positionals.ptr)))[0..positionals.len] };
         } else {
             raw_args = .{};
         }
@@ -112,7 +112,7 @@ pub const Arguments = struct {
         if (args.option("--file")) |file_path| {
             if (file_path.len > 0) {
                 var cwd = try std.process.getCwd(&cwd_buf);
-                var parts = [_]string{std.mem.span(file_path)};
+                var parts = [_]string{file_path};
                 var absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
                 file_path_buf[absolute_path.len] = 0;
                 file_path_buf[absolute_path.len + 1] = 0;
@@ -136,7 +136,7 @@ pub const Arguments = struct {
             var raw_arg_i: usize = 0;
             while (raw_arg_i < raw_args.items.len) : (raw_arg_i += 1) {
                 const arg = raw_args.items[raw_arg_i];
-                if (MethodNames.get(std.mem.span(arg))) |method_| {
+                if (MethodNames.get(arg[0..])) |method_| {
                     method = method_;
                     _ = raw_args.swapRemove(raw_arg_i);
                 }
@@ -177,7 +177,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.http;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
@@ -198,7 +198,7 @@ pub fn main() anyerror!void {
     try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
-    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests = args.concurrency;
+    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .Monotonic);
     const Group = struct {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
@@ -244,7 +244,7 @@ pub fn main() anyerror!void {
             const http = channel.readItem() catch continue;
             read_count += 1;
 
-            Output.printElapsed(@floatCast(f64, @intToFloat(f128, http.elapsed) / std.time.ns_per_ms));
+            Output.printElapsed(@as(f64, @floatCast(@as(f128, @floatFromInt(http.elapsed)) / std.time.ns_per_ms)));
             if (http.response) |resp| {
                 if (resp.status_code == 200) {
                     success_count += 1;
@@ -270,7 +270,7 @@ pub fn main() anyerror!void {
                         http.client.url.href,
                         http.response_buffer.list.items.len,
                     });
-                    Output.printElapsed(@floatCast(f64, @intToFloat(f128, http.gzip_elapsed) / std.time.ns_per_ms));
+                    Output.printElapsed(@as(f64, @floatCast(@as(f128, @floatFromInt(http.gzip_elapsed)) / std.time.ns_per_ms)));
                     Output.prettyError("<d> gzip)<r>\n", .{});
                 } else {
                     Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes)<r>\n", .{
@@ -295,7 +295,7 @@ pub fn main() anyerror!void {
             fail_count,
         });
 
-        Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
+        Output.printElapsed(@as(f64, @floatCast(@as(f128, @floatFromInt(timer.read())) / std.time.ns_per_ms)));
         Output.prettyErrorln(" {d} requests", .{
             read_count,
         });

@@ -1,5 +1,0 @@
-*.bun
-node_modules
-pnpm-log.yaml
-yarn-error.log
-yarn.lock

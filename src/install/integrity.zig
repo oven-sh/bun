@@ -3,34 +3,26 @@ const strings = @import("../string_immutable.zig");
 const Crypto = @import("../sha.zig").Hashers;
 
 pub const Integrity = extern struct {
+    const empty_digest_buf: [Integrity.digest_buf_len]u8 = [_]u8{0} ** Integrity.digest_buf_len;
+
     tag: Tag = Tag.unknown,
     /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
     /// We transform it though.
-    value: [digest_buf_len]u8 = undefined,
+    value: [digest_buf_len]u8 = empty_digest_buf,
 
     const Base64 = std.base64.standard_no_pad;
 
-    pub const digest_buf_len: usize = brk: {
-        const values = [_]usize{
-            std.crypto.hash.Sha1.digest_length,
-            std.crypto.hash.sha2.Sha512.digest_length,
-            std.crypto.hash.sha2.Sha256.digest_length,
-            std.crypto.hash.sha2.Sha384.digest_length,
-        };
-
-        var value: usize = 0;
-        for (values) |val| {
-            value = @max(val, value);
-        }
-
-        break :brk value;
-    };
+    pub const digest_buf_len: usize = @max(
+        std.crypto.hash.Sha1.digest_length,
+        std.crypto.hash.sha2.Sha512.digest_length,
+        std.crypto.hash.sha2.Sha256.digest_length,
+        std.crypto.hash.sha2.Sha384.digest_length,
+    );
 
     pub fn parseSHASum(buf: []const u8) !Integrity {
         if (buf.len == 0) {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         }
 
@@ -40,8 +32,11 @@ pub const Integrity = extern struct {
         var out_i: usize = 0;
         var i: usize = 0;
 
-        {
-            std.mem.set(u8, &integrity.value, 0);
+        // initializer should zero it out
+        if (comptime @import("root").bun.Environment.allow_assert) {
+            for (integrity.value) |c| {
+                std.debug.assert(c == 0);
+            }
         }
 
         while (i < end) {
@@ -61,7 +56,7 @@ pub const Integrity = extern struct {
             });
 
             // parse hex integer
-            integrity.value[out_i] = @truncate(u8, x0 << 4 | x1);
+            integrity.value[out_i] = @as(u8, @truncate(x0 << 4 | x1));
 
             out_i += 1;
             i += 1;
@@ -74,23 +69,20 @@ pub const Integrity = extern struct {
         if (buf.len < "sha256-".len) {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         }
 
-        var out: [digest_buf_len]u8 = undefined;
+        var out: [digest_buf_len]u8 = empty_digest_buf;
         const tag = Tag.parse(buf);
         if (tag == Tag.unknown) {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         }
 
         Base64.Decoder.decode(&out, std.mem.trimRight(u8, buf["sha256-".len..], "=")) catch {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         };
 
@@ -111,13 +103,13 @@ pub const Integrity = extern struct {
         _,
 
         pub inline fn isSupported(this: Tag) bool {
-            return @enumToInt(this) >= @enumToInt(Tag.sha1) and @enumToInt(this) <= @enumToInt(Tag.sha512);
+            return @intFromEnum(this) >= @intFromEnum(Tag.sha1) and @intFromEnum(this) <= @intFromEnum(Tag.sha512);
         }
 
         pub fn parse(buf: []const u8) Tag {
             const Matcher = strings.ExactSizeMatcher(8);
 
-            const i = std.mem.indexOfScalar(u8, buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
+            const i = strings.indexOfChar(buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
 
             return switch (Matcher.match(buf[0..i])) {
                 Matcher.case("sha1") => Tag.sha1,
@@ -202,5 +194,14 @@ pub const Integrity = extern struct {
         }
 
         unreachable;
+    }
+
+    comptime {
+        var integrity = Integrity{ .tag = Tag.sha1 };
+        for (integrity.value) |c| {
+            if (c != 0) {
+                @compileError("Integrity buffer is not zeroed");
+            }
+        }
     }
 };

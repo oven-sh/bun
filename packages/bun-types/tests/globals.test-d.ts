@@ -64,3 +64,35 @@ expectType<Promise<void>>(fsPromises.mkdir("./index.d.ts"));
 Bun.env;
 
 Bun.version;
+
+setImmediate;
+clearImmediate;
+setInterval;
+clearInterval;
+setTimeout;
+clearTimeout;
+
+const arg = new AbortSignal();
+arg;
+
+const e = new CustomEvent("asdf");
+console.log(e);
+
+exports;
+module.exports;
+
+global.AbortController;
+global.Bun;
+
+const er = new DOMException();
+er.name;
+er.HIERARCHY_REQUEST_ERR;
+
+new Request(new Request("https://example.com"), {});
+new Request("", { method: "POST" });
+
+Bun.sleepSync(1); // sleep for 1 ms (not recommended)
+await Bun.sleep(1); // sleep for 1 ms (recommended)
+
+Blob;
+WebSocket;

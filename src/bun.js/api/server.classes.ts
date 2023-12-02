@@ -1,25 +1,76 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 function generate(name) {
   return define({
     name,
     proto: {
       fetch: {
-        fn: "fetch",
+        fn: "doFetch",
         length: 1,
       },
+      upgrade: {
+        fn: "doUpgrade",
+        length: 1,
+      },
+      publish: {
+        fn: "doPublish",
+        length: 3,
+      },
+      reload: {
+        fn: "doReload",
+        length: 2,
+      },
+      stop: {
+        fn: "doStop",
+        length: 1,
+      },
+      requestIP: {
+        fn: "doRequestIP",
+        length: 1,
+      },
+      port: {
+        getter: "getPort",
+      },
+      id: {
+        getter: "getId",
+        cache: true,
+      },
+      pendingRequests: {
+        getter: "getPendingRequests",
+      },
+      pendingWebSockets: {
+        getter: "getPendingWebSockets",
+      },
+      hostname: {
+        getter: "getHostname",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
+        cache: true,
+      },
+      url: {
+        getter: "getURL",
+        cache: true,
+      },
+      protocol: {
+        getter: "getProtocol",
+      },
+      development: {
+        getter: "getDevelopment",
+      },
     },
-    values: ["callback"],
     klass: {},
     finalize: true,
     construct: true,
+    noConstructor: true,
   });
 }
 export default [
-  // generate(`HTTPServer`),
-  // generate(`DebugModeHTTPServer`),
-  // generate(`HTTPSServer`),
-  // generate(`DebugModeHTTPSServer`),
+  generate(`HTTPServer`),
+  generate(`DebugHTTPServer`),
+  generate(`HTTPSServer`),
+  generate(`DebugHTTPSServer`),
 
   define({
     name: "ServerWebSocket",
@@ -32,20 +83,29 @@ export default [
       sendText: {
         fn: "sendText",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "bool"],
-        },
+        // ASSERTION FAILED: m_data[index].lockCount
+        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
+        // 1   0x102740124 WTFCrash
+        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
+        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
+        // DOMJIT: {
+        //   returns: "int",
+        //   args: ["JSString", "bool"],
+        // },
       },
       sendBinary: {
         fn: "sendBinary",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSUint8Array", "bool"],
-        },
+        // ASSERTION FAILED: m_data[index].lockCount
+        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
+        // 1   0x102740124 WTFCrash
+        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
+        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
+        // DOMJIT: {
+        //   returns: "int",
+        //   args: ["JSUint8Array", "bool"],
+        // },
       },
-
       publishText: {
         fn: "publishText",
         length: 2,
@@ -62,10 +122,21 @@ export default [
           args: ["JSString", "JSUint8Array"],
         },
       },
-
+      ping: {
+        fn: "ping",
+        length: 1,
+      },
+      pong: {
+        fn: "pong",
+        length: 1,
+      },
       close: {
         fn: "close",
-        length: 1,
+        length: 3,
+      },
+      terminate: {
+        fn: "terminate",
+        length: 0,
       },
       cork: {
         fn: "cork",
@@ -103,11 +174,6 @@ export default [
         fn: "isSubscribed",
         length: 1,
       },
-
-      // topics: {
-      //   getter: "getTopics",
-      // },
-
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,

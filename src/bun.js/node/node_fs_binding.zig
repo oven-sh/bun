@@ -1,11 +1,11 @@
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const FeatureFlags = @import("bun").FeatureFlags;
+const FeatureFlags = @import("root").bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
@@ -44,12 +44,16 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             const args = if (comptime Arguments != void)
                 (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
-                    std.debug.assert(exceptionref != null);
-                    globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                    // we might've already thrown
+                    if (exceptionref != null)
+                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
                     return .zero;
                 })
             else
                 Arguments{};
+            defer {
+                if (comptime Arguments != void and @hasDecl(Arguments, "deinit")) args.deinit();
+            }
 
             const exception1 = JSC.JSValue.c(exceptionref);
 
@@ -63,6 +67,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 args,
                 comptime Flavor.sync,
             );
+
             switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
@@ -91,53 +96,57 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     return NodeBindingClosure.bind;
 }
 
-fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
-    // const FunctionType = @TypeOf(Function);
-    _ = Function;
+fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
+    const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
+    const FunctionType = @TypeOf(Function);
 
-    // const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
-    // comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    // const Arguments = comptime function.args[2].type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
-    // const Result = comptime function.return_type.?;
-    // comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{s} is missing fromJS()", .{@typeName(Arguments)}));
-    // comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{s} is missing toJS()", .{@typeName(Result)}));
+    const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
+    comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
+    const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
         pub fn bind(
             _: *JSC.Node.NodeJSFS,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            globalObject.throw("Not implemented yet", .{});
-            return .zero;
-            // var slice = ArgumentsSlice.init(arguments);
+            var arguments = callframe.arguments(8);
 
-            // defer {
-            //     for (arguments.len) |arg| {
-            //         JSC.C.JSValueUnprotect(ctx, arg);
-            //     }
-            //     slice.arena.deinit();
-            // }
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            var exceptionref: JSC.C.JSValueRef = null;
+            const args = if (comptime Arguments != void)
+                (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
+                    // we might've already thrown
+                    if (exceptionref != null)
+                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                    slice.deinit();
+                    return .zero;
+                })
+            else
+                Arguments{};
 
-            // const args = if (comptime Arguments != void)
-            //     Arguments.fromJS(ctx, &slice, exception)
-            // else
-            //     Arguments{};
-            // if (exception.* != null) return null;
+            const exception1 = JSC.JSValue.c(exceptionref);
 
-            // const result: Maybe(Result) = Function(this, comptime Flavor.sync, args);
-            // switch (result) {
-            //     .err => |err| {
-            //         exception.* = err.toJS(ctx);
-            //         return null;
-            //     },
-            //     .result => |res| {
-            //         return switch (comptime Result) {
-            //             void => JSC.JSValue.jsUndefined().asRef(),
-            //             else => res.toJS(ctx),
-            //         };
-            //     },
-            // }
-            // unreachable;
+            if (exception1 != .zero) {
+                globalObject.throwValue(exception1);
+
+                slice.deinit();
+                return .zero;
+            }
+
+            // TODO: handle globalObject.throwValue
+
+            const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
+            if (comptime FunctionEnum == .cp) {
+                return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
+            } else {
+                if (comptime FunctionEnum == .readdir) {
+                    if (args.recursive) {
+                        return JSC.Node.Async.readdir_recursive.create(globalObject, args, globalObject.bunVM());
+                    }
+                }
+
+                return Task.create(globalObject, args, globalObject.bunVM());
+            }
         }
     };
     return NodeBindingClosure.bind;
@@ -157,6 +166,7 @@ pub const NodeJSFS = struct {
     pub const appendFile = call(.appendFile);
     pub const close = call(.close);
     pub const copyFile = call(.copyFile);
+    pub const cp = call(.cp);
     pub const exists = call(.exists);
     pub const chown = call(.chown);
     pub const chmod = call(.chmod);
@@ -192,6 +202,7 @@ pub const NodeJSFS = struct {
     pub const accessSync = callSync(.access);
     pub const appendFileSync = callSync(.appendFile);
     pub const closeSync = callSync(.close);
+    pub const cpSync = callSync(.cp);
     pub const copyFileSync = callSync(.copyFile);
     pub const existsSync = callSync(.exists);
     pub const chownSync = callSync(.chown);
@@ -225,6 +236,10 @@ pub const NodeJSFS = struct {
     pub const lutimesSync = callSync(.lutimes);
     pub const rmSync = callSync(.rm);
     pub const rmdirSync = callSync(.rmdir);
+    pub const writev = call(.writev);
+    pub const writevSync = callSync(.writev);
+    pub const readv = call(.readv);
+    pub const readvSync = callSync(.readv);
 
     pub const fdatasyncSync = callSync(.fdatasync);
     pub const fdatasync = call(.fdatasync);
@@ -233,12 +248,16 @@ pub const NodeJSFS = struct {
         return JSC.Node.Dirent.getConstructor(globalThis);
     }
 
+    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.Node.StatsSmall.getConstructor(globalThis);
+    }
+
+    pub const watch = callSync(.watch);
+    pub const watchFile = callSync(.watchFile);
+    pub const unwatchFile = callSync(.unwatchFile);
+
     // Not implemented yet:
     const notimpl = fdatasync;
     pub const opendir = notimpl;
     pub const opendirSync = notimpl;
-    pub const readv = notimpl;
-    pub const readvSync = notimpl;
-    pub const writev = notimpl;
-    pub const writevSync = notimpl;
 };

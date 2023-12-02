@@ -57,14 +57,14 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case BaseAudioContextEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<BaseAudioContext&>(impl));
         // #endif
-        //     case BroadcastChannelEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
+    case BroadcastChannelEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
         //     case ClipboardEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<Clipboard&>(impl));
         //     case DOMApplicationCacheEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<DOMApplicationCache&>(impl));
-        //     case DOMWindowEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<DOMWindow&>(impl));
+    case DOMWindowEventTargetInterfaceType:
+        return globalObject;
         //     case DedicatedWorkerGlobalScopeEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<DedicatedWorkerGlobalScope&>(impl));
         //     case EventSourceEventTargetInterfaceType:
@@ -117,8 +117,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case MediaStreamTrackEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<MediaStreamTrack&>(impl));
         // #endif
-        //     case MessagePortEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<MessagePort&>(impl));
+    case MessagePortEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<MessagePort&>(impl));
         //     case NodeEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<Node&>(impl));
         // #if ENABLE(NOTIFICATIONS)
@@ -265,15 +265,18 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case WebXRSystemEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<WebXRSystem&>(impl));
         // #endif
-        //     case WorkerEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<Worker&>(impl));
-        //     case WorkletGlobalScopeEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<WorkletGlobalScope&>(impl));
-        //     case XMLHttpRequestEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<XMLHttpRequest&>(impl));
-        //     case XMLHttpRequestUploadEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<XMLHttpRequestUpload&>(impl));
-        //     }
+    case WorkerEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<Worker&>(impl));
+    //     case WorkletGlobalScopeEventTargetInterfaceType:
+    //         return toJS(state, globalObject, static_cast<WorkletGlobalScope&>(impl));
+    //     case XMLHttpRequestEventTargetInterfaceType:
+    //         return toJS(state, globalObject, static_cast<XMLHttpRequest&>(impl));
+    //     case XMLHttpRequestUploadEventTargetInterfaceType:
+    //         return toJS(state, globalObject, static_cast<XMLHttpRequestUpload&>(impl));
+    //     }
+    default: {
+        break;
+    }
     }
     return wrap(state, globalObject, impl);
 }

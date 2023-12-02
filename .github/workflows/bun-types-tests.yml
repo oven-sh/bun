@@ -1,16 +1,16 @@
-name: Test bun-types
+name: bun-types
 on:
   push:
     paths:
-      - 'packages/bun-types/**'
+      - "packages/bun-types/**"
     branches: [main]
   pull_request:
     paths:
-      - 'packages/bun-types/**'
+      - "packages/bun-types/**"
 
 jobs:
   tests:
-    name: Build and test
+    name: type-tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,10 +21,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install node
         uses: actions/setup-node@v3
@@ -32,7 +31,8 @@ jobs:
           node-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: |
+          bun install
 
       - name: Generate package
         run: bun run build

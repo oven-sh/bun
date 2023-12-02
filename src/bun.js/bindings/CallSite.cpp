@@ -45,7 +45,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
         m_function.set(vm, this, JSC::jsUndefined());
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
     } else {
-        if (callFrame) {
+        if (callFrame && callFrame->thisValue()) {
             // We know that we're not in strict mode
             m_thisValue.set(vm, this, callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy()));
         } else {
@@ -84,6 +84,43 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisCallSite->m_function);
     visitor.append(thisCallSite->m_functionName);
     visitor.append(thisCallSite->m_sourceURL);
+}
+
+void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
+{
+    JSString* myTypeName = jsTypeStringForValue(globalObject, thisValue());
+    JSString* myFunction = functionName().toString(globalObject);
+    JSString* myFunctionName = functionName().toString(globalObject);
+    JSString* mySourceURL = sourceURL().toString(globalObject);
+
+    JSString* myColumnNumber = columnNumber().toInt32(globalObject) != -1 ? columnNumber().toString(globalObject) : jsEmptyString(vm);
+    JSString* myLineNumber = lineNumber().toInt32(globalObject) != -1 ? lineNumber().toString(globalObject) : jsEmptyString(vm);
+
+    bool myIsConstructor = isConstructor();
+
+    if (myFunctionName->length() > 0) {
+        if (myIsConstructor) {
+            sb.append("new "_s);
+        } else {
+            // TODO: print type or class name if available
+            // sb.append(myTypeName->getString(globalObject));
+            // sb.append(" "_s);
+        }
+        sb.append(myFunctionName->getString(globalObject));
+    } else {
+        sb.append("<anonymous>"_s);
+    }
+    sb.append(" ("_s);
+    if (isNative()) {
+        sb.append("native"_s);
+    } else {
+        sb.append(mySourceURL->getString(globalObject));
+        sb.append(":"_s);
+        sb.append(myLineNumber->getString(globalObject));
+        sb.append(":"_s);
+        sb.append(myColumnNumber->getString(globalObject));
+    }
+    sb.append(")"_s);
 }
 
 DEFINE_VISIT_CHILDREN(CallSite);

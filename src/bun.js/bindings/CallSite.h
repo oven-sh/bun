@@ -8,6 +8,7 @@
 #include "ErrorStackTrace.h"
 
 #include <JavaScriptCore/JSObject.h>
+#include "BunClientData.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -60,9 +61,9 @@ public:
         return WebCore::subspaceForImpl<CallSite, UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForCallSite.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCallSite = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCallSite = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForCallSite.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCallSite = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCallSite = std::forward<decltype(space)>(space); });
     }
 
     JSC::JSValue thisValue() const { return m_thisValue.get(); }
@@ -76,11 +77,17 @@ public:
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
 
+    void setLineNumber(JSC::JSValue lineNumber) { m_lineNumber = lineNumber; }
+    void setColumnNumber(JSC::JSValue columnNumber) { m_columnNumber = columnNumber; }
+
+    void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
+
 private:
     CallSite(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
         , m_lineNumber(-1)
         , m_columnNumber(-1)
+        , m_flags(0)
     {
     }
 

@@ -9,7 +9,7 @@
  */
 declare module "fs/promises" {
   import { ArrayBufferView } from "bun";
-  import {
+  import type {
     Stats,
     BigIntStats,
     StatOptions,
@@ -25,7 +25,12 @@ declare module "fs/promises" {
     SimlinkType,
     Abortable,
     RmOptions,
+    RmDirOptions,
+    WatchOptions,
+    WatchEventType,
   } from "node:fs";
+
+  const constants: typeof import("node:fs")["constants"];
 
   interface FlagAndOpenMode {
     mode?: Mode | undefined;
@@ -83,6 +88,7 @@ declare module "fs/promises" {
    * @param [mode=fs.constants.F_OK]
    * @return Fulfills with `undefined` upon success.
    */
+
   function access(path: PathLike, mode?: number): Promise<void>;
   /**
    * Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it
@@ -677,9 +683,121 @@ declare module "fs/promises" {
    * @since v14.14.0
    */
   export function rm(path: PathLike, options?: RmOptions): Promise<void>;
+
+  /**
+   * Asynchronously test whether or not the given path exists by checking with the file system.
+   *
+   * ```ts
+   * import { exists } from 'fs/promises';
+   *
+   * const e = await exists('/etc/passwd');
+   * e; // boolean
+   * ```
+   */
+  function exists(path: PathLike): Promise<boolean>;
+
+  /**
+   * @deprecated Use `fs.promises.rm()` instead.
+   *
+   * Asynchronously remove a directory.
+   *
+   * ```ts
+   * import { rmdir } from 'fs/promises';
+   *
+   * // remove a directory
+   * await rmdir('/tmp/mydir'); // Promise<void>
+   * ```
+   *
+   * To remove a directory recursively, use `fs.promises.rm()` instead, with the `recursive` option set to `true`.
+   */
+  function rmdir(path: PathLike, options?: RmDirOptions): Promise<void>;
+
+  interface FileChangeInfo<T extends string | Buffer> {
+    eventType: WatchEventType;
+    filename: T;
+  }
+  /**
+   * Returns an async iterator that watches for changes on `filename`, where `filename`is either a file or a directory.
+   *
+   * ```js
+   * const { watch } = require('node:fs/promises');
+   *
+   * const ac = new AbortController();
+   * const { signal } = ac;
+   * setTimeout(() => ac.abort(), 10000);
+   *
+   * (async () => {
+   *   try {
+   *     const watcher = watch(__filename, { signal });
+   *     for await (const event of watcher)
+   *       console.log(event);
+   *   } catch (err) {
+   *     if (err.name === 'AbortError')
+   *       return;
+   *     throw err;
+   *   }
+   * })();
+   * ```
+   *
+   * On most platforms, `'rename'` is emitted whenever a filename appears or
+   * disappears in the directory.
+   *
+   * All the `caveats` for `fs.watch()` also apply to `fsPromises.watch()`.
+   * @since v0.6.8
+   * @return of objects with the properties:
+   */
+  function watch(
+    filename: PathLike,
+    options:
+      | (WatchOptions & {
+          encoding: "buffer";
+        })
+      | "buffer",
+  ): AsyncIterable<FileChangeInfo<Buffer>>;
+  /**
+   * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   * @param options Either the encoding for the filename provided to the listener, or an object optionally specifying encoding, persistent, and recursive options.
+   * If `encoding` is not supplied, the default of `'utf8'` is used.
+   * If `persistent` is not supplied, the default of `true` is used.
+   * If `recursive` is not supplied, the default of `false` is used.
+   */
+  function watch(
+    filename: PathLike,
+    options?: WatchOptions | BufferEncoding,
+  ): AsyncIterable<FileChangeInfo<string>>;
+  /**
+   * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   * @param options Either the encoding for the filename provided to the listener, or an object optionally specifying encoding, persistent, and recursive options.
+   * If `encoding` is not supplied, the default of `'utf8'` is used.
+   * If `persistent` is not supplied, the default of `true` is used.
+   * If `recursive` is not supplied, the default of `false` is used.
+   */
+  function watch(
+    filename: PathLike,
+    options: WatchOptions | string,
+  ):
+    | AsyncIterable<FileChangeInfo<string>>
+    | AsyncIterable<FileChangeInfo<Buffer>>;
+  /**
+   * Asynchronously copies the entire directory structure from `source` to `destination`,
+   * including subdirectories and files.
+   *
+   * When copying a directory to another directory, globs are not supported and
+   * behavior is similar to `cp dir1/ dir2/`.
+   *
+   * @param source source path to copy.
+   * @param destination destination path to copy to.
+   * @return Fulfills with `undefined` upon success.
+   */
+  function cp(
+    source: string | URL,
+    destination: string | URL,
+    options?: CopyOptions,
+  ): Promise<void>;
 }
 
 declare module "node:fs/promises" {
-  import * as fsPromises from "fs/promises";
-  export = fsPromises;
+  export * from "fs/promises";
 }

@@ -5,14 +5,14 @@ class GlobalObject;
 }
 
 #include "root.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 #include "js_native_api_types.h"
-#include "JavaScriptCore/JSWeakValue.h"
+#include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
 
 namespace JSC {
@@ -61,8 +61,8 @@ public:
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
 
-class NapiRef : public RefCounted<NapiRef>, public CanMakeWeakPtr<NapiRef> {
-    WTF_MAKE_FAST_ALLOCATED;
+class NapiRef {
+    WTF_MAKE_ISO_ALLOCATED(NapiRef);
 
 public:
     void ref();
@@ -135,9 +135,9 @@ public:
         return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
     }
 
     DECLARE_EXPORT_INFO;
@@ -155,8 +155,6 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    static CallData getConstructData(JSCell* cell);
-
     FFIFunction constructor()
     {
         return m_constructor;
@@ -164,6 +162,7 @@ public:
 
     void* dataPtr = nullptr;
     FFIFunction m_constructor = nullptr;
+    NapiRef* napiRef = nullptr;
 
 private:
     NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure)
@@ -212,15 +211,25 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    NapiPrototype* subclass(JSC::JSObject* newTarget)
+    NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)
     {
         auto& vm = this->vm();
-        auto* structure = InternalFunction::createSubclassStructure(globalObject(),
-            newTarget,
-            this->structure());
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* targetFunction = jsCast<JSFunction*>(newTarget);
+        FunctionRareData* rareData = targetFunction->ensureRareData(vm);
+        auto* prototype = newTarget->get(globalObject, vm.propertyNames->prototype).getObject();
+        RETURN_IF_EXCEPTION(scope, nullptr);
+
+        // This must be kept in-sync with InternalFunction::createSubclassStructure
+        Structure* structure = rareData->internalFunctionAllocationStructure();
+        if (UNLIKELY(!(structure && structure->classInfoForCells() == this->structure()->classInfoForCells() && structure->globalObject() == globalObject))) {
+            structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+        }
+
+        RETURN_IF_EXCEPTION(scope, nullptr);
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
-        return footprint;
+        RELEASE_AND_RETURN(scope, footprint);
     }
 
     NapiRef* napiRef = nullptr;

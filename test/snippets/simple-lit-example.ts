@@ -3,7 +3,7 @@ import { LitElement, html, css } from "lit";
 import { customElement, property, eventOptions } from "lit/decorators.js";
 
 var loadedResolve;
-var loadedPromise = new Promise((resolve) => {
+var loadedPromise = new Promise(resolve => {
   loadedResolve = resolve;
 });
 
@@ -35,11 +35,7 @@ export class MyElement extends LitElement {
   @property() planet = "Earth";
 
   render() {
-    return html`
-      <span @click=${this.togglePlanet} class="planet" id="planet-id"
-        >${this.planet}</span
-      >
-    `;
+    return html` <span @click=${this.togglePlanet} class="planet" id="planet-id">${this.planet}</span> `;
   }
 
   @eventOptions({ once: true })

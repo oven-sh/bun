@@ -1,11 +1,12 @@
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Fs = @import("../fs.zig");
 const js_ast = bun.JSAst;
 const Bundler = bun.Bundler;
 const strings = bun.strings;
+
 pub const FallbackEntryPoint = struct {
     code_buffer: [8096]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -85,9 +86,9 @@ pub const ClientEntryPoint = struct {
         var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
         var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
 
-        std.mem.copy(u8, outbuffer[generated_path.len..], ".entry");
+        bun.copy(u8, outbuffer[generated_path.len..], ".entry");
         generated_path = outbuffer[0 .. generated_path.len + ".entry".len];
-        std.mem.copy(u8, outbuffer[generated_path.len..], original_path.ext);
+        bun.copy(u8, outbuffer[generated_path.len..], original_path.ext);
         return outbuffer[0 .. generated_path.len + original_path.ext.len];
     }
 
@@ -99,7 +100,7 @@ pub const ClientEntryPoint = struct {
             original_ext = original_path.ext[entry_i + "entry".len ..];
         }
 
-        std.mem.copy(u8, outbuffer[generated_path.len..], original_ext);
+        bun.copy(u8, outbuffer[generated_path.len..], original_ext);
 
         return outbuffer[0 .. generated_path.len + original_ext.len];
     }
@@ -156,44 +157,43 @@ pub const ClientEntryPoint = struct {
     }
 };
 
+const QuoteEscapeFormat = struct {
+    data: []const u8,
+
+    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
+            try writer.writeAll(self.data[i..j]);
+            try writer.writeAll(switch (self.data[j]) {
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\\' => "\\\\",
+                else => unreachable,
+            });
+        }
+        if (i == self.data.len) return;
+        try writer.writeAll(self.data[i..]);
+    }
+};
+
 pub const ServerEntryPoint = struct {
-    code_buffer: [bun.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
-    output_code_buffer: [bun.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
     source: logger.Source = undefined,
 
     pub fn generate(
         entry: *ServerEntryPoint,
+        allocator: std.mem.Allocator,
         is_hot_reload_enabled: bool,
-        original_path: Fs.PathName,
+        path_to_use: string,
         name: string,
     ) !void {
-
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        const dir_to_use: string = original_path.dirWithTrailingSlash();
-
         const code = brk: {
             if (is_hot_reload_enabled) {
-                break :brk try std.fmt.bufPrint(
-                    &entry.code_buffer,
-                    \\//Auto-generated file
-                    \\var cjsSymbol = Symbol.for("CommonJS");
+                break :brk try std.fmt.allocPrint(
+                    allocator,
+                    \\// @bun
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
-                    \\import * as start from '{s}{s}';
-                    \\export * from '{s}{s}';
+                    \\import * as start from '{}';
                     \\var entryNamespace = start;
-                    \\var cjs = start?.default;
-                    \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                    \\  entryNamespace = cjs();
-                    \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                     \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
@@ -202,7 +202,7 @@ pub const ServerEntryPoint = struct {
                     \\           server.reload(entryNamespace.default);
                     \\        }} else {{
                     \\           server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
-                    \\           console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
+                    \\           console.debug(`Started server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\        }}
                     \\      }}
                     \\   }}, reportError);
@@ -212,30 +212,21 @@ pub const ServerEntryPoint = struct {
                     \\      server.reload(entryNamespace.default);
                     \\   }} else {{
                     \\      server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
-                    \\      console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
+                    \\      console.debug(`Started server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\   }}
                     \\}}
                     \\
                 ,
                     .{
-                        dir_to_use,
-                        original_path.filename,
-                        dir_to_use,
-                        original_path.filename,
+                        QuoteEscapeFormat{ .data = path_to_use },
                     },
                 );
             }
-            break :brk try std.fmt.bufPrint(
-                &entry.code_buffer,
-                \\//Auto-generated file
-                \\var cjsSymbol = Symbol.for("CommonJS");
-                \\import * as start from '{s}{s}';
-                \\export * from '{s}{s}';
+            break :brk try std.fmt.allocPrint(
+                allocator,
+                \\// @bun
+                \\import * as start from "{}";
                 \\var entryNamespace = start;
-                \\var cjs = start?.default;
-                \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                \\  entryNamespace = cjs();
-                \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                 \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
@@ -248,10 +239,7 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    dir_to_use,
-                    original_path.filename,
-                    dir_to_use,
-                    original_path.filename,
+                    QuoteEscapeFormat{ .data = path_to_use },
                 },
             );
         };
@@ -273,7 +261,7 @@ pub const MacroEntryPoint = struct {
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
@@ -281,13 +269,13 @@ pub const MacroEntryPoint = struct {
         const fmt = bun.fmt.hexIntLower(hash);
 
         const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
-        len.* = @truncate(u32, specifier.len);
+        len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);
     }
 
     pub fn generateIDFromSpecifier(specifier: string) i32 {
-        return @bitCast(i32, @truncate(u32, std.hash.Wyhash.hash(0, specifier)));
+        return @as(i32, @bitCast(@as(u32, @truncate(bun.hash(specifier)))));
     }
 
     pub fn generate(
@@ -298,37 +286,65 @@ pub const MacroEntryPoint = struct {
         macro_id: i32,
         macro_label_: string,
     ) !void {
-        const dir_to_use: string = import_path.dirWithTrailingSlash();
-        std.mem.copy(u8, entry.code_buffer[0..macro_label_.len], macro_label_);
+        const dir_to_use: string = if (import_path.dir.len == 0) "" else import_path.dirWithTrailingSlash();
+        bun.copy(u8, &entry.code_buffer, macro_label_);
         const macro_label = entry.code_buffer[0..macro_label_.len];
 
-        const code = try std.fmt.bufPrint(
-            entry.code_buffer[macro_label.len..],
-            \\//Auto-generated file
-            \\var Macros;
-            \\try {{
-            \\  Macros = await import('{s}{s}');
-            \\}} catch (err) {{
-            \\   console.error("Error importing macro");
-            \\   throw err;
-            \\}}
-            \\if (!('{s}' in Macros)) {{
-            \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
-            \\}}
-            \\
-            \\Bun.registerMacro({d}, Macros['{s}']);
-        ,
-            .{
-                dir_to_use,
-                import_path.filename,
-                function_name,
-                function_name,
-                dir_to_use,
-                import_path.filename,
-                macro_id,
-                function_name,
-            },
-        );
+        const code = brk: {
+            if (strings.eqlComptime(import_path.base, "bun")) {
+                break :brk try std.fmt.bufPrint(
+                    entry.code_buffer[macro_label.len..],
+                    \\//Auto-generated file
+                    \\var Macros;
+                    \\try {{
+                    \\  Macros = globalThis.Bun;
+                    \\}} catch (err) {{
+                    \\   console.error("Error importing macro");
+                    \\   throw err;
+                    \\}}
+                    \\const macro = Macros['{s}'];
+                    \\if (!macro) {{
+                    \\  throw new Error("Macro '{s}' not found in 'bun'");
+                    \\}}
+                    \\
+                    \\Bun.registerMacro({d}, macro);
+                ,
+                    .{
+                        function_name,
+                        function_name,
+                        macro_id,
+                    },
+                );
+            }
+
+            break :brk try std.fmt.bufPrint(
+                entry.code_buffer[macro_label.len..],
+                \\//Auto-generated file
+                \\var Macros;
+                \\try {{
+                \\  Macros = await import('{s}{s}');
+                \\}} catch (err) {{
+                \\   console.error("Error importing macro");
+                \\   throw err;
+                \\}}
+                \\if (!('{s}' in Macros)) {{
+                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\}}
+                \\
+                \\Bun.registerMacro({d}, Macros['{s}']);
+            ,
+                .{
+                    dir_to_use,
+                    import_path.filename,
+                    function_name,
+                    function_name,
+                    dir_to_use,
+                    import_path.filename,
+                    macro_id,
+                    function_name,
+                },
+            );
+        };
 
         entry.source = logger.Source.initPathString(macro_label, code);
         entry.source.path.text = macro_label;

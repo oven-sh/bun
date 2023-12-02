@@ -1,14 +1,16 @@
 const Output = @This();
-const bun = @import("bun");
+const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("bun").string;
-const root = @import("bun");
-const strings = @import("bun").strings;
-const StringTypes = @import("bun").StringTypes;
-const Global = @import("bun").Global;
-const ComptimeStringMap = @import("bun").ComptimeStringMap;
-const use_mimalloc = @import("bun").use_mimalloc;
+const string = @import("root").bun.string;
+const root = @import("root");
+const strings = @import("root").bun.strings;
+const StringTypes = @import("root").bun.StringTypes;
+const Global = @import("root").bun.Global;
+const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
+const use_mimalloc = @import("root").bun.use_mimalloc;
+const writeStream = std.json.writeStream;
+const WriteStream = std.json.WriteStream;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 
@@ -95,29 +97,39 @@ pub const Source = struct {
     }
 
     pub fn isNoColor() bool {
-        return bun.getenvZ("NO_COLOR") != null;
+        const no_color = bun.getenvZ("NO_COLOR") orelse return false;
+        // https://no-color.org/
+        // "when present and not an empty string (regardless of its value)"
+        return no_color.len != 0;
     }
 
-    pub fn isForceColor() ?bool {
-        const force_color_str = bun.getenvZ("FORCE_COLOR") orelse return null;
-        return force_color_str.len == 0 or
-            strings.eqlComptime(force_color_str, "TRUE") or
-            strings.eqlComptime(force_color_str, "ON") or
-            strings.eqlComptime(force_color_str, "YES") or
-            strings.eqlComptime(force_color_str, "1") or
-            strings.eqlComptime(force_color_str, " ");
+    pub fn isForceColor() bool {
+        const force_color = bun.getenvZ("FORCE_COLOR") orelse return false;
+        // Supported by Node.js, if set will ignore NO_COLOR.
+        // - "1", "true", or "" to indicate 16-color support
+        // - "2" to indicate 256-color support
+        // - "3" to indicate 16 million-color support
+        return force_color.len == 0 or
+            strings.eqlComptime(force_color, "1") or
+            strings.eqlComptime(force_color, "true") or
+            strings.eqlComptime(force_color, "2") or
+            strings.eqlComptime(force_color, "3");
     }
 
     pub fn isColorTerminal() bool {
-        if (isForceColor()) |val| return val;
-        if (bun.getenvZ("COLORTERM")) |color_term| return !strings.eqlComptime(color_term, "0");
-
+        if (bun.getenvZ("COLORTERM")) |color_term| {
+            return !strings.eqlComptime(color_term, "0");
+        }
         if (bun.getenvZ("TERM")) |term| {
-            if (strings.eqlComptime(term, "dumb")) return false;
-
+            return !strings.eqlComptime(term, "dumb");
+        }
+        if (Environment.isWindows) {
+            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
+            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
+            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
+            // Every other version supports 16 colors.
             return true;
         }
-
         return false;
     }
 
@@ -128,28 +140,26 @@ pub const Source = struct {
         if (!stdout_stream_set) {
             stdout_stream_set = true;
             if (comptime Environment.isNative) {
-                var is_color_terminal: ?bool = null;
-                if (_source.stream.isTty()) {
+                var enable_color: ?bool = null;
+                if (isForceColor()) {
+                    enable_color = true;
+                } else if (isNoColor() or !isColorTerminal()) {
+                    enable_color = false;
+                }
+
+                const is_stdout_tty = _source.stream.isTty();
+                if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
-                    is_color_terminal = is_color_terminal orelse isColorTerminal();
-                    enable_ansi_colors_stdout = is_color_terminal.?;
-                } else if (isForceColor()) |val| {
-                    enable_ansi_colors_stdout = val;
-                } else {
-                    enable_ansi_colors_stdout = false;
                 }
 
-                if (_source.error_stream.isTty()) {
+                const is_stderr_tty = _source.error_stream.isTty();
+                if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
-                    is_color_terminal = is_color_terminal orelse isColorTerminal();
-                    enable_ansi_colors_stderr = is_color_terminal.?;
-                } else if (isForceColor()) |val| {
-                    enable_ansi_colors_stderr = val;
-                } else {
-                    enable_ansi_colors_stderr = false;
                 }
 
-                enable_ansi_colors = enable_ansi_colors_stderr or enable_ansi_colors_stdout;
+                enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
+                enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
+                enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
             stdout_stream = _source.stream;
@@ -169,12 +179,31 @@ pub var enable_ansi_colors = Environment.isNative;
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
+pub var is_verbose = false;
+pub var is_github_action = false;
 
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
     return enable_ansi_colors and !Environment.isWindows;
+}
+
+pub fn isGithubAction() bool {
+    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
+        return strings.eqlComptime(value, "true");
+    }
+    return false;
+}
+
+pub fn isVerbose() bool {
+    // Set by Github Actions when a workflow is run using debug mode.
+    if (bun.getenvZ("RUNNER_DEBUG")) |value| {
+        if (strings.eqlComptime(value, "1")) {
+            return true;
+        }
+    }
+    return false;
 }
 
 var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;
@@ -233,6 +262,13 @@ pub fn resetTerminal() void {
     }
 }
 
+pub fn resetTerminalAll() void {
+    if (enable_ansi_colors_stderr)
+        _ = source.error_stream.write("\x1b[H\x1b[2J") catch 0;
+    if (enable_ansi_colors_stdout)
+        _ = source.stream.write("\x1b[H\x1b[2J") catch 0;
+}
+
 /// Write buffered stdout & stderr to the terminal.
 /// Must be called before the process exits or the buffered output will be lost.
 /// Bun automatically calls this function in Global.exit().
@@ -245,8 +281,38 @@ pub fn flush() void {
     }
 }
 
+pub const ElapsedFormatter = struct {
+    colors: bool,
+    duration_ns: u64 = 0,
+
+    pub fn format(self: ElapsedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer_: anytype) !void {
+        switch (self.duration_ns) {
+            0...std.time.ns_per_ms * 10 => {
+                const fmt_str = "<r><d>[{d:>.2}ms<r><d>]<r>";
+                switch (self.colors) {
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@as(f64, @floatFromInt(self.duration_ns)) / std.time.ns_per_ms}),
+                }
+            },
+            std.time.ns_per_ms * 8_000...std.math.maxInt(u64) => {
+                const fmt_str = "<r><d>[<r><yellow>{d:>.2}ms<r><d>]<r>";
+
+                switch (self.colors) {
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@as(f64, @floatFromInt(self.duration_ns)) / std.time.ns_per_ms}),
+                }
+            },
+            else => {
+                const fmt_str = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
+
+                switch (self.colors) {
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@as(f64, @floatFromInt(self.duration_ns)) / std.time.ns_per_ms}),
+                }
+            },
+        }
+    }
+};
+
 inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
-    switch (@floatToInt(i64, @round(elapsed))) {
+    switch (@as(i64, @intFromFloat(@round(elapsed)))) {
         0...1500 => {
             const fmt = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
             const args = .{elapsed};
@@ -269,35 +335,51 @@ inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, compt
     }
 }
 
-pub fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
+pub noinline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
     printElapsedToWithCtx(elapsed, printerFn, true, ctx);
 }
 
 pub fn printElapsed(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.prettyError, false, void{});
+    printElapsedToWithCtx(elapsed, Output.prettyError, false, {});
 }
 
 pub fn printElapsedStdout(elapsed: f64) void {
-    printElapsedToWithCtx(elapsed, Output.pretty, false, void{});
+    printElapsedToWithCtx(elapsed, Output.pretty, false, {});
+}
+
+pub fn printElapsedStdoutTrim(elapsed: f64) void {
+    switch (@as(i64, @intFromFloat(@round(elapsed)))) {
+        0...1500 => {
+            const fmt = "<r><d>[<b>{d:>}ms<r><d>]<r>";
+            const args = .{elapsed};
+            pretty(fmt, args);
+        },
+        else => {
+            const fmt = "<r><d>[<b>{d:>}s<r><d>]<r>";
+            const args = .{elapsed / 1000.0};
+
+            pretty(fmt, args);
+        },
+    }
 }
 
 pub fn printStartEnd(start: i128, end: i128) void {
-    const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
-    printElapsed(@intToFloat(f64, elapsed));
+    const elapsed = @divTrunc(@as(i64, @truncate(end - start)), @as(i64, std.time.ns_per_ms));
+    printElapsed(@as(f64, @floatFromInt(elapsed)));
 }
 
 pub fn printStartEndStdout(start: i128, end: i128) void {
-    const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
-    printElapsedStdout(@intToFloat(f64, elapsed));
+    const elapsed = @divTrunc(@as(i64, @truncate(end - start)), @as(i64, std.time.ns_per_ms));
+    printElapsedStdout(@as(f64, @floatFromInt(elapsed)));
 }
 
 pub fn printTimer(timer: *SystemTimer) void {
     if (comptime Environment.isWasm) return;
     const elapsed = @divTrunc(timer.read(), @as(u64, std.time.ns_per_ms));
-    printElapsed(@intToFloat(f64, elapsed));
+    printElapsed(@as(f64, @floatFromInt(elapsed)));
 }
 
-pub fn printErrorable(comptime fmt: string, args: anytype) !void {
+pub noinline fn printErrorable(comptime fmt: string, args: anytype) !void {
     if (comptime Environment.isWasm) {
         try source.stream.seekTo(0);
         try source.stream.writer().print(fmt, args);
@@ -310,7 +392,7 @@ pub fn printErrorable(comptime fmt: string, args: anytype) !void {
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
-pub fn println(comptime fmt: string, args: anytype) void {
+pub noinline fn println(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
     }
@@ -326,27 +408,26 @@ pub inline fn debug(comptime fmt: string, args: anytype) void {
     flush();
 }
 
-pub fn _debug(comptime fmt: string, args: anytype) void {
+pub inline fn _debug(comptime fmt: string, args: anytype) void {
     std.debug.assert(source_set);
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return print(fmt ++ "\n", args);
-    }
-
-    return print(fmt, args);
+    println(fmt, args);
 }
 
-pub fn print(comptime fmt: string, args: anytype) void {
+// callconv is a workaround for a zig wasm bug?
+pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.CallingConvention.Unspecified) void {
     if (comptime Environment.isWasm) {
         source.stream.pos = 0;
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        std.debug.assert(source_set);
+        if (comptime Environment.allow_assert)
+            std.debug.assert(source_set);
 
+        // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
-            std.fmt.format(source.buffered_stream.writer(), fmt, args) catch unreachable;
+            std.fmt.format(source.buffered_stream.writer(), fmt, args) catch {};
         } else {
-            std.fmt.format(writer(), fmt, args) catch unreachable;
+            std.fmt.format(writer(), fmt, args) catch {};
         }
     }
 }
@@ -360,7 +441,7 @@ pub fn print(comptime fmt: string, args: anytype) void {
 ///   BUN_DEBUG_ALL=1
 const _log_fn = fn (comptime fmt: string, args: anytype) void;
 pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
-    if (comptime !Environment.isDebug) {
+    if (comptime !Environment.isDebug or !Environment.isNative) {
         return struct {
             pub fn log(comptime _: string, _: anytype) void {}
         }.log;
@@ -373,6 +454,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
+        var lock = std.Thread.Mutex{};
 
         /// Debug-only logs which should not appear in release mode
         /// To enable a specific log at runtime, set the environment variable
@@ -382,6 +464,10 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
         pub fn log(comptime fmt: string, args: anytype) void {
+            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
+                return log(fmt ++ "\n", args);
+            }
+
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_ALL") != null or
@@ -404,22 +490,33 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 out_set = true;
             }
 
-            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-                return log(fmt ++ "\n", args);
-            }
+            lock.lock();
+            defer lock.unlock();
 
             if (Output.enable_ansi_colors_stderr) {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             }
         }
     }.log;
 }
 
-// Valid colors:
+// Valid "colors":
 // <black>
 // <blue>
 // <cyan>
@@ -432,7 +529,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
 // <d> - dim
 // </r> - reset
 // <r> - reset
-pub const ED = "\x1b[";
+const ED = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
     &.{ "black", ED ++ "30m" },
     &.{ "blue", ED ++ "34m" },
@@ -446,8 +543,11 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "white", ED ++ "37m" },
     &.{ "yellow", ED ++ "33m" },
 });
-pub const RESET = "\x1b[0m";
+const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
+    if (comptime @import("root").bun.fast_debug_build_mode)
+        return fmt;
+
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
 
@@ -458,9 +558,11 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         switch (c) {
             '\\' => {
                 i += 1;
-                if (fmt.len < i) {
+                if (i < fmt.len) {
                     switch (fmt[i]) {
                         '<', '>' => {
+                            new_fmt[new_fmt_i] = fmt[i];
+                            new_fmt_i += 1;
                             i += 1;
                         },
                         else => {
@@ -468,6 +570,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                             new_fmt_i += 1;
                             new_fmt[new_fmt_i] = fmt[i];
                             new_fmt_i += 1;
+                            i += 1;
                         },
                     }
                 }
@@ -502,20 +605,11 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                         @compileError("Invalid color name passed: " ++ color_name);
                     }
                 };
-                var orig = new_fmt_i;
 
                 if (is_enabled) {
-                    if (!is_reset) {
-                        orig = new_fmt_i;
-                        new_fmt_i += color_str.len;
-                        std.mem.copy(u8, new_fmt[orig..new_fmt_i], color_str);
-                    }
-
-                    if (is_reset) {
-                        const reset_sequence = RESET;
-                        orig = new_fmt_i;
-                        new_fmt_i += reset_sequence.len;
-                        std.mem.copy(u8, new_fmt[orig..new_fmt_i], reset_sequence);
+                    for (if (is_reset) RESET else color_str) |ch| {
+                        new_fmt[new_fmt_i] = ch;
+                        new_fmt_i += 1;
                     }
                 }
             },
@@ -531,19 +625,22 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     return comptime new_fmt[0..new_fmt_i];
 }
 
-pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
+pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
     if (comptime l == .Warn) {
         if (level == .Error) return;
     }
 
-    if (if (comptime l == Level.stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
+    if (if (comptime l == .stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
         printer(comptime prettyFmt(fmt, true), args);
     } else {
         printer(comptime prettyFmt(fmt, false), args);
     }
 }
 
-pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+    if (comptime @import("root").bun.fast_debug_build_mode)
+        return printFn(ctx, comptime prettyFmt(fmt, false), args);
+
     if (enable_ansi_colors) {
         printFn(ctx, comptime prettyFmt(fmt, true), args);
     } else {
@@ -551,21 +648,17 @@ pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn
     }
 }
 
-pub fn pretty(comptime fmt: string, args: anytype) void {
+pub noinline fn pretty(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, print, .stdout);
 }
 
 /// Like Output.println, except it will automatically strip ansi color codes if
 /// the terminal doesn't support them.
 pub fn prettyln(comptime fmt: string, args: anytype) void {
-    if (enable_ansi_colors) {
-        println(comptime prettyFmt(fmt, true), args);
-    } else {
-        println(comptime prettyFmt(fmt, false), args);
-    }
+    prettyWithPrinter(fmt, args, println, .stdout);
 }
 
-pub fn printErrorln(comptime fmt: string, args: anytype) void {
+pub noinline fn printErrorln(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return printError(fmt ++ "\n", args);
     }
@@ -573,28 +666,14 @@ pub fn printErrorln(comptime fmt: string, args: anytype) void {
     return printError(fmt, args);
 }
 
-pub fn prettyError(comptime fmt: string, args: anytype) void {
+pub noinline fn prettyError(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Error);
 }
 
 /// Print to stderr with ansi color codes automatically stripped out if the
 /// terminal doesn't support them. Text is buffered
 pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return prettyWithPrinter(
-            fmt ++ "\n",
-            args,
-            printError,
-            .Error,
-        );
-    }
-
-    return prettyWithPrinter(
-        fmt,
-        args,
-        printError,
-        .Error,
-    );
+    prettyWithPrinter(fmt, args, printErrorln, .Error);
 }
 
 pub const Level = enum(u8) {
@@ -605,28 +684,21 @@ pub const Level = enum(u8) {
 
 pub var level = if (Environment.isDebug) Level.Warn else Level.Error;
 
-pub fn prettyWarn(comptime fmt: string, args: anytype) void {
+pub noinline fn prettyWarn(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Warn);
 }
 
 pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return prettyWithPrinter(fmt ++ "\n", args, printError, .Warn);
-    }
-
-    return prettyWithPrinter(fmt, args, printError, .Warn);
+    prettyWithPrinter(fmt, args, printErrorln, .Warn);
 }
 
-pub fn errorLn(comptime fmt: string, args: anytype) void {
-    return printErrorln(fmt, args);
-}
-
-pub fn printError(comptime fmt: string, args: anytype) void {
+pub noinline fn printError(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
         source.error_stream.seekTo(0) catch return;
         source.error_stream.writer().print(fmt, args) catch unreachable;
         root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
     } else {
+        // There's not much we can do if this errors. Especially if it's something like BrokenPipe
         if (enable_buffering)
             std.fmt.format(source.buffered_error_stream.writer(), fmt, args) catch {}
         else
@@ -635,7 +707,7 @@ pub fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("bun").DebugOnly(std.time.Timer) = undefined,
+    timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
 
     pub fn start() DebugTimer {
         if (comptime Environment.isDebug) {
@@ -655,7 +727,7 @@ pub const DebugTimer = struct {
             var _opts = opts;
             _opts.precision = 3;
             std.fmt.formatFloatDecimal(
-                @floatCast(f64, @intToFloat(f64, timer.read()) / std.time.ns_per_ms),
+                @as(f64, @floatCast(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms)),
                 _opts,
                 writer_,
             ) catch unreachable;

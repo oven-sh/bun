@@ -3,8 +3,8 @@
 
 #include "root.h"
 
-#include "wtf/FastMalloc.h"
-#include "wtf/Noncopyable.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -18,6 +18,7 @@ public:
     /*-- BUN --*/
     std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForWrappingFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
@@ -30,7 +31,20 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
     std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
+    std::unique_ptr<IsoSubspace> m_subspaceForImportMeta;
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
+    std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForAsyncContextFrame;
+    std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
+    std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -391,7 +405,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForAnimationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForAttr;
     // std::unique_ptr<IsoSubspace> m_subspaceForBeforeUnloadEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForBroadcastChannel;
+    std::unique_ptr<IsoSubspace> m_subspaceForBroadcastChannel;
     // std::unique_ptr<IsoSubspace> m_subspaceForCDATASection;
     // std::unique_ptr<IsoSubspace> m_subspaceForCharacterData;
     // std::unique_ptr<IsoSubspace> m_subspaceForClipboardEvent;
@@ -399,7 +413,6 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForCompositionEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForCustomElementRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForCustomEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMImplementation;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMPoint;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMPointReadOnly;
@@ -426,9 +439,9 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForIdleDeadline;
     // std::unique_ptr<IsoSubspace> m_subspaceForInputEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForKeyboardEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
     std::unique_ptr<IsoSubspace> m_subspaceForMessageEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
     // std::unique_ptr<IsoSubspace> m_subspaceForMouseEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationObserver;
@@ -467,8 +480,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForFileList;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileReader;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileReaderSync;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
+    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
+    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMTokenList;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMTokenListIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
@@ -843,7 +856,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForWebFakeXRInputController;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebXRTest;
     // std::unique_ptr<IsoSubspace> m_subspaceForDedicatedWorkerGlobalScope;
-    // std::unique_ptr<IsoSubspace> m_subspaceForWorker;
+    std::unique_ptr<IsoSubspace> m_subspaceForWorker;
     std::unique_ptr<IsoSubspace> m_subspaceForWorkerGlobalScope;
     // std::unique_ptr<IsoSubspace> m_subspaceForWorkerLocation;
     // std::unique_ptr<IsoSubspace> m_subspaceForExtendableEvent;

@@ -26,9 +26,9 @@
 #include "root.h"
 
 #include "ExceptionOr.h"
-#include "wtf/Vector.h"
-#include "wtf/WeakPtr.h"
-#include "wtf/text/WTFString.h"
+#include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
+#include <wtf/text/WTFString.h>
 #include <variant>
 
 namespace WebCore {
@@ -52,6 +52,7 @@ public:
     String toString() const;
     void updateFromAssociatedURL();
     void sort();
+    size_t size() const { return m_pairs.size(); }
 
     class Iterator {
     public:

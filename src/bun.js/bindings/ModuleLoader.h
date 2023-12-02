@@ -1,8 +1,11 @@
 #include "root.h"
 #include "headers-handwritten.h"
 
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JSCInlines.h>
 #include "BunClientData.h"
+
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
 namespace Zig {
 class GlobalObject;
@@ -14,6 +17,8 @@ class JSInternalPromise;
 
 namespace Bun {
 using namespace JSC;
+
+class JSCommonJSModule;
 
 typedef uint8_t OnLoadResultType;
 const OnLoadResultType OnLoadResultTypeError = 0;
@@ -37,6 +42,7 @@ union OnLoadResultValue {
 struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
+    bool wasMock;
 };
 
 class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
@@ -50,9 +56,9 @@ public:
         return WebCore::subspaceForImpl<PendingVirtualModuleResult, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForPendingVirtualModuleResult.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPendingVirtualModuleResult = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForPendingVirtualModuleResult.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForPendingVirtualModuleResult = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); });
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
@@ -76,19 +82,27 @@ public:
 
     PendingVirtualModuleResult(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
+
+    bool wasModuleMock = false;
 };
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue);
-JSValue fetchSourceCodeSync(
+JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer);
+    BunString* specifier,
+    BunString* referrer);
 
-JSValue fetchSourceCodeAsync(
+JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
-    ZigString* specifier,
-    ZigString* referrer);
+    BunString* specifier,
+    BunString* referrer);
+
+JSValue fetchCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSCommonJSModule* moduleObject,
+    JSValue specifierValue,
+    BunString* specifier,
+    BunString* referrer);
 
 } // namespace Bun

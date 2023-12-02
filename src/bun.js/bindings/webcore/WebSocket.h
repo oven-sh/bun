@@ -61,6 +61,7 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     ~WebSocket();
 
     enum State {
@@ -68,6 +69,20 @@ public:
         OPEN = 1,
         CLOSING = 2,
         CLOSED = 3,
+    };
+
+    enum Opcode : unsigned char {
+        Continue = 0x0,
+        Text = 0x1,
+        Binary = 0x2,
+        Close = 0x8,
+        Ping = 0x9,
+        Pong = 0xA,
+    };
+
+    enum CleanStatus {
+        NotClean = 0,
+        Clean = 1,
     };
 
     ExceptionOr<void> connect(const String& url);
@@ -80,7 +95,20 @@ public:
     ExceptionOr<void> send(JSC::ArrayBufferView&);
     // ExceptionOr<void> send(Blob&);
 
+    ExceptionOr<void> ping();
+    ExceptionOr<void> ping(const String& message);
+    ExceptionOr<void> ping(JSC::ArrayBuffer&);
+    ExceptionOr<void> ping(JSC::ArrayBufferView&);
+    // ExceptionOr<void> ping(Blob&);
+
+    ExceptionOr<void> pong();
+    ExceptionOr<void> pong(const String& message);
+    ExceptionOr<void> pong(JSC::ArrayBuffer&);
+    ExceptionOr<void> pong(JSC::ArrayBufferView&);
+    // ExceptionOr<void> ping(Blob&);
+
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
+    ExceptionOr<void> terminate();
 
     const URL& url() const;
     State readyState() const;
@@ -103,12 +131,36 @@ public:
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
-    void didReceiveBinaryData(Vector<uint8_t>&&);
+    void didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const
     {
         return m_hasPendingActivity.load();
+    }
+
+    void setRejectUnauthorized(bool rejectUnauthorized)
+    {
+        m_rejectUnauthorized = rejectUnauthorized;
+    }
+
+    bool rejectUnauthorized() const
+    {
+        return m_rejectUnauthorized;
+    }
+
+    void incPendingActivityCount()
+    {
+        m_pendingActivityCount++;
+        ref();
+        updateHasPendingActivity();
+    }
+
+    void decPendingActivityCount()
+    {
+        m_pendingActivityCount--;
+        deref();
+        updateHasPendingActivity();
     }
 
 private:
@@ -140,41 +192,35 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveMessageError(unsigned short code, WTF::StringImpl::StaticStringImpl* reason);
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 
-    void sendWebSocketString(const String& message);
-    void sendWebSocketData(const char* data, size_t length);
-
-    void incPendingActivityCount()
-    {
-        m_pendingActivityCount++;
-        ref();
-        updateHasPendingActivity();
-    }
-
-    void decPendingActivityCount()
-    {
-        m_pendingActivityCount--;
-        deref();
-        updateHasPendingActivity();
-    }
+    void sendWebSocketString(const String& message, const Opcode opcode);
+    void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
 
     void failAsynchronously();
 
     enum class BinaryType { Blob,
-        ArrayBuffer };
+        ArrayBuffer,
+        // non-standard:
+        NodeBuffer };
 
     State m_state { CONNECTING };
     URL m_url;
     unsigned m_bufferedAmount { 0 };
     unsigned m_bufferedAmountAfterClose { 0 };
-    BinaryType m_binaryType { BinaryType::ArrayBuffer };
+    // In browsers, the default is Blob, however most applications
+    // immediately change the default to ArrayBuffer.
+    //
+    // And since we know the typical usage is to override the default,
+    // we set NodeBuffer as the default to match the default of ServerWebSocket.
+    BinaryType m_binaryType { BinaryType::NodeBuffer };
     String m_subprotocol;
     String m_extensions;
     void* m_upgradeClient { nullptr };
     bool m_isSecure { false };
+    bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };

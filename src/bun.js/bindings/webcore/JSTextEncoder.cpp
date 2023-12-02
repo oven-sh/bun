@@ -22,19 +22,19 @@
 
 #include "JSTextEncoder.h"
 
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/APICast.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/APICast.h>
 
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
-// #include "JavaScriptCore/JSTypedArrays.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
+// #include <JavaScriptCore/JSTypedArrays.h>
 
 #include "GCDefferalContext.h"
 #include "ActiveDOMObject.h"
@@ -61,6 +61,7 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+#include "BunClientData.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -177,7 +178,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextEncoderPrototype, JSTextEncoderPrototy
 
 using JSTextEncoderDOMConstructor = JSDOMConstructor<JSTextEncoder>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -215,9 +216,9 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
 
 constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
 
-// This is the equivalent of DataView.set
-constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
-constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
+// TODO: figure out why the test fails after JSC upgrade and re-enable this!
+// constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::Heap, JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
+// constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::SideState, JSC::DFG::Absolute, JSC::DFG::JSCell_structureID, JSC::DFG::HeapObjectCount };
 
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
     jsTextEncoderEncodeWithoutTypeCheck,
@@ -229,10 +230,9 @@ static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithout
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
     jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
     JSTextEncoder::info(),
-    // this is slightly incorrect
-    // there could be cases where the object returned by encodeInto will appear to be reused
-    // it impacts HeapObjectCount
-    JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
+
+    JSC::DOMJIT::Effect {},
+    // JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
     DOMJIT::IDLResultTypeFilter<IDLObject>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);
@@ -254,7 +254,7 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValu
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    EncodedJSValue res;
+    JSC::EncodedJSValue res;
     String str;
     if (input->is8Bit()) {
         if (input->isRope()) {
@@ -348,7 +348,7 @@ void JSTextEncoder::destroy(JSC::JSCell* cell)
     thisObject->JSTextEncoder::~JSTextEncoder();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -366,7 +366,7 @@ static inline JSValue jsTextEncoder_encodingGetter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.encoding())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSTextEncoder>::get<jsTextEncoder_encodingGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -379,7 +379,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     UNUSED_PARAM(callFrame);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
-    EncodedJSValue res;
+    JSC::EncodedJSValue res;
     String str;
     if (input->is8Bit()) {
         if (input->isRope()) {
@@ -452,9 +452,9 @@ JSC::GCClient::IsoSubspace* JSTextEncoder::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoder = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoder = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoder = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoder = std::forward<decltype(space)>(space); });
 }
 
 void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

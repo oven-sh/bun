@@ -4,23 +4,20 @@ var short = new TextEncoder().encode("Hello World!");
 var shortUTF16 = new TextEncoder().encode("Hello World 💕💕💕");
 var long = new TextEncoder().encode("Hello World!".repeat(1024));
 var longUTF16 = new TextEncoder().encode("Hello World 💕💕💕".repeat(1024));
+var decoder = new TextDecoder();
 bench(`${short.length} ascii`, () => {
-  var decoder = new TextDecoder();
   decoder.decode(short);
 });
 
 bench(`${short.length} utf8`, () => {
-  var decoder = new TextDecoder();
   decoder.decode(shortUTF16);
 });
 
 bench(`${long.length} ascii`, () => {
-  var decoder = new TextDecoder();
   decoder.decode(long);
 });
 
 bench(`${longUTF16.length} utf8`, () => {
-  var decoder = new TextDecoder();
   decoder.decode(longUTF16);
 });
 

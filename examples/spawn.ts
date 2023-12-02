@@ -7,9 +7,7 @@ const repo = process.argv.at(3) || "TheoBr/vercel-vite-demo";
 const target = basename(repo) + "-main";
 console.log("Downloading", repo, "to", "/tmp/" + target);
 
-const archive = await fetch(
-  `https://github.com/${repo}/archive/refs/heads/main.tar.gz`,
-);
+const archive = await fetch(`https://github.com/${repo}/archive/refs/heads/main.tar.gz`);
 
 // remove the directory if it already exists locally
 rmSync("/tmp/" + target, { recursive: true, force: true });

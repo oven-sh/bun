@@ -36,12 +36,12 @@ export async function fetchCSV(callExpression) {
   rows = rows
     .slice(Math.max(limit, rows.length) - limit)
     .reverse()
-    .filter((columns) => columns.every(Boolean));
+    .filter(columns => columns.every(Boolean));
   const value = (
     <array>
-      {rows.map((columns) => (
+      {rows.map(columns => (
         <array>
-          {columnIndices.map((columnIndex) => (
+          {columnIndices.map(columnIndex => (
             <string value={columns[columnIndex]} />
           ))}
         </array>

@@ -1,0 +1,42 @@
+{
+	"name": "dev-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "dev-deps",
+			"version": "1.0.0",
+			"devDependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "dev-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-e6ekSjPwd2fKE8hqV9EIBZnL/IZn2urf5S+y0Kz6g+3/9VcDQpByRy/OHJMVb2iH2vqLgB4FFUHeKm/l8yvWZg==",
+				"shasum": "618b949b93f3912fdba7858163dcd4f0d0cf08a6",
+				"tarball": "http://localhost:4873/dev-deps/-/dev-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:01.430Z",
+		"created": "2023-11-01T22:05:01.430Z",
+		"1.0.0": "2023-11-01T22:05:01.430Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dev-deps-1.0.0.tgz": {
+			"shasum": "618b949b93f3912fdba7858163dcd4f0d0cf08a6",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-1a9f2e874ae8ceb4",
+	"_id": "dev-deps",
+	"readme": "ERROR: No README data found!"
+}

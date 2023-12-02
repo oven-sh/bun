@@ -51,7 +51,26 @@ pub const Tmpfile = struct {
     pub fn finish(this: *Tmpfile, destname: [:0]const u8) !void {
         if (comptime Environment.isLinux) {
             if (this.using_tmpfile) {
-                return try bun.sys.linkatTmpfile(this.fd, this.destination_dir, destname).unwrap();
+                var retry = true;
+                const basename: [:0]const u8 = @ptrCast(std.fs.path.basename(destname));
+                while (retry) {
+                    const ret = bun.sys.linkatTmpfile(this.fd, this.destination_dir, basename);
+                    switch (ret) {
+                        .result => {
+                            return;
+                        },
+                        .err => |err| {
+                            if (err.getErrno() == .EXIST and retry) {
+                                _ = bun.sys.unlinkat(this.destination_dir, basename);
+                                retry = false;
+                                continue;
+                            } else {
+                                try ret.unwrap();
+                                return;
+                            }
+                        },
+                    }
+                }
             }
         }
 

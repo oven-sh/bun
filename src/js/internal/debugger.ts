@@ -20,12 +20,12 @@ export default function (
 
   const { protocol, href, host, pathname } = debug.url;
   if (!protocol.includes("unix")) {
-    console.error(dim("--------------------- Bun Inspector ---------------------"), reset());
-    console.error(`Listening:\n  ${dim(href)}`);
+    Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+    Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
     if (protocol.includes("ws")) {
-      console.error(`Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}`);
+      Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
     }
-    console.error(dim("--------------------- Bun Inspector ---------------------"), reset());
+    Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------")+ reset() + "\n");
   }
 
   const unix = process.env["BUN_INSPECT_NOTIFY"];

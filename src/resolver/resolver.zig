@@ -555,6 +555,18 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
+        // TODO(@paperdave): make this configurable. the rationale for disabling
+        // auto-install in standalone mode is that such executable must either:
+        //
+        // - bundle the dependency itself. dynamic `require`/`import` should be
+        //   able to bundle possible dependencies specified in package.json
+        //
+        // - try to load the user's node_modules.
+        //
+        // auto install, as of writing, is also quite buggy and untested, it always
+        // installs the latest version regardless of a user's package.json or specifier.
+        if (self.standalone_module_graph) |_| return false;
+
         return self.opts.global_cache.isEnabled();
     }
 

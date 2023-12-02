@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '19cee77e8b063917b04d1fb01b929890a4670741' satisfies typeof Bun.revision;
+export const revision = '7c841d1aa3686b0c46f4c10ad16457a68c049698' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -171,7 +171,11 @@ export const openInEditor = ((file: string, opts?: EditorOptions) => {
 export const serve = servePolyfill satisfies typeof Bun.serve;
 
 export const file = ((path: string | URL | Uint8Array | ArrayBufferLike | number, options?: BlobPropertyBag): BunFileBlob => {
-    if (typeof path === 'object') throw new NotImplementedError('Bun.file with typed array', file);
+    if (path instanceof URL) path = fileURLToPathNode(path);
+    else if (typeof path === 'object') {
+        if (path instanceof ArrayBuffer || path instanceof SharedArrayBuffer) path = new Uint8Array(path);
+        path = new TextDecoder().decode(path);
+    }
     return new FileBlob(path, options);
 }) satisfies typeof Bun.file;
 

@@ -353,7 +353,9 @@ pub const fmt = struct {
                             var i: usize = 1;
                             for (remain[i..]) |c| {
                                 if (c == char) {
-                                    i += 1;
+                                    if (i < remain.len) {
+                                        i += 1;
+                                    }
                                     break;
                                 } else if (c == '\\') {
                                     i += 1;
@@ -361,7 +363,9 @@ pub const fmt = struct {
                                         i += 1;
                                     }
                                 } else {
-                                    i += 1;
+                                    if (i < remain.len) {
+                                        i += 1;
+                                    }
                                 }
                             }
 

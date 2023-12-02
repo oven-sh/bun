@@ -537,21 +537,21 @@ declare module "bun:test" {
      * Create an asymmetric matcher for a promise resolved value.
      *
      * @example
-     * expect(Promise.resolve("value")).toEqual(expect.resolvedTo.stringContaining("value")); // will pass
-     * expect(Promise.reject("value")).toEqual(expect.resolvedTo.stringContaining("value")); // will fail
-     * expect("value").toEqual(expect.resolvedTo.stringContaining("value")); // will fail
+     * expect(Promise.resolve("value")).toEqual(expect.resolvesTo.stringContaining("value")); // will pass
+     * expect(Promise.reject("value")).toEqual(expect.resolvesTo.stringContaining("value")); // will fail
+     * expect("value").toEqual(expect.resolvesTo.stringContaining("value")); // will fail
      */
-    resolvedTo: AsymmetricMatchers;
+    resolvesTo: AsymmetricMatchers;
 
     /**
      * Create an asymmetric matcher for a promise rejected value.
      *
      * @example
-     * expect(Promise.reject("error")).toEqual(expect.rejectedTo.stringContaining("error")); // will pass
-     * expect(Promise.resolve("error")).toEqual(expect.rejectedTo.stringContaining("error")); // will fail
-     * expect("error").toEqual(expect.rejectedTo.stringContaining("error")); // will fail
+     * expect(Promise.reject("error")).toEqual(expect.rejectsTo.stringContaining("error")); // will pass
+     * expect(Promise.resolve("error")).toEqual(expect.rejectsTo.stringContaining("error")); // will fail
+     * expect("error").toEqual(expect.rejectsTo.stringContaining("error")); // will fail
      */
-    rejectedTo: AsymmetricMatchers;
+    rejectsTo: AsymmetricMatchers;
 
     /**
      * Register new custom matchers.
@@ -734,21 +734,21 @@ declare module "bun:test" {
      * Create an asymmetric matcher that will fail on a promise resolved value that matches the chained matcher.
      *
      * @example
-     * expect(Promise.resolve("value")).toEqual(expect.not.resolvedTo.stringContaining("value")); // will fail
-     * expect(Promise.reject("value")).toEqual(expect.not.resolvedTo.stringContaining("value")); // will pass
-     * expect("value").toEqual(expect.not.resolvedTo.stringContaining("value")); // will pass
+     * expect(Promise.resolve("value")).toEqual(expect.not.resolvesTo.stringContaining("value")); // will fail
+     * expect(Promise.reject("value")).toEqual(expect.not.resolvesTo.stringContaining("value")); // will pass
+     * expect("value").toEqual(expect.not.resolvesTo.stringContaining("value")); // will pass
      */
-    resolvedTo: ExpectNot;
+    resolvesTo: ExpectNot;
 
     /**
      * Create an asymmetric matcher that will fail on a promise rejected value that matches the chained matcher.
      *
      * @example
-     * expect(Promise.reject("value")).toEqual(expect.not.rejectedTo.stringContaining("value")); // will fail
-     * expect(Promise.resolve("value")).toEqual(expect.not.rejectedTo.stringContaining("value")); // will pass
-     * expect("value").toEqual(expect.not.rejectedTo.stringContaining("value")); // will pass
+     * expect(Promise.reject("value")).toEqual(expect.not.rejectsTo.stringContaining("value")); // will fail
+     * expect(Promise.resolve("value")).toEqual(expect.not.rejectsTo.stringContaining("value")); // will pass
+     * expect("value").toEqual(expect.not.rejectsTo.stringContaining("value")); // will pass
      */
-    rejectedTo: ExpectNot;
+    rejectsTo: ExpectNot;
 
     /**
      * `expect.not.arrayContaining(array)` matches a received array which

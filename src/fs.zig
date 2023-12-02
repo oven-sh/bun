@@ -641,13 +641,14 @@ pub const FileSystem = struct {
                 if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             }
 
-            pub fn create(this: *TmpfilePosix, rfs: *RealFS, name: [:0]const u8) !void {
-                var tmpdir_ = try rfs.openTmpDir();
+            pub fn create(this: *TmpfilePosix, _: *RealFS, name: [:0]const u8) !void {
+                // We originally used a temporary directory, but it caused EXDEV.
+                const dir_fd = std.fs.cwd().fd;
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
-                this.dir_fd = bun.toFD(tmpdir_.fd);
+                this.dir_fd = bun.toFD(dir_fd);
 
-                const result = try bun.sys.openat(tmpdir_.fd, name, flags, std.os.S.IRWXU).unwrap();
+                const result = try bun.sys.openat(dir_fd, name, flags, std.os.S.IRWXU).unwrap();
                 this.fd = bun.toFD(result);
             }
 

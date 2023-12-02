@@ -1576,6 +1576,9 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         @compileError("Linux only.");
     }
 
+    if (comptime Environment.allow_assert)
+        std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+
     return Maybe(void).errnoSysP(
         std.os.linux.linkat(
             bun.fdcast(tmpfd),

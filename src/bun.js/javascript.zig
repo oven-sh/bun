@@ -1231,7 +1231,7 @@ pub const VirtualMachine = struct {
 
     pub const Options = struct {
         allocator: std.mem.Allocator,
-        args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
+        args: Api.TransformOptions,
         log: ?*logger.Log = null,
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,

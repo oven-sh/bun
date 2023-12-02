@@ -1502,7 +1502,7 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 {
     const WTF::URL& url = arg0->href();
     if (url.protocolIsFile()) {
-        return Bun::toString(url.fileSystemPath());
+        return Bun::toStringRef(url.fileSystemPath());
     }
 
     return BunStringEmpty;
@@ -1812,6 +1812,8 @@ bool JSC__JSFunction__getSourceCode(JSC__JSValue JSValue0, ZigString* outSourceC
         }
         return false;
     }
+
+    return false;
 }
 
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,

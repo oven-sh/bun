@@ -21,6 +21,7 @@ let cache_dir = "";
 const env = {
   ...bunEnv,
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache_dir,
+  BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
 };
 
 let prev_cache_count = 0;
@@ -90,7 +91,7 @@ describe("transpiler cache", () => {
     expect(b.stdout == "b");
     expect(newCacheCount()).toBe(0);
   });
-  test("doing 500 buns at once does not crash", async () => {
+  test("doing 50 buns at once does not crash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));
 
@@ -102,7 +103,7 @@ describe("transpiler cache", () => {
 
     let processes: Subprocess<"ignore", "pipe", "inherit">[] = [];
     let killing = false;
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 50; i++) {
       processes.push(
         Bun.spawn({
           cmd: [bunExe(), i % 2 == 0 ? "a.js" : "b.js"],

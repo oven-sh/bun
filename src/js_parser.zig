@@ -1,3 +1,7 @@
+/// ** IMPORTANT **
+/// ** When making changes to the JavaScript Parser that impact runtime behavior or fix bugs **
+/// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
+/// ** IMPORTANT **
 pub const std = @import("std");
 pub const logger = @import("root").bun.logger;
 pub const js_lexer = bun.js_lexer;
@@ -3076,8 +3080,10 @@ pub const Parser = struct {
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
-        var result: js_ast.Result = undefined;
-        _ = result;
+
+        var binary_expression_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).init(binary_expression_stack_heap.get());
+        defer p.binary_expression_stack.clearAndFree();
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -4853,6 +4859,8 @@ fn NewParser_(
         scope_order_to_visit: []ScopeOrder = &([_]ScopeOrder{}),
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
+
+        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
@@ -6878,6 +6886,393 @@ fn NewParser_(
             }
             return ExprBindingTuple{ .binding = bind, .expr = initializer };
         }
+
+        const BinaryExpressionVisitor = struct {
+            e: *E.Binary,
+            loc: logger.Loc,
+            in: ExprIn,
+
+            /// Input for visiting the left child
+            left_in: ExprIn,
+
+            /// "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
+            is_stmt_expr: bool = false,
+
+            pub fn visitRightAndFinish(
+                v: *BinaryExpressionVisitor,
+                p: *P,
+            ) Expr {
+                var e_ = v.e;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and e_ == p.call_target.e_binary;
+                // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
+                const was_anonymous_named_expr = e_.right.isAnonymousNamed();
+
+                // Mark the control flow as dead if the branch is never taken
+                switch (e_.op) {
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            // "true || dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and !side_effects.value) {
+                            // "false && dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        if (side_effects.ok and !side_effects.value) {
+                            // "notNullOrUndefined ?? dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    else => {
+                        e_.right = p.visitExpr(e_.right);
+                    },
+                }
+
+                // Always put constants on the right for equality comparisons to help
+                // reduce the number of cases we have to check during pattern matching. We
+                // can only reorder expressions that do not have any side effects.
+                switch (e_.op) {
+                    .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
+                        if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
+                            const _left = e_.left;
+                            const _right = e_.right;
+                            e_.left = _right;
+                            e_.right = _left;
+                        }
+                    },
+                    else => {},
+                }
+
+                switch (e_.op) {
+                    .bin_comma => {
+                        // "(1, 2)" => "2"
+                        // "(sideEffects(), 2)" => "(sideEffects(), 2)"
+                        if (p.options.features.minify_syntax) {
+                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse return e_.right;
+                        }
+                    },
+                    .bin_loose_eq => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        if (equality.ok) {
+                            return p.newExpr(
+                                E.Boolean{ .value = equality.equal },
+                                v.loc,
+                            );
+                        }
+
+                        if (p.options.features.minify_syntax) {
+                            // "x == void 0" => "x == null"
+                            if (e_.left.data == .e_undefined) {
+                                e_.left.data = .{ .e_null = E.Null{} };
+                            } else if (e_.right.data == .e_undefined) {
+                                e_.right.data = .{ .e_null = E.Null{} };
+                            }
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                    },
+                    .bin_strict_eq => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+                    },
+                    .bin_loose_ne => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                        // "x != void 0" => "x != null"
+                        if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
+                            e_.right = p.newExpr(E.Null{}, e_.right.loc);
+                        }
+                    },
+                    .bin_strict_ne => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        if (nullorUndefined.ok) {
+                            if (!nullorUndefined.value) {
+                                return e_.left;
+                            } else if (nullorUndefined.side_effects == .no_side_effects) {
+                                // "(null ?? fn)()" => "fn()"
+                                // "(null ?? this.fn)" => "this.fn"
+                                // "(null ?? this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
+                            }
+                        }
+                    },
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            return e_.left;
+                        } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
+                            // "(0 || fn)()" => "fn()"
+                            // "(0 || this.fn)" => "this.fn"
+                            // "(0 || this.fn)()" => "(0, this.fn)()"
+                            if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                            }
+
+                            return e_.right;
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok) {
+                            if (!side_effects.value) {
+                                return e_.left;
+                            } else if (side_effects.side_effects == .no_side_effects) {
+                                // "(1 && fn)()" => "fn()"
+                                // "(1 && this.fn)" => "this.fn"
+                                // "(1 && this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
+                            }
+                        }
+                    },
+                    .bin_add => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, v.loc);
+                            }
+                        }
+
+                        if (foldStringAddition(e_.left, e_.right)) |res| {
+                            return res;
+                        }
+                    },
+                    .bin_sub => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_mul => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_div => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_rem => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(
+                                    // Use libc fmod here to be consistent with what JavaScriptCore does
+                                    // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                    E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
+                                    v.loc,
+                                );
+                            }
+                        }
+                    },
+                    .bin_pow => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_shl => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) << @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_shr => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_u_shr => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_and => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_or => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_xor => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    .bin_assign => {
+
+                        // Optionally preserve the name
+                        if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
+                            e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
+                        }
+                    },
+                    .bin_add_assign => {
+                        // notimpl();
+                    },
+                    .bin_sub_assign => {
+                        // notimpl();
+                    },
+                    .bin_mul_assign => {
+                        // notimpl();
+                    },
+                    .bin_div_assign => {
+                        // notimpl();
+                    },
+                    .bin_rem_assign => {
+                        // notimpl();
+                    },
+                    .bin_pow_assign => {
+                        // notimpl();
+                    },
+                    .bin_shl_assign => {
+                        // notimpl();
+                    },
+                    .bin_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_u_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_or_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_xor_assign => {
+                        // notimpl();
+                    },
+                    .bin_nullish_coalescing_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_or_assign => {
+                        // notimpl();
+                    },
+                    else => {},
+                }
+
+                return Expr{ .loc = v.loc, .data = .{ .e_binary = e_ } };
+            }
+
+            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *P) ?Expr {
+                var e_ = v.e;
+                switch (e_.left.data) {
+                    // Special-case private identifiers
+                    .e_private_identifier => |_private| {
+                        if (e_.op == .bin_in) {
+                            var private = _private;
+                            const name = p.loadNameFromRef(private.ref);
+                            const result = p.findSymbol(e_.left.loc, name) catch unreachable;
+                            private.ref = result.ref;
+
+                            // Unlike regular identifiers, there are no unbound private identifiers
+                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                            if (!Symbol.isKindPrivate(kind)) {
+                                const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
+                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                            }
+
+                            e_.right = p.visitExpr(e_.right);
+                            e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+
+                            // privateSymbolNeedsToBeLowered
+                            return Expr{ .loc = v.loc, .data = .{ .e_binary = e_ } };
+                        }
+                    },
+                    else => {},
+                }
+
+                v.is_stmt_expr = p.stmt_expr_value == .e_binary and p.stmt_expr_value.e_binary == e_;
+
+                v.left_in = ExprIn{
+                    .assign_target = e_.op.binaryAssignTarget(),
+                };
+
+                return null;
+            }
+        };
 
         fn forbidLexicalDecl(p: *P, loc: logger.Loc) anyerror!void {
             try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
@@ -15505,352 +15900,74 @@ fn NewParser_(
                 },
 
                 .e_binary => |e_| {
-                    switch (e_.left.data) {
-                        // Special-case private identifiers
-                        .e_private_identifier => |_private| {
-                            if (e_.op == .bin_in) {
-                                var private = _private;
-                                const name = p.loadNameFromRef(private.ref);
-                                const result = p.findSymbol(e_.left.loc, name) catch unreachable;
-                                private.ref = result.ref;
 
-                                // Unlike regular identifiers, there are no unbound private identifiers
-                                const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
-                                if (!Symbol.isKindPrivate(kind)) {
-                                    const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
-                                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
-                                }
+                    // The handling of binary expressions is convoluted because we're using
+                    // iteration on the heap instead of recursion on the call stack to avoid
+                    // stack overflow for deeply-nested ASTs.
+                    var v = BinaryExpressionVisitor{
+                        .e = e_,
+                        .loc = expr.loc,
+                        .in = in,
+                        .left_in = ExprIn{},
+                    };
 
-                                e_.right = p.visitExpr(e_.right);
-                                e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+                    // Everything uses a single stack to reduce allocation overhead. This stack
+                    // should almost always be very small, and almost all visits should reuse
+                    // existing memory without allocating anything.
+                    const stack_bottom = p.binary_expression_stack.items.len;
 
-                                // privateSymbolNeedsToBeLowered
-                                return expr;
-                            }
-                        },
-                        else => {},
+                    var current = Expr{ .data = .{ .e_binary = e_ }, .loc = v.loc };
+
+                    // Iterate down into the AST along the left node of the binary operation.
+                    // Continue iterating until we encounter something that's not a binary node.
+
+                    while (true) {
+                        if (v.checkAndPrepare(p)) |out| {
+                            current = out;
+                            break;
+                        }
+
+                        // Grab the arguments to our nested "visitExprInOut" call for the left
+                        // node. We only care about deeply-nested left nodes because most binary
+                        // operators in JavaScript are left-associative and the problematic edge
+                        // cases we're trying to avoid crashing on have lots of left-associative
+                        // binary operators chained together without parentheses (e.g. "1+2+...").
+                        var left = v.e.left;
+                        const left_in = v.left_in;
+
+                        var left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
+
+                        // Stop iterating if iteration doesn't apply to the left node. This checks
+                        // the assignment target because "visitExprInOut" has additional behavior
+                        // in that case that we don't want to miss (before the top-level "switch"
+                        // statement).
+                        if (left_binary == null or left_in.assign_target != .none) {
+                            v.e.left = p.visitExprInOut(left, left_in);
+                            current = v.visitRightAndFinish(p);
+                            break;
+                        }
+
+                        // Note that we only append to the stack (and therefore allocate memory
+                        // on the heap) when there are nested binary expressions. A single binary
+                        // expression doesn't add anything to the stack.
+                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        v = BinaryExpressionVisitor{
+                            .e = left_binary.?,
+                            .loc = left.loc,
+                            .in = left_in,
+                            .left_in = .{},
+                        };
                     }
 
-                    const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
-                    // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
-                    const was_anonymous_named_expr = e_.right.isAnonymousNamed();
-
-                    e_.left = p.visitExprInOut(e_.left, ExprIn{
-                        .assign_target = e_.op.binaryAssignTarget(),
-                    });
-
-                    // Mark the control flow as dead if the branch is never taken
-                    switch (e_.op) {
-                        .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                // "true || dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and !side_effects.value) {
-                                // "false && dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        .bin_nullish_coalescing => {
-                            const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
-                            if (side_effects.ok and !side_effects.value) {
-                                // "notNullOrUndefined ?? dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        else => {
-                            e_.right = p.visitExpr(e_.right);
-                        },
+                    // Process all binary operations from the deepest-visited node back toward
+                    // our original top-level binary operation.
+                    while (p.binary_expression_stack.items.len > stack_bottom) {
+                        v = p.binary_expression_stack.pop();
+                        v.e.left = current;
+                        current = v.visitRightAndFinish(p);
                     }
 
-                    // Always put constants on the right for equality comparisons to help
-                    // reduce the number of cases we have to check during pattern matching. We
-                    // can only reorder expressions that do not have any side effects.
-                    switch (e_.op) {
-                        .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
-                            if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
-                                const _left = e_.left;
-                                const _right = e_.right;
-                                e_.left = _right;
-                                e_.right = _left;
-                            }
-                        },
-                        else => {},
-                    }
-
-                    switch (e_.op) {
-                        .bin_comma => {
-                            // notimpl();
-                        },
-                        .bin_loose_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
-                            if (equality.ok) {
-                                return p.newExpr(
-                                    E.Boolean{ .value = equality.equal },
-                                    expr.loc,
-                                );
-                            }
-
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-
-                        },
-                        .bin_strict_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = equality.equal }, expr.loc);
-                            }
-
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-                        },
-                        .bin_loose_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
-                            }
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-
-                            // "x != void 0" => "x != null"
-                            if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
-                                e_.right = p.newExpr(E.Null{}, e_.right.loc);
-                            }
-                        },
-                        .bin_strict_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
-                            }
-                        },
-                        .bin_nullish_coalescing => {
-                            const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
-                            if (nullorUndefined.ok) {
-                                if (!nullorUndefined.value) {
-                                    return e_.left;
-                                } else if (nullorUndefined.side_effects == .no_side_effects) {
-                                    // "(null ?? fn)()" => "fn()"
-                                    // "(null ?? this.fn)" => "this.fn"
-                                    // "(null ?? this.fn)()" => "(0, this.fn)()"
-                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
-                                    }
-
-                                    return e_.right;
-                                }
-                            }
-                        },
-                        .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                return e_.left;
-                            } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
-                                // "(0 || fn)()" => "fn()"
-                                // "(0 || this.fn)" => "this.fn"
-                                // "(0 || this.fn)()" => "(0, this.fn)()"
-                                if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
-                                }
-
-                                return e_.right;
-                            }
-                        },
-                        .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok) {
-                                if (!side_effects.value) {
-                                    return e_.left;
-                                } else if (side_effects.side_effects == .no_side_effects) {
-                                    // "(1 && fn)()" => "fn()"
-                                    // "(1 && this.fn)" => "this.fn"
-                                    // "(1 && this.fn)()" => "(0, this.fn)()"
-                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
-                                    }
-
-                                    return e_.right;
-                                }
-                            }
-                        },
-                        .bin_add => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, expr.loc);
-                                }
-                            }
-
-                            if (foldStringAddition(e_.left, e_.right)) |res| {
-                                return res;
-                            }
-                        },
-                        .bin_sub => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_mul => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_div => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_rem => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(
-                                        // Use libc fmod here to be consistent with what JavaScriptCore does
-                                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                        E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
-                                        expr.loc,
-                                    );
-                                }
-                            }
-                        },
-                        .bin_pow => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_shl => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) << @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_shr => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_u_shr => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_and => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_or => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_xor => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        .bin_assign => {
-
-                            // Optionally preserve the name
-                            if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
-                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
-                            }
-                        },
-                        .bin_add_assign => {
-                            // notimpl();
-                        },
-                        .bin_sub_assign => {
-                            // notimpl();
-                        },
-                        .bin_mul_assign => {
-                            // notimpl();
-                        },
-                        .bin_div_assign => {
-                            // notimpl();
-                        },
-                        .bin_rem_assign => {
-                            // notimpl();
-                        },
-                        .bin_pow_assign => {
-                            // notimpl();
-                        },
-                        .bin_shl_assign => {
-                            // notimpl();
-                        },
-                        .bin_shr_assign => {
-                            // notimpl();
-                        },
-                        .bin_u_shr_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_or_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_and_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_xor_assign => {
-                            // notimpl();
-                        },
-                        .bin_nullish_coalescing_assign => {
-                            // notimpl();
-                        },
-                        .bin_logical_and_assign => {
-                            // notimpl();
-                        },
-                        .bin_logical_or_assign => {
-                            // notimpl();
-                        },
-                        else => {},
-                    }
+                    return current;
                 },
                 .e_index => |e_| {
                     const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index == p.call_target.e_index;

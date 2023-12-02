@@ -7,6 +7,9 @@ const expected_version = 1;
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
 
+// When making parser changes, it gets extremely confusing.
+var restore_from_cache_in_debug_build = false;
+
 pub const RuntimeTranspilerCache = struct {
     input_hash: ?u64 = null,
     input_byte_length: ?u64 = null,
@@ -111,6 +114,15 @@ pub const RuntimeTranspilerCache = struct {
             utf8: []const u8,
             string: bun.String,
 
+            pub fn deinit(this: *OutputCode, allocator: std.mem.Allocator) void {
+                switch (this.*) {
+                    .utf8 => {
+                        allocator.free(this.utf8);
+                    },
+                    .string => this.string.deref(),
+                }
+            }
+
             pub fn byteSlice(this: *const OutputCode) []const u8 {
                 switch (this.*) {
                     .utf8 => return this.utf8,
@@ -118,6 +130,13 @@ pub const RuntimeTranspilerCache = struct {
                 }
             }
         };
+
+        pub fn deinit(this: *Entry, sourcemap_allocator: std.mem.Allocator, output_code_allocator: std.mem.Allocator) void {
+            this.output_code.deinit(output_code_allocator);
+            if (this.sourcemap.len > 0) {
+                sourcemap_allocator.free(this.sourcemap);
+            }
+        }
 
         pub fn save(
             destination_dir: bun.FileDescriptor,
@@ -352,6 +371,10 @@ pub const RuntimeTranspilerCache = struct {
     fn reallyGetCacheDir(
         buf: *[bun.MAX_PATH_BYTES]u8,
     ) [:0]const u8 {
+        if (comptime bun.Environment.allow_assert) {
+            restore_from_cache_in_debug_build = bun.getenvZ("BUN_RESTORE_FROM_CACHE") != null;
+        }
+
         if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {
             if (dir.len == 0 or (dir.len == 1 and dir[0] == '0')) {
                 return "";
@@ -573,10 +596,23 @@ pub const RuntimeTranspilerCache = struct {
             debug("get(\"{s}\") = {s}", .{ source.path.text, @errorName(err) });
             return false;
         };
-        if (comptime bun.Environment.allow_assert)
-            debug("get(\"{s}\") = {d} bytes", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
-
+        if (comptime bun.Environment.allow_assert) {
+            if (restore_from_cache_in_debug_build) {
+                debug("get(\"{s}\") = {d} bytes, restored", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
+            } else {
+                debug("get(\"{s}\") = {d} bytes, ignored for debug build", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
+            }
+        }
         bun.Analytics.Features.transpiler_cache = true;
+
+        if (comptime bun.Environment.allow_assert) {
+            if (!restore_from_cache_in_debug_build) {
+                if (this.entry) |*entry| {
+                    entry.deinit(this.sourcemap_allocator, this.output_code_allocator);
+                    this.entry = null;
+                }
+            }
+        }
 
         return this.entry != null;
     }

@@ -11,10 +11,12 @@ koffi.alias('i8', 'int8_t');
 koffi.alias('i16', 'int16_t');
 koffi.alias('i32', 'int32_t');
 koffi.alias('i64', 'int64_t');
+koffi.alias('i64_fast', 'int64_t');
 koffi.alias('u8', 'uint8_t');
 koffi.alias('u16', 'uint16_t');
 koffi.alias('u32', 'uint32_t');
 koffi.alias('u64', 'uint64_t');
+koffi.alias('u64_fast', 'uint64_t');
 koffi.alias('usize', 'uint64_t');
 koffi.alias('callback', 'void*');
 koffi.alias('function', 'void*');
@@ -69,8 +71,7 @@ const ptrsToValues = new Map<bunffi.Pointer, unknown>();
 let fakePtr = 4;
 
 export const suffix = (
-    process.platform === 'darwin' ? '.dylib' :
-        (process.platform === 'win32' ? '.dll' : '.so')
+    process.platform === 'darwin' ? 'dylib' : (process.platform === 'win32' ? 'dll' : 'so')
 ) satisfies typeof bunffi.suffix;
 
 export const dlopen = (<Fns extends Record<string, bunffi.Narrow<bunffi.FFIFunction>>>(name: string, symbols: Fns) => {
@@ -108,9 +109,14 @@ export const dlopen = (<Fns extends Record<string, bunffi.Narrow<bunffi.FFIFunct
                     ptrsToValues.set(ptrAddr, rawret);
                     return new CString(ptrAddr);
                 }
+                if (['usize', 'u64', 'i64', 'uint64_t', 'int64_t'].includes(returnType)) {
+                    return BigInt(rawret); // ensure BigInt
+                }
                 return rawret;
             }
         );
+        const fn = Reflect.get(outsyms, sym);
+        Reflect.set(fn, 'native', fn); // Not really accurate but should be fine... hopefully...
     }
     return {
         close() { lib.unload(); },
@@ -150,26 +156,32 @@ export const toArrayBuffer = ((ptr, byteOff?, byteLen?) => {
         `Untracked pointer ${ptr} in ffi.toArrayBuffer, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
     );
     if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return view as ArrayBuffer; // ?
-    if (util.types.isExternal(view)) {
-        if (byteLen === undefined) {
-            let bytes = [], byte, off = 0;
-            do {
-                byte = koffi.decode(view, off++, 'unsigned char[]', 1);
-                bytes.push(byte[0]);
-            } while (byte[0]);
-            bytes.pop();
-            return new Uint8Array(bytes).buffer as ArrayBuffer; // ?
-        } else {
-            return koffi.decode(view, byteOff ?? 0, 'unsigned char[]', byteLen).buffer;
+    const arraybuffer = (() => {
+        if (util.types.isExternal(view)) {
+            if (byteLen === undefined) {
+                let bytes = [], byte, off = 0;
+                do {
+                    byte = koffi.decode(view, off++, 'unsigned char[]', 1);
+                    bytes.push(byte[0]);
+                } while (byte[0]);
+                bytes.pop();
+                return new Uint8Array(bytes).buffer as ArrayBuffer; // ?
+            } else {
+                return koffi.decode(view, byteOff ?? 0, 'unsigned char[]', byteLen).buffer;
+            }
         }
-    }
-    if (byteOff === undefined) return (view as DataView).buffer;
-    return (view as DataView).buffer.slice(byteOff, byteOff + (byteLen ?? (view as DataView).byteLength));
+        if (byteOff === undefined) return (view as DataView).buffer;
+        return (view as DataView).buffer.slice(byteOff, byteOff + (byteLen ?? (view as DataView).byteLength));
+    })();
+    Object.defineProperty(arraybuffer, '@@bun-polyfills.ffi.ptr', { value: ptr });
+    return arraybuffer;
 }) satisfies typeof bunffi.toArrayBuffer;
 
 export const ptr = ((view, byteOffset = 0) => {
     const known = [...ptrsToValues.entries()].find(([_, v]) => v === view);
     if (known) return known[0];
+    if (Reflect.get(view, '@@bun-polyfills.ffi.ptr')) return Reflect.get(view, '@@bun-polyfills.ffi.ptr');
+    if (ArrayBuffer.isView(view) && Reflect.get(view.buffer, '@@bun-polyfills.ffi.ptr')) return Reflect.get(view.buffer, '@@bun-polyfills.ffi.ptr');
     const ptr = fakePtr;
     fakePtr += (view.byteLength + 3) & ~0x3;
     if (!byteOffset) {
@@ -185,9 +197,9 @@ export const ptr = ((view, byteOffset = 0) => {
     }
 }) satisfies typeof bunffi.ptr;
 
-export const CFunction = ((sym): CallableFunction & { close(): void; } => {
+export const CFunction = (function CFunction(sym): CallableFunction & { close(): void; } {
     if (!sym.ptr) throw new Error('ffi.CFunction requires a non-null pointer');
-    const fnName = `anonymous__${sym.ptr.toString(16).replaceAll('.', '_')}`;
+    const fnName = `anonymous__${sym.ptr.toString(16).replaceAll('.', '_')}_${Math.random().toString(16).slice(2)}`;
     const fnSig = koffi.proto(fnName, bunffiTypeToKoffiType(sym.returns), sym.args?.map(bunffiTypeToKoffiType) ?? []);
     const fnPtr = ptrsToValues.get(sym.ptr);
     if (!fnPtr) throw new Error(
@@ -216,10 +228,14 @@ export class CString extends String implements bunffi.CString {
 
 // TODO
 export class JSCallback implements bunffi.JSCallback {
-    constructor(cb: (...args: any[]) => any, def: bunffi.FFIFunction) { }
-    readonly ptr!: bunffi.Pointer | null;
-    readonly threadsafe!: boolean;
-    close() { };
+    constructor(cb: (...args: any[]) => any, def: bunffi.FFIFunction) {
+        throw new Error('ffi.JSCallback is not implemented');
+    }
+    readonly ptr: bunffi.Pointer | null = null;
+    readonly threadsafe: boolean = false;
+    close() {
+        Reflect.set(this, 'ptr', null);
+    };
 };
 
 export const read = {
@@ -269,14 +285,14 @@ export const read = {
             `Untracked pointer ${ptr} in ffi.read.i64, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
         );
         if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getBigInt64(bOff, LE);
-        return koffi.decode(view, bOff, 'i64');
+        return BigInt(koffi.decode(view, bOff, 'i64'));
     },
     intptr(ptr, bOff = 0) {
         return this.i32(ptr, bOff);
     },
     ptr(ptr, bOff = 0) {
         const u64 = this.u64(ptr, bOff);
-        const masked = u64 & 0b11111111_11111111_11111111_11111111_11111111_11111111_00000111_00000000n;
+        const masked = u64 & 0x7FFFFFFFFFFFFn;
         return Number(masked);
     },
     u8(ptr, bOff = 0) {
@@ -309,7 +325,7 @@ export const read = {
             `Untracked pointer ${ptr} in ffi.read.u64, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
         );
         if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getBigUint64(bOff, LE);
-        return koffi.decode(view, bOff, 'u64');
+        return BigInt(koffi.decode(view, bOff, 'u64'));
     },
 } satisfies typeof bunffi.read;
 

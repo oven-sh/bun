@@ -469,7 +469,7 @@ test("CallFrame.p.toString", () => {
   expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
 });
 
-test.todo("err.stack should invoke prepareStackTrace", () => {
+test("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
@@ -492,9 +492,9 @@ test.todo("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(488);
+  expect(lineNumber).toBe(491);
   // TODO: this is wrong
-  expect(parentLineNumber).toBe(497);
+  expect(parentLineNumber).toBe(499);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {

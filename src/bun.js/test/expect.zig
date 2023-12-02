@@ -3734,11 +3734,11 @@ pub const Expect = struct {
         return ExpectStatic.create(globalObject, .{ .not = true });
     }
 
-    pub fn getStaticResolvedTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticResolvesTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
         return ExpectStatic.create(globalObject, .{ .promise = .resolves });
     }
 
-    pub fn getStaticRejectedTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticRejectsTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
         return ExpectStatic.create(globalObject, .{ .promise = .rejects });
     }
 
@@ -4142,16 +4142,16 @@ pub const ExpectStatic = struct {
         return create(globalObject, flags);
     }
 
-    pub fn getResolvedTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
         var flags = this.flags;
-        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "resolvedTo");
+        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "resolvesTo");
         flags.promise = .resolves;
         return create(globalObject, flags);
     }
 
-    pub fn getRejectedTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getRejectsTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
         var flags = this.flags;
-        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "rejectedTo");
+        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "rejectsTo");
         flags.promise = .rejects;
         return create(globalObject, flags);
     }
@@ -4159,8 +4159,8 @@ pub const ExpectStatic = struct {
     fn asyncChainingError(globalObject: *JSGlobalObject, flags: Expect.Flags, name: string) JSValue {
         @setCold(true);
         var str = switch (flags.promise) {
-            .resolves => "resolvedTo",
-            .rejects => "rejectedTo",
+            .resolves => "resolvesTo",
+            .rejects => "rejectsTo",
             else => unreachable,
         };
         globalObject.throw("expect.{s}: already called expect.{s} on this chain", .{ name, str });

@@ -8,7 +8,7 @@ const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
 
 // When making parser changes, it gets extremely confusing.
-var restore_from_cache_in_debug_build = false;
+var bun_debug_restore_from_cache = false;
 
 pub const RuntimeTranspilerCache = struct {
     input_hash: ?u64 = null,
@@ -372,7 +372,7 @@ pub const RuntimeTranspilerCache = struct {
         buf: *[bun.MAX_PATH_BYTES]u8,
     ) [:0]const u8 {
         if (comptime bun.Environment.allow_assert) {
-            restore_from_cache_in_debug_build = bun.getenvZ("BUN_RESTORE_FROM_CACHE") != null;
+            bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_RESTORE_FROM_CACHE") != null;
         }
 
         if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {
@@ -597,7 +597,7 @@ pub const RuntimeTranspilerCache = struct {
             return false;
         };
         if (comptime bun.Environment.allow_assert) {
-            if (restore_from_cache_in_debug_build) {
+            if (bun_debug_restore_from_cache) {
                 debug("get(\"{s}\") = {d} bytes, restored", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
             } else {
                 debug("get(\"{s}\") = {d} bytes, ignored for debug build", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
@@ -606,7 +606,7 @@ pub const RuntimeTranspilerCache = struct {
         bun.Analytics.Features.transpiler_cache = true;
 
         if (comptime bun.Environment.allow_assert) {
-            if (!restore_from_cache_in_debug_build) {
+            if (!bun_debug_restore_from_cache) {
                 if (this.entry) |*entry| {
                     entry.deinit(this.sourcemap_allocator, this.output_code_allocator);
                     this.entry = null;

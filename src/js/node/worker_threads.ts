@@ -111,6 +111,7 @@ function receiveMessageOnPort(port: MessagePort) {
   };
 }
 
+// TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
   Object.defineProperty(fake, "onmessage", {
@@ -126,7 +127,9 @@ function fakeParentPort() {
     get() {
       return self.onmessageerror;
     },
-    set(value) {},
+    set(value) {
+      self.onmessageerror = value;
+    },
   });
 
   Object.defineProperty(fake, "postMessage", {
@@ -136,9 +139,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "close", {
-    value() {
-      return process.exit(0);
-    },
+    value() {},
   });
 
   Object.defineProperty(fake, "start", {

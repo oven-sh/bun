@@ -56,46 +56,80 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgo
     if (!sig)
         return Exception { OperationError };
 
-    const BIGNUM* r;
-    const BIGNUM* s;
-    ECDSA_SIG_get0(sig.get(), &r, &s);
+    if (parameters.encoding == CryptoAlgorithmECDSAEncoding::DER) {
+        int derSigLength = i2d_ECDSA_SIG(sig.get(), nullptr);
+        if (derSigLength <= 0)
+            return Exception { OperationError };
+        Vector<uint8_t> signature(derSigLength);
+        uint8_t* p = signature.data();
+        if(i2d_ECDSA_SIG(sig.get(), &p) != derSigLength)
+            return Exception { OperationError };
+        return signature;
+    } else {
 
-    // Concatenate r and s, expanding r and s to keySizeInBytes.
-    Vector<uint8_t> signature = convertToBytesExpand(r, keySizeInBytes);
-    signature.appendVector(convertToBytesExpand(s, keySizeInBytes));
+        const BIGNUM* r;
+        const BIGNUM* s;
+        ECDSA_SIG_get0(sig.get(), &r, &s);
 
-    return signature;
+        // Concatenate r and s, expanding r and s to keySizeInBytes.
+        Vector<uint8_t> signature = convertToBytesExpand(r, keySizeInBytes);
+        signature.appendVector(convertToBytesExpand(s, keySizeInBytes));
+        return signature;
+    }
 }
 
 ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcdsaParams& parameters, const CryptoKeyEC& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
-    size_t keySizeInBytes = (key.keySizeInBits() + 7) / 8;
+    if (parameters.encoding == CryptoAlgorithmECDSAEncoding::DER) {
+        const uint8_t* p = signature.data();
 
-    // Bail if the signature size isn't double the key size (i.e. concatenated r and s components).
-    if (signature.size() != keySizeInBytes * 2)
-        return false;
-    
-    auto sig = ECDSASigPtr(ECDSA_SIG_new());
-    auto r = BN_bin2bn(signature.data(), keySizeInBytes, nullptr);
-    auto s = BN_bin2bn(signature.data() + keySizeInBytes, keySizeInBytes, nullptr);
+        auto sig = ECDSASigPtr(d2i_ECDSA_SIG(nullptr, &p, signature.size()));
+        if (!sig)
+            return Exception { OperationError };
 
-    if (!ECDSA_SIG_set0(sig.get(), r, s))
-        return Exception { OperationError };
+        const EVP_MD* md = digestAlgorithm(parameters.hashIdentifier);
+        if (!md)
+            return Exception { NotSupportedError };
 
-    const EVP_MD* md = digestAlgorithm(parameters.hashIdentifier);
-    if (!md)
-        return Exception { NotSupportedError };
+        std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
+        if (!digest)
+            return Exception { OperationError };
 
-    std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
-    if (!digest)
-        return Exception { OperationError };
+        EC_KEY* ecKey = EVP_PKEY_get0_EC_KEY(key.platformKey());
+        if (!ecKey)
+            return Exception { OperationError };
 
-    EC_KEY* ecKey = EVP_PKEY_get0_EC_KEY(key.platformKey());
-    if (!ecKey)
-        return Exception { OperationError };
+        int ret = ECDSA_do_verify(digest->data(), digest->size(), sig.get(), ecKey);
+        return ret == 1;
+    } else {
+        size_t keySizeInBytes = (key.keySizeInBits() + 7) / 8;
 
-    int ret = ECDSA_do_verify(digest->data(), digest->size(), sig.get(), ecKey);
-    return ret == 1;
+        // Bail if the signature size isn't double the key size (i.e. concatenated r and s components).
+        if (signature.size() != keySizeInBytes * 2)
+            return false;
+        
+        auto sig = ECDSASigPtr(ECDSA_SIG_new());
+        auto r = BN_bin2bn(signature.data(), keySizeInBytes, nullptr);
+        auto s = BN_bin2bn(signature.data() + keySizeInBytes, keySizeInBytes, nullptr);
+
+        if (!ECDSA_SIG_set0(sig.get(), r, s))
+            return Exception { OperationError };
+
+        const EVP_MD* md = digestAlgorithm(parameters.hashIdentifier);
+        if (!md)
+            return Exception { NotSupportedError };
+
+        std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
+        if (!digest)
+            return Exception { OperationError };
+
+        EC_KEY* ecKey = EVP_PKEY_get0_EC_KEY(key.platformKey());
+        if (!ecKey)
+            return Exception { OperationError };
+
+        int ret = ECDSA_do_verify(digest->data(), digest->size(), sig.get(), ecKey);
+        return ret == 1;
+    }
 }
 
 } // namespace WebCore

@@ -95,7 +95,7 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export PATH="$(brew --prefix llvm@16)/bin:$PATH"
 ```
 
 ```bash#Arch
@@ -104,19 +104,6 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 ```
 
 {% /codetabs %}
-
-## Install Zig
-
-Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
-
-```bash
-$ bun install -g @oven/zig
-$ zigup 0.12.0-dev.1604+caae40c21
-```
-
-{% callout %}
-We last updated Zig on **October 26th, 2023**
-{% /callout %}
 
 ## Building Bun
 

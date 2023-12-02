@@ -271,37 +271,99 @@ inline fn setNapiValue(result: *napi_value, value: JSValue) void {
     value.ensureStillAlive();
     result.* = value;
 }
-pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
-    log("napi_create_string_latin1", .{});
-    const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0)
-    else
-        str[0..length];
+pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
+    const result: *napi_value = result_ orelse {
+        return invalidArg();
+    };
 
-    setNapiValue(result, JSC.ZigString.init(slice).toValueGC(env));
-    return .ok;
-}
-pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
-    const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0)
-    else
-        str[0..length];
+    const slice: []const u8 = brk: {
+        if (NAPI_AUTO_LENGTH == length) {
+            break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
+        } else if (length > std.math.maxInt(u32)) {
+            return invalidArg();
+        }
 
-    log("napi_create_string_utf8: {s}", .{slice});
+        if (str) |ptr|
+            break :brk ptr[0..length];
 
-    var string = bun.String.create(slice);
+        return invalidArg();
+    };
+
+    log("napi_create_string_latin1: {s}", .{slice});
+
+    var string = bun.String.createUninitializedLatin1(slice.len);
+    if (string.tag == .Dead) {
+        return .generic_failure;
+    }
+
+    if (slice.len > 0) {
+        @memcpy(@constCast(string.latin1())[0..slice.len], slice);
+    }
+
     defer string.deref();
     setNapiValue(result, string.toJS(env));
     return .ok;
 }
-pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
-    log("napi_create_string_utf16", .{});
-    const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@as([*:0]const char16_t, @ptrCast(str)), 0)
-    else
-        str[0..length];
+pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
+    const result: *napi_value = result_ orelse {
+        return invalidArg();
+    };
+    const slice: []const u8 = brk: {
+        if (NAPI_AUTO_LENGTH == length) {
+            break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
+        } else if (length > std.math.maxInt(u32)) {
+            return invalidArg();
+        }
 
-    setNapiValue(result, JSC.ZigString.from16(slice.ptr, length).toValueGC(env));
+        if (str) |ptr|
+            break :brk ptr[0..length];
+
+        return invalidArg();
+    };
+
+    log("napi_create_string_utf8: {s}", .{slice});
+
+    var string = bun.String.create(slice);
+    if (string.tag == .Dead) {
+        return .generic_failure;
+    }
+
+    defer string.deref();
+    setNapiValue(result, string.toJS(env));
+    return .ok;
+}
+pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, length: usize, result_: ?*napi_value) napi_status {
+    const result: *napi_value = result_ orelse {
+        return invalidArg();
+    };
+
+    const slice: []const u16 = brk: {
+        if (NAPI_AUTO_LENGTH == length) {
+            break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
+        } else if (length > std.math.maxInt(u32)) {
+            return invalidArg();
+        }
+
+        if (str) |ptr|
+            break :brk ptr[0..length];
+
+        return invalidArg();
+    };
+
+    if (comptime bun.Environment.allow_assert)
+        log("napi_create_string_utf16: {d} {any}", .{ slice.len, strings.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+
+    var string = bun.String.createUninitializedUTF16(slice.len);
+    if (string.tag == .Dead) {
+        return .generic_failure;
+    }
+
+    if (slice.len > 0) {
+        @memcpy(@constCast(string.utf16())[0..slice.len], slice);
+    }
+
+    defer string.deref();
+    setNapiValue(result, string.toJS(env));
     return .ok;
 }
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
@@ -710,15 +772,7 @@ pub export fn napi_is_arraybuffer(_: napi_env, value: napi_value, result: *bool)
     result.* = !value.isNumber() and value.jsTypeLoose() == .ArrayBuffer;
     return .ok;
 }
-pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status {
-    log("napi_create_arraybuffer", .{});
-    var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
-    var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return genericFailure();
-    const len = @min(array_buffer.len, @as(u32, @truncate(byte_length)));
-    @memcpy(array_buffer.ptr[0..len], data[0..len]);
-    result.* = JSValue.c(typed_array);
-    return .ok;
-}
+pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status;
 
 pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 

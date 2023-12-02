@@ -12,6 +12,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -22,6 +23,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -121,6 +123,11 @@ jobs:
           platforms: linux/${{matrix.build_arch}}
           target: ${{matrix.target}}
           outputs: type=local,dest=${{runner.temp}}/release
+      - id: bun-version-check
+        name: Bun version check
+        run: |
+          # If this hangs, it means something is seriously wrong with the build
+          ${{runner.temp}}/release/bun-profile --version
       - name: Zip
         run: |
           # if zip is not found
@@ -237,7 +244,11 @@ jobs:
           cd bun-${{matrix.tag}}
           chmod +x bun
           pwd >> $GITHUB_PATH
-          ./bun --version
+      - id: bun-version-check
+        name: Bun version check
+        run: |
+          # If this hangs, it means something is seriously wrong with the build
+          bun --version
       - id: install-dependnecies
         name: Install dependencies
         run: |

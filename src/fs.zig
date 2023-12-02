@@ -642,7 +642,7 @@ pub const FileSystem = struct {
             }
 
             pub fn create(this: *TmpfilePosix, _: *RealFS, name: [:0]const u8) !void {
-                // We originally used
+                // We originally used a temporary directory, but it caused EXDEV.
                 const dir_fd = std.fs.cwd().fd;
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;

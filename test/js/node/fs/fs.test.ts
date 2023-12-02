@@ -777,7 +777,7 @@ describe("readFileSync", () => {
 
   it("reads correctly using base64 encoding", () => {
     const base64Text = readFileSync(import.meta.dir + "/readFileSync.txt", "base64");
-    const expectedString = "RmlsZSByZWFkIHN1Y2Nlc3NmdWxseQo="; // "File read successfully" encoded in base64
+    const expectedString = "RmlsZSByZWFkIHN1Y2Nlc3NmdWxseQ=="; // "File read successfully" encoded in base64
     expect(base64Text).toBe(expectedString);
   });
 });

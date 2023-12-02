@@ -104,11 +104,11 @@ describe("bundler", () => {
       "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
       "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
       "/node_modules/other/index.js": "globalThis.x = 1;",
-      "/node_modules/other-esm/index.js": "globalThis.w = 0;"
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
     },
     run: {
       stdout: "[0,1,2,3]",
-      setCwd: true
+      setCwd: true,
     },
     compile: true,
   });
@@ -131,11 +131,11 @@ describe("bundler", () => {
       "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
       "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
       "/node_modules/other/index.js": "globalThis.x = 1;",
-      "/node_modules/other-esm/index.js": "globalThis.w = 0;"
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
     },
     run: {
       stdout: "[0,1,2,3]",
-      setCwd: true
+      setCwd: true,
     },
     compile: true,
   });
@@ -148,7 +148,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      error: 'Cannot find package "express"'
+      error: 'Cannot find package "express"',
     },
     compile: true,
   });

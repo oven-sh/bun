@@ -1220,7 +1220,7 @@ for (const [key, blob] of build.outputs) {
             IS_TEST_RUNNER: "1",
           },
           stdio: ["ignore", "pipe", "pipe"],
-          cwd: run.setCwd ? root : undefined
+          cwd: run.setCwd ? root : undefined,
         });
 
         if (run.error) {

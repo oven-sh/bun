@@ -34,6 +34,8 @@ namespace WebCore {
 class CryptoAlgorithmSHA224 final : public CryptoAlgorithm {
 public:
     static constexpr ASCIILiteral s_name = "SHA-224"_s;
+    static constexpr ASCIILiteral s_alternative_name = "SHA224"_s;
+
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::SHA_224;
     static Ref<CryptoAlgorithm> create();
 

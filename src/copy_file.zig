@@ -27,7 +27,6 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
         const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
         switch (os.errno(rc)) {
             .SUCCESS => return,
-            .INVAL => unreachable,
             .NOMEM => return error.SystemResources,
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.

@@ -269,6 +269,8 @@ export interface BundlerTestRunOptions {
   errorLineMatch?: RegExp;
 
   runtime?: "bun" | "node";
+
+  setCwd?: boolean;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -1218,6 +1220,7 @@ for (const [key, blob] of build.outputs) {
             IS_TEST_RUNNER: "1",
           },
           stdio: ["ignore", "pipe", "pipe"],
+          cwd: run.setCwd ? root : undefined,
         });
 
         if (run.error) {

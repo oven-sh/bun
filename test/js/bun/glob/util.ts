@@ -1,3 +1,24 @@
+import { mkdtempSync, symlinkSync } from "fs";
+import path from "path";
+import os from "os";
+
+export function createTempDirectoryWithBrokenSymlinks() {
+  // Create a temporary directory
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "fixtures_symlink_"));
+
+  // Define broken symlink targets (non-existent paths)
+  const brokenTargets = ["non_existent_file.txt", "non_existent_dir"];
+
+  // Create broken symlinks in the temporary directory
+  for (const target of brokenTargets) {
+    const symlinkPath = path.join(tempDir, `broken_link_to_${target}`);
+    symlinkSync(target, symlinkPath);
+  }
+
+  console.log(`Temporary directory with broken symlinks created at: ${tempDir}`);
+  return tempDir;
+}
+
 export function tempFixturesDir() {
   const files: Record<string, string | Record<string, string>> = {
     ".directory": {

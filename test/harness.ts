@@ -8,6 +8,7 @@ export const bunEnv: any = {
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
   CI: "1",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
 
 export function bunExe() {

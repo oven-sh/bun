@@ -973,7 +973,7 @@ pub const FormData = struct {
     pub fn toJS(globalThis: *JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !JSC.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = JSC.ZigString.fromUTF8(input);
+                var str = JSC.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
                 return JSC.DOMFormData.createFromURLQuery(globalThis, &str);
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
@@ -1077,13 +1077,13 @@ pub const FormData = struct {
                         if (filename_str.len > 0) {
                             const extension = std.fs.path.extension(filename_str);
                             if (extension.len > 0) {
-                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                if (bun.http.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
                                     break :brk mime.value;
                                 }
                             }
                         }
 
-                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                        if (bun.http.MimeType.sniff(value_str)) |mime| {
                             break :brk mime.value;
                         }
 
@@ -1104,7 +1104,16 @@ pub const FormData = struct {
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = JSC.ZigString.initUTF8(value_str);
+                    var value = JSC.ZigString.initUTF8(
+                        // > Each part whose `Content-Disposition` header does not
+                        // > contain a `filename` parameter must be parsed into an
+                        // > entry whose value is the UTF-8 decoded without BOM
+                        // > content of the part. This is done regardless of the
+                        // > presence or the value of a `Content-Type` header and
+                        // > regardless of the presence or the value of a
+                        // > `charset` parameter.
+                        strings.withoutUTF8BOM(value_str),
+                    );
                     wrap.form.append(&key, &value);
                 }
             }

@@ -181,3 +181,5 @@ pub const disable_on_windows_due_to_bugs = env.isWindows;
 
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const disable_auto_js_to_ts_in_node_modules = true;
+
+pub const runtime_transpiler_cache = true;

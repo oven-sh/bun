@@ -72,7 +72,7 @@ pub const FileSystem = struct {
 
     var tmpname_id_number = std.atomic.Atomic(u32).init(0);
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
-        const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) ^ @as(u128, @intCast(std.time.nanoTimestamp()))));
+        const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
         return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
             bun.fmt.hexIntLower(hex_value),
@@ -494,6 +494,10 @@ pub const FileSystem = struct {
         return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .loose);
     }
 
+    pub fn absBufZ(f: *@This(), parts: anytype, buf: []u8) stringZ {
+        return path_handler.joinAbsStringBufZ(f.top_level_dir, buf, parts, .loose);
+    }
+
     pub fn joinAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
         const joined = f.join(parts);
         return try allocator.dupe(u8, joined);
@@ -617,14 +621,6 @@ pub const FileSystem = struct {
             tmpdir_path_set = true;
         }
 
-        pub fn fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
-            const file = try fs._fetchCacheFile(basename);
-            if (comptime FeatureFlags.store_file_descriptors) {
-                setMaxFd(file.handle);
-            }
-            return file;
-        }
-
         pub const TmpfilePosix = struct {
             fd: bun.FileDescriptor = bun.invalid_fd,
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
@@ -659,7 +655,7 @@ pub const FileSystem = struct {
                 std.debug.assert(this.fd != bun.invalid_fd);
                 std.debug.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, std.fs.cwd().fd, name);
+                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), bun.sliceTo(from_name, 0), std.fs.cwd().fd, bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -728,18 +724,6 @@ pub const FileSystem = struct {
                 this.close();
             }
         };
-
-        inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
-            var parts = [_]string{ "node_modules", ".cache", basename };
-            var path = fs.parent_fs.join(&parts);
-            return std.fs.cwd().openFile(path, .{ .mode = .read_write, .lock = .Shared }) catch {
-                path = fs.parent_fs.join(parts[0..2]);
-                try std.fs.cwd().makePath(path);
-
-                path = fs.parent_fs.join(&parts);
-                return try std.fs.cwd().createFile(path, .{ .mode = .read_write, .lock = .Shared });
-            };
-        }
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
             // On Windows, we must always close open file handles
@@ -1760,6 +1744,10 @@ pub const Path = struct {
 
     pub fn isNodeModule(this: *const Path) bool {
         return strings.lastIndexOf(this.name.dir, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str) != null;
+    }
+
+    pub fn isJSXFile(this: *const Path) bool {
+        return strings.hasSuffixComptime(this.name.filename, ".jsx") or strings.hasSuffixComptime(this.name.filename, ".tsx");
     }
 };
 

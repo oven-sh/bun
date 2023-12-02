@@ -372,7 +372,7 @@ pub const RuntimeTranspilerCache = struct {
         buf: *[bun.MAX_PATH_BYTES]u8,
     ) [:0]const u8 {
         if (comptime bun.Environment.allow_assert) {
-            bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_RESTORE_FROM_CACHE") != null;
+            bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE") != null;
         }
 
         if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {

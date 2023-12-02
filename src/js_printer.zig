@@ -765,7 +765,6 @@ fn NewPrinter(
                 const entry: *const Op = Op.Table.getPtrConst(e.op);
                 const e_level = entry.level;
                 v.entry = entry;
-
                 v.wrap = v.level.gte(e_level) or (e.op == Op.Code.bin_in and v.flags.contains(.forbid_in));
 
                 // Destructuring assignments must be parenthesized
@@ -838,6 +837,12 @@ fn NewPrinter(
                             .e_await, .e_undefined, .e_number => {
                                 left_level.* = .call;
                             },
+                            .e_boolean => {
+                                // When minifying, booleans are printed as "!0 and "!1"
+                                if (p.options.minify_syntax) {
+                                    left_level.* = .call;
+                                }
+                            },
                             else => {},
                         }
                     },
@@ -854,7 +859,7 @@ fn NewPrinter(
                     return false;
                 }
 
-                v.left_flags = ExprFlag.None();
+                v.left_flags = ExprFlag.Set{};
 
                 if (v.flags.contains(.forbid_in)) {
                     v.left_flags.insert(.forbid_in);
@@ -868,7 +873,7 @@ fn NewPrinter(
             pub fn visitRightAndFinish(v: *BinaryExpressionVisitor, p: *Printer) void {
                 var e = v.e;
                 const entry = v.entry;
-                var flags = v.flags;
+                var flags = ExprFlag.Set{};
 
                 if (e.op != .bin_comma) {
                     p.printSpace();
@@ -885,11 +890,14 @@ fn NewPrinter(
                 }
 
                 p.printSpace();
-                flags.insert(.forbid_in);
 
-                // this feels like a hack? I think something is wrong here.
-                if (e.op == .bin_assign) {
-                    flags.remove(.expr_result_is_unused);
+                // The result of the right operand of the comma operator is unused if the caller doesn't use it
+                if (e.op == .bin_comma and v.flags.contains(.expr_result_is_unused)) {
+                    flags.insert(.expr_result_is_unused);
+                }
+
+                if (v.flags.contains(.forbid_in)) {
+                    flags.insert(.forbid_in);
                 }
 
                 p.printExpr(e.right, v.right_level, flags);
@@ -3120,8 +3128,8 @@ fn NewPrinter(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        var stack = p.binary_expression_stack.pop();
-                        stack.visitRightAndFinish(p);
+                        var last = p.binary_expression_stack.pop();
+                        last.visitRightAndFinish(p);
                     }
                 },
                 else => {

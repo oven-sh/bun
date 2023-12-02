@@ -6978,6 +6978,15 @@ fn NewParser_(
                             );
                         }
 
+                        if (p.options.features.minify_syntax) {
+                            // "x == void 0" => "x == null"
+                            if (e_.left.data == .e_undefined) {
+                                e_.left.data = .{ .e_null = E.Null{} };
+                            } else if (e_.right.data == .e_undefined) {
+                                e_.right.data = .{ .e_null = E.Null{} };
+                            }
+                        }
+
                         // const after_op_loc = locAfterOp(e_.);
                         // TODO: warn about equality check
                         // TODO: warn about typeof string
@@ -6987,15 +6996,6 @@ fn NewParser_(
                         const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
                         if (equality.ok) {
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
-                        }
-
-                        if (p.options.features.minify_syntax) {
-                            // "x == void 0" => "x == null"
-                            if (e_.left.data == .e_undefined) {
-                                e_.left.data = .{ .e_null = E.Null{} };
-                            } else if (e_.right.data == .e_undefined) {
-                                e_.right.data = .{ .e_null = E.Null{} };
-                            }
                         }
 
                         // const after_op_loc = locAfterOp(e_.);
@@ -15957,7 +15957,7 @@ fn NewParser_(
 
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation.
-                    while (p.binary_expression_stack.items.len > 0 and p.binary_expression_stack.items.len > stack_bottom) {
+                    while (p.binary_expression_stack.items.len > stack_bottom) {
                         v = p.binary_expression_stack.pop();
                         v.e.left = current;
                         current = v.visitRightAndFinish(p);

@@ -341,7 +341,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
     bool hasSet = false;
 
-    if(errorInstance) {
+    if (errorInstance) {
         if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
             if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
@@ -2847,17 +2847,6 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, JSC::JSValue());
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-
-    if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        // we make a separate copy of the StackTrace unfortunately so that we
-        // can later console.log it without losing the info
-        //
-        // This is not good. We should remove this in the future as it strictly makes this function
-        // already slower than necessary.
-        instance->captureStackTrace(vm, globalObject, 1, false);
-    }
-
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue {}));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

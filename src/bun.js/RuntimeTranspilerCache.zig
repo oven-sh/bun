@@ -1,8 +1,10 @@
+// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
+const expected_version = 1;
+
 const bun = @import("root").bun;
 const std = @import("std");
 const Output = bun.Output;
 const JSC = bun.JSC;
-const expected_version = 1;
 
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

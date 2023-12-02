@@ -7,10 +7,13 @@ const STUB = () => void 0;
 
 function jscSerialize(value: any, options?: { binaryType: 'nodebuffer'; }): Buffer;
 function jscSerialize(value: any, options?: { binaryType?: 'arraybuffer'; }): SharedArrayBuffer;
-function jscSerialize(value: any, options?: { binaryType?: string }): Buffer | SharedArrayBuffer {
-    const serialized = v8.serialize(value);
+function jscSerialize(value: any, options?: { binaryType?: string; }): Buffer | SharedArrayBuffer {
+    const serialized = v8.serialize(value instanceof SharedArrayBuffer ? new Uint8Array(value) : value);
     if (options?.binaryType === 'nodebuffer') return serialized;
-    else return new SharedArrayBuffer(serialized.byteLength);
+    const sab = new SharedArrayBuffer(serialized.byteLength);
+    const sabView = new Uint8Array(sab);
+    sabView.set(serialized);
+    return sab;
 }
 // TODO: Investigate ways of making these the actual JSC serialization format (probably Bun WASM)
 // TODO: whilst this works for common use-cases like Node <-> Node it still does not make it
@@ -102,9 +105,7 @@ export const reoptimizationRetryCount = ((...args) => args.length ? 0 : void 0 a
 export const profile = (() => {
     throw new NotImplementedError('jsc.profile is not polyfillable', STUB, true);
 }) satisfies typeof jsc.profile;
-export const optimizeNextInvocation = (() => {
-    throw new NotImplementedError('jsc.optimizeNextInvocation is not polyfillable', STUB, true);
-}) satisfies typeof jsc.optimizeNextInvocation;
+export const optimizeNextInvocation = STUB satisfies typeof jsc.optimizeNextInvocation; // no-op
 
 export { setRandomSeed, getRandomSeed } from '../global/mathrandom.js';
 

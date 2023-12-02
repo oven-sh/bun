@@ -1579,16 +1579,14 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         std.debug.assert(FileSystem.instance_loaded);
     }
     var tmpname_buf: [512]u8 = undefined;
-    tmpname_buf[0..8].* = "bunlock-".*;
+    tmpname_buf[0..9].* = ".bunlockb".*;
     var tmpfile = FileSystem.RealFS.Tmpfile{};
-    var secret: [32]u8 = undefined;
-    std.mem.writeInt(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())), .little);
     var base64_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
-    const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
-    tmpname_buf[tmpname__.len + 8] = 0;
-    const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
+    const tmpname__ = std.fmt.bufPrint(tmpname_buf[9..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+    tmpname_buf[tmpname__.len + 9] = 0;
+    const tmpname = tmpname_buf[0 .. tmpname__.len + 9 :0];
 
     tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
         Output.prettyErrorln("<r><red>error:<r> failed to open lockfile: {s}", .{@errorName(err)});
@@ -1641,6 +1639,11 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     }
 
     tmpfile.promoteToCWD(tmpname, filename) catch |err| {
+        if (comptime Environment.allow_assert) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+        }
         tmpfile.dir().deleteFileZ(tmpname) catch {};
         Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
         Global.crash();

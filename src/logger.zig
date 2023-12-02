@@ -106,7 +106,7 @@ pub const Location = struct {
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
-        if (this.line_text) |text| builder.count(text[0..@min(text.len, 690)]);
+        if (this.line_text) |text| builder.count(text);
         if (this.suggestion) |text| builder.count(text);
     }
 

@@ -736,7 +736,169 @@ fn NewPrinter(
 
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
+        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
         const Printer = @This();
+
+        /// The handling of binary expressions is convoluted because we're using
+        /// iteration on the heap instead of recursion on the call stack to avoid
+        /// stack overflow for deeply-nested ASTs. See the comments for the similar
+        /// code in the JavaScript parser for details.
+        pub const BinaryExpressionVisitor = struct {
+            // Inputs
+            e: *E.Binary,
+            level: Level = .lowest,
+            flags: ExprFlag.Set = ExprFlag.None(),
+
+            // Input for visiting the left child
+            left_level: Level = .lowest,
+            left_flags: ExprFlag.Set = ExprFlag.None(),
+
+            // "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
+            entry: *const Op = undefined,
+            wrap: bool = false,
+            right_level: Level = .lowest,
+
+            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *Printer) bool {
+                var e = v.e;
+
+                const entry: *const Op = Op.Table.getPtrConst(e.op);
+                const e_level = entry.level;
+                v.entry = entry;
+
+                v.wrap = v.level.gte(e_level) or (e.op == Op.Code.bin_in and v.flags.contains(.forbid_in));
+
+                // Destructuring assignments must be parenthesized
+                const n = p.writer.written;
+                if (n == p.stmt_start or n == p.arrow_expr_start) {
+                    switch (e.left.data) {
+                        .e_object => {
+                            v.wrap = true;
+                        },
+                        else => {},
+                    }
+                }
+
+                if (v.wrap) {
+                    p.print("(");
+                    v.flags.insert(.forbid_in);
+                }
+
+                v.left_level = e_level.sub(1);
+                v.right_level = e_level.sub(1);
+                var left_level = &v.left_level;
+                var right_level = &v.right_level;
+
+                if (e.op.isRightAssociative()) {
+                    left_level.* = e_level;
+                }
+
+                if (e.op.isLeftAssociative()) {
+                    right_level.* = e_level;
+                }
+
+                switch (e.op) {
+                    // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
+                    .bin_nullish_coalescing => {
+                        switch (e.left.data) {
+                            .e_binary => {
+                                const left = e.left.data.e_binary;
+                                switch (left.op) {
+                                    .bin_logical_and, .bin_logical_or => {
+                                        left_level.* = .prefix;
+                                    },
+                                    else => {},
+                                }
+                            },
+                            else => {},
+                        }
+
+                        switch (e.right.data) {
+                            .e_binary => {
+                                const right = e.right.data.e_binary;
+                                switch (right.op) {
+                                    .bin_logical_and, .bin_logical_or => {
+                                        right_level.* = .prefix;
+                                    },
+                                    else => {},
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                    // "**" can't contain certain unary expressions
+                    .bin_pow => {
+                        switch (e.left.data) {
+                            .e_unary => {
+                                const left = e.left.data.e_unary;
+                                if (left.op.unaryAssignTarget() == .none) {
+                                    left_level.* = .call;
+                                }
+                            },
+                            .e_await, .e_undefined, .e_number => {
+                                left_level.* = .call;
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
+
+                // Special-case "#foo in bar"
+                if (e.left.data == .e_private_identifier and e.op == .bin_in) {
+                    const private = e.left.data.e_private_identifier;
+                    const name = p.renamer.nameForSymbol(private.ref);
+                    p.addSourceMappingForName(e.left.loc, name, private.ref);
+                    p.printIdentifier(name);
+                    v.visitRightAndFinish(p);
+                    return false;
+                }
+
+                v.left_flags = ExprFlag.None();
+
+                if (v.flags.contains(.forbid_in)) {
+                    v.left_flags.insert(.forbid_in);
+                }
+
+                if (e.op == .bin_comma)
+                    v.left_flags.insert(.expr_result_is_unused);
+
+                return true;
+            }
+            pub fn visitRightAndFinish(v: *BinaryExpressionVisitor, p: *Printer) void {
+                var e = v.e;
+                const entry = v.entry;
+                var flags = v.flags;
+
+                if (e.op != .bin_comma) {
+                    p.printSpace();
+                }
+
+                if (entry.is_keyword) {
+                    p.printSpaceBeforeIdentifier();
+                    p.print(entry.text);
+                } else {
+                    p.printSpaceBeforeOperator(e.op);
+                    p.print(entry.text);
+                    p.prev_op = e.op;
+                    p.prev_op_end = p.writer.written;
+                }
+
+                p.printSpace();
+                flags.insert(.forbid_in);
+
+                // this feels like a hack? I think something is wrong here.
+                if (e.op == .bin_assign) {
+                    flags.remove(.expr_result_is_unused);
+                }
+
+                p.printExpr(e.right, v.right_level, flags);
+
+                if (v.wrap) {
+                    p.print(")");
+                }
+            }
+        };
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
@@ -1197,18 +1359,14 @@ fn NewPrinter(
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
-        // pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
-        //     _ = location;
-        //     if (comptime !generate_source_map) {
-        //         return;
-        //     }
+        pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, _: string, _: Ref) void {
+            if (comptime !generate_source_map) {
+                return;
+            }
 
-        //     if (printer.symbols().get(printer.symbols().follow(ref))) |symbol| {
-        //         if (!strings.eqlLong(symbol.original_name, name)) {
-        //             printer.source_map_builder.addSourceMapping()
-        //         }
-        //     }
-        // }
+            // TODO:
+            printer.addSourceMapping(location);
+        }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             std.debug.assert(!ref.isNull());
@@ -2921,120 +3079,49 @@ fn NewPrinter(
                     }
                 },
                 .e_binary => |e| {
-                    // 4.00 ms  enums.EnumIndexer(src.js_ast.Op.Code).indexOf
-                    const entry: *const Op = Op.Table.getPtrConst(e.op);
-                    const e_level = entry.level;
+                    // The handling of binary expressions is convoluted because we're using
+                    // iteration on the heap instead of recursion on the call stack to avoid
+                    // stack overflow for deeply-nested ASTs. See the comments for the similar
+                    // code in the JavaScript parser for details.
+                    var v = BinaryExpressionVisitor{
+                        .e = e,
+                        .level = level,
+                        .flags = flags,
+                        .entry = Op.Table.getPtrConst(e.op),
+                    };
 
-                    var wrap = level.gte(e_level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
+                    // Use a single stack to reduce allocation overhead
+                    const stack_bottom = p.binary_expression_stack.items.len;
 
-                    // Destructuring assignments must be parenthesized
-                    const n = p.writer.written;
-                    if (n == p.stmt_start or n == p.arrow_expr_start) {
-                        switch (e.left.data) {
-                            .e_object => {
-                                wrap = true;
-                            },
-                            else => {},
+                    while (true) {
+                        if (!v.checkAndPrepare(p)) {
+                            break;
                         }
+
+                        const left = v.e.left;
+                        var left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
+
+                        // Stop iterating if iteration doesn't apply to the left node
+                        if (left_binary == null) {
+                            p.printExpr(left, v.left_level, v.left_flags);
+                            v.visitRightAndFinish(p);
+                            break;
+                        }
+
+                        // Only allocate heap memory on the stack for nested binary expressions
+                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        v = BinaryExpressionVisitor{
+                            .e = left_binary.?,
+                            .level = v.left_level,
+                            .flags = v.left_flags,
+                        };
                     }
 
-                    if (wrap) {
-                        p.print("(");
-                        flags.insert(.forbid_in);
-                    }
-
-                    var left_level = e_level.sub(1);
-                    var right_level = e_level.sub(1);
-
-                    if (e.op.isRightAssociative()) {
-                        left_level = e_level;
-                    }
-
-                    if (e.op.isLeftAssociative()) {
-                        right_level = e_level;
-                    }
-
-                    switch (e.op) {
-                        // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
-                        .bin_nullish_coalescing => {
-                            switch (e.left.data) {
-                                .e_binary => {
-                                    const left = e.left.data.e_binary;
-                                    switch (left.op) {
-                                        .bin_logical_and, .bin_logical_or => {
-                                            left_level = .prefix;
-                                        },
-                                        else => {},
-                                    }
-                                },
-                                else => {},
-                            }
-
-                            switch (e.right.data) {
-                                .e_binary => {
-                                    const right = e.right.data.e_binary;
-                                    switch (right.op) {
-                                        .bin_logical_and, .bin_logical_or => {
-                                            right_level = .prefix;
-                                        },
-                                        else => {},
-                                    }
-                                },
-                                else => {},
-                            }
-                        },
-                        // "**" can't contain certain unary expressions
-                        .bin_pow => {
-                            switch (e.left.data) {
-                                .e_unary => {
-                                    const left = e.left.data.e_unary;
-                                    if (left.op.unaryAssignTarget() == .none) {
-                                        left_level = .call;
-                                    }
-                                },
-                                .e_await, .e_undefined, .e_number => {
-                                    left_level = .call;
-                                },
-                                else => {},
-                            }
-                        },
-                        else => {},
-                    }
-
-                    // Special-case "#foo in bar"
-                    if (e.op == .bin_in and @as(Expr.Tag, e.left.data) == .e_private_identifier) {
-                        p.printSymbol(e.left.data.e_private_identifier.ref);
-                    } else {
-                        flags.insert(.forbid_in);
-                        p.printExpr(e.left, left_level, flags);
-                    }
-
-                    if (e.op != .bin_comma) {
-                        p.printSpace();
-                    }
-
-                    if (entry.is_keyword) {
-                        p.printSpaceBeforeIdentifier();
-                        p.print(entry.text);
-                    } else {
-                        p.printSpaceBeforeOperator(e.op);
-                        p.print(entry.text);
-                        p.prev_op = e.op;
-                        p.prev_op_end = p.writer.written;
-                    }
-
-                    p.printSpace();
-                    flags.insert(.forbid_in);
-
-                    // this feels like a hack? I think something is wrong here.
-                    if (e.op == .bin_assign) {
-                        flags.remove(.expr_result_is_unused);
-                    }
-
-                    p.printExpr(e.right, right_level, flags);
-
-                    if (wrap) {
-                        p.print(")");
+                    // Process all binary operations from the deepest-visited node back toward
+                    // our original top-level binary operation
+                    while (p.binary_expression_stack.items.len > stack_bottom) {
+                        var stack = p.binary_expression_stack.pop();
+                        stack.visitRightAndFinish(p);
                     }
                 },
                 else => {
@@ -5769,6 +5856,9 @@ pub fn printAst(
         renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }
@@ -5842,6 +5932,9 @@ pub fn printJSON(
         renamer.toRenamer(),
         undefined,
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
     if (printer.writer.getError()) {} else |err| {
@@ -5940,6 +6033,10 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
+
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer _writer.* = printer.writer.*;
     defer {
@@ -5997,6 +6094,9 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
+    var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+    printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
+    defer printer.binary_expression_stack.clearAndFree();
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }

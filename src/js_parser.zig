@@ -1,3 +1,7 @@
+/// ** IMPORTANT **
+/// ** When making changes to the JavaScript Parser that impact runtime behavior or fix bugs **
+/// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
+/// ** IMPORTANT **
 pub const std = @import("std");
 pub const logger = @import("root").bun.logger;
 pub const js_lexer = bun.js_lexer;

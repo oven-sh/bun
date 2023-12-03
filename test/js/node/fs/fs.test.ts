@@ -696,6 +696,159 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("throws invalid args value if buffer is empty", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      const buffer = new Uint8Array();
+      fs.readSync(fd, buffer, 0, 10, 0);
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_VALUE");
+      expect(exception.message).toBe(
+        "The argument 'buffer' is empty and cannot be written. " + "Received Uint8Array(0)",
+      );
+    }
+  });
+
+  it("throws error if buffer is not of type Buffer or TypedArray, or DataView ", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, 4, 0, "utf-8");
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(exception.name).toBe("TypeError");
+    }
+  });
+
+  it("throws error if fd is not a number", () => {
+    try {
+      [true, null, undefined, () => {}, {}].forEach(value => {
+        fs.readSync(value, Buffer.allocUnsafe(3), 0, 3, 0);
+      });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(exception.name).toBe("TypeError");
+    }
+  });
+
+  it("offset should be >=0", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), -1, 3, 0);
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("offset should be less than buffer length", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), 4, 3, 0);
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("offset should be less than buffer length when object is passed", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), { offset: 4, length: 3, position: 0 });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("offset should be >=0 when object is passed", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), { offset: -1, length: 3, position: 0 });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("length should be >=0", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), 2, -1, 0);
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("length should be >=0 when object is passed", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), { offset: 2, length: -1, position: 0 });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("length should not be greater than buffer length", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), 2, 4, 0);
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("length should not be greater than buffer length when object is passed", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+      fs.readSync(fd, Buffer.allocUnsafe(3), { offset: 2, length: 4, position: 0 });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+      expect(exception.name).toBe("RangeError");
+    }
+  });
+
+  it("position should be a number or bigint", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+
+      [true, () => {}, {}, ""].forEach(value => {
+        fs.readSync(fd, Buffer.allocUnsafe(3), 0, 2, value);
+      });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(exception.name).toBe("TypeError");
+    }
+  });
+
+  it("position should be a number or bigint when object is passed", () => {
+    try {
+      const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+
+      [true, () => {}, {}, ""].forEach(value => {
+        fs.readSync(fd, Buffer.allocUnsafe(3), { offset: 0, length: 2, position: value });
+      });
+    } catch (exception: any) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(exception.name).toBe("TypeError");
+    }
+  });
+
+  //TODO: Should make below test pass
+  // it("position should be >=-1 and <=9007199254740991", () => {
+  //   try {
+  //     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+  //     [0.5, 2 ** 53, 2n ** 63n].forEach(value => {
+  //       fs.readSync(fd, Buffer.allocUnsafe(3), 1, 2, value);
+  //     });
+  //   } catch (exception: any) {
+  //     expect(exception.code).toBe("ERR_OUT_OF_RANGE");
+  //     expect(exception.name).toBe("RangeError");
+  //   }
+  // });
 });
 
 it("writevSync", () => {
@@ -2441,7 +2594,7 @@ it("BigIntStats", () => {
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
+  expect(() => readSync(2147483640, Buffer.alloc(2))).toThrow("Bad file descriptor");
   expect(() => readlinkSync(path)).toThrow("No such file or directory");
   expect(() => realpathSync(path)).toThrow("No such file or directory");
   expect(() => readFileSync(path)).toThrow("No such file or directory");

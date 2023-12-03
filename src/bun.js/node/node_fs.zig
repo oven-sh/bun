@@ -2486,7 +2486,7 @@ pub const Arguments = struct {
             }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "buffer must be a TypedArray",
+                        "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView.",
                         .{},
                         ctx,
                         exception,
@@ -2499,50 +2499,41 @@ pub const Arguments = struct {
 
             arguments.eat();
 
+            if (buffer.buffer.len == 0) {
+                ctx.throwValue(JSC.toTypeErrorWithCode(
+                    @tagName(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE),
+                    "The argument 'buffer' is empty and cannot be written. Received {s}(0)",
+                    .{@tagName(buffer.buffer.typed_array_type)},
+                    ctx,
+                ));
+
+                return null;
+            }
+
             var args = Read{
                 .fd = fd,
                 .buffer = buffer,
             };
 
+            // TODO: Type checking for NaN, Infinity, -Infinity
             if (arguments.next()) |current| {
                 arguments.eat();
                 if (current.isNumber() and arguments.remaining.len != 0) {
                     var offset = current.to(i54);
-                    if (offset < 0) {
-                        JSC.throwInvalidArguments(
-                            "The value of \"offset\" is out of range. It must be >= 0 && <= {}. Received {}",
-                            .{ std.math.maxInt(i54), offset },
-                            ctx,
-                            exception,
-                        );
 
+                    if (offset < 0) {
+                        ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"offset\" is out of range. It must be >= 0 && <= {}. Received {}", .{ std.math.maxInt(i54), offset }));
                         return null;
                     }
 
                     args.offset = current.to(u53);
-                    if (args.offset > args.buffer.buffer.len) {
-                        JSC.throwInvalidArguments(
-                            "The value of \"offset\" should be less than the buffer length",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
-                        return null;
-                    }
 
                     //length
                     if (arguments.remaining.len >= 1) {
                         if (arguments.remaining[0].isNumber()) {
                             var length = arguments.remaining[0].to(i54);
                             if (length < 0) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"length\" is out of range. It must be >= 0. Received {}",
-                                    .{length},
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"length\" is out of range. It must be >= 0. Received {}", .{length}));
                                 return null;
                             }
 
@@ -2550,29 +2541,17 @@ pub const Arguments = struct {
 
                             var diff = @subWithOverflow(args.buffer.buffer.len, args.offset);
                             if (diff[1] == 1) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
-                                    .{ std.math.maxInt(u52) - diff[0], args.length },
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"length\" is out of range. It must be <= -{}. Received {}", .{ (std.math.maxInt(u64)) - (diff[0] - 1), args.length }));
                                 return null;
                             }
 
                             if (args.length > diff[0]) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
-                                    .{ diff[0], args.length },
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"length\" is out of range. It must be <={}. Received {}", .{ diff[0], args.length }));
                                 return null;
                             }
                         } else {
                             JSC.throwInvalidArguments(
-                                "The \"offset\" argument must be of type number. Received type {s}",
+                                "The \"length\" argument must be of type number. Received type {s}",
                                 .{@tagName(arguments.remaining[0].jsType())},
                                 ctx,
                                 exception,
@@ -2591,13 +2570,7 @@ pub const Arguments = struct {
                             if (!arguments.remaining[0].isNull()) {
                                 var position = @as(ReadPosition, @intCast(arguments.remaining[0].to(i54)));
                                 if (position < -1) {
-                                    JSC.throwInvalidArguments(
-                                        "Postion should be >=-1 && <= {}. Received {}",
-                                        .{ std.math.maxInt(i54), position },
-                                        ctx,
-                                        exception,
-                                    );
-
+                                    ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"position\" is out of range. It should be >=-1 && <= {}. Received {}", .{ std.math.maxInt(i54), position }));
                                     return null;
                                 }
 
@@ -2615,32 +2588,16 @@ pub const Arguments = struct {
                         }
                         arguments.remaining = arguments.remaining[0..];
                     }
-                } else if (current.isObject()) {
+                } else if (current.jsType() == .FinalObject) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
                         if (num.isNumber()) {
                             var offset = num.to(i54);
                             if (offset < 0) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"offset\" is out of range. It must be >= 0 && <= {}. Received {}",
-                                    .{ std.math.maxInt(i54), offset },
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"offset\" is out of range. It must be >= 0 && <= {}. Received {}", .{ std.math.maxInt(i54), offset }));
                                 return null;
                             }
 
                             args.offset = num.to(u53);
-                            if (args.offset > args.buffer.buffer.len) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"offset\" should be less than buffer length",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-
-                                return null;
-                            }
                         } else {
                             JSC.throwInvalidArguments(
                                 "The \"offset\" argument must be of type number. Received type {s}",
@@ -2657,13 +2614,7 @@ pub const Arguments = struct {
                         if (num.isNumber()) {
                             var length = num.to(i54);
                             if (length < 0) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"length\" is out of range. It must be >= 0. Received {}",
-                                    .{length},
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"length\" is out of range. It must be >= 0. Received {}", .{length}));
                                 return null;
                             }
 
@@ -2671,24 +2622,12 @@ pub const Arguments = struct {
 
                             var diff = @subWithOverflow(args.buffer.buffer.len, args.offset);
                             if (diff[1] == 1) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
-                                    .{ std.math.maxInt(u52) - diff[0], args.length },
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"length\" is out of range. It must be <= -{}. Received {}", .{ (std.math.maxInt(u64)) - (diff[0] - 1), args.length }));
                                 return null;
                             }
 
                             if (args.length > diff[0]) {
-                                JSC.throwInvalidArguments(
-                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
-                                    .{ diff[0], args.length },
-                                    ctx,
-                                    exception,
-                                );
-
+                                ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"length\" is out of range. It must be <={}. Received {}", .{ diff[0], args.length }));
                                 return null;
                             }
                         } else {
@@ -2708,13 +2647,7 @@ pub const Arguments = struct {
                             if (!num.isNull()) {
                                 var position = @as(ReadPosition, @intCast(num.to(i54)));
                                 if (position < -1) {
-                                    JSC.throwInvalidArguments(
-                                        "Postion should be >=-1 && <= {}. Received {}",
-                                        .{ std.math.maxInt(i54), position },
-                                        ctx,
-                                        exception,
-                                    );
-
+                                    ctx.throwValue(ctx.createRangeErrorInstanceWithCode(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE, "The value of \"position\" is out of range. It should be >=-1 && <= {}. Received {}", .{ std.math.maxInt(i54), position }));
                                     return null;
                                 }
 

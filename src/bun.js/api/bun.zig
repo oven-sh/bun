@@ -681,6 +681,7 @@ pub fn dummyShell(
         allocator,
         &arena,
         script_heap,
+        jsobjs.items[0..],
     ) catch {
         arena.deinit();
         return .false;

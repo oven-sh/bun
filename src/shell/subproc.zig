@@ -24,7 +24,7 @@ const ShellCmd = @import("./interpreter.zig").Cmd;
 const util = @import("../subproc/util.zig");
 
 pub const ShellSubprocess = struct {
-    const log = Output.scoped(.Subprocess, false);
+    const log = Output.scoped(.SHELL_SUBPROC, false);
     pub const default_max_buffer_size = 1024 * 1024 * 4;
 
     cmd_parent: ?*ShellCmd = null,
@@ -210,7 +210,8 @@ pub const ShellSubprocess = struct {
         // this.ipc_mode = .none;
     }
 
-    fn closeIO(this: *ShellSubprocess, comptime io: @Type(.EnumLiteral)) void {
+    pub fn closeIO(this: *ShellSubprocess, comptime io: @Type(.EnumLiteral)) void {
+        log("close IO {s}", .{@tagName(io)});
         if (this.closed.contains(io)) return;
         this.closed.insert(io);
 

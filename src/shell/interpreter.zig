@@ -52,6 +52,9 @@ pub const Interpreter = struct {
     /// just contains ones set by this shell script.
     export_env: std.StringArrayHashMap([:0]const u8),
 
+    /// JS objects used as input for the shell script
+    jsobjs: []JSValue,
+
     const ShellErrorKind = error{
         OutOfMemory,
         Syscall,
@@ -76,6 +79,7 @@ pub const Interpreter = struct {
         allocator: Allocator,
         arena: *bun.ArenaAllocator,
         script: *ast.Script,
+        jsobjs: []JSValue,
     ) !*Interpreter {
         var interpreter = try allocator.create(Interpreter);
         interpreter.global = global;
@@ -104,6 +108,7 @@ pub const Interpreter = struct {
         interpreter.arena = arena.*;
         interpreter.allocator = allocator;
         interpreter.promise = .{};
+        interpreter.jsobjs = jsobjs;
 
         var promise = JSC.JSPromise.create(global);
         interpreter.promise.strong.set(global, promise.asValue(global));
@@ -569,17 +574,20 @@ pub const Stmt = struct {
     }
 
     pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: u8) void {
+        log("child done Stmt {x} child={x} exit={d}", .{ @intFromPtr(this), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
         this.last_exit_code = exit_code;
         const next_idx = this.idx + 1;
+        child.deinit();
+        this.currently_executing = null;
         if (next_idx >= this.node.exprs.len)
             return this.parent.childDone(Script.ChildPtr.init(this), exit_code);
-        child.deinit();
 
         const next_child = &this.node.exprs[next_idx];
         switch (next_child.*) {
             .cond => {
                 const cond = Cond.init(this.base.interpreter, next_child.cond, Cond.ParentPtr.init(this), this.io);
                 cond.start();
+                this.currently_executing = ChildPtr.init(cond);
             },
             else => @panic("TODO"),
         }
@@ -856,8 +864,13 @@ pub const Pipeline = struct {
                 cmd_or_result.cmd.deinit();
             }
         }
-        this.base.interpreter.allocator.free(this.pipes);
-        this.base.interpreter.allocator.free(this.cmds);
+        if (this.pipes) |pipes| {
+            this.base.interpreter.allocator.free(pipes);
+        }
+        if (this.cmds) |cmds| {
+            this.base.interpreter.allocator.free(cmds);
+        }
+        this.base.interpreter.allocator.destroy(this);
     }
 
     fn initializePipes(pipes: []Pipe, set_count: *u32) !void {
@@ -887,6 +900,7 @@ pub const Cmd = struct {
     parent: ParentPtr,
     exit_code: ?u8,
     io: IO,
+    stdout_close: bool = false,
 
     const ParentPtr = StatePtrUnion(.{
         Stmt,
@@ -920,6 +934,7 @@ pub const Cmd = struct {
         cmd.parent = parent;
         cmd.exit_code = null;
         cmd.io = io;
+        cmd.stdout_close = false;
         return cmd;
     }
 
@@ -980,11 +995,73 @@ pub const Cmd = struct {
         };
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
 
-        // FIXME support redirects
-        // spawn_args.stdio[bun.STDIN_FD] = .inherit;
-        // spawn_args.stdio[bun.STDOUT_FD] = .inherit;
-        // spawn_args.stdio[bun.STDERR_FD] = .inherit;
         this.io.to_subproc_stdio(&spawn_args.stdio);
+
+        if (this.node.redirect_file) |redirect| {
+            const in_cmd_subst = false;
+
+            if (comptime in_cmd_subst) {
+                if (this.node.redirect.stdin) {
+                    spawn_args.stdio[bun.STDIN_FD] = .ignore;
+                }
+
+                if (this.node.redirect.stdout) {
+                    spawn_args.stdio[bun.STDOUT_FD] = .ignore;
+                }
+
+                if (this.node.redirect.stderr) {
+                    spawn_args.stdio[bun.STDERR_FD] = .ignore;
+                }
+            } else switch (redirect) {
+                .jsbuf => |val| {
+                    if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(this.base.interpreter.global)) |buf| {
+                        var stdio: Subprocess.Stdio = .{ .array_buffer = .{
+                            .buf = JSC.ArrayBuffer.Strong{
+                                .array_buffer = buf,
+                                .held = JSC.Strong.create(buf.value, this.base.interpreter.global),
+                            },
+                            .from_jsc = true,
+                        } };
+
+                        if (this.node.redirect.stdin) {
+                            stdio.array_buffer.signal = this.fifoCloseSignal(.stdin);
+                            spawn_args.stdio[bun.STDIN_FD] = stdio;
+                        }
+
+                        if (this.node.redirect.stdout) {
+                            stdio.array_buffer.signal = this.fifoCloseSignal(.stdout);
+                            spawn_args.stdio[bun.STDOUT_FD] = stdio;
+                        }
+
+                        if (this.node.redirect.stderr) {
+                            stdio.array_buffer.signal = this.fifoCloseSignal(.stderr);
+                            spawn_args.stdio[bun.STDERR_FD] = stdio;
+                        }
+                    } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
+                        if (this.node.redirect.stdout) {
+                            if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
+                                @panic("FIXME OOPS");
+                            }
+                        }
+
+                        if (this.node.redirect.stdin) {
+                            if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
+                                @panic("FIXME OOPS");
+                            }
+                        }
+
+                        if (this.node.redirect.stderr) {
+                            if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
+                                @panic("FIXME OOPS");
+                            }
+                        }
+                    } else {
+                        @panic("FIXME Unhandled");
+                    }
+                },
+                else => @panic("FIXME TODO"),
+            }
+        }
 
         const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
         this.cmd = subproc;
@@ -993,21 +1070,77 @@ pub const Cmd = struct {
     pub fn onExit(this: *Cmd, exit_code: u8) void {
         log("cmd exit code={d} ({x})", .{ exit_code, @intFromPtr(this) });
         this.exit_code = exit_code;
+        // if (this.stdout_close)
         this.parent.childDone(this, exit_code);
     }
 
     // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
     pub fn deinit(this: *Cmd) void {
-        if (this.cmd) |cmd| {
-            if (cmd.hasExited()) {
-                cmd.unref(true);
-                cmd.deinit();
-            } else {
+        log("cmd deinit {x}", .{@intFromPtr(this)});
+        if (this.exit_code != null) {
+            if (this.cmd) |cmd| {
                 _ = cmd.tryKill(9);
                 cmd.unref(true);
+                cmd.deinit();
             }
         }
+
+        // if (this.cmd) |cmd| {
+        //     if (cmd.hasExited()) {
+        //         cmd.unref(true);
+        //         // cmd.deinit();
+        //     } else {
+        //         _ = cmd.tryKill(9);
+        //         cmd.unref(true);
+        //         cmd.deinit();
+        //     }
+        //     this.cmd = null;
+        // }
+
         this.base.interpreter.allocator.destroy(this);
+    }
+
+    pub fn fifoCloseSignal(this: *Cmd, comptime io: enum { stdin, stdout, stderr }) JSC.WebCore.Signal {
+        const Functions = struct {
+            fn onClose(this_: *anyopaque, err: ?Syscall.Error) void {
+                switch (comptime io) {
+                    // .stdin => Cmd.stdinFifoClose(@ptrCast(@alignCast(this)), err),
+                    .stdout => Cmd.stdoutFifoClose(@ptrCast(@alignCast(this_)), err),
+                    .stderr => Cmd.stderrFifoClose(@ptrCast(@alignCast(this_)), err),
+                    else => {},
+                }
+            }
+        };
+
+        return .{ .ptr = this, .vtable = JSC.WebCore.Signal.VTable{
+            .close = Functions.onClose,
+            .ready = JSC.WebCore.Signal.VTable.Dead.ready,
+            .start = JSC.WebCore.Signal.VTable.Dead.start,
+        } };
+    }
+
+    pub fn stdoutFifoReady(this: *Cmd, amount: ?JSC.WebCore.Blob.SizeType, offset: ?JSC.WebCore.Blob.SizeType) void {
+        _ = offset;
+        const amt = amount orelse return;
+        _ = amt;
+        var cmd = this.cmd orelse return;
+
+        cmd.stdout.pipe.buffer.readAll();
+    }
+
+    pub fn stdoutFifoClose(this: *Cmd, err: ?Syscall.Error) void {
+        _ = err;
+        log("stdout fifo close ({x})", .{@intFromPtr(this)});
+        this.stdout_close = true;
+        this.cmd.?.closeIO(.stdout);
+        // if (this.exit_code) |code| {
+        //     this.parent.childDone(this, code);
+        // }
+    }
+
+    pub fn stderrFifoClose(this: *Cmd, err: ?Syscall.Error) void {
+        _ = err;
+        log("stderr fifo close ({x})", .{@intFromPtr(this)});
     }
 };
 
@@ -1038,9 +1171,9 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
                     var casted = this.as(Ty);
 
-                    if (@hasField(MaybeChild(@TypeOf(casted)), "deinit")) {
-                        casted.deinit();
-                    }
+                    // if (@hasField(MaybeChild(@TypeOf(casted)), "deinit")) {
+                    casted.deinit();
+                    // }
                     return;
                 }
             }

@@ -4123,31 +4123,31 @@ var require_lib = __commonJS({
       return engine._processChunk(buffer, flushFlag);
     }
     function Deflate(opts) {
-      if (!(this instanceof Deflate)) return new Deflate(opts);
+      if (!new.target) return new Deflate(opts);
       Zlib.$call(this, opts, binding.DEFLATE);
     }
     function Inflate(opts) {
-      if (!(this instanceof Inflate)) return new Inflate(opts);
+      if (!new.target) return new Inflate(opts);
       Zlib.$call(this, opts, binding.INFLATE);
     }
     function Gzip(opts) {
-      if (!(this instanceof Gzip)) return new Gzip(opts);
+      if (!new.target) return new Gzip(opts);
       Zlib.$call(this, opts, binding.GZIP);
     }
     function Gunzip(opts) {
-      if (!(this instanceof Gunzip)) return new Gunzip(opts);
+      if (!new.target) return new Gunzip(opts);
       Zlib.$call(this, opts, binding.GUNZIP);
     }
     function DeflateRaw(opts) {
-      if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
+      if (!new.target) return new DeflateRaw(opts);
       Zlib.$call(this, opts, binding.DEFLATERAW);
     }
     function InflateRaw(opts) {
-      if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
+      if (!new.target) return new InflateRaw(opts);
       Zlib.$call(this, opts, binding.INFLATERAW);
     }
     function Unzip(opts) {
-      if (!(this instanceof Unzip)) return new Unzip(opts);
+      if (!new.target) return new Unzip(opts);
       Zlib.$call(this, opts, binding.UNZIP);
     }
     function isValidFlushFlag(flag) {

@@ -851,7 +851,7 @@ var defaultWriteStreamOptions = {
 };
 
 var WriteStreamClass = (WriteStream = function WriteStream(path, options = defaultWriteStreamOptions) {
-  if (!(this instanceof WriteStream)) {
+  if (!new.target) {
     return new WriteStream(path, options);
   }
 

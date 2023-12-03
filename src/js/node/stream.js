@@ -2000,7 +2000,7 @@ var require_legacy = __commonJS({
     var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
 
     function Stream(options) {
-      if (!(this instanceof Stream)) return new Stream(options);
+      if (!new.target) return new Stream(options);
       EE.$call(this, options);
     }
     Stream.prototype = {};
@@ -2264,7 +2264,7 @@ var require_readable = __commonJS({
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
-      if (!(this instanceof Readable)) return new Readable(options);
+      if (!new.target) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
       this._readableState = new ReadableState(options, this, isDuplex);
       if (options) {
@@ -4386,7 +4386,7 @@ var require_duplex = __commonJS({
     var Readable = require_readable();
 
     function Duplex(options) {
-      if (!(this instanceof Duplex)) return new Duplex(options);
+      if (!new.target) return new Duplex(options);
       Readable.$call(this, options);
       Writable.$call(this, options);
 
@@ -4472,7 +4472,7 @@ var require_transform = __commonJS({
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
     var Duplex = require_duplex();
     function Transform(options) {
-      if (!(this instanceof Transform)) return new Transform(options);
+      if (!new.target) return new Transform(options);
       Duplex.$call(this, options);
 
       this._readableState.sync = false;
@@ -4569,7 +4569,7 @@ var require_passthrough = __commonJS({
     var Transform = require_transform();
 
     function PassThrough(options) {
-      if (!(this instanceof PassThrough)) return new PassThrough(options);
+      if (!new.target) return new PassThrough(options);
       Transform.$call(this, options);
     }
     PassThrough.prototype = {};

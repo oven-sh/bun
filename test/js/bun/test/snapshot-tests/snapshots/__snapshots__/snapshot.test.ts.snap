@@ -368,3 +368,11 @@ exports[`most types: testing 7 2`] = `9`;
 exports[`most types: testing 7 3`] = `8`;
 
 exports[`most types: undefined 1`] = `undefined`;
+
+exports[`should work with expect.anything() 1`] = `
+{
+  "a": Anything,
+}
+`;
+
+exports[`should work with \`backticks\` in the test name 1`] = `true`;

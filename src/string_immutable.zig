@@ -7,6 +7,7 @@ const CodePoint = bun.CodePoint;
 const bun = @import("root").bun;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
+const js_lexer = @import("./js_lexer.zig");
 
 pub const Encoding = enum {
     ascii,
@@ -216,7 +217,6 @@ pub fn fmtIdentifier(name: string) FormatValidIdentifier {
 /// This will always allocate
 pub const FormatValidIdentifier = struct {
     name: string,
-    const js_lexer = @import("./js_lexer.zig");
     pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var iterator = strings.CodepointIterator.init(self.name);
         var cursor = strings.CodepointIterator.Cursor{};
@@ -1311,11 +1311,37 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     }
 }
 
+const utf8_bom = [_]u8{ 0xef, 0xbb, 0xbf };
+
+pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
+    return toUTF16AllocAllowBOM(allocator, bytes, fail_if_invalid, false);
+}
+
+pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
+    if (bytes.len > 3 and strings.eqlComptime(bytes[0..3], utf8_bom)) {
+        return bytes[3..];
+    } else {
+        return bytes;
+    }
+}
+
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
-pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
+pub fn toUTF16AllocAllowBOM(allocator: std.mem.Allocator, bytes_: []const u8, comptime fail_if_invalid: bool, comptime allow_bom: bool) !?[]u16 {
+    var bytes = bytes_;
     if (strings.firstNonASCII(bytes)) |i| {
+        if (comptime allow_bom) {
+            // we could avoid the allocation here when it's otherwise ASCII. But
+            // it gets really complicated because most memory allocators need
+            // the head pointer to be the allocated one so if we instead return
+            // a non-head pointer and try to free that the allocator might not
+            // be able to free it, and we would have a big problem.
+            if (i == 0 and bytes.len > 3 and strings.eqlComptime(bytes[0..3], utf8_bom)) {
+                bytes = bytes[3..];
+            }
+        }
+
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const trimmed = bun.simdutf.trim.utf8(bytes);
 
@@ -1743,9 +1769,12 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length + 16);
         const buf = try convertUTF16ToUTF8(list, Type, utf16);
-        if (Environment.allow_assert) {
-            std.debug.assert(buf.items.len == length);
-        }
+        // Commenting out because `convertUTF16ToUTF8` may convert to WTF-8
+        // which uses 3 bytes for invalid surrogates, causing the length to not
+        // match from simdutf.
+        // if (Environment.allow_assert) {
+        //     std.debug.assert(buf.items.len == length);
+        // }
         return buf;
     }
 
@@ -3333,6 +3362,58 @@ pub const AsciiVectorU1Small = @Vector(8, u1);
 pub const AsciiVectorU16U1 = @Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii: @Vector(4, u8) = @splat(@as(u8, 127));
+
+const UTF8_ACCEPT: u8 = 0;
+const UTF8_REJECT: u8 = 12;
+
+const utf8d: [364]u8 = .{
+    // The first part of the table maps bytes to character classes that
+    // to reduce the size of the transition table and create bitmasks.
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,
+    7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,
+    8,  8,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,
+    10, 3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  4,  3,  3,  11, 6,  6,  6,  5,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,
+
+    // The second part is a transition table that maps a combination
+    // of a state of the automaton and a character class to a state.
+    0,  12, 24, 36, 60, 96, 84, 12, 12, 12, 48, 72, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 0,  12, 12, 12, 12, 12, 0,
+    12, 0,  12, 12, 12, 24, 12, 12, 12, 12, 12, 24, 12, 24, 12, 12, 12, 12, 12, 12, 12, 12, 12, 24, 12, 12, 12, 12, 12, 24, 12, 12,
+    12, 12, 12, 12, 12, 24, 12, 12, 12, 12, 12, 12, 12, 12, 12, 36, 12, 36, 12, 12, 12, 36, 12, 12, 12, 12, 12, 36, 12, 36, 12, 12,
+    12, 36, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+};
+
+pub fn decodeCheck(state: u8, byte: u8) u8 {
+    const char_type: u32 = utf8d[byte];
+    // we dont care about the codep
+    // codep = if (*state != UTF8_ACCEPT) (byte & 0x3f) | (*codep << 6) else (0xff >> char_type) & (byte);
+
+    const value = @as(u32, 256) + state + char_type;
+    if (value >= utf8d.len) return UTF8_REJECT;
+    return utf8d[value];
+}
+
+// Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+// See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+pub fn isValidUTF8WithoutSIMD(slice: []const u8) bool {
+    var state: u8 = 0;
+
+    for (slice) |byte| {
+        state = decodeCheck(state, byte);
+    }
+    return state == UTF8_ACCEPT;
+}
+
+pub fn isValidUTF8(slice: []const u8) bool {
+    if (bun.FeatureFlags.use_simdutf)
+        return bun.simdutf.validate.utf8(slice);
+
+    return isValidUTF8WithoutSIMD(slice);
+}
+
 pub fn isAllASCII(slice: []const u8) bool {
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);
@@ -3984,59 +4065,142 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
 
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
-pub fn indexOfLineNumber(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count + 1]u32 {
-    var ranges = std.mem.zeroes([line_range_count + 1]u32);
+const LineRange = struct {
+    start: u32,
+    end: u32,
+};
+pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) std.BoundedArray(LineRange, line_range_count) {
     var remaining = text;
-    if (remaining.len == 0 or line == 0) return null;
+    if (remaining.len == 0) return .{};
 
-    var iter = CodepointIterator.init(text);
-    var cursor = CodepointIterator.Cursor{};
-    var count: u32 = 0;
+    var ranges = std.BoundedArray(LineRange, line_range_count){};
 
-    while (iter.next(&cursor)) {
-        switch (cursor.c) {
-            '\n', '\r' => {
-                if (cursor.c == '\r' and text[cursor.i..].len > 0 and text[cursor.i + 1] == '\n') {
-                    cursor.i += 1;
-                }
-
-                if (comptime line_range_count > 1) {
-                    comptime var i: usize = 0;
-                    inline while (i < line_range_count) : (i += 1) {
-                        std.mem.swap(u32, &ranges[i], &ranges[i + 1]);
-                    }
-                } else {
-                    ranges[0] = ranges[1];
-                }
-
-                ranges[line_range_count] = cursor.i;
-
-                if (count == line) {
-                    return ranges;
-                }
-
-                count += 1;
-            },
-            else => {},
+    var current_line: u32 = 0;
+    const first_newline_or_nonascii_i = strings.indexOfNewlineOrNonASCIICheckStart(text, 0, true) orelse {
+        if (target_line == 0) {
+            ranges.appendAssumeCapacity(.{
+                .start = 0,
+                .end = @truncate(text.len),
+            });
         }
+
+        return ranges;
+    };
+
+    var iter = CodepointIterator.initOffset(text, 0);
+    var cursor = CodepointIterator.Cursor{
+        .i = first_newline_or_nonascii_i,
+    };
+    const first_newline_range: LineRange = brk: {
+        while (iter.next(&cursor)) {
+            const codepoint = cursor.c;
+            switch (codepoint) {
+                '\n' => {
+                    current_line += 1;
+                    break :brk .{
+                        .start = 0,
+                        .end = cursor.i,
+                    };
+                },
+                '\r' => {
+                    if (iter.next(&cursor)) {
+                        const codepoint2 = cursor.c;
+                        if (codepoint2 == '\n') {
+                            current_line += 1;
+                            break :brk .{
+                                .start = 0,
+                                .end = cursor.i,
+                            };
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        ranges.appendAssumeCapacity(.{
+            .start = 0,
+            .end = @truncate(text.len),
+        });
+        return ranges;
+    };
+
+    ranges.appendAssumeCapacity(first_newline_range);
+
+    if (target_line == 0) {
+        return ranges;
     }
 
-    return null;
+    var prev_end = first_newline_range.end;
+    while (strings.indexOfNewlineOrNonASCIICheckStart(text, cursor.i + @as(u32, cursor.width), true)) |current_i| {
+        cursor.i = current_i;
+        cursor.width = 0;
+        const current_line_range: LineRange = brk: {
+            if (iter.next(&cursor)) {
+                const codepoint = cursor.c;
+                switch (codepoint) {
+                    '\n' => {
+                        const start = prev_end;
+                        prev_end = cursor.i;
+                        break :brk .{
+                            .start = start,
+                            .end = cursor.i + 1,
+                        };
+                    },
+                    '\r' => {
+                        const current_end = cursor.i;
+                        if (iter.next(&cursor)) {
+                            const codepoint2 = cursor.c;
+                            if (codepoint2 == '\n') {
+                                defer prev_end = cursor.i;
+                                break :brk .{
+                                    .start = prev_end,
+                                    .end = current_end,
+                                };
+                            }
+                        }
+                    },
+                    else => continue,
+                }
+            }
+        };
+
+        if (ranges.len == line_range_count and current_line <= target_line) {
+            var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+            new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
+            ranges = new_ranges;
+        }
+        ranges.appendAssumeCapacity(current_line_range);
+
+        if (current_line >= target_line) {
+            return ranges;
+        }
+
+        current_line += 1;
+    }
+
+    if (ranges.len == line_range_count and current_line <= target_line) {
+        var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+        new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
+        ranges = new_ranges;
+    }
+
+    return ranges;
 }
 
 /// Get N lines from the start of the text
-pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count][]const u8 {
-    const ranges = indexOfLineNumber(text, line, line_range_count) orelse return null;
-    var results = std.mem.zeroes([line_range_count][]const u8);
-    var i: usize = 0;
-    var any_exist = false;
-    while (i < line_range_count) : (i += 1) {
-        results[i] = text[ranges[i]..ranges[i + 1]];
-        any_exist = any_exist or results[i].len > 0;
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?std.BoundedArray([]const u8, line_range_count) {
+    const ranges = indexOfLineRanges(text, line, line_range_count);
+    if (ranges.len == 0) return null;
+    var results = std.BoundedArray([]const u8, line_range_count){};
+    results.len = ranges.len;
+
+    for (results.slice()[0..ranges.len], ranges.slice()) |*chunk, range| {
+        chunk.* = text[range.start..range.end];
     }
 
-    if (!any_exist)
-        return null;
+    std.mem.reverse([]const u8, results.slice());
+
     return results;
 }
 
@@ -4364,6 +4528,24 @@ pub fn containsNonBmpCodePoint(text: string) bool {
     return false;
 }
 
+pub fn containsNonBmpCodePointOrIsInvalidIdentifier(text: string) bool {
+    var iter = CodepointIterator.init(text);
+    var curs = CodepointIterator.Cursor{};
+
+    if (!iter.next(&curs)) return true;
+
+    if (curs.c > 0xFFFF or !js_lexer.isIdentifierStart(curs.c))
+        return true;
+
+    while (iter.next(&curs)) {
+        if (curs.c > 0xFFFF or !js_lexer.isIdentifierContinue(curs.c)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // this is std.mem.trim except it doesn't forcibly change the slice to be const
 pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice) {
     var begin: usize = 0;
@@ -4377,15 +4559,9 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
 pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
 
 pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
-    for (slice) |*c| {
-        switch (c.*) {
-            whitespace: {
-                inline for (whitespace_chars) |wc| break :whitespace wc;
-            } => {},
-            else => {
-                return @intFromPtr(c) - @intFromPtr(slice.ptr);
-            },
-        }
+    brk: for (slice) |*c| {
+        inline for (whitespace_chars) |wc| if (c.* == wc) continue :brk;
+        return @intFromPtr(c) - @intFromPtr(slice.ptr);
     }
 
     return slice.len;
@@ -4488,6 +4664,147 @@ pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
+pub const PackedCodepointIterator = struct {
+    const Iterator = @This();
+    const CodePointType = u32;
+    const zeroValue = 0;
+
+    bytes: []const u8,
+    i: usize,
+    next_width: usize = 0,
+    width: u3 = 0,
+    c: CodePointType = zeroValue,
+
+    pub const ZeroValue = zeroValue;
+
+    pub const Cursor = packed struct {
+        i: u32 = 0,
+        c: u29 = zeroValue,
+        width: u3 = 0,
+        pub const CodePointType = u29;
+    };
+
+    pub fn init(str: string) Iterator {
+        return Iterator{ .bytes = str, .i = 0, .c = zeroValue };
+    }
+
+    pub fn initOffset(str: string, i: usize) Iterator {
+        return Iterator{ .bytes = str, .i = i, .c = zeroValue };
+    }
+
+    pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
+        const pos: u32 = @as(u32, cursor.width) + cursor.i;
+        if (pos >= it.bytes.len) {
+            return false;
+        }
+
+        const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
+        const error_char = comptime std.math.minInt(CodePointType);
+
+        const codepoint = @as(
+            CodePointType,
+            switch (cp_len) {
+                0 => return false,
+                1 => it.bytes[pos],
+                else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
+            },
+        );
+
+        {
+            @setRuntimeSafety(false);
+            cursor.* = Cursor{
+                .i = pos,
+                .c = if (error_char != codepoint)
+                    @truncate(codepoint)
+                else
+                    unicode_replacement,
+                .width = if (codepoint != error_char) cp_len else 1,
+            };
+        }
+
+        return true;
+    }
+
+    inline fn nextCodepointSlice(it: *Iterator) []const u8 {
+        const bytes = it.bytes;
+        const prev = it.i;
+        const next_ = prev + it.next_width;
+        if (bytes.len <= next_) return "";
+
+        const cp_len = utf8ByteSequenceLength(bytes[next_]);
+        it.next_width = cp_len;
+        it.i = @min(next_, bytes.len);
+
+        const slice = bytes[prev..][0..cp_len];
+        it.width = @as(u3, @intCast(slice.len));
+        return slice;
+    }
+
+    pub fn needsUTF8Decoding(slice: string) bool {
+        var it = Iterator{ .bytes = slice, .i = 0 };
+
+        while (true) {
+            const part = it.nextCodepointSlice();
+            @setRuntimeSafety(false);
+            switch (part.len) {
+                0 => return false,
+                1 => continue,
+                else => return true,
+            }
+        }
+    }
+
+    pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
+        while (iter.c > -1) {
+            if (!switch (iter.nextCodepoint()) {
+                quote => false,
+                '\\' => brk: {
+                    if (iter.nextCodepoint() == quote) {
+                        continue;
+                    }
+                    break :brk true;
+                },
+                else => true,
+            }) {
+                return iter.i + 1;
+            }
+        }
+
+        return iter.i;
+    }
+
+    pub fn nextCodepoint(it: *Iterator) CodePointType {
+        const slice = it.nextCodepointSlice();
+
+        it.c = switch (slice.len) {
+            0 => zeroValue,
+            1 => @as(CodePointType, @intCast(slice[0])),
+            2 => @as(CodePointType, @intCast(std.unicode.utf8Decode2(slice) catch unreachable)),
+            3 => @as(CodePointType, @intCast(std.unicode.utf8Decode3(slice) catch unreachable)),
+            4 => @as(CodePointType, @intCast(std.unicode.utf8Decode4(slice) catch unreachable)),
+            else => unreachable,
+        };
+
+        return it.c;
+    }
+
+    /// Look ahead at the next n codepoints without advancing the iterator.
+    /// If fewer than n codepoints are available, then return the remainder of the string.
+    pub fn peek(it: *Iterator, n: usize) []const u8 {
+        const original_i = it.i;
+        defer it.i = original_i;
+
+        var end_ix = original_i;
+        var found: usize = 0;
+        while (found < n) : (found += 1) {
+            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
+            end_ix += next_codepoint.len;
+        }
+
+        return it.bytes[original_i..end_ix];
+    }
+};
+
 pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: comptime_int) type {
     return struct {
         const Iterator = @This();
@@ -4496,6 +4813,8 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
         next_width: usize = 0,
         width: u3 = 0,
         c: CodePointType = zeroValue,
+
+        pub const ZeroValue = zeroValue;
 
         pub const Cursor = struct {
             i: u32 = 0,
@@ -5047,4 +5366,8 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
             std.mem.indexOfAnyPos(u8, contents, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
         else => true,
     };
+}
+
+pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
+    return strings.contains(path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str);
 }

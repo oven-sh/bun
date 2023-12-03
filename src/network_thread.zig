@@ -8,7 +8,7 @@ const std = @import("std");
 pub const AsyncIO = bun.AsyncIO;
 const Output = bun.Output;
 const IdentityContext = @import("./identity_context.zig").IdentityContext;
-const HTTP = @import("./http_client_async.zig");
+const HTTP = @import("./http.zig");
 const NetworkThread = @This();
 const Environment = bun.Environment;
 const Lock = @import("./lock.zig").Lock;
@@ -191,7 +191,7 @@ pub fn init() !void {
         global.waker = try AsyncIO.Waker.init(@import("root").bun.default_allocator);
     }
 
-    global.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, onStartIOThread, .{
+    global.thread = try std.Thread.spawn(.{ .stack_size = bun.default_stack_size }, onStartIOThread, .{
         global.waker,
     });
     global.thread.detach();

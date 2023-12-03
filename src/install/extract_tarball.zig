@@ -155,7 +155,7 @@ threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
-    var tmpname_buf: [256]u8 = undefined;
+    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
     const basename = brk: {
         if (name[0] == '@') {
@@ -279,16 +279,19 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     // Now that we've extracted the archive, we rename.
-    std.os.renameatZ(tmpdir.fd, tmpname, cache_dir.fd, folder_name) catch |err| {
-        this.package_manager.log.addErrorFmt(
-            null,
-            logger.Loc.Empty,
-            this.package_manager.allocator,
-            "moving \"{s}\" to cache dir failed: {s}\n  From: {s}\n    To: {s}",
-            .{ name, @errorName(err), tmpname, folder_name },
-        ) catch unreachable;
-        return error.InstallFailed;
-    };
+    switch (bun.sys.renameat(tmpdir.fd, bun.sliceTo(tmpname, 0), cache_dir.fd, folder_name)) {
+        .err => |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                .{ name, err, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
+        },
+        .result => {},
+    }
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.

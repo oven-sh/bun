@@ -30,6 +30,7 @@ const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
 const String = bun.String;
+const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -398,12 +399,12 @@ pub const Process = extern struct {
 };
 
 pub const ZigStackTrace = extern struct {
-    source_lines_ptr: [*c]bun.String,
-    source_lines_numbers: [*c]i32,
+    source_lines_ptr: [*]bun.String,
+    source_lines_numbers: [*]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
 
-    frames_ptr: [*c]ZigStackFrame,
+    frames_ptr: [*]ZigStackFrame,
     frames_len: u8,
 
     pub fn toAPI(
@@ -502,8 +503,8 @@ pub const ZigStackTrace = extern struct {
     pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
         var i: usize = 0;
         for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
-            if (num > 0) {
-                i = j;
+            if (num >= 0) {
+                i = @max(j, i);
             }
         }
         return SourceLineIterator{ .trace = this, .i = @as(i16, @intCast(i)) };
@@ -601,10 +602,10 @@ pub const ZigStackFrame = extern struct {
                             writer,
                             // :
                             comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<yellow>{d}<r>", true),
-                            .{ this.position.line + 1, this.position.column_start },
+                            .{ this.position.line + 1, this.position.column_start + 1 },
                         );
                     } else {
-                        try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
+                        try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start + 1 });
                     }
                 } else if (this.position.line > -1) {
                     if (this.enable_color) {
@@ -636,9 +637,9 @@ pub const ZigStackFrame = extern struct {
             switch (this.code_type) {
                 .Eval => {
                     try writer.writeAll("(eval)");
-                },
-                .Module => {
-                    // try writer.writeAll("(esm)");
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "{}", .{name});
+                    }
                 },
                 .Function => {
                     if (!name.isEmpty()) {
@@ -662,7 +663,11 @@ pub const ZigStackFrame = extern struct {
                 .Constructor => {
                     try std.fmt.format(writer, "new {}", .{name});
                 },
-                else => {},
+                else => {
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "{}", .{name});
+                    }
+                },
             }
         }
     };
@@ -1836,17 +1841,8 @@ pub const ZigConsoleClient = struct {
                             .failed = false,
                         };
 
-                        var name_str = value.getName(globalThis);
-                        defer name_str.deref();
-                        if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
+                        if (getObjectName(globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
-                        } else {
-                            name_str.deref();
-                            name_str = value.getPrototype(globalThis).getName(globalThis);
-
-                            if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
-                                writer.print("{} ", .{name_str});
-                            }
                         }
                     }
 
@@ -1971,6 +1967,15 @@ pub const ZigConsoleClient = struct {
                     }
                 }
             };
+        }
+
+        fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ?ZigString {
+            var name_str = ZigString.init("");
+            value.getClassName(globalThis, &name_str);
+            if (!name_str.eqlComptime("Object")) {
+                return name_str;
+            }
+            return null;
         }
 
         extern fn JSC__JSValue__callCustomInspectFunction(
@@ -2366,42 +2371,7 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(JSC.Expect.ExpectAnything) != null) {
-                        writer.writeAll("Anything");
-                        return;
-                    } else if (value.as(JSC.Expect.ExpectAny) != null) {
-                        const constructor_value = JSC.Expect.ExpectAny.constructorValueGetCached(value) orelse return;
-
-                        this.addForNewLine("Any<".len);
-                        writer.writeAll("Any<");
-                        var class_name = ZigString.init(&name_buf);
-
-                        constructor_value.getClassName(this.globalThis, &class_name);
-                        this.addForNewLine(class_name.len);
-                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
-                        this.addForNewLine(1);
-                        writer.writeAll(">");
-
-                        return;
-                    } else if (value.as(JSC.Expect.ExpectStringContaining) != null) {
-                        const substring_value = JSC.Expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
-
-                        this.addForNewLine("StringContaining ".len);
-                        writer.writeAll("StringContaining ");
-                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
-
-                        return;
-                    } else if (value.as(JSC.Expect.ExpectStringMatching) != null) {
-                        const test_value = JSC.Expect.ExpectStringMatching.testValueGetCached(value) orelse return;
-
-                        this.addForNewLine("StringMatching ".len);
-                        writer.writeAll("StringMatching ");
-
-                        const original_quote_strings = this.quote_strings;
-                        if (test_value.isRegExp()) this.quote_strings = false;
-                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
-                        this.quote_strings = original_quote_strings;
-
+                    } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {
@@ -2971,13 +2941,18 @@ pub const ZigConsoleClient = struct {
                             this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
-                        else
+                        else {
+                            if (getObjectName(this.globalThis, value)) |name_str| {
+                                writer.print("{} ", .{name_str});
+                            }
                             writer.writeAll("{}");
+                        }
                     } else {
                         this.depth -= 1;
 
                         if (iter.always_newline) {
                             this.indent -|= 1;
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             writer.writeAll("}");
@@ -3259,13 +3234,14 @@ pub const ZigConsoleClient = struct {
         // console
         _: ZigConsoleClient.Type,
         // global
-        _: *JSGlobalObject,
+        global: *JSGlobalObject,
         // chars
         chars: [*]const u8,
         // len
         len: usize,
         // args
-        _: *ScriptArguments,
+        args: [*]JSValue,
+        args_len: usize,
     ) callconv(.C) void {
         if (!pending_time_logs_loaded) {
             return;
@@ -3277,13 +3253,32 @@ pub const ZigConsoleClient = struct {
         // then display it in milliseconds
         Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
         switch (len) {
-            0 => Output.printErrorln("\n", .{}),
-            else => Output.printErrorln(" {s}", .{chars[0..len]}),
+            0 => {},
+            else => Output.printError(" {s}", .{chars[0..len]}),
         }
-
         Output.flush();
 
-        // TODO: print the arguments
+        // print the arguments
+        var fmt = ZigConsoleClient.Formatter{
+            .remaining_values = &[_]JSValue{},
+            .globalThis = global,
+            .ordered_properties = false,
+            .quote_strings = false,
+        };
+        var console = global.bunVM().console;
+        var writer = console.error_writer.writer();
+        const Writer = @TypeOf(writer);
+        for (args[0..args_len]) |arg| {
+            const tag = ZigConsoleClient.Formatter.Tag.get(arg, global);
+            _ = writer.write(" ") catch 0;
+            if (Output.enable_ansi_colors_stderr) {
+                fmt.format(tag, Writer, writer, arg, global, true);
+            } else {
+                fmt.format(tag, Writer, writer, arg, global, false);
+            }
+        }
+        _ = writer.write("\n") catch 0;
+        writer.context.flush() catch {};
     }
     pub fn profile(
         // console

@@ -180,6 +180,29 @@ const libuv = bun.windows.libuv;
 const LibUVBackend = struct {
     const log = Output.scoped(.LibUVBackend, false);
 
+    fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.C) void {
+        //TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
+        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
+        const Holder = struct {
+            uv_info: *libuv.uv_getaddrinfo_t,
+            task: JSC.AnyTask,
+
+            pub fn run(held: *@This()) void {
+                defer bun.default_allocator.destroy(held);
+                GetAddrInfoRequest.onLibUVComplete(held.uv_info);
+            }
+        };
+
+        var holder = bun.default_allocator.create(Holder) catch unreachable;
+        holder.* = .{
+            .uv_info = uv_info,
+            .task = undefined,
+        };
+        holder.task = JSC.AnyTask.New(Holder, Holder.run).init(holder);
+
+        this.head.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+    }
+
     pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const key = GetAddrInfoRequest.PendingCacheKey.init(query);
 
@@ -220,37 +243,13 @@ const LibUVBackend = struct {
         if (libuv.uv_getaddrinfo(
             this.vm.uvLoop(),
             &request.backend.libc.uv,
-            // &GetAddrInfoRequest.onLibUVComplete,
-            null,
+            &onRawLibUVComplete,
             host.ptr,
             portZ.ptr,
             if (hints) |*hint| hint else null,
         ).errEnum()) |_| {
             @panic("TODO: handle error");
         }
-
-        const Holder = struct {
-            request: *GetAddrInfoRequest,
-            task: JSC.AnyTask,
-
-            pub fn run(held: *@This()) void {
-                defer bun.default_allocator.destroy(held);
-
-                const self = held.request;
-                GetAddrInfoRequest.onLibUVComplete(@alignCast(@ptrCast(self)), self.backend.libc.uv.retcode, self.backend.libc.uv.addrinfo);
-            }
-        };
-
-        var holder = bun.default_allocator.create(Holder) catch unreachable;
-        holder.* = .{
-            .request = request,
-            .task = undefined,
-        };
-        holder.task = JSC.AnyTask.New(Holder, Holder.run).init(holder);
-
-        globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
-
-        request.backend.libc.uv.data = request;
         return promise;
     }
 };
@@ -708,7 +707,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
     return struct {
         const request_type = @This();
 
-        const log = Output.scoped(.ResolveInfoRequest, false);
+        const log = Output.scoped(.ResolveInfoRequest, true);
 
         resolver_for_caching: ?*DNSResolver = null,
         hash: u64 = 0,
@@ -723,8 +722,6 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             globalThis: *JSC.JSGlobalObject,
             comptime cache_field: []const u8,
         ) !*@This() {
-            log("init", .{});
-
             var request = try globalThis.allocator().create(@This());
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(name);
@@ -898,7 +895,7 @@ pub const GetHostByAddrInfoRequest = struct {
 };
 
 pub const CAresNameInfo = struct {
-    const log = Output.scoped(.CAresNameInfo, false);
+    const log = Output.scoped(.CAresNameInfo, true);
 
     globalThis: *JSC.JSGlobalObject = undefined,
     promise: JSC.JSPromise.Strong,
@@ -1294,9 +1291,8 @@ pub const GetAddrInfoRequest = struct {
         head.processGetAddrInfo(err_, timeout, result);
     }
 
-    // fn (*uv_getaddrinfo_t, c_int, ?*anyopaque) callconv(.C) void
-    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, retcode: libuv.ReturnCode, addrinfo: ?*libuv.addrinfo) callconv(.C) void {
-        log("onLibUVComplete status {}", .{retcode.value});
+    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
+        log("onLibUVComplete status {}", .{uv_info.retcode.value});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         std.debug.assert(uv_info == &this.backend.libc.uv);
 
@@ -1306,13 +1302,13 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, retcode.value, .{ .addrinfo = addrinfo });
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.value, .{ .addrinfo = uv_info.addrinfo });
                 return;
             }
         }
 
         var head = this.head;
-        head.processGetAddrInfoNative(retcode.value, addrinfo);
+        head.processGetAddrInfoNative(uv_info.retcode.value, uv_info.addrinfo);
         head.globalThis.allocator().destroy(this);
     }
 };
@@ -1389,7 +1385,7 @@ pub const CAresReverse = struct {
 
 pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) type {
     return struct {
-        const log = Output.scoped(.CAresLookup, false);
+        const log = Output.scoped(.CAresLookup, true);
 
         globalThis: *JSC.JSGlobalObject = undefined,
         promise: JSC.JSPromise.Strong,
@@ -1399,7 +1395,6 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         name: []const u8,
 
         pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: []const u8) !*@This() {
-            log("init", .{});
             var this = try allocator.create(@This());
             var poll_ref = Async.KeepAlive.init();
             poll_ref.ref(globalThis.bunVM());
@@ -1408,7 +1403,6 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         }
 
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
-            log("processResolve", .{});
             if (err_) |err| {
                 var promise = this.promise;
                 var globalThis = this.globalThis;
@@ -1418,7 +1412,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                     JSC.ZigString.static("code"),
                     JSC.ZigString.init(err.code()).toValueGC(globalThis),
                 );
-                log("processResolve reject", .{});
+
                 promise.reject(globalThis, error_value);
                 this.deinit();
                 return;
@@ -1432,13 +1426,11 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                     JSC.ZigString.static("code"),
                     JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
                 );
-                log("processResolve reject", .{});
                 promise.reject(globalThis, error_value);
                 this.deinit();
                 return;
             }
 
-            log("processResolve complete", .{});
             var node = result.?;
             const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name);
             this.onComplete(array);
@@ -1446,7 +1438,6 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         }
 
         pub fn onComplete(this: *@This(), result: JSC.JSValue) void {
-            log("onComplete", .{});
             var promise = this.promise;
             var globalThis = this.globalThis;
             this.promise = .{};
@@ -1455,7 +1446,6 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         }
 
         pub fn deinit(this: *@This()) void {
-            log("deinit", .{});
             this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             bun.default_allocator.free(this.name);
 
@@ -1515,12 +1505,10 @@ pub const DNSLookup = struct {
                 break :brk error_value;
             };
 
-            defer this.deinit();
-            log("processGetAddrInfoNative reject", .{});
+            this.deinit();
             promise.reject(globalThis, error_value);
             return;
         }
-        log("processGetAddrInfoNative complete", .{});
         onCompleteNative(this, .{ .addrinfo = result });
     }
 
@@ -1535,7 +1523,6 @@ pub const DNSLookup = struct {
                 JSC.ZigString.static("code"),
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
-            log("processGetAddrInfo reject", .{});
             promise.reject(globalThis, error_value);
             this.deinit();
             return;
@@ -1551,12 +1538,10 @@ pub const DNSLookup = struct {
                 JSC.ZigString.static("code"),
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
-            log("processGetAddrInfo reject", .{});
             promise.reject(globalThis, error_value);
             this.deinit();
             return;
         }
-        log("processGetAddrInfo complete", .{});
         this.onComplete(result.?);
     }
 

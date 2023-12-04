@@ -4386,7 +4386,7 @@ var require_duplex = __commonJS({
     var Readable = require_readable();
 
     function Duplex(options) {
-      if (!new.target) return new Duplex(options);
+      if (!(this instanceof Duplex)) return new Duplex(options);
       Readable.$call(this, options);
       Writable.$call(this, options);
 
@@ -4472,7 +4472,7 @@ var require_transform = __commonJS({
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
     var Duplex = require_duplex();
     function Transform(options) {
-      if (!new.target) return new Transform(options);
+      if (!(this instanceof Transform)) return new Transform(options);
       Duplex.$call(this, options);
 
       this._readableState.sync = false;
@@ -4569,7 +4569,7 @@ var require_passthrough = __commonJS({
     var Transform = require_transform();
 
     function PassThrough(options) {
-      if (!new.target) return new PassThrough(options);
+      if (!(this instanceof PassThrough)) return new PassThrough(options);
       Transform.$call(this, options);
     }
     PassThrough.prototype = {};

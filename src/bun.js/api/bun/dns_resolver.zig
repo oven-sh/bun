@@ -1292,10 +1292,9 @@ pub const GetAddrInfoRequest = struct {
     }
 
     pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
-        log("onLibUVComplete status {}", .{uv_info.retcode.value});
+        log("onLibUVComplete: status={d}", .{uv_info.retcode.value});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         std.debug.assert(uv_info == &this.backend.libc.uv);
-
         if (this.backend == .libinfo) {
             if (this.backend.libinfo.file_poll) |poll| poll.deinit();
         }
@@ -1487,7 +1486,7 @@ pub const DNSLookup = struct {
     }
 
     pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
-        log("processGetAddrInfoNative", .{});
+        log("processGetAddrInfoNative: status={d}", .{status});
         if (c_ares.Error.initEAI(status)) |err| {
             var promise = this.promise;
             var globalThis = this.globalThis;

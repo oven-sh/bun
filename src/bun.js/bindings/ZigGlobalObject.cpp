@@ -3321,17 +3321,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(structure);
         });
 
-    m_JSStringDecoderClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = JSStringDecoderPrototype::create(
-                init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSStringDecoderConstructor::create(
-                init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
+    setJSStringDecoderLazyClassStructure(m_JSStringDecoderClassStructure);
 
     m_JSReadableStateClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {

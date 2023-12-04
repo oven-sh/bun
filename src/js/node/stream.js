@@ -75,6 +75,7 @@ function ERR_INVALID_ARG_VALUE(name, value, reason) {
   return new Error(`The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`);
 }
 
+var isCallingDuplexStreamConstructor = false;
 // node_modules/readable-stream/lib/ours/primordials.js
 var require_primordials = __commonJS({
   "node_modules/readable-stream/lib/ours/primordials.js"(exports, module) {
@@ -2000,7 +2001,6 @@ var require_legacy = __commonJS({
     var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
 
     function Stream(options) {
-      if (!new.target) return new Stream(options);
       EE.$call(this, options);
     }
     Stream.prototype = {};
@@ -2264,23 +2264,43 @@ var require_readable = __commonJS({
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
-      if (!new.target) return new Readable(options);
-      const isDuplex = this instanceof require_duplex();
-      this._readableState = new ReadableState(options, this, isDuplex);
+      if (!(this instanceof Readable)) return new Readable(options);
+      const wasCallingDuplexStreamConstructor = isCallingDuplexStreamConstructor;
+      isCallingDuplexStreamConstructor = false;
+
+      this._events ??= {
+        close: undefined,
+        error: undefined,
+        data: undefined,
+        end: undefined,
+        readable: undefined,
+        // Skip uncommon events...
+        // pause: undefined,
+        // resume: undefined,
+        // pipe: undefined,
+        // unpipe: undefined,
+        // [destroyImpl.kConstruct]: undefined,
+        // [destroyImpl.kDestroy]: undefined,
+      };
+
+      this._readableState = new ReadableState(options, this, wasCallingDuplexStreamConstructor);
+
       if (options) {
         const { read, destroy, construct, signal } = options;
-        if (typeof read === "function") this._read = read;
-        if (typeof destroy === "function") this._destroy = destroy;
-        if (typeof construct === "function") this._construct = construct;
-        if (signal && !isDuplex) addAbortSignal(signal, this);
+        if ($isCallable(read)) this._read = read;
+        if ($isCallable(destroy)) this._destroy = destroy;
+        if ($isCallable(construct)) this._construct = construct;
+        if (signal) addAbortSignal(signal, this);
       }
       Stream.$call(this, options);
 
-      destroyImpl.construct(this, () => {
-        if (this._readableState.needReadable) {
-          maybeReadMore(this, this._readableState);
-        }
-      });
+      if (!$isUndefinedOrNull(this._construct)) {
+        destroyImpl.construct(this, () => {
+          if (this._readableState.needReadable) {
+            maybeReadMore(this, this._readableState);
+          }
+        });
+      }
     }
     Readable.prototype = {};
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
@@ -4387,7 +4407,10 @@ var require_duplex = __commonJS({
 
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
+      const prevIsCallingDuplexStreamConstructor = isCallingDuplexStreamConstructor;
+      isCallingDuplexStreamConstructor = true;
       Readable.$call(this, options);
+      isCallingDuplexStreamConstructor = prevIsCallingDuplexStreamConstructor;
       Writable.$call(this, options);
 
       if (options) {

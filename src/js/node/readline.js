@@ -1411,7 +1411,7 @@ function onResize() {
 }
 
 function InterfaceConstructor(input, output, completer, terminal) {
-  if (!new.target) {
+  if (!(this instanceof InterfaceConstructor)) {
     return new InterfaceConstructor(input, output, completer, terminal);
   }
 
@@ -2536,7 +2536,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 };
 
 function Interface(input, output, completer, terminal) {
-  if (!new.target) {
+  if (!(this instanceof Interface)) {
     return new Interface(input, output, completer, terminal);
   }
 

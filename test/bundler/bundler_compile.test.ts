@@ -86,4 +86,70 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  itBundled("compile/DynamicRequire", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        const y = req('commonjs');
+        const z = req('esm').default;
+        console.log(JSON.stringify([w, x, y, z]));
+        module.exports = null;
+      `,
+      "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
+      "/node_modules/other/index.js": "globalThis.x = 1;",
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
+    },
+    run: {
+      stdout: "[0,1,2,3]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  itBundled("compile/DynamicImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import 'static';
+        const imp = (x) => import(x).then(x => x.default);
+        const y = await imp('commonjs');
+        const z = await imp('esm');
+        console.log(JSON.stringify([w, x, y, z]));
+      `,
+      "/node_modules/static/index.js": "'use strict';",
+      "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
+      "/node_modules/other/index.js": "globalThis.x = 1;",
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
+    },
+    run: {
+      stdout: "[0,1,2,3]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // see comment in `usePackageManager` for why this is a test
+  itBundled("compile/NoAutoInstall", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        req('express');
+      `,
+    },
+    run: {
+      error: 'Cannot find package "express"',
+    },
+    compile: true,
+  });
 });

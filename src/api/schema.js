@@ -1101,17 +1101,21 @@ const DotEnvBehavior = {
   "1": 1,
   "2": 2,
   "3": 3,
+  "4": 4,
   "disable": 1,
   "prefix": 2,
   "load_all": 3,
+  "load_all_without_inlining": 4,
 };
 const DotEnvBehaviorKeys = {
   "1": "disable",
   "2": "prefix",
   "3": "load_all",
+  "4": "load_all_without_inlining",
   "disable": "disable",
   "prefix": "prefix",
   "load_all": "load_all",
+  "load_all_without_inlining": "load_all_without_inlining",
 };
 
 function decodeEnvConfig(bb) {

@@ -6470,6 +6470,7 @@ pub const Part = struct {
 
 pub const Result = union(enum) {
     already_bundled: void,
+    cached: void,
     ast: Ast,
 };
 

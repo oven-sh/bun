@@ -1,5 +1,4 @@
 import { describe, it, expect } from "bun:test";
-import { unsafe, spawn, readableStreamToText } from "bun";
 import { bunExe, bunEnv, gc } from "harness";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -170,7 +169,7 @@ describe("WebSocket", () => {
         const client = WebSocket(url, { tls: { rejectUnauthorized: false } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
-        expect(result.code).toBe(1001);
+        expect(result.code).toBe(1000);
       }
     } finally {
       server.stop(true);

@@ -24,14 +24,17 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
 import * as path from "path";
-import { tempFixturesDir } from "./util";
+import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks } from "./util";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
+let tempBrokenSymlinksDir: string;
 beforeAll(() => {
   process.chdir(path.join(import.meta.dir, "../../../"));
   tempFixturesDir();
+  tempBrokenSymlinksDir = createTempDirectoryWithBrokenSymlinks();
   Bun.unsafe.gcAggressionLevel(0);
 });
+
 afterAll(() => {
   Bun.unsafe.gcAggressionLevel(origAggressiveGC);
 });
@@ -171,7 +174,6 @@ describe("glob.match", async () => {
       try {
         cb();
       } catch (err) {
-        console.error("Error", err);
         // @ts-expect-error
         return err;
       }
@@ -376,6 +378,62 @@ describe("fast-glob e2e tests", async () => {
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
+});
+
+test("broken symlinks", async () => {
+  const glob = new Glob("**/*");
+  const results = await Array.fromAsync(
+    glob.scan({
+      cwd: tempBrokenSymlinksDir,
+      followSymlinks: true,
+      absolute: true,
+      onlyFiles: false,
+    }),
+  );
+  expect(new Set(results)).toEqual(
+    new Set([
+      path.join(tempBrokenSymlinksDir, "broken_link_to_non_existent_dir"),
+      path.join(tempBrokenSymlinksDir, "broken_link_to_non_existent_file.txt"),
+    ]),
+  );
+});
+
+test("error broken symlinks", async () => {
+  const glob = new Glob("**/*");
+  let err: Error | undefined = undefined;
+  try {
+    const results = await Array.fromAsync(
+      glob.scan({
+        cwd: tempBrokenSymlinksDir,
+        followSymlinks: true,
+        absolute: true,
+        onlyFiles: false,
+        throwErrorOnBrokenSymlink: true,
+      }),
+    );
+  } catch (e) {
+    err = e as any;
+  }
+  expect(err).toBeDefined();
+});
+
+test("error non-existent cwd", async () => {
+  const glob = new Glob("**/*");
+  let err: Error | undefined = undefined;
+  try {
+    const results = await Array.fromAsync(
+      glob.scan({
+        cwd: "alkfjalskdjfoogaboogaalskjflskdjfl",
+        followSymlinks: true,
+        absolute: true,
+        onlyFiles: false,
+        throwErrorOnBrokenSymlink: true,
+      }),
+    );
+  } catch (e) {
+    err = e as any;
+  }
+  expect(err).toBeDefined();
 });
 
 test("glob.scan(string)", async () => {

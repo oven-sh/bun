@@ -869,6 +869,7 @@ pub const PathLike = union(Tag) {
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
                     const path_str: bun.String = domurl.fileSystemPath();
+                    defer path_str.deref();
                     if (path_str.isEmpty()) {
                         JSC.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{}, ctx, exception);
                         return null;
@@ -876,7 +877,6 @@ pub const PathLike = union(Tag) {
                     arguments.eat();
 
                     if (!Valid.pathStringLength(path_str.length(), ctx, exception)) {
-                        defer path_str.deref();
                         return null;
                     }
 

@@ -155,12 +155,12 @@ pub fn build_(b: *Build) !void {
     switch (comptime zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {
         .eq => {},
         .lt => {
-            @compileError("The minimum version of Zig required to compile Bun is " ++ recommended_zig_version ++ ", found " ++ @import("builtin").zig_version_string);
+            @compileError("The minimum version of Zig required to compile Bun is " ++ recommended_zig_version ++ ", found " ++ @import("builtin").zig_version_string ++ ". Please follow the instructions at https://bun.sh/docs/project/contributing. You may need to re-run `bun setup`.");
         },
         .gt => {
             const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
             std.debug.print(
-                "{s}WARNING:\nBun recommends Zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/contributing#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
+                "{s}WARNING:\nBun recommends Zig version '{s}', but found '{s}', build may fail...\nMake sure you are following the instructions at https://bun.sh/docs/project/contributing\n{s}You can update to the right version using 'zigup {s}'\n\n",
                 .{
                     if (colors) "\x1b[1;33m" else "",
                     recommended_zig_version,

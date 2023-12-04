@@ -10,7 +10,7 @@ const Async = bun.Async;
 pub const WebWorker = struct {
     /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
-    status: Status = .start,
+    status: std.atomic.Atomic(Status) = std.atomic.Atomic(Status).init(.start),
     /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
     requested_terminate: bool = false,
     execution_context_id: u32 = 0,
@@ -31,7 +31,7 @@ pub const WebWorker = struct {
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
 
-    pub const Status = enum {
+    pub const Status = enum(u8) {
         start,
         starting,
         running,
@@ -51,7 +51,7 @@ pub const WebWorker = struct {
         worker.cpp_worker = ptr;
 
         var thread = std.Thread.spawn(
-            .{ .stack_size = 2 * 1024 * 1024 },
+            .{ .stack_size = bun.default_stack_size },
             startWithErrorHandling,
             .{worker},
         ) catch {
@@ -141,7 +141,7 @@ pub const WebWorker = struct {
             return;
         }
 
-        std.debug.assert(this.status == .start);
+        std.debug.assert(this.status.load(.Acquire) == .start);
         std.debug.assert(this.vm == null);
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
@@ -230,7 +230,8 @@ pub const WebWorker = struct {
 
     fn setStatus(this: *WebWorker, status: Status) void {
         log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
-        this.status = status;
+
+        this.status.store(status, .Release);
     }
 
     fn unhandledError(this: *WebWorker, _: anyerror) void {
@@ -239,7 +240,7 @@ pub const WebWorker = struct {
 
     fn spin(this: *WebWorker) void {
         var vm = this.vm.?;
-        std.debug.assert(this.status == .start);
+        std.debug.assert(this.status.load(.Acquire) == .start);
         this.setStatus(.starting);
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
@@ -307,6 +308,9 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        if (this.status.load(.Acquire) == .terminated) {
+            return;
+        }
         if (this.requested_terminate) {
             return;
         }
@@ -324,6 +328,8 @@ pub const WebWorker = struct {
     /// Otherwise, call `requestTerminate` to cause the event loop to safely terminate after the next tick.
     pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
+        this.setStatus(.terminated);
+
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
         var cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;

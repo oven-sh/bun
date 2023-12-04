@@ -1,8 +1,11 @@
 /**
- * This file is meant to be runnable in both Jest and Bun.
- * `bunx jest mock-fn.test.js`
+ * This file is meant to be runnable in Jest, Vitest, and Bun:
+ *  `bun test test/js/bun/test/mock-fn.test.js`
+ *  `bunx vitest test/js/bun/test/mock-fn.test.js`
+ *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
-var { isBun, expect, jest, vi, mock, spyOn } = require("./test-interop.js")();
+import test_interop from "./test-interop.js";
+var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
 // if you want to test vitest, comment the above and uncomment the below
 

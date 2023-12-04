@@ -39,6 +39,25 @@ function testSatisfies(right: any, left: any, expected: boolean) {
 }
 
 describe("Bun.semver.order()", () => {
+  test("whitespace bug fix", () => {
+    expect(
+      order(
+        `1.2.3`,
+        `
+1.2.3`,
+      ),
+    ).toBe(0);
+    expect(
+      order(
+        `1.2.3`,
+        `\t
+1.2.3`,
+      ),
+    ).toBe(0);
+    expect(order("1.2.3", " 1.2.3")).toBe(0);
+    expect(order(`\n\t1.2.3`, " 1.2.3")).toBe(0);
+    expect(order(`\r\t\n\r1.2.3`, " 1.2.3")).toBe(0);
+  });
   // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/comparisons.js#L4
   test("comparisons", () => {
     var tests = [

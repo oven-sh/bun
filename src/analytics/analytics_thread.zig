@@ -53,6 +53,7 @@ pub const Features = struct {
     pub var fetch = false;
     pub var bunfig = false;
     pub var extracted_packages = false;
+    pub var transpiler_cache = false;
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -81,6 +82,7 @@ pub const Features = struct {
                 "fetch",
                 "bunfig",
                 "extracted_packages",
+                "transpiler_cache",
             };
             inline for (fields) |field| {
                 if (@field(Features, field)) {

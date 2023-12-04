@@ -59,7 +59,7 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         const lockfile = migrateNPMLockfile(this, allocator, log, data, lockfile_path) catch |err| {
             if (err == error.NPMLockfileVersionMismatch) {
                 Output.prettyErrorln(
-                    \\<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 3
+                    \\<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3
                     \\
                     \\Run 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.
                 , .{});
@@ -130,7 +130,10 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         return error.InvalidNPMLockfile;
     }
     if (json.get("lockfileVersion")) |version| {
-        if (!(version.data == .e_number and version.data.e_number.value == 3)) {
+        if (!(version.data == .e_number and
+            version.data.e_number.value >= 2 and
+            version.data.e_number.value <= 3))
+        {
             return error.NPMLockfileVersionMismatch;
         }
     } else {
@@ -1003,7 +1006,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
     this.meta_hash = try this.generateMetaHash(false);
 
-    return LoadFromDiskResult{ .ok = this };
+    return LoadFromDiskResult{ .ok = .{ .lockfile = this, .was_migrated = true } };
 }
 
 fn packageNameFromPath(pkg_path: []const u8) []const u8 {

@@ -2391,9 +2391,9 @@ pub const Package = extern struct {
                     };
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
                     scripts[script_index] = entry;
-                    script_index += 1;
                     lockfile.scripts.preinstall.append(lockfile.allocator, entry) catch unreachable;
                 }
+                script_index += 1;
 
                 const entry: Lockfile.Scripts.Entry = .{
                     .cwd = cwd orelse brk: {
@@ -2427,9 +2427,9 @@ pub const Package = extern struct {
                         };
                         if (first_script_index == -1) first_script_index = @intCast(script_index);
                         scripts[script_index] = entry;
-                        script_index += 1;
                         @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
                     }
+                    script_index += 1;
                 }
             }
 
@@ -2453,9 +2453,9 @@ pub const Package = extern struct {
                         };
                         if (first_script_index == -1) first_script_index = @intCast(script_index);
                         scripts[script_index] = entry;
-                        script_index += 1;
                         @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
                     }
+                    script_index += 1;
                 }
             }
 

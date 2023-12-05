@@ -9,9 +9,6 @@
 #include "JSDOMConvertEnumeration.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include "BunClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/LazyClassStructure.h>
-#include <JavaScriptCore/LazyClassStructureInlines.h>
 
 namespace WebCore {
 
@@ -24,66 +21,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastChar);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);
-
-class JSStringDecoderPrototype : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSStringDecoderPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSStringDecoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderPrototype>(vm)) JSStringDecoderPrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSStringDecoderPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSStringDecoderConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSStringDecoderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSStringDecoderPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSStringDecoderConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, call, construct)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
-};
 
 static inline JSC::EncodedJSValue jsStringDecoderCast(JSGlobalObject* globalObject, JSValue stringDecoderValue)
 {
@@ -570,7 +507,7 @@ void JSStringDecoderConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* glo
 
 JSStringDecoderConstructor* JSStringDecoderConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSStringDecoderPrototype* prototype)
 {
-    JSStringDecoderConstructor* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderConstructor>(vm)) JSStringDecoderConstructor(vm, structure);
+    JSStringDecoderConstructor* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderConstructor>(vm)) JSStringDecoderConstructor(vm, structure, construct);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
@@ -613,11 +550,6 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     return JSC::JSValue::encode(jsObject);
 }
 
-JSC::EncodedJSValue JSStringDecoderConstructor::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    return JSC::JSValue::encode(jsUndefined());
-}
-
 void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype)
 {
     putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
@@ -628,25 +560,5 @@ void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObjec
 }
 
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };
-
-void setJSStringDecoderLazyClassStructure(JSC::LazyClassStructure& lazy)
-{
-    lazy.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = JSStringDecoderPrototype::create(
-                init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSStringDecoderConstructor::create(
-                init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-}
-
-void JSStringDecoder::destroy(JSCell* cell)
-{
-    static_cast<JSStringDecoder*>(cell)->JSStringDecoder::~JSStringDecoder();
-}
 
 } // namespace Zig

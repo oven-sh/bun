@@ -2,35 +2,38 @@ The following document is not yet complete, please join the [#windows channel on
 
 ## Prerequisites
 
-### System Dependencies
+{% details summary="Extra notes for Bun Core Team Members" %}
 
-- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
-  - Install Git and CMake from here, if not already installed.
-- LLVM 16
-- Ninja
-- Go
-- Rust
-- NASM
-- Perl
-- Ruby
-- Node.js (until Bun itself runs stable on windows)
+Here are the extra steps I ran on my fresh windows machine (some of these are a little opiniated)
 
-<!--
-TODO: missing the rest of the things
-```
-winget install OpenJS.NodeJS.LTS
-``` -->
+- Change user to a local account (set username to `window` and empty password)
+  - (Empty password will disable the password and auto-login on boot)
+- Set Windows Terminal as default terminal
+- Install latest version of Powershell
+- Display scale to 100%
+- Remove McAfee and enable Windows Defender (default antivirus, does not nag you)
+- Install Software
+  - OpenSSH server (run these in an elevated terminal)
+    - `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0`
+    - `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`
+    - `Start-Service sshd`
+    - `Set-Service -Name sshd -StartupType 'Automatic'`
+    - Configure in `C:\ProgramData\ssh`
+    - Add ssh keys (in ProgramData because it is an admin account)
+  - Tailscale (login with GitHub so it joins the team tailnet)
+  - Visual Studio Code
+- Configure `git`
+  - `git config user.name "your name"`
+  - `git config user.email "your@email"`
+
+I recommend using VSCode through SSH instead of Tunnels or the Tailscale extension, it seems to be more reliable.
+
+{% /details %}
 
 Make sure to use powershell with the proper shell environment loaded. To do so, you can run:
 
 ```ps1
 .\scripts\env.ps1
-```
-
-To verify, you can check for a command line such as `mt.exe`
-
-```ps1
-Get-Command cl
 ```
 
 ### Enable Scripts
@@ -39,6 +42,39 @@ By default, scripts are blocked.
 
 ```ps1
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
+```
+
+### System Dependencies
+
+- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
+  - Install Git and CMake from here, if not already installed.
+
+After Visual Studio, you need the following:
+
+- LLVM 16
+- Go
+- Rust
+- NASM
+- Perl
+- Ruby
+- Node.js (until bun is stable enough on windows)
+
+[Scoop](https://scoop.sh) can be used to install these easily.
+
+```bash
+$ scoop install nodejs-lts go rust nasm ruby perl llvm@16.0.4
+```
+
+From here on out, it is **expected you use a Developer PowerShell Terminal with `.\scripts\env.ps1 sourced**. This script is available in the Bun repository and can be loaded by executing it.
+
+```ps1
+$ .\scripts\env.ps1
+```
+
+To verify, you can check for an MSVC-only command line such as `mt.exe`
+
+```ps1
+Get-Command mt
 ```
 
 ### Zig
@@ -55,18 +91,20 @@ We last updated Zig on **October 26th, 2023**
 
 ### Codegen
 
-On Unix platforms, we depend on an existing build of Bun to generate code for itself. Since the Windows branch is not stable enough for this to pass, you currently need to generate the code.
-
-On a system with Bun installed, run:
+On Unix platforms, we depend on an existing build of Bun to generate code for itself. Since the Windows build is not stable enough for this to run the code generators, you currently need to use another computer or WSL to generate this:
 
 ```bash
-$ bash ./scripts/cross-compile-codegen.sh win32 x64
-# -> build-codegen-win32-x64
+$ wsl --install # run twice if it doesnt install
+# in the linux environment
+$ sudo apt install unzip
+$ curl -fsSL https://bun.sh/install | bash
 ```
 
-Copy the contents of this to the Windows machine into a folder named `build`
+Whenever codegen-related things are updated, please re-run
 
-TODO: Use WSL to automatically run codegen without a separate machine.
+```ps1
+$ .\scripts\codegen.ps1
+```
 
 ## Building
 
@@ -74,11 +112,11 @@ TODO: Use WSL to automatically run codegen without a separate machine.
 npm install
 
 .\scripts\env.ps1
-
 .\scripts\update-submodules.ps1
 .\scripts\all-dependencies.ps1
+.\scripts\codegen.ps1
 
-cd build # this was created by the codegen script in the prerequisites
+cd build # this was created by the codegen.ps1 script in the prerequisites
 
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ninja

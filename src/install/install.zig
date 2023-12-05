@@ -5018,7 +5018,7 @@ pub const PackageManager = struct {
 
         manager.drainDependencyList();
 
-        manager.uws_event_loop.tickWithTimeout(1);
+        manager.uws_event_loop.tickWithoutIdle();
 
         if (comptime log_level.showProgress()) {
             if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {

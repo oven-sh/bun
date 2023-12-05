@@ -1,0 +1,2 @@
+# For Netlify SPA fallback, will be copied to dist/_redirects
+/*    /index.html   200

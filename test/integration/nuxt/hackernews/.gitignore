@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+dist/
+npm-debug.log
+yarn-error.log
+package-lock.json
+.idea
+*.iml
+.nuxt
+.vscode
+.output
+
+public/manifest*.json
+public/sw.js
+public/workbox-sw*.js*

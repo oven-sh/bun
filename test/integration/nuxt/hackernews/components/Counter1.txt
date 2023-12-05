@@ -1,0 +1,69 @@
+<template>
+  <div id="counter-fixture" class="rounded-bl-full">
+    <p>Count A: {{ count }}</p>
+    <button class="inc" @click="increment">
+      +
+    </button>
+    <button class="dec" @click="decrement">
+      -
+    </button>
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      count: 0,
+    };
+  },
+  methods: {
+    increment() {
+      this.count++;
+    },
+    decrement() {
+      this.count--;
+    },
+  },
+};
+</script>
+
+<style lang="postcss">
+#counter-fixture {
+  margin-left: 2rem;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  /* rounded-bl-full in Tailwind */
+  text-align: center;
+}
+
+#counter-fixture p {
+  margin: 10px 0;
+  font-size: 1.2rem;
+}
+
+button {
+  background-color: #4caf50;
+  /* Tailwind green */
+  color: white;
+  padding: 8px 15px;
+  margin: 5px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #45a049;
+}
+
+button.dec {
+  background-color: #f44336;
+  /* Tailwind red */
+}
+
+button.dec:hover {
+  background-color: #d32f2f;
+}
+</style>

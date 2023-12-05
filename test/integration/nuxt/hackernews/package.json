@@ -1,0 +1,39 @@
+{
+  "name": "nuxt-hn",
+  "private": true,
+  "packageManager": "pnpm@8.3.1",
+  "description": "Nuxt Hacker News",
+  "author": "Evan You <yyx990803@gmail.com>",
+  "contributors": [
+    {
+      "name": "Sebastien Chopin (@Atinux)"
+    },
+    {
+      "name": "Alexandre Chopin (@alexchopin)"
+    },
+    {
+      "name": "Pooya Parsa (@pi0)"
+    },
+    {
+      "name": "Anthony Fu (@antfu)"
+    }
+  ],
+  "scripts": {
+    "dev": "nuxi dev",
+    "build": "nuxi build",
+    "start": "nuxi start",
+    "lint": "eslint --ext .vue,.js,.ts --ignore-path .gitignore .",
+    "postinstall": "cd node_modules/puppeteer && bun install.mjs"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "0.4.2",
+    "@nuxt/eslint-config": "0.1.1",
+    "@types/node": "18.16.0",
+    "bun-types": "^1.0.15",
+    "eslint": "8.39.0",
+    "nuxt": "3.4.2",
+    "postcss-nesting": "11.2.2",
+    "puppeteer": "21.3.4",
+    "typescript": "5.0.4"
+  }
+}

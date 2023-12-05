@@ -58,6 +58,11 @@ FROM debian:bullseye
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
 
+# Disable the runtime transpiler cache by default inside Docker containers.
+# On ephemeral containers, the cache is not useful
+ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
+
 RUN groupadd bun \
       --gid 1000 \
     && useradd bun \

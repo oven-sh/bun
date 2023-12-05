@@ -8,7 +8,7 @@ exports[`error.cause 1`] = `
 5 |   const err2 = new Error("error 2", { cause: err });
                    ^
 error: error 2
-      at [dir]/inspect-error.test.js:5:15
+      at [dir]/inspect-error.test.js:5:16
 
 1 | import { test, expect } from "bun:test";
 2 | 
@@ -16,7 +16,7 @@ error: error 2
 4 |   const err = new Error("error 1");
                   ^
 error: error 1
-      at [dir]/inspect-error.test.js:4:14
+      at [dir]/inspect-error.test.js:4:15
 "
 `;
 
@@ -27,20 +27,20 @@ exports[`Error 1`] = `
  8 | 
  9 | test("Error", () => {
 10 |   const err = new Error("my message");
-                  ^
+                   ^
 error: my message
-      at [dir]/inspect-error.test.js:10:14
+      at [dir]/inspect-error.test.js:10:15
 "
 `;
 
 exports[`BuildMessage 1`] = `
-"const duplicateConstDecl = 456;
-      ^
+"2 | const duplicateConstDecl = 456;
+          ^
 error: "duplicateConstDecl" has already been declared
-    at [dir]/inspect-error-fixture-bad.js:2:7 38
+    at [dir]/inspect-error-fixture-bad.js:2:7
 
-const duplicateConstDecl = 123;
-      ^
+1 | const duplicateConstDecl = 123;
+          ^
 note: "duplicateConstDecl" was originally declared here
-   at [dir]/inspect-error-fixture-bad.js:1:7 6"
+   at [dir]/inspect-error-fixture-bad.js:1:7"
 `;

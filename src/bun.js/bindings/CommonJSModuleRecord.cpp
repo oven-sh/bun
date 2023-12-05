@@ -117,12 +117,15 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
     moduleObject->hasEvaluated = true;
 
-    JSFunction* fn = jsCast<JSC::JSFunction*>(JSC::evaluate(globalObject, code->sourceCode(), jsUndefined(), exception));
+    // This will return 0 if there was a syntax error or an allocation failure
+    JSValue fnValue = JSC::evaluate(globalObject, code->sourceCode(), jsUndefined(), exception);
 
-    if (exception.get()) {
+    if (UNLIKELY(exception.get() || fnValue.isEmpty())) {
         moduleObject->sourceCode.clear();
         return false;
     }
+
+    JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
 
     JSC::CallData callData = JSC::getCallData(fn);
     MarkedArgumentBuffer args;

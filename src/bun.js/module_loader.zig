@@ -159,6 +159,10 @@ const BunDebugHolder = struct {
 /// This can technically fail if concurrent access across processes happens, or permission issues.
 /// Errors here should always be ignored.
 fn dumpSource(specifier: string, printer: anytype) void {
+    dumpSourceString(specifier, printer.ctx.getWritten());
+}
+
+fn dumpSourceString(specifier: string, written: []const u8) void {
     if (comptime Environment.isWindows) return;
     if (BunDebugHolder.dir == null) {
         BunDebugHolder.dir = std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{}) catch return;
@@ -172,9 +176,9 @@ fn dumpSource(specifier: string, printer: anytype) void {
     if (std.fs.path.dirname(specifier)) |dir_path| {
         var parent = dir.dir.makeOpenPathIterable(dir_path[1..], .{}) catch return;
         defer parent.close();
-        parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
+        parent.dir.writeFile(std.fs.path.basename(specifier), written) catch return;
     } else {
-        dir.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
+        dir.dir.writeFile(std.fs.path.basename(specifier), written) catch return;
     }
 }
 
@@ -356,6 +360,11 @@ pub const RuntimeTranspilerStore = struct {
             const loader = this.loader;
             this.log = logger.Log.init(bun.default_allocator);
 
+            var cache = JSC.RuntimeTranspilerCache{
+                .output_code_allocator = allocator,
+                .sourcemap_allocator = bun.default_allocator,
+            };
+
             var vm = this.vm;
             var bundler: bun.Bundler = undefined;
             bundler = vm.bundler;
@@ -417,6 +426,7 @@ pub const RuntimeTranspilerStore = struct {
                     vm.main_hash == hash and
                     strings.eqlLong(vm.main, path.text, false),
                 .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, true) and setBreakPointOnFirstLine(),
+                .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
             };
 
             defer {
@@ -478,6 +488,37 @@ pub const RuntimeTranspilerStore = struct {
                         ) catch {};
                     }
                 }
+            }
+
+            if (cache.entry) |*entry| {
+                const duped = String.create(specifier);
+                vm.source_mappings.putMappings(parse_result.source, .{
+                    .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
+                    .allocator = bun.default_allocator,
+                }) catch {};
+
+                if (comptime Environment.allow_assert) {
+                    dumpSourceString(specifier, entry.output_code.byteSlice());
+                }
+
+                this.resolved_source = ResolvedSource{
+                    .allocator = null,
+                    .source_code = switch (entry.output_code) {
+                        .string => entry.output_code.string,
+                        .utf8 => brk: {
+                            const result = bun.String.create(entry.output_code.utf8);
+                            cache.output_code_allocator.free(entry.output_code.utf8);
+                            entry.output_code.utf8 = "";
+                            break :brk result;
+                        },
+                    },
+                    .specifier = duped,
+                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
+                    .hash = 0,
+                    .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
+                };
+
+                return;
             }
 
             if (parse_result.already_bundled) {
@@ -560,7 +601,8 @@ pub const RuntimeTranspilerStore = struct {
                 .allocator = null,
                 .source_code = brk: {
                     const written = printer.ctx.getWritten();
-                    const result = bun.String.createLatin1(written);
+
+                    const result = cache.output_code orelse bun.String.createLatin1(written);
 
                     if (written.len > 1024 * 1024 * 2 or vm.smol) {
                         printer.ctx.buffer.deinit();
@@ -1429,6 +1471,11 @@ pub const ModuleLoader = struct {
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
+                var cache = JSC.RuntimeTranspilerCache{
+                    .output_code_allocator = allocator,
+                    .sourcemap_allocator = bun.default_allocator,
+                };
+
                 var old = jsc_vm.bundler.log;
                 jsc_vm.bundler.log = log;
                 jsc_vm.bundler.linker.log = log;
@@ -1480,6 +1527,8 @@ pub const ModuleLoader = struct {
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
+
+                    .runtime_transpiler_cache = if (!disable_transpilying and !JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
@@ -1608,6 +1657,51 @@ pub const ModuleLoader = struct {
                     };
                 }
 
+                if (cache.entry) |*entry| {
+                    jsc_vm.source_mappings.putMappings(parse_result.source, .{
+                        .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
+                        .allocator = bun.default_allocator,
+                    }) catch {};
+
+                    if (comptime Environment.allow_assert) {
+                        dumpSourceString(specifier, entry.output_code.byteSlice());
+                    }
+
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = switch (entry.output_code) {
+                            .string => entry.output_code.string,
+                            .utf8 => brk: {
+                                const result = bun.String.create(entry.output_code.utf8);
+                                cache.output_code_allocator.free(entry.output_code.utf8);
+                                entry.output_code.utf8 = "";
+                                break :brk result;
+                            },
+                        },
+                        .specifier = input_specifier,
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .hash = 0,
+                        .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
+                        .tag = brk: {
+                            if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
+                                var actual_package_json: *PackageJSON = package_json orelse brk2: {
+                                    // this should already be cached virtually always so it's fine to do this
+                                    var dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                        break :brk .javascript;
+
+                                    break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
+                                } orelse break :brk .javascript;
+
+                                if (actual_package_json.module_type == .esm) {
+                                    break :brk ResolvedSource.Tag.package_json_type_module;
+                                }
+                            }
+
+                            break :brk ResolvedSource.Tag.javascript;
+                        },
+                    };
+                }
+
                 const start_count = jsc_vm.bundler.linker.import_counter;
 
                 // We _must_ link because:
@@ -1725,7 +1819,7 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = brk: {
                         const written = printer.ctx.getWritten();
-                        const result = bun.String.createLatin1(written);
+                        const result = cache.output_code orelse bun.String.createLatin1(written);
 
                         if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                             printer.ctx.buffer.deinit();

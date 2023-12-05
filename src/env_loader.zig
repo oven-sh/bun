@@ -240,7 +240,7 @@ pub const Loader = struct {
         var key_buf_len: usize = 0;
         var e_strings_to_allocate: usize = 0;
 
-        if (behavior != .disable) {
+        if (behavior != .disable and behavior != .load_all_without_inlining) {
             if (behavior == .prefix) {
                 std.debug.assert(prefix.len > 0);
 

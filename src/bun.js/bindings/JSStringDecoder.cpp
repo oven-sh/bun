@@ -12,6 +12,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace WebCore {
 

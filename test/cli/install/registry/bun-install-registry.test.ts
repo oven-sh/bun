@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, ignoreMimallocWarning } from "harness";
+import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -10,10 +10,8 @@ import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } fr
 
 var verdaccioServer: ChildProcess;
 var testCounter: number = 0;
-var port: number = 4784;
+var port: number = 4873;
 var packageDir: string;
-
-ignoreMimallocWarning({ beforeAll, afterAll });
 
 beforeAll(async done => {
   verdaccioServer = fork(
@@ -467,9 +465,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
 
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
-    if (!err.includes("mimalloc: warning")) {
-      expect(err).not.toContain("error:");
-    }
+    expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
@@ -630,9 +626,7 @@ describe("hoisting", async () => {
       var out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
-      if (!err.includes("mimalloc: warning")) {
-        expect(err).not.toContain("error:");
-      }
+      expect(err).not.toContain("error:");
       for (const dep of Object.keys(dependencies)) {
         expect(out).toContain(` + ${dep}@${dependencies[dep]}`);
       }
@@ -654,9 +648,7 @@ describe("hoisting", async () => {
       out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
-      if (!err.includes("mimalloc: warning")) {
-        expect(err).not.toContain("error:");
-      }
+      expect(err).not.toContain("error:");
       expect(out).not.toContain("package installed");
       expect(out).toContain(`Checked ${Object.keys(dependencies).length * 2} installs across`);
       expect(await exited).toBe(0);
@@ -792,9 +784,7 @@ describe("hoisting", async () => {
         var out = await new Response(stdout).text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
-        if (!err.includes("mimalloc: warning")) {
-          expect(err).not.toContain("error:");
-        }
+        expect(err).not.toContain("error:");
         for (const dep of Object.keys(dependencies)) {
           expect(out).toContain(` + ${dep}@${dependencies[dep]}`);
         }
@@ -816,9 +806,7 @@ describe("hoisting", async () => {
         out = await new Response(stdout).text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
-        if (!err.includes("mimalloc: warning")) {
-          expect(err).not.toContain("error:");
-        }
+        expect(err).not.toContain("error:");
         if (out.includes("installed")) {
           console.log("stdout:", out);
         }
@@ -841,9 +829,7 @@ describe("hoisting", async () => {
         out = await new Response(stdout).text();
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
-        if (!err.includes("mimalloc: warning")) {
-          expect(err).not.toContain("error:");
-        }
+        expect(err).not.toContain("error:");
         expect(out).not.toContain("package installed");
         expect(await exited).toBe(0);
         expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
@@ -1438,13 +1424,6 @@ describe("lifecycle scripts", async () => {
       " + all-lifecycle-scripts@1.0.0",
       "",
       expect.stringContaining("1 package installed"),
-      "",
-      expect.stringContaining("2 preinstall scripts..."),
-      expect.stringContaining("2 install scripts..."),
-      expect.stringContaining("2 postinstall scripts..."),
-      expect.stringContaining("1 preprepare script..."),
-      expect.stringContaining("1 prepare script..."),
-      expect.stringContaining("1 postprepare script..."),
     ]);
     expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall exists!");
     expect(await file(join(packageDir, "install.txt")).text()).toBe("install exists!");
@@ -1498,13 +1477,6 @@ describe("lifecycle scripts", async () => {
       " + all-lifecycle-scripts@1.0.0",
       "",
       expect.stringContaining("1 package installed"),
-      "",
-      expect.stringContaining("2 preinstall scripts..."),
-      expect.stringContaining("2 install scripts..."),
-      expect.stringContaining("2 postinstall scripts..."),
-      expect.stringContaining("1 preprepare script..."),
-      expect.stringContaining("1 prepare script..."),
-      expect.stringContaining("1 postprepare script..."),
     ]);
 
     expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall!");
@@ -1518,6 +1490,50 @@ describe("lifecycle scripts", async () => {
     expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
     expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
     expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
+    expect(await exited).toBe(0);
+  });
+
+  test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+    const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "uses-what-bin-slow": "1.0.0",
+        },
+        trustedDependencies: ["uses-what-bin-slow"],
+        scripts: {
+          install: script,
+          postinstall: script,
+          preinstall: script,
+          prepare: script,
+          postprepare: script,
+          preprepare: script,
+        },
+      }),
+    );
+
+    // uses-what-bin-slow will wait one second then write a file to disk. The root package should wait for
+    // for this to happen before running its lifecycle scripts.
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    var err = await new Response(stderr).text();
+    expect(stdout).toBeDefined();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
 
@@ -1598,10 +1614,6 @@ describe("lifecycle scripts", async () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       expect.stringContaining("Checked 1 install across 2 packages (no changes)"),
-      "",
-      expect.stringContaining("1 preinstall script..."),
-      expect.stringContaining("1 install script..."),
-      expect.stringContaining("[2/2] lifecycle scripts..."),
     ]);
 
     expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
@@ -1641,8 +1653,6 @@ describe("lifecycle scripts", async () => {
       "",
       // @ts-ignore
       expect.stringContaining("1 package installed"),
-      "",
-      expect.stringContaining("[1/1] lifecycle scripts..."),
     ]);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
@@ -1666,8 +1676,6 @@ describe("lifecycle scripts", async () => {
       " + lifecycle-postinstall@1.0.0",
       "",
       expect.stringContaining("1 package installed"),
-      "",
-      "1 postinstall script...",
     ]);
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
@@ -1687,8 +1695,9 @@ describe("lifecycle scripts", async () => {
         },
         dependencies: {
           "lifecycle-init-cwd": "1.0.0",
+          "another-init-cwd": "npm:lifecycle-init-cwd@1.0.0",
         },
-        trustedDependencies: ["lifecycle-init-cwd"],
+        trustedDependencies: ["lifecycle-init-cwd", "another-init-cwd"],
       }),
     );
 
@@ -1720,15 +1729,15 @@ process.env.INIT_CWD || "does not exist"
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + another-init-cwd@1.0.0",
       " + lifecycle-init-cwd@1.0.0",
       "",
       expect.stringContaining("1 package installed"),
-      "",
-      expect.stringContaining("[2/2] lifecycle scripts..."),
     ]);
     expect(await exited).toBe(0);
     expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir + "/");
     expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir + "/");
+    expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir + "/");
   });
 
   test("failing lifecycle script should print output", async () => {
@@ -1757,12 +1766,44 @@ process.env.INIT_CWD || "does not exist"
 
     const err = await new Response(stderr).text();
     expect(err).toContain("hello");
+    expect(await exited).toBe(1);
+    const out = await new Response(stdout).text();
+    expect(out).toBeEmpty();
+  });
+
+  test("--ignore-scripts should skip lifecycle scripts", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "lifecycle-failing-postinstall": "1.0.0",
+        },
+        trustedDependencies: ["lifecycle-failing-postinstall"],
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--ignore-scripts"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("hello");
     const out = await new Response(stdout).text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       " + lifecycle-failing-postinstall@1.0.0",
       "",
-      expect.stringContaining("1 package installed"),
+      " 1 package installed",
     ]);
+    expect(await exited).toBe(0);
   });
 
   test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
@@ -1796,8 +1837,6 @@ process.env.INIT_CWD || "does not exist"
       " + binding-gyp-scripts@1.5.0",
       "",
       expect.stringContaining("2 packages installed"),
-      "",
-      expect.stringContaining("[1/1] lifecycle scripts..."),
     ]);
     expect(await exited).toBe(0);
     expect(await exists(join(packageDir, "node_modules/binding-gyp-scripts/build.node"))).toBeTrue();
@@ -1883,8 +1922,6 @@ process.env.INIT_CWD || "does not exist"
       " + node-gyp@1.5.0",
       "",
       expect.stringContaining("1 package installed"),
-      "",
-      expect.stringContaining("[1/1] lifecycle scripts..."),
     ]);
     expect(await exited).toBe(0);
     expect(await exists(join(packageDir, "build.node"))).toBeTrue();
@@ -1941,8 +1978,6 @@ process.env.INIT_CWD || "does not exist"
       " + node-gyp@1.5.0",
       "",
       expect.stringContaining("1 package installed"),
-      "",
-      expect.stringContaining("[4/4] lifecycle scripts..."),
     ]);
     expect(await exited).toBe(0);
     expect(await exists(join(packageDir, "build.node"))).toBeTrue();
@@ -1981,58 +2016,11 @@ process.env.INIT_CWD || "does not exist"
         " + node-gyp@1.5.0",
         "",
         expect.stringContaining("1 package installed"),
-        "",
-        expect.stringContaining("[1/1] lifecycle scripts..."),
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "build.node"))).toBeFalse();
     });
   }
-
-  // https://github.com/pnpm/pnpm/blob/ee6e0734e911d48f6ff786aa0f05b9b9926e4815/pkg-manager/core/test/install/lifecycleScripts.ts#L262
-  test.todo("it should run lifecycle scripts of dependant packages after running scripts of their deps", async () => {
-    await writeFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "with-postinstall-a": "1.0.0",
-        },
-        trustedDependencies: ["with-postinstall-a", "with-postinstall-b"],
-      }),
-    );
-
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-
-    const err = await new Response(stderr).text();
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("not found");
-    expect(err).not.toContain("error:");
-    const out = await new Response(stdout).text();
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      " + with-postinstall-a@1.0.0",
-      "",
-      expect.stringContaining("2 packages installed"),
-      "",
-      expect.stringContaining("[2/2] lifecycle scripts..."),
-    ]);
-    expect(await exited).toBe(0);
-    console.log(await readdirSorted(join(packageDir, "node_modules", "with-postinstall-a")));
-    const a = await file(join(packageDir, "node_modules", "with-postinstall-a", "output.json")).json();
-    const b = await file(join(packageDir, "node_modules", "with-postinstall-b", "output.json")).json();
-    expect(
-      +(await file(join(packageDir, "node_modules", "with-postinstall-a", "output.json")).text()) >
-        +(await file(join(packageDir, "node_modules", "with-postinstall-b", "output.json")).text()),
-    ).toBeTrue();
-  });
 
   test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
     await writeFile(
@@ -2102,6 +2090,179 @@ process.env.INIT_CWD || "does not exist"
     expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "install.txt"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
   });
+
+  test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "uses-what-bin-slow": "1.0.0",
+        },
+        trustedDependencies: ["uses-what-bin-slow"],
+        scripts: {
+          install: '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]',
+        },
+      }),
+    );
+
+    // Package `uses-what-bin-slow` has an install script that will sleep for 1 second
+    // before writing `what-bin.txt` to disk. The root package has an install script that
+    // checks if this file exists. If the root package install script does not wait for
+    // the other to finish, it will fail.
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + uses-what-bin-slow@1.0.0",
+      "",
+      " 2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+  });
+});
+
+test("it should install and use correct binary version", async () => {
+  // this should install node-gyp in two places:
+  //
+  // - node_modules/.bin/what-bin@1.5.0
+  // - node_modules/uses-what-bin/node_modules/.bin/what-bin@1.0.0
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      scripts: {
+        install: "what-bin",
+      },
+      dependencies: {
+        "uses-what-bin": "1.0.0",
+        "what-bin": "1.5.0",
+      },
+      trustedDependencies: ["uses-what-bin"],
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uses-what-bin@1.0.0",
+    " + what-bin@1.5.0",
+    "",
+    expect.stringContaining("3 packages installed"),
+  ]);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "what-bin.txt")).text()).toBe("what-bin@1.5.0");
+  expect(await file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+
+  await rm(join(packageDir, "what-bin.txt"));
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"));
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "uses-what-bin": "1.5.0",
+        "what-bin": "1.0.0",
+      },
+      scripts: {
+        install: "what-bin",
+      },
+      trustedDependencies: ["uses-what-bin"],
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+  expect(await file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text()).toBe("what-bin@1.5.0");
+});
+
+test("it should be able to find binary in node_modules/.bin from parent directory of root package", async () => {
+  await mkdir(join(packageDir, "node_modules", ".bin"), { recursive: true });
+  await mkdir(join(packageDir, "morePackageDir"));
+  await writeFile(
+    join(packageDir, "morePackageDir", "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      scripts: {
+        install: "missing-bin",
+      },
+      dependencies: {
+        "what-bin": "1.0.0",
+      },
+    }),
+  );
+
+  await cp(join(packageDir, "bunfig.toml"), join(packageDir, "morePackageDir", "bunfig.toml"));
+
+  await await writeFile(
+    join(packageDir, "node_modules", ".bin", "missing-bin"),
+    `#!/usr/bin/env node
+require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
+`,
+    { mode: 0o777 },
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(packageDir, "morePackageDir"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + what-bin@1.0.0",
+    "",
+    expect.stringContaining("1 package installed"),
+  ]);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");
 });
 
 test("it should install and use correct binary version", async () => {
@@ -3825,8 +3986,6 @@ describe("yarn tests", () => {
       " + one-dep-scripted@1.5.0",
       "",
       expect.stringContaining("4 packages installed"),
-      "",
-      expect.stringContaining("[4/4] lifecycle scripts"),
     ]);
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);

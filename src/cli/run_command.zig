@@ -472,7 +472,7 @@ pub const RunCommand = struct {
         }
 
         pub fn printOutput(this: *LifecycleScriptSubprocess) void {
-            Output.errorWriter().writeAll(this.output_buffer.slice()) catch {};
+            Output.errorWriter().print("{s}\n", .{this.output_buffer.slice()}) catch {};
         }
 
         pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {

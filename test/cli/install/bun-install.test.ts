@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, ignoreMimallocWarning, withoutMimalloc } from "harness";
+import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
@@ -20,8 +20,6 @@ beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
-
-ignoreMimallocWarning({ beforeAll, afterAll });
 
 describe("chooses", () => {
   async function runTest(latest: string, range: string, chosen = "0.0.5") {
@@ -896,12 +894,6 @@ it("should handle life-cycle scripts within workspaces", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(
-    err
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .slice(1),
-  ).toEqual([" Saved lockfile", `$ ${bunExe()} preinstall.js`, `$ ${bunExe()} install.js`, ""]);
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -967,12 +959,6 @@ it("should handle life-cycle scripts during re-installation", async () => {
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(
-    err1
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`, `$ node qux-install.js`]);
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1006,12 +992,6 @@ it("should handle life-cycle scripts during re-installation", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).not.toContain("Saved lockfile");
-  expect(
-    err1
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`, `$ node qux-install.js`]);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1045,12 +1025,6 @@ it("should handle life-cycle scripts during re-installation", async () => {
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
-  expect(
-    err1
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`, `$ node qux-install.js`]);
   expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1110,12 +1084,6 @@ it("should use updated life-cycle scripts in root during re-installation", async
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(
-    err1
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`]);
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1165,12 +1133,6 @@ it("should use updated life-cycle scripts in root during re-installation", async
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
-  expect(
-    err2
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install2.js`, `$ ${bunExe()} foo-postinstall.js`]);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1206,12 +1168,6 @@ it("should use updated life-cycle scripts in root during re-installation", async
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
-  expect(
-    err3
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install2.js`, `$ ${bunExe()} foo-postinstall.js`]);
 
   expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
@@ -1272,12 +1228,6 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(
-    err1
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`]);
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1330,12 +1280,6 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
-  expect(
-    err2
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`, `$ ${bunExe()} bar-postinstall.js`]);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1374,12 +1318,6 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
-  expect(
-    err3
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([`$ ${bunExe()} bar-preinstall.js`, `$ ${bunExe()} foo-install.js`, `$ ${bunExe()} bar-postinstall.js`]);
   expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([

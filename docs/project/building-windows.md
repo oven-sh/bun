@@ -18,6 +18,7 @@ Here are the extra steps I ran on my fresh windows machine (some of these are a 
     - `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`
     - `Start-Service sshd`
     - `Set-Service -Name sshd -StartupType 'Automatic'`
+    - `New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Program Files\PowerShell\7\pwsh.exe" -PropertyType String -Force`
     - Configure in `C:\ProgramData\ssh`
     - Add ssh keys (in ProgramData because it is an admin account)
   - Tailscale (login with GitHub so it joins the team tailnet)

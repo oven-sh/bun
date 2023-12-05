@@ -1943,6 +1943,7 @@ it("fs.constants", () => {
       UV_FS_COPYFILE_FICLONE_FORCE: 4,
       COPYFILE_FICLONE_FORCE: 4,
     } as any);
+    return;
   }
   expect(constants).toBeDefined();
   expect(constants.F_OK).toBeDefined();

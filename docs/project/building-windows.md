@@ -25,6 +25,7 @@ Here are the extra steps I ran on my fresh windows machine (some of these are a 
 - Configure `git`
   - `git config user.name "your name"`
   - `git config user.email "your@email"`
+- Disable sleep mode and the lid switch by going to "Power Options" and configuring everything there.
 
 I recommend using VSCode through SSH instead of Tunnels or the Tailscale extension, it seems to be more reliable.
 

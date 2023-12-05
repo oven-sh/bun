@@ -4,9 +4,17 @@ set -e
 export TARGET_PLATFORM=${1:-win32}
 export TARGET_ARCH=${2:-x64}
 
+if ! which bun; then
+  export PATH="$PATH:$HOME/.bun/bin"
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/../"
 
 OUT=build-codegen-${TARGET_PLATFORM}-${TARGET_ARCH}
+
+if [ -n "$3" ]; then
+  OUT="$3"
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"

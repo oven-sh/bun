@@ -125,14 +125,22 @@ pub fn hasTrustedDependencies(this: *const Lockfile) bool {
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
-    const Entry = struct {
+    pub const Entry = struct {
         cwd: string,
         script: string,
         package_name: string,
     };
-    const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(Entry);
 
-    const Queue = std.fifo.LinearFifo(*RunCommand.SpawnedScript, .Dynamic);
+    pub const names = [_]string{
+        "preinstall",
+        "install",
+        "postinstall",
+        "preprepare",
+        "prepare",
+        "postprepare",
+    };
+
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
     preinstall: Entries = .{},
@@ -143,7 +151,7 @@ pub const Scripts = struct {
     postprepare: Entries = .{},
 
     pub fn hasAny(this: *Scripts) bool {
-        inline for (Package.Scripts.Hooks) |hook| {
+        inline for (Scripts.names) |hook| {
             if (@field(this, hook).items.len > 0) return true;
         }
         return false;
@@ -151,57 +159,14 @@ pub const Scripts = struct {
 
     pub fn count(this: *Scripts) usize {
         var res: usize = 0;
-        inline for (Package.Scripts.Hooks) |hook| {
+        inline for (Scripts.names) |hook| {
             res += @field(this, hook).items.len;
         }
         return res;
     }
 
-    pub fn run(
-        this: *Scripts,
-        allocator: Allocator,
-        env: *DotEnv.Loader,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime hook: []const u8,
-    ) !void {
-        for (@field(this, hook).items) |entry| {
-            if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-            _ = try RunCommand.runPackageScriptForeground(allocator, entry.script, hook, entry.cwd, env, &.{}, log_level == .silent);
-        }
-    }
-
-    pub fn spawnAllPackageScripts(
-        this: *Scripts,
-        manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime hook: []const u8,
-    ) !void {
-        if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-
-        const items = @field(this, hook).items;
-        if (items.len > 0) {
-            manager.pending_tasks = @truncate(items.len);
-
-            for (items) |entry| {
-                try RunCommand.spawnPackageScript(
-                    manager,
-                    entry.script,
-                    hook,
-                    entry.package_name,
-                    entry.cwd,
-                    &.{},
-                    log_level == .silent,
-                );
-            }
-
-            while (manager.pending_tasks > 0) {
-                manager.uws_event_loop.tick();
-            }
-        }
-    }
-
     pub fn deinit(this: *Scripts, allocator: Allocator) void {
-        inline for (Package.Scripts.Hooks) |hook| {
+        inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
                 allocator.free(entry.cwd);
@@ -322,7 +287,7 @@ pub const Tree = struct {
     }
 
     pub const root_dep_id: DependencyID = invalid_package_id - 1;
-    const invalid_id: Id = std.math.maxInt(Id);
+    pub const invalid_id: Id = std.math.maxInt(Id);
     const dependency_loop = invalid_id - 1;
     const hoisted = invalid_id - 2;
     const error_id = hoisted;
@@ -332,6 +297,7 @@ pub const Tree = struct {
     pub const NodeModulesFolder = struct {
         relative_path: stringZ,
         dependencies: []const DependencyID,
+        tree_id: Tree.Id,
     };
 
     pub const Iterator = struct {
@@ -339,7 +305,7 @@ pub const Tree = struct {
         dependency_ids: []const DependencyID,
         dependencies: []const Dependency,
         resolutions: []const PackageID,
-        tree_id: Id = 0,
+        tree_id: Id,
         path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         path_buf_len: usize = 0,
         last_parent: Id = invalid_id,
@@ -351,6 +317,7 @@ pub const Tree = struct {
         pub fn init(lockfile: *const Lockfile) Iterator {
             return .{
                 .trees = lockfile.buffers.trees.items,
+                .tree_id = 0,
                 .dependency_ids = lockfile.buffers.hoisted_dependencies.items,
                 .dependencies = lockfile.buffers.dependencies.items,
                 .resolutions = lockfile.buffers.resolutions.items,
@@ -366,10 +333,14 @@ pub const Tree = struct {
             this.string_buf = lockfile.buffers.string_bytes.items;
         }
 
-        pub fn nextNodeModulesFolder(this: *Iterator) ?NodeModulesFolder {
+        pub fn nextNodeModulesFolder(this: *Iterator, completed_trees: ?*Bitset) ?NodeModulesFolder {
             if (this.tree_id >= this.trees.len) return null;
 
             while (this.trees[this.tree_id].dependencies.len == 0) {
+                if (completed_trees) |_completed_trees| {
+                    _completed_trees.set(this.tree_id);
+                    @panic("is this possible??");
+                }
                 this.tree_id += 1;
                 if (this.tree_id >= this.trees.len) return null;
             }
@@ -416,6 +387,7 @@ pub const Tree = struct {
             return .{
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
+                .tree_id = tree.id,
             };
         }
     };
@@ -2357,13 +2329,16 @@ pub const Package = extern struct {
         postprepare: String = .{},
         filled: bool = false,
 
-        pub const Hooks = .{
-            "preinstall",
-            "install",
-            "postinstall",
-            "preprepare",
-            "prepare",
-            "postprepare",
+        pub const List = struct {
+            items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
+            first_index: u8,
+
+            pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(this.items[this.first_index] != null);
+                }
+                return this.items[this.first_index].?;
+            }
         };
 
         pub fn clone(this: *const Package.Scripts, buf: []const u8, comptime Builder: type, builder: Builder) Package.Scripts {
@@ -2371,20 +2346,20 @@ pub const Package = extern struct {
             var scripts = Package.Scripts{
                 .filled = true,
             };
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 @field(scripts, hook) = builder.append(String, @field(this, hook).slice(buf));
             }
             return scripts;
         }
 
         pub fn count(this: *const Package.Scripts, buf: []const u8, comptime Builder: type, builder: Builder) void {
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 builder.count(@field(this, hook).slice(buf));
             }
         }
 
         pub fn hasAny(this: *const Package.Scripts) bool {
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(this, hook).isEmpty()) return true;
             }
             return false;
@@ -2393,35 +2368,46 @@ pub const Package = extern struct {
         pub fn enqueue(
             this: *const Package.Scripts,
             lockfile: *Lockfile,
-            buf: []const u8,
+            lockfile_buf: []const u8,
             _cwd: string,
             package_name: string,
             enqueue_prepare_scripts: bool,
             add_node_gyp_rebuild_script: bool,
-        ) void {
+        ) ?Package.Scripts.List {
             var cwd: ?string = null;
+            var script_index: u8 = 0;
+            var first_script_index: i8 = -1;
+            var scripts: [6]?Lockfile.Scripts.Entry = .{null} ** 6;
 
             if (add_node_gyp_rebuild_script) {
-                lockfile.scripts.install.append(lockfile.allocator, .{
+                // missing install and postinstall, only need to check preinstall
+                if (!this.preinstall.isEmpty()) {
+                    const entry: Lockfile.Scripts.Entry = .{
+                        .cwd = cwd orelse brk: {
+                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                            break :brk cwd.?;
+                        },
+                        .script = lockfile.allocator.dupe(u8, this.preinstall.slice(lockfile_buf)) catch unreachable,
+                        .package_name = package_name,
+                    };
+                    if (first_script_index == -1) first_script_index = @intCast(script_index);
+                    scripts[script_index] = entry;
+                    script_index += 1;
+                    lockfile.scripts.preinstall.append(lockfile.allocator, entry) catch unreachable;
+                }
+
+                const entry: Lockfile.Scripts.Entry = .{
                     .cwd = cwd orelse brk: {
                         cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
                         break :brk cwd.?;
                     },
                     .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
                     .package_name = package_name,
-                }) catch unreachable;
-
-                // missing install and postinstall, only need to check preinstall
-                if (!this.preinstall.isEmpty()) {
-                    lockfile.scripts.preinstall.append(lockfile.allocator, .{
-                        .cwd = cwd orelse brk: {
-                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
-                            break :brk cwd.?;
-                        },
-                        .script = lockfile.allocator.dupe(u8, this.preinstall.slice(buf)) catch unreachable,
-                        .package_name = package_name,
-                    }) catch unreachable;
-                }
+                };
+                if (first_script_index == -1) first_script_index = @intCast(script_index);
+                scripts[script_index] = entry;
+                script_index += 2;
+                lockfile.scripts.install.append(lockfile.allocator, entry) catch unreachable;
             } else {
                 const install_scripts = .{
                     "preinstall",
@@ -2432,45 +2418,62 @@ pub const Package = extern struct {
                 inline for (install_scripts) |hook| {
                     const script = @field(this, hook);
                     if (!script.isEmpty()) {
-                        @field(lockfile.scripts, hook).append(lockfile.allocator, .{
+                        const entry: Lockfile.Scripts.Entry = .{
                             .cwd = cwd orelse brk: {
                                 cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
                                 break :brk cwd.?;
                             },
-                            .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
+                            .script = lockfile.allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
                             .package_name = package_name,
-                        }) catch unreachable;
+                        };
+                        if (first_script_index == -1) first_script_index = @intCast(script_index);
+                        scripts[script_index] = entry;
+                        script_index += 1;
+                        @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
                     }
                 }
             }
 
-            if (!enqueue_prepare_scripts) return;
+            if (enqueue_prepare_scripts) {
+                const prepare_scripts = .{
+                    "preprepare",
+                    "prepare",
+                    "postprepare",
+                };
 
-            const prepare_scripts = .{
-                "preprepare",
-                "prepare",
-                "postprepare",
-            };
-
-            inline for (prepare_scripts) |hook| {
-                const script = @field(this, hook);
-                if (!script.isEmpty()) {
-                    @field(lockfile.scripts, hook).append(lockfile.allocator, .{
-                        .cwd = cwd orelse brk: {
-                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
-                            break :brk cwd.?;
-                        },
-                        .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
-                        .package_name = package_name,
-                    }) catch unreachable;
+                inline for (prepare_scripts) |hook| {
+                    const script = @field(this, hook);
+                    if (!script.isEmpty()) {
+                        const entry: Lockfile.Scripts.Entry = .{
+                            .cwd = cwd orelse brk: {
+                                cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                                break :brk cwd.?;
+                            },
+                            .script = lockfile.allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
+                            .package_name = package_name,
+                        };
+                        if (first_script_index == -1) first_script_index = @intCast(script_index);
+                        scripts[script_index] = entry;
+                        script_index += 1;
+                        @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                    }
                 }
             }
+
+            if (first_script_index != -1) {
+                return .{
+                    .items = scripts,
+                    .first_index = @intCast(first_script_index),
+                };
+            }
+
+            return null;
         }
 
         pub fn parseCount(allocator: Allocator, builder: *Lockfile.StringBuilder, json: Expr) void {
             if (json.asProperty("scripts")) |scripts_prop| {
                 if (scripts_prop.expr.data == .e_object) {
-                    inline for (Package.Scripts.Hooks) |script_name| {
+                    inline for (Lockfile.Scripts.names) |script_name| {
                         if (scripts_prop.expr.get(script_name)) |script| {
                             if (script.asString(allocator)) |input| {
                                 builder.count(input);
@@ -2484,7 +2487,7 @@ pub const Package = extern struct {
         pub fn parseAlloc(this: *Package.Scripts, allocator: Allocator, builder: *Lockfile.StringBuilder, json: Expr) void {
             if (json.asProperty("scripts")) |scripts_prop| {
                 if (scripts_prop.expr.data == .e_object) {
-                    inline for (Package.Scripts.Hooks) |script_name| {
+                    inline for (Lockfile.Scripts.names) |script_name| {
                         if (scripts_prop.expr.get(script_name)) |script| {
                             if (script.asString(allocator)) |input| {
                                 @field(this, script_name) = builder.append(String, input);
@@ -2504,7 +2507,8 @@ pub const Package = extern struct {
             cwd: string,
             name: string,
             add_node_gyp_rebuild_script: bool,
-        ) !void {
+            resolution: *const Resolution,
+        ) !?Package.Scripts.List {
             var json_file_fd = try bun.sys.openat(
                 bun.toFD(node_modules.fd),
                 bun.path.joinZ([_]string{ subpath, "package.json" }, .auto),
@@ -2532,7 +2536,14 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd, name, false, add_node_gyp_rebuild_script);
+            return this.enqueue(
+                lockfile,
+                tmp.buffers.string_bytes.items,
+                cwd,
+                name,
+                resolution.isGit(),
+                add_node_gyp_rebuild_script,
+            );
         }
     };
 
@@ -3142,7 +3153,7 @@ pub const Package = extern struct {
 
             summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
 
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(
                     @field(from.scripts, hook),
                     to_lockfile.buffers.string_bytes.items,

@@ -23,6 +23,10 @@ pub const Resolution = extern struct {
         };
     }
 
+    pub fn isGit(this: *const Resolution) bool {
+        return this.tag == .git or this.tag == .github or this.tag == .gitlab;
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,

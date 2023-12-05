@@ -134,8 +134,8 @@ pub const FilePoll = struct {
     };
 
     const RunCommand = bun.RunCommand;
-    const PostinstallSubprocess = RunCommand.PostinstallSubprocess;
-    const PostinstallSubprocessPid = RunCommand.PostinstallSubprocess.PidPollData;
+    const LifecycleScriptSubprocess = RunCommand.LifecycleScriptSubprocess;
+    const LifecycleScriptSubprocessPid = RunCommand.LifecycleScriptSubprocess.PidPollData;
 
     pub const Owner = bun.TaggedPointerUnion(.{
         FileReader,
@@ -146,8 +146,8 @@ pub const FilePoll = struct {
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
-        PostinstallSubprocess,
-        PostinstallSubprocessPid,
+        LifecycleScriptSubprocess,
+        LifecycleScriptSubprocessPid,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -272,15 +272,15 @@ pub const FilePoll = struct {
                 loader.onMachportChange();
             },
 
-            @field(Owner.Tag, "PostinstallSubprocess") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) PostinstallSubprocess", .{poll.fd});
-                var loader: *PostinstallSubprocess = ptr.as(PostinstallSubprocess);
+            @field(Owner.Tag, "LifecycleScriptSubprocess") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess", .{poll.fd});
+                var loader: *LifecycleScriptSubprocess = ptr.as(LifecycleScriptSubprocess);
                 loader.onOutputUpdate(size_or_offset, poll.fileDescriptor());
             },
 
             @field(Owner.Tag, "PidPollData") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) PostinstallSubprocess Pid", .{poll.fd});
-                var loader: *PostinstallSubprocess = ptr.as(PostinstallSubprocess);
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess Pid", .{poll.fd});
+                var loader: *LifecycleScriptSubprocess = ptr.as(LifecycleScriptSubprocess);
                 loader.onProcessUpdate(size_or_offset);
             },
 

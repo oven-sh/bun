@@ -49,6 +49,7 @@ const ShellCompletions = @import("./shell_completions.zig");
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;
+const Lockfile = @import("../install/lockfile.zig");
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -233,9 +234,12 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub const PostinstallSubprocess = struct {
+    pub const LifecycleScriptSubprocess = struct {
         script_name: []const u8,
         package_name: []const u8,
+
+        scripts: [6]?Lockfile.Scripts.Entry,
+        current_script_index: usize = 0,
 
         finished_fds: u8 = 0,
 
@@ -244,28 +248,152 @@ pub const RunCommand = struct {
         waitpid_result: ?PosixSpawn.WaitPidResult,
         stdout_poll: *Async.FilePoll,
         stderr_poll: *Async.FilePoll,
-        package_manager: *PackageManager,
+        manager: *PackageManager,
 
         /// A "nothing" struct that lets us reuse the same pointer
         /// but with a different tag for the file poll
-        pub const PidPollData = struct { process: PostinstallSubprocess };
+        pub const PidPollData = struct { process: LifecycleScriptSubprocess };
+
+        pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: usize) !void {
+            const manager = this.manager;
+            const original_script = this.scripts[next_script_index].?;
+            const cwd = original_script.cwd;
+            const env = manager.env;
+            const name = Lockfile.Scripts.names[next_script_index];
+
+            this.script_name = name;
+            this.package_name = original_script.package_name;
+
+            const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+
+            var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
+            try replacePackageManagerRun(&copy_script, original_script.script);
+            try copy_script.append(0);
+
+            var combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
+
+            var argv = try manager.allocator.allocSentinel(?[*:0]const u8, 3, null);
+            defer manager.allocator.free(argv);
+            argv[0] = shell_bin;
+            argv[1] = "-c";
+            argv[2] = combined_script;
+
+            var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
+            if (comptime Environment.isMac) {
+                flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
+            }
+
+            var attr = try PosixSpawn.Attr.init();
+            defer attr.deinit();
+            try attr.set(@intCast(flags));
+            try attr.resetSignals();
+
+            var actions = try PosixSpawn.Actions.init();
+            defer actions.deinit();
+            try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
+
+            // Have both stdout and stderr write to the same buffer
+            const fdsOut = try std.os.pipe2(0);
+            try actions.dup2(fdsOut[1], bun.STDOUT_FD);
+
+            const fdsErr = try std.os.pipe2(0);
+            try actions.dup2(fdsErr[1], bun.STDERR_FD);
+
+            try actions.chdir(cwd);
+
+            var arena = bun.ArenaAllocator.init(manager.allocator);
+            defer arena.deinit();
+
+            const pid = brk: {
+                defer {
+                    _ = bun.sys.close(fdsOut[1]);
+                    _ = bun.sys.close(fdsErr[1]);
+                }
+                switch (PosixSpawn.spawnZ(
+                    argv[0].?,
+                    actions,
+                    attr,
+                    argv,
+                    try env.map.createNullDelimitedEnvMap(arena.allocator()),
+                )) {
+                    .err => |err| {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
+                        Output.flush();
+                        return;
+                    },
+                    .result => |pid| break :brk pid,
+                }
+            };
+
+            const pid_fd: std.os.fd_t = brk: {
+                if (!Environment.isLinux) {
+                    break :brk pid;
+                }
+
+                const kernel = @import("../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+
+                // pidfd_nonblock only supported in 5.10+
+                const pidfd_flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+                    std.os.O.NONBLOCK
+                else
+                    0;
+
+                const fd = std.os.linux.pidfd_open(
+                    pid,
+                    pidfd_flags,
+                );
+
+                switch (std.os.linux.getErrno(fd)) {
+                    .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
+                    else => |err| {
+                        var status: u32 = 0;
+                        // ensure we don't leak the child process on error
+                        _ = std.os.linux.waitpid(pid, &status, 0);
+
+                        Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err, @tagName(err) });
+                        Output.flush();
+
+                        return null;
+                    },
+                }
+            };
+
+            this.current_script_index = next_script_index;
+            this.waitpid_result = null;
+            this.finished_fds = 0;
+            this.output_buffer = .{};
+            this.pid_poll = Async.FilePoll.initWithPackageManager(
+                manager,
+                pid_fd,
+                .{},
+                @as(*PidPollData, @ptrCast(this)),
+            );
+            this.stdout_poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, this);
+            this.stderr_poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, this);
+
+            try this.registerPolls();
+        }
 
         pub fn init(
             manager: *PackageManager,
             script_name: []const u8,
             package_name: []const u8,
+            scripts: [6]?Lockfile.Scripts.Entry,
+            script_index: usize,
             stdout_fd: bun.FileDescriptor,
             stderr_fd: bun.FileDescriptor,
             pid_fd: bun.FileDescriptor,
-        ) !?*PostinstallSubprocess {
+        ) !?*LifecycleScriptSubprocess {
             // TODO: this doesnt handle some cleanup edge cases on error
-            var this = try manager.allocator.create(PostinstallSubprocess);
+            var this = try manager.allocator.create(LifecycleScriptSubprocess);
             errdefer this.deinit(manager.allocator);
 
             this.* = .{
                 .package_name = package_name,
                 .script_name = script_name,
-                .package_manager = manager,
+                .manager = manager,
+                .scripts = scripts,
+                .current_script_index = script_index,
                 .waitpid_result = null,
                 .output_buffer = .{},
                 .pid_poll = Async.FilePoll.initWithPackageManager(
@@ -278,11 +406,17 @@ pub const RunCommand = struct {
                 .stderr_poll = Async.FilePoll.initWithPackageManager(manager, stderr_fd, .{}, this),
             };
 
-            _ = try this.stdout_poll.register(manager.uws_event_loop, .readable, false).unwrap();
-            _ = try this.stderr_poll.register(manager.uws_event_loop, .readable, false).unwrap();
+            try this.registerPolls();
+
+            return this;
+        }
+
+        pub fn registerPolls(this: *LifecycleScriptSubprocess) !void {
+            _ = try this.stdout_poll.register(this.manager.uws_event_loop, .readable, false).unwrap();
+            _ = try this.stderr_poll.register(this.manager.uws_event_loop, .readable, false).unwrap();
 
             switch (this.pid_poll.register(
-                manager.uws_event_loop,
+                this.manager.uws_event_loop,
                 .process,
                 true,
             )) {
@@ -295,19 +429,15 @@ pub const RunCommand = struct {
                         @panic("This shouldn't happen. Could not register pid poll");
                     }
 
-                    this.package_manager.pending_tasks -= 1;
                     this.onProcessUpdate(0);
-                    return null;
                 },
             }
-
-            return this;
         }
 
-        pub fn onOutputUpdate(this: *PostinstallSubprocess, size: i64, fd: bun.FileDescriptor) void {
-            var needed_capacity = this.output_buffer.len + @as(u32, @intCast(size));
-            _ = needed_capacity;
-            this.output_buffer.ensureUnusedCapacity(this.package_manager.allocator, @intCast(size)) catch @panic("Failed to allocate memory for output buffer");
+        pub fn onOutputUpdate(this: *LifecycleScriptSubprocess, size: i64, fd: bun.FileDescriptor) void {
+            // var needed_capacity = this.output_buffer.len + @as(u32, @intCast(size));
+            // _ = needed_capacity;
+            this.output_buffer.ensureUnusedCapacity(this.manager.allocator, @intCast(size)) catch @panic("Failed to allocate memory for output buffer");
 
             if (size == 0) {
                 this.finished_fds += 1;
@@ -330,32 +460,40 @@ pub const RunCommand = struct {
             }
         }
 
-        pub fn printOutput(this: *PostinstallSubprocess) void {
+        pub fn printOutput(this: *LifecycleScriptSubprocess) void {
             Output.errorWriter().writeAll(this.output_buffer.slice()) catch {};
         }
 
-        pub fn onProcessUpdate(this: *PostinstallSubprocess, _: i64) void {
+        pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {
             switch (PosixSpawn.waitpid(this.pid_poll.fileDescriptor(), std.os.W.NOHANG)) {
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{ this.script_name, this.package_name, err.errno, @tagName(err.getErrno()) });
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                        this.script_name,
+                        this.package_name,
+                        err.errno,
+                        @tagName(err.getErrno()),
+                    });
                     Output.flush();
-                    this.package_manager.pending_tasks -= 1;
+                    this.manager.pending_lifecycle_script_tasks -= 1;
                 },
                 .result => |result| this.onResult(result),
             }
         }
 
-        pub fn onResult(this: *PostinstallSubprocess, result: PosixSpawn.WaitPidResult) void {
+        pub fn onResult(this: *LifecycleScriptSubprocess, result: PosixSpawn.WaitPidResult) void {
             if (result.pid == 0) {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{ this.script_name, this.package_name, 0, "Unknown" });
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                    this.script_name,
+                    this.package_name,
+                    0,
+                    "Unknown",
+                });
                 Output.flush();
 
-                this.package_manager.pending_tasks -= 1;
+                this.manager.pending_lifecycle_script_tasks -= 1;
                 return;
             }
             if (std.os.W.IFEXITED(result.status)) {
-                defer this.deinit(this.package_manager.allocator);
-
                 const code = std.os.W.EXITSTATUS(result.status);
                 if (code > 0) {
                     if (this.finished_fds < 2) {
@@ -363,12 +501,33 @@ pub const RunCommand = struct {
                         return;
                     }
                     this.printOutput();
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(code) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
+                        this.script_name,
+                        this.package_name,
+                        bun.SignalCode.from(code),
+                    });
+                    this.deinit(this.manager.allocator);
                     Output.flush();
                     Global.exit(code);
                 }
 
-                this.package_manager.pending_tasks -= 1;
+                for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
+                    if (this.scripts[new_script_index] != null) {
+                        this.resetPolls();
+                        this.spawnNextScript(new_script_index) catch |err| {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                                Lockfile.Scripts.names[new_script_index],
+                                @errorName(err),
+                            });
+                            Global.exit(1);
+                        };
+                        return;
+                    }
+                }
+
+                // the last script finished
+                this.manager.pending_lifecycle_script_tasks -= 1;
+                this.deinit(this.manager.allocator);
                 return;
             }
             if (std.os.W.IFSIGNALED(result.status)) {
@@ -379,8 +538,11 @@ pub const RunCommand = struct {
                     return;
                 }
                 this.printOutput();
-
-                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(signal) });
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
+                    this.script_name,
+                    this.package_name,
+                    bun.SignalCode.from(signal),
+                });
                 Output.flush();
                 Global.exit(1);
             }
@@ -392,176 +554,49 @@ pub const RunCommand = struct {
                     return;
                 }
                 this.printOutput();
-
-                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by signal {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(signal) });
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by signal {any}<r>", .{
+                    this.script_name,
+                    this.package_name,
+                    bun.SignalCode.from(signal),
+                });
                 Output.flush();
                 Global.exit(1);
             }
         }
 
-        pub fn deinit(this: *PostinstallSubprocess, alloc: std.mem.Allocator) void {
-            _ = this.stdout_poll.unregister(this.package_manager.uws_event_loop, false);
-            _ = this.stderr_poll.unregister(this.package_manager.uws_event_loop, false);
-            _ = this.pid_poll.unregister(this.package_manager.uws_event_loop, false);
+        pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
+            const loop = this.manager.uws_event_loop;
+            _ = this.stdout_poll.unregister(loop, false);
+            _ = this.stderr_poll.unregister(loop, false);
+            _ = this.pid_poll.unregister(loop, false);
 
             _ = bun.sys.close(this.stdout_poll.fileDescriptor());
             _ = bun.sys.close(this.stderr_poll.fileDescriptor());
             _ = bun.sys.close(this.pid_poll.fileDescriptor());
+        }
 
+        pub fn deinit(this: *LifecycleScriptSubprocess, alloc: std.mem.Allocator) void {
+            this.resetPolls();
             alloc.destroy(this);
         }
     };
 
-    inline fn spawnScript(
-        ctx: *PackageManager,
-        name: string,
-        package_name: string,
-        cwd: string,
-        env: *DotEnv.Loader,
-        argv: [*:null]?[*:0]const u8,
-    ) !?*PostinstallSubprocess {
-        var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
-        if (comptime Environment.isMac) {
-            flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
-        }
-
-        var attr = try PosixSpawn.Attr.init();
-        defer attr.deinit();
-        try attr.set(@intCast(flags));
-        try attr.resetSignals();
-
-        var actions = try PosixSpawn.Actions.init();
-        defer actions.deinit();
-        try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
-
-        // Have both stdout and stderr write to the same buffer
-        const fdsOut = try std.os.pipe2(0);
-        try actions.dup2(fdsOut[1], bun.STDOUT_FD);
-
-        const fdsErr = try std.os.pipe2(0);
-        try actions.dup2(fdsErr[1], bun.STDERR_FD);
-
-        try actions.chdir(cwd);
-
-        var arena = bun.ArenaAllocator.init(ctx.allocator);
-        defer arena.deinit();
-
-        const pid = brk: {
-            defer {
-                _ = bun.sys.close(fdsOut[1]);
-                _ = bun.sys.close(fdsErr[1]);
-            }
-            switch (PosixSpawn.spawnZ(
-                argv[0].?,
-                actions,
-                attr,
-                argv,
-                try env.map.createNullDelimitedEnvMap(arena.allocator()),
-            )) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
-                    Output.flush();
-                    return null;
-                },
-                .result => |pid| break :brk pid,
-            }
-        };
-
-        const pidfd: std.os.fd_t = brk: {
-            if (!Environment.isLinux) {
-                break :brk pid;
-            }
-
-            const kernel = @import("../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
-
-            // pidfd_nonblock only supported in 5.10+
-            const pidfd_flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
-                std.os.O.NONBLOCK
-            else
-                0;
-
-            const fd = std.os.linux.pidfd_open(
-                pid,
-                pidfd_flags,
-            );
-
-            switch (std.os.linux.getErrno(fd)) {
-                .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
-                else => |err| {
-                    var status: u32 = 0;
-                    // ensure we don't leak the child process on error
-                    _ = std.os.linux.waitpid(pid, &status, 0);
-
-                    Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err, @tagName(err) });
-                    Output.flush();
-
-                    return null;
-                },
-            }
-        };
-
-        return try PostinstallSubprocess.init(ctx, name, package_name, fdsOut[0], fdsErr[0], pidfd);
-    }
-
-    /// Used to execute postinstall scripts
-    pub fn spawnPackageScript(
-        ctx: *PackageManager,
-        original_script: string,
-        name: string,
-        package_name: string,
-        cwd: string,
-        passthrough: []const string,
-        silent: bool,
+    pub fn spawnPackageScripts(
+        manager: *PackageManager,
+        list: Lockfile.Package.Scripts.List,
     ) !void {
-        const env = ctx.env;
-        const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
+        lifecycle_subprocess.scripts = list.items;
+        lifecycle_subprocess.manager = manager;
 
-        var script = original_script;
-        var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, script.len + 1);
-
-        // We're going to do this slowly.
-        // Find exact matches of yarn, pnpm, npm
-
-        try replacePackageManagerRun(&copy_script, script);
-        try copy_script.append(0);
-
-        var combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
-
-        log("Script from pkg \"{s}\" : \"{s}\"", .{ package_name, combined_script });
-
-        if (passthrough.len > 0) {
-            var combined_script_len = script.len;
-            for (passthrough) |p| {
-                combined_script_len += p.len + 1;
-            }
-            var combined_script_buf = try ctx.allocator.allocSentinel(u8, combined_script_len, 0);
-            bun.copy(u8, combined_script_buf, script);
-            var remaining_script_buf = combined_script_buf[script.len..];
-            for (passthrough) |part| {
-                var p = part;
-                remaining_script_buf[0] = ' ';
-                bun.copy(u8, remaining_script_buf[1..], p);
-                remaining_script_buf = remaining_script_buf[p.len + 1 ..];
-            }
-            combined_script = combined_script_buf;
-        }
-
-        if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-            Output.flush();
-        }
-
-        var argv = try ctx.allocator.allocSentinel(?[*:0]const u8, 3, null);
-        defer ctx.allocator.free(argv);
-        argv[0] = shell_bin;
-        argv[1] = "-c";
-        argv[2] = combined_script;
-
-        _ = spawnScript(ctx, name, package_name, cwd, env, argv) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-            Output.flush();
-            return;
+        lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                Lockfile.Scripts.names[list.first_index],
+                @errorName(err),
+            });
         };
+
+        manager.pending_lifecycle_script_tasks += 1;
     }
 
     pub fn runPackageScriptForeground(
@@ -824,9 +859,7 @@ pub const RunCommand = struct {
         ctx: Command.Context,
         this_bundler: *bundler.Bundler,
         env: ?*DotEnv.Loader,
-        ORIGINAL_PATH: *string,
         log_errors: bool,
-        force_using_bun: bool,
     ) !*DirInfo {
         var args = ctx.args;
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
@@ -863,8 +896,6 @@ pub const RunCommand = struct {
             return error.CouldntReadCurrentDirectory;
         };
 
-        var package_json_dir: string = "";
-
         if (env == null) {
             this_bundler.env.loadProcess();
 
@@ -889,88 +920,6 @@ pub const RunCommand = struct {
                 }
             }
         }
-
-        var bin_dirs = this_bundler.resolver.binDirs();
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
-            }
-        }
-
-        var PATH = this_bundler.env.map.get("PATH") orelse "";
-        ORIGINAL_PATH.* = PATH;
-
-        const found_node = this_bundler.env.loadNodeJSConfig(
-            this_bundler.fs,
-            if (force_using_bun) bun_node_dir ++ "/node" else "",
-        ) catch false;
-
-        var needs_to_force_bun = force_using_bun or !found_node;
-        var optional_bun_self_path: string = "";
-
-        var new_path_len: usize = PATH.len + 2;
-        for (bin_dirs) |bin| {
-            new_path_len += bin.len + 1;
-        }
-
-        if (package_json_dir.len > 0) {
-            new_path_len += package_json_dir.len + 1;
-        }
-
-        new_path_len += root_dir_info.abs_path.len + "node_modules/.bin".len + 1;
-
-        if (needs_to_force_bun) {
-            new_path_len += bun_node_dir.len + 1;
-        }
-
-        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
-
-        if (needs_to_force_bun) {
-            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
-            if (!force_using_bun) {
-                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
-                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
-                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
-            }
-
-            needs_to_force_bun = false;
-        }
-
-        {
-            var needs_delim = false;
-            if (package_json_dir.len > 0) {
-                defer needs_delim = true;
-                if (needs_delim) {
-                    try new_path.append(std.fs.path.delimiter);
-                }
-                try new_path.appendSlice(package_json_dir);
-            }
-
-            var bin_dir_i: i32 = @as(i32, @intCast(bin_dirs.len)) - 1;
-            // Iterate in reverse order
-            // Directories are added to bin_dirs in top-down order
-            // That means the parent-most node_modules/.bin will be first
-            while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                defer needs_delim = true;
-                if (needs_delim) {
-                    try new_path.append(std.fs.path.delimiter);
-                }
-                try new_path.appendSlice(bin_dirs[@as(usize, @intCast(bin_dir_i))]);
-            }
-
-            if (needs_delim) {
-                try new_path.append(std.fs.path.delimiter);
-            }
-            try new_path.appendSlice(root_dir_info.abs_path);
-            try new_path.appendSlice(bun.pathLiteral("node_modules/.bin"));
-            try new_path.append(std.fs.path.delimiter);
-            try new_path.appendSlice(PATH);
-        }
-
-        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-        PATH = new_path.items;
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
 
@@ -1009,6 +958,93 @@ pub const RunCommand = struct {
         }
 
         return root_dir_info;
+    }
+
+    pub fn configurePathForRun(
+        ctx: Command.Context,
+        root_dir_info: *DirInfo,
+        this_bundler: *bundler.Bundler,
+        ORIGINAL_PATH: ?*string,
+        cwd: string,
+        force_using_bun: bool,
+    ) !void {
+        var package_json_dir: string = "";
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
+            }
+        }
+
+        var PATH = this_bundler.env.map.get("PATH") orelse "";
+        if (ORIGINAL_PATH) |original_path| {
+            original_path.* = PATH;
+        }
+
+        const found_node = this_bundler.env.loadNodeJSConfig(
+            this_bundler.fs,
+            if (force_using_bun) bun_node_dir ++ "/node" else "",
+        ) catch false;
+
+        var needs_to_force_bun = force_using_bun or !found_node;
+        var optional_bun_self_path: string = "";
+
+        var new_path_len: usize = PATH.len + 2;
+
+        if (package_json_dir.len > 0) {
+            new_path_len += package_json_dir.len + 1;
+        }
+
+        {
+            var remain = cwd;
+            while (strings.lastIndexOfChar(remain, '/')) |i| {
+                new_path_len += strings.withoutTrailingSlash(remain).len + "/node_modules/.bin".len + 1;
+                remain = remain[0..i];
+            } else {
+                new_path_len += strings.withoutTrailingSlash(remain).len + "/node_modules/.bin".len + 1;
+            }
+        }
+
+        if (needs_to_force_bun) {
+            new_path_len += bun_node_dir.len + 1;
+        }
+
+        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+
+        if (needs_to_force_bun) {
+            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
+            if (!force_using_bun) {
+                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
+                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
+                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
+            }
+
+            needs_to_force_bun = false;
+        }
+
+        {
+            if (package_json_dir.len > 0) {
+                try new_path.appendSlice(package_json_dir);
+                try new_path.append(std.fs.path.delimiter);
+            }
+
+            var remain = cwd;
+            while (strings.lastIndexOfChar(remain, '/')) |i| {
+                try new_path.appendSlice(strings.withoutTrailingSlash(remain));
+                try new_path.appendSlice("/node_modules/.bin");
+                try new_path.append(std.fs.path.delimiter);
+                remain = remain[0..i];
+            } else {
+                try new_path.appendSlice(strings.withoutTrailingSlash(remain));
+                try new_path.appendSlice("/node_modules/.bin");
+                try new_path.append(std.fs.path.delimiter);
+            }
+
+            try new_path.appendSlice(PATH);
+        }
+
+        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1418,7 +1454,8 @@ pub const RunCommand = struct {
 
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
-        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
+        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
+        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {

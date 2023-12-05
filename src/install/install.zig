@@ -1845,6 +1845,7 @@ pub const PackageManager = struct {
     env: *DotEnv.Loader,
     progress: Progress = .{},
     downloads_node: ?*Progress.Node = null,
+    scripts_node: ?*Progress.Node = null,
     progress_name_buf: [768]u8 = undefined,
     progress_name_buf_dynamic: []u8 = &[_]u8{},
     cpu_count: u32 = 0,
@@ -1855,7 +1856,6 @@ pub const PackageManager = struct {
 
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
-    root_download_node: std.Progress.Node = undefined,
 
     to_remove: []const UpdateRequest = &[_]UpdateRequest{},
     to_update: bool = false,
@@ -1880,6 +1880,8 @@ pub const PackageManager = struct {
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
     pending_lifecycle_script_tasks: u32 = 0,
+
+    total_scripts: usize = 0,
 
     root_lifecycle_scripts: ?Package.Scripts.List = null,
     _configured_env_for_scripts: bool = false,
@@ -2288,15 +2290,15 @@ pub const PackageManager = struct {
     ) void {
         if (Output.isEmojiEnabled()) {
             if (is_first) {
-                bun.copy(u8, &this.progress_name_buf, emoji);
-                bun.copy(u8, this.progress_name_buf[emoji.len..], name);
+                @memcpy(this.progress_name_buf[0..emoji.len], emoji);
+                @memcpy(this.progress_name_buf[emoji.len..][0..name.len], name);
                 node.name = this.progress_name_buf[0 .. emoji.len + name.len];
             } else {
-                bun.copy(u8, this.progress_name_buf[emoji.len..], name);
+                @memcpy(this.progress_name_buf[emoji.len..][0..name.len], name);
                 node.name = this.progress_name_buf[0 .. emoji.len + name.len];
             }
         } else {
-            bun.copy(u8, &this.progress_name_buf, name);
+            @memcpy(&this.progress_name_buf, name);
             node.name = this.progress_name_buf[0..name.len];
         }
     }
@@ -5016,7 +5018,7 @@ pub const PackageManager = struct {
 
         manager.drainDependencyList();
 
-        manager.uws_event_loop.run();
+        manager.uws_event_loop.tickWithTimeout(1);
 
         if (comptime log_level.showProgress()) {
             if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
@@ -5555,7 +5557,7 @@ pub const PackageManager = struct {
         };
     };
 
-    const ProgressStrings = struct {
+    pub const ProgressStrings = struct {
         pub const download_no_emoji_ = "Resolving";
         const download_no_emoji: string = download_no_emoji_ ++ "\n";
         const download_with_emoji: string = download_emoji ++ download_no_emoji_;
@@ -5576,6 +5578,11 @@ pub const PackageManager = struct {
         const save_with_emoji: string = save_emoji ++ save_no_emoji_;
         pub const save_emoji: string = "  🔒 ";
 
+        pub const script_no_emoji_ = "Running script";
+        const script_no_emoji: string = script_no_emoji_ ++ "\n";
+        const script_with_emoji: string = script_emoji ++ script_no_emoji_;
+        pub const script_emoji: string = "  🏗️  ";
+
         pub inline fn download() string {
             return if (Output.isEmojiEnabled()) download_with_emoji else download_no_emoji;
         }
@@ -5590,6 +5597,10 @@ pub const PackageManager = struct {
 
         pub inline fn install() string {
             return if (Output.isEmojiEnabled()) install_with_emoji else install_no_emoji;
+        }
+
+        pub inline fn script() string {
+            return if (Output.isEmojiEnabled()) script_with_emoji else script_no_emoji;
         }
     };
 
@@ -6151,7 +6162,6 @@ pub const PackageManager = struct {
             manager.progress = Progress{};
             manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             manager.root_progress_node = manager.progress.start("", 0);
-            manager.root_download_node = manager.root_progress_node.start(ProgressStrings.download(), 0);
         } else {
             manager.options.log_level = .default_no_progress;
         }
@@ -7739,6 +7749,7 @@ pub const PackageManager = struct {
                         this.successfully_installed.set(package_id);
 
                         if (comptime log_level.showProgress()) {
+                            this.node.activate();
                             this.node.completeOne();
                         }
 
@@ -7945,6 +7956,18 @@ pub const PackageManager = struct {
                     add_node_gyp_rebuild_script,
                 )) |scripts_list| {
                     if (this.manager.options.do.run_scripts) {
+                        this.manager.total_scripts += scripts_list.total;
+                        if (this.manager.scripts_node) |scripts_node| {
+                            this.manager.setNodeName(
+                                scripts_node,
+                                scripts_list.items[scripts_list.first_index].?.package_name,
+                                PackageManager.ProgressStrings.script_emoji,
+                                true,
+                            );
+                            scripts_node.setEstimatedTotalItems(scripts_node.unprotected_estimated_total_items + scripts_list.total);
+                            scripts_node.activate();
+                            this.progress.refresh();
+                        }
                         this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                             .list = scripts_list,
                             .tree_id = this.current_tree_id,
@@ -8010,6 +8033,18 @@ pub const PackageManager = struct {
 
                 if (this.manager.options.do.run_scripts) {
                     if (scripts_list) |list| {
+                        this.manager.total_scripts += list.total;
+                        if (this.manager.scripts_node) |scripts_node| {
+                            this.manager.setNodeName(
+                                scripts_node,
+                                list.items[list.first_index].?.package_name,
+                                PackageManager.ProgressStrings.script_emoji,
+                                true,
+                            );
+                            scripts_node.setEstimatedTotalItems(scripts_node.unprotected_estimated_total_items + list.total);
+                            scripts_node.activate();
+                            this.progress.refresh();
+                        }
                         this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                             .list = list,
                             .tree_id = this.current_tree_id,
@@ -8029,6 +8064,7 @@ pub const PackageManager = struct {
 
             if (meta.isDisabled()) {
                 if (comptime log_level.showProgress()) {
+                    this.node.activate();
                     this.node.completeOne();
                 }
                 this.incrementTreeInstallCount(this.current_tree_id, log_level);
@@ -8203,9 +8239,27 @@ pub const PackageManager = struct {
             );
         }
 
+        const root_lifecycle_scripts_count = brk: {
+            if (this.options.do.run_scripts and
+                this.options.do.install_packages and
+                this.root_lifecycle_scripts != null)
+            {
+                var counter: usize = 0;
+
+                for (this.root_lifecycle_scripts.?.items) |item| {
+                    if (item != null) counter += 1;
+                }
+
+                this.total_scripts += counter;
+                break :brk counter;
+            }
+            break :brk 0;
+        };
+
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
+        var scripts_node: Progress.Node = undefined;
         const options = &this.options;
         var progress = &this.progress;
 
@@ -8215,7 +8269,9 @@ pub const PackageManager = struct {
             download_node = root_node.start(ProgressStrings.download(), 0);
 
             install_node = root_node.start(ProgressStrings.install(), lockfile.packages.len);
+            scripts_node = root_node.start(ProgressStrings.script(), root_lifecycle_scripts_count);
             this.downloads_node = &download_node;
+            this.scripts_node = &scripts_node;
         }
 
         defer {
@@ -8554,6 +8610,24 @@ pub const PackageManager = struct {
                         }
                     }
                 }
+            }
+
+            while (this.pending_lifecycle_script_tasks > 0) {
+                this.uws_event_loop.tickWithTimeout(125);
+            }
+
+            if (root_lifecycle_scripts_count > 0) {
+                // root lifecycle scripts can run now that all dependencies are installed
+                // and their lifecycle script have finished
+                try this.spawnPackageLifecycleScripts(ctx, this.root_lifecycle_scripts.?, log_level);
+            }
+
+            while (this.pending_lifecycle_script_tasks > 0) {
+                this.uws_event_loop.tickWithTimeout(125);
+            }
+
+            if (comptime log_level.showProgress()) {
+                scripts_node.end();
             }
         }
 
@@ -9004,22 +9078,22 @@ pub const PackageManager = struct {
                 break :save;
             }
 
-            var node: *Progress.Node = undefined;
+            var save_node: *Progress.Node = undefined;
 
             if (comptime log_level.showProgress()) {
-                node = manager.progress.start(ProgressStrings.save(), 0);
+                save_node = manager.progress.start(ProgressStrings.save(), 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-                node.activate();
+                save_node.activate();
 
                 manager.progress.refresh();
             }
 
             manager.lockfile.saveToDisk(manager.options.lockfile_path);
             if (comptime log_level.showProgress()) {
-                node.end();
+                save_node.end();
                 manager.progress.refresh();
                 manager.progress.root.end();
-                manager.progress = .{};
+                // manager.progress = .{};
             } else if (comptime log_level != .silent) {
                 Output.prettyErrorln(" Saved lockfile", .{});
                 Output.flush();
@@ -9184,24 +9258,6 @@ pub const PackageManager = struct {
         }
 
         Output.flush();
-
-        while (manager.pending_lifecycle_script_tasks > 0) {
-            manager.uws_event_loop.tickWithTimeout(125);
-        }
-
-        const run_lifecycle_scripts = manager.options.do.run_scripts and
-            manager.options.do.install_packages and
-            install_summary.fail == 0 and
-            manager.root_lifecycle_scripts != null;
-        if (run_lifecycle_scripts) {
-            // root lifecycle scripts can run now that all dependencies are installed
-            // and their lifecycle script have finished
-            try manager.spawnPackageLifecycleScripts(ctx, manager.root_lifecycle_scripts.?, log_level);
-        }
-
-        while (manager.pending_lifecycle_script_tasks > 0) {
-            manager.uws_event_loop.tickWithTimeout(125);
-        }
     }
 
     pub fn spawnPackageLifecycleScripts(

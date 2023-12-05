@@ -2331,6 +2331,7 @@ pub const Package = extern struct {
         pub const List = struct {
             items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
             first_index: u8,
+            total: u8,
 
             pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
                 if (comptime Environment.allow_assert) {
@@ -2377,6 +2378,7 @@ pub const Package = extern struct {
             var script_index: u8 = 0;
             var first_script_index: i8 = -1;
             var scripts: [6]?Lockfile.Scripts.Entry = .{null} ** 6;
+            var counter: u8 = 0;
 
             if (add_node_gyp_rebuild_script) {
                 // missing install and postinstall, only need to check preinstall
@@ -2392,6 +2394,7 @@ pub const Package = extern struct {
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
                     scripts[script_index] = entry;
                     lockfile.scripts.preinstall.append(lockfile.allocator, entry) catch unreachable;
+                    counter += 1;
                 }
                 script_index += 1;
 
@@ -2407,6 +2410,7 @@ pub const Package = extern struct {
                 scripts[script_index] = entry;
                 script_index += 2;
                 lockfile.scripts.install.append(lockfile.allocator, entry) catch unreachable;
+                counter += 1;
             } else {
                 const install_scripts = .{
                     "preinstall",
@@ -2428,6 +2432,7 @@ pub const Package = extern struct {
                         if (first_script_index == -1) first_script_index = @intCast(script_index);
                         scripts[script_index] = entry;
                         @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                        counter += 1;
                     }
                     script_index += 1;
                 }
@@ -2454,6 +2459,7 @@ pub const Package = extern struct {
                         if (first_script_index == -1) first_script_index = @intCast(script_index);
                         scripts[script_index] = entry;
                         @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                        counter += 1;
                     }
                     script_index += 1;
                 }
@@ -2463,6 +2469,7 @@ pub const Package = extern struct {
                 return .{
                     .items = scripts,
                     .first_index = @intCast(first_script_index),
+                    .total = counter,
                 };
             }
 

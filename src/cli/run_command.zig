@@ -261,6 +261,17 @@ pub const RunCommand = struct {
             const env = manager.env;
             const name = Lockfile.Scripts.names[next_script_index];
 
+            if (manager.scripts_node) |scripts_node| {
+                manager.setNodeName(
+                    scripts_node,
+                    original_script.package_name,
+                    PackageManager.ProgressStrings.script_emoji,
+                    true,
+                );
+                scripts_node.activate();
+                manager.progress.refresh();
+            }
+
             this.script_name = name;
             this.package_name = original_script.package_name;
 
@@ -440,7 +451,7 @@ pub const RunCommand = struct {
             this.output_buffer.ensureUnusedCapacity(this.manager.allocator, @intCast(size)) catch @panic("Failed to allocate memory for output buffer");
 
             if (size == 0) {
-                this.finished_fds += 1;
+                this.finished_fds +|= 1;
                 if (this.waitpid_result) |result| {
                     if (this.finished_fds == 2) {
                         this.onResult(result);
@@ -509,6 +520,10 @@ pub const RunCommand = struct {
                     this.deinit(this.manager.allocator);
                     Output.flush();
                     Global.exit(code);
+                }
+
+                if (this.manager.scripts_node) |scripts_node| {
+                    scripts_node.completeOne();
                 }
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {

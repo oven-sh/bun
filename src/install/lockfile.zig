@@ -339,7 +339,6 @@ pub const Tree = struct {
             while (this.trees[this.tree_id].dependencies.len == 0) {
                 if (completed_trees) |_completed_trees| {
                     _completed_trees.set(this.tree_id);
-                    @panic("is this possible??");
                 }
                 this.tree_id += 1;
                 if (this.tree_id >= this.trees.len) return null;

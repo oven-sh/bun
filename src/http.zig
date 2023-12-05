@@ -710,7 +710,7 @@ pub const HTTPThread = struct {
 
         const thread = try std.Thread.spawn(
             .{
-                .stack_size = bun.default_stack_size,
+                .stack_size = bun.default_thread_stack_size,
             },
             comptime onStart,
             .{

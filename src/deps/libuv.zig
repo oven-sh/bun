@@ -1394,7 +1394,7 @@ const union_unnamed_435 = extern union {
     connect: struct_unnamed_437,
 };
 pub const uv_getaddrinfo_t = struct_uv_getaddrinfo_s;
-pub const uv_getaddrinfo_cb = ?*const fn (*uv_getaddrinfo_t, ReturnCode, ?*addrinfo) callconv(.C) void;
+pub const uv_getaddrinfo_cb = ?*const fn (*uv_getaddrinfo_t, c_int, ?*addrinfo) callconv(.C) void;
 pub const struct_uv_getaddrinfo_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,

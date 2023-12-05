@@ -16,7 +16,8 @@ if [ -n "$3" ]; then
   OUT="$3"
 fi
 
-rm -rf "$OUT"
+rm -rf "$OUT/codegen"
+rm -rf "$OUT/js"
 mkdir -p "$OUT"
 mkdir -p "$OUT/"{codegen,js,tmp_functions,tmp_modules}
 

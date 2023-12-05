@@ -6,7 +6,7 @@ namespace Bun {
 NapiExternal::~NapiExternal()
 {
     if (finalizer) {
-        reinterpret_cast<napi_finalize>(finalizer)(toNapi(globalObject()), m_value, m_finalizerHint);
+        finalizer(toNapi(globalObject()), m_value, m_finalizerHint);
     }
 }
 

@@ -192,11 +192,17 @@ public:
 
     DECLARE_INFO;
 
-    static NapiPrototype* create(VM& vm, Structure* structure)
+    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
         return footprint;
+    }
+
+    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject)
+    {
+        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
+        return create(vm, globalObject, structure);
     }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

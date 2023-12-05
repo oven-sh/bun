@@ -64,7 +64,8 @@ After Visual Studio, you need the following:
 [Scoop](https://scoop.sh) can be used to install these easily.
 
 ```bash
-$ scoop install nodejs-lts go rust nasm ruby perl llvm@16.0.4
+scoop install nodejs-lts go rust nasm ruby perl
+scoop llvm@16.0.4 # scoop bug if you install llvm and the rest at the same time
 ```
 
 From here on out, it is **expected you use a Developer PowerShell Terminal with `.\scripts\env.ps1 sourced**. This script is available in the Bun repository and can be loaded by executing it.

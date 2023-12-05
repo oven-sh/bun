@@ -1545,18 +1545,14 @@ pub const Blob = struct {
 
                 const State = @This();
 
-                /// This is a workaround for some versions of IO uring returning
-                /// EAGAIN when reading a file opened with O_NONBLOCK. Since io_uring waits, we don't need to wait.
-                const non_block_without_io_uring = if (Environment.isLinux) 0 else std.os.O.NONBLOCK;
-
-                const __opener_flags = non_block_without_io_uring | std.os.O.CLOEXEC;
+                const __opener_flags = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
 
                 const open_flags_ = if (@hasDecl(This, "open_flags"))
                     This.open_flags | __opener_flags
                 else
                     std.os.O.RDONLY | __opener_flags;
 
-                pub fn getFdMac(this: *This) bun.FileDescriptor {
+                pub fn getFdImpl(this: *This) bun.FileDescriptor {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var path_string = if (@hasField(This, "file_store"))
                         this.file_store.pathlike.path
@@ -1602,11 +1598,7 @@ pub const Blob = struct {
                         }
                     }
 
-                    if (comptime Environment.isMac) {
-                        Callback(this, this.getFdMac());
-                    } else {
-                        this.getFdLinux(Callback);
-                    }
+                    Callback(this, this.getFdImpl());
                 }
 
                 const WrappedOpenCallback = *const fn (*State, *http.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
@@ -1663,57 +1655,18 @@ pub const Blob = struct {
                         }
                     }.onOpen;
                 }
-
-                pub fn getFdLinux(this: *This, comptime callback: OpenCallback) void {
-                    var aio = &AsyncIO.global;
-
-                    var path_string = if (@hasField(This, "file_store"))
-                        this.file_store.pathlike.path
-                    else
-                        this.file_blob.store.?.data.file.pathlike.path;
-
-                    var holder = bun.default_allocator.create(State) catch unreachable;
-                    holder.* = .{
-                        .context = this,
-                    };
-                    var path_buffer = bun.default_allocator.dupeZ(u8, path_string.slice()) catch unreachable;
-                    aio.open(
-                        *State,
-                        holder,
-                        comptime OpenCallbackWrapper(callback),
-                        &holder.open_completion,
-                        path_buffer,
-                        open_flags_,
-                        JSC.Node.default_permission,
-                    );
-                }
             };
         }
 
         pub fn FileCloserMixin(comptime This: type) type {
             return struct {
                 const Closer = @This();
-                close_completion: AsyncIO.Completion = undefined,
 
                 pub fn doClose(this: *This) void {
                     const fd = this.opened_fd;
                     std.debug.assert(fd != null_fd);
-                    var aio = &AsyncIO.global;
 
-                    var closer = bun.default_allocator.create(Closer) catch unreachable;
-
-                    aio.close(
-                        *Closer,
-                        closer,
-                        onClose,
-                        &closer.close_completion,
-                        fd,
-                    );
-                    this.opened_fd = null_fd;
-                }
-
-                pub fn onClose(closer: *Closer, _: *http.NetworkThread.Completion, _: AsyncIO.CloseError!void) void {
-                    bun.default_allocator.destroy(closer);
+                    _ = bun.sys.close(fd);
                 }
             };
         }

@@ -16,6 +16,8 @@ pub const TaggedPointer = packed struct {
     _ptr: AddressableSize,
     data: TagSize,
 
+    pub const Tag = TagSize;
+
     pub inline fn init(ptr: anytype, data: TagSize) TaggedPointer {
         const Ptr = @TypeOf(ptr);
 

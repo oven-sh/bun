@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { parseArgs } from "node:util";
 
-describe.skip("parseArgs", () => {
+describe.todo("parseArgs", () => {
   // Test file adapted from Node v21
   const expectToThrowErrorMatching = (fn, errorPattern) => {
     let error = undefined;

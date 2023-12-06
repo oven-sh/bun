@@ -24,7 +24,7 @@ pub const Resolution = extern struct {
     }
 
     pub fn isGit(this: *const Resolution) bool {
-        return this.tag == .git or this.tag == .github or this.tag == .gitlab;
+        return this.tag.isGit();
     }
 
     pub fn order(
@@ -336,5 +336,9 @@ pub const Resolution = extern struct {
         single_file_module = 100,
 
         _,
+
+        pub fn isGit(this: Tag) bool {
+            return this == .git or this == .github or this == .gitlab;
+        }
     };
 };

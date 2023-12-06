@@ -1044,19 +1044,23 @@ describe("parseArgs extra tests", () => {
       expect(Object.keys(result.values)).toHaveLength(1000);
     });
 
-    test("100 mixed", () => {
-      const result = parseArgs({
-        allowPositionals: true,
-        strict: false,
-        args: ""
-          .padStart(100)
-          .split("")
-          .map((_, i) => {
-            if (i % 17 === 0) return `-abc`;
-            if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
-            return `--arg${i}`;
-          }),
-      });
+    test("100 mixed several times", () => {
+      let result;
+      for (let i = 0; i < 1000; ++i) {
+        result = parseArgs({
+          allowPositionals: true,
+          strict: false,
+          args: ""
+            .padStart(100)
+            .split("")
+            .map((_, i) => {
+              if (i % 17 === 0) return `-abc`;
+              if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
+              return `--arg${i}`;
+            }),
+        });
+        Bun.gc();
+      }
       expect(Object.keys(result.values)).toHaveLength(93);
     });
   });

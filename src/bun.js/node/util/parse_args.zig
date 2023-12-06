@@ -34,8 +34,8 @@ const ArgsSlice = struct {
     start: u32,
     end: u32,
 
-    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: i32) JSValue {
-        return this.array.getIndex(globalThis, this.start + @as(u32, @intCast(i)));
+    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return this.array.getIndex(globalThis, this.start + i);
     }
 };
 
@@ -70,13 +70,13 @@ const TokenKind = enum {
     const COUNT = @typeInfo(TokenKind).Enum.fields.len;
 };
 const Token = union(TokenKind) {
-    positional: struct { index: i32, value: ValueRef },
+    positional: struct { index: u32, value: ValueRef },
     option: OptionToken,
-    @"option-terminator": struct { index: i32 },
+    @"option-terminator": struct { index: u32 },
 };
 
 const OptionToken = struct {
-    index: i32,
+    index: u32,
     name: ValueRef,
     parse_type: enum {
         lone_short_option,
@@ -387,8 +387,8 @@ fn tokenizeArgs(
     ctx: *T,
     emitToken: fn (ctx: *T, token: Token) ParseArgsError!void,
 ) !void {
-    const num_args: i32 = @intCast(args.end - args.start);
-    var index: i32 = 0;
+    const num_args: u32 = args.end - args.start;
+    var index: u32 = 0;
     while (index < num_args) : (index += 1) {
         const arg_ref: ValueRef = ValueRef{ .jsvalue = args.get(globalThis, index) };
         const arg = arg_ref.asBunString(globalThis);
@@ -627,7 +627,7 @@ const ParseArgsState = struct {
             obj.put(globalThis, ZigString.static("kind"), kind_jsvalue);
             switch (token_generic) {
                 .option => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumberFromInt32(token.index));
+                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
                     obj.put(globalThis, ZigString.static("name"), token.name.asJSValue(globalThis));
                     obj.put(globalThis, ZigString.static("rawName"), token.makeRawNameJSValue(globalThis));
 
@@ -637,11 +637,11 @@ const ParseArgsState = struct {
                     obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) JSValue.undefined else JSValue.jsBoolean(token.inline_value));
                 },
                 .positional => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumberFromInt32(token.index));
+                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
                     obj.put(globalThis, ZigString.static("value"), token.value.asJSValue(globalThis));
                 },
                 .@"option-terminator" => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumberFromInt32(token.index));
+                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
                 },
             }
             this.tokens.push(globalThis, obj);
@@ -722,6 +722,11 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
     //
     log("Phase 1+2: tokenize args (args.len={d})", .{args.end - args.start});
 
+    // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
+    var values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
+    var positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
+    var tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
+
     var state = ParseArgsState{
         .globalThis = globalThis,
 
@@ -729,10 +734,9 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
         .allow_positionals = allow_positionals,
         .strict = strict,
 
-        // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
-        .values = JSValue.createEmptyObjectWithNullPrototype(globalThis),
-        .positionals = JSC.JSValue.createEmptyArray(globalThis, 0),
-        .tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined,
+        .values = values,
+        .positionals = positionals,
+        .tokens = tokens,
     };
 
     try tokenizeArgs(ParseArgsState, globalThis, args, option_defs.items, &state, ParseArgsState.handleToken);

@@ -5475,7 +5475,7 @@ const default_trusted_dependencies = brk: {
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
     if (this.hasTrustedDependencies()) {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-        return this.trusted_dependencies.contains(hash);
+        return this.trusted_dependencies.contains(hash) or default_trusted_dependencies.has(name);
     }
 
     // always search through default trusted dependencies

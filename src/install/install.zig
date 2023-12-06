@@ -7473,16 +7473,6 @@ pub const PackageManager = struct {
             tree_id: Lockfile.Tree.Id,
         }) = .{},
 
-        // For linking native binaries, we only want to link after we've installed the companion dependencies
-        // We don't want to introduce dependent callbacks like that for every single package
-        // Since this will only be a handful, it's fine to just say "run this at the end"
-        platform_binlinks: std.ArrayListUnmanaged(DeferredBinLink) = std.ArrayListUnmanaged(DeferredBinLink){},
-
-        pub const DeferredBinLink = struct {
-            dependency_id: DependencyID,
-            node_modules_folder: std.fs.IterableDir,
-        };
-
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: PackageManager.Options.LogLevel) void {
@@ -7759,49 +7749,39 @@ pub const PackageManager = struct {
                             const bin_task_id = Task.Id.forBinLink(package_id);
                             var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
                             if (!task_queue.found_existing) {
-                                run_bin_link: {
-                                    if (std.mem.indexOfScalar(PackageNameHash, this.options.native_bin_link_allowlist, String.Builder.stringHash(name)) != null) {
-                                        this.platform_binlinks.append(this.lockfile.allocator, .{
-                                            .dependency_id = dependency_id,
-                                            .node_modules_folder = this.node_modules_folder,
-                                        }) catch unreachable;
-                                        break :run_bin_link;
+                                var bin_linker = Bin.Linker{
+                                    .bin = bin,
+                                    .package_installed_node_modules = bun.toFD(this.node_modules_folder.dir.fd),
+                                    .global_bin_path = this.options.bin_path,
+                                    .global_bin_dir = this.options.global_bin_dir.dir,
+
+                                    // .destination_dir_subpath = destination_dir_subpath,
+                                    .root_node_modules_folder = bun.toFD(this.root_node_modules_folder.dir.fd),
+                                    .package_name = strings.StringOrTinyString.init(alias),
+                                    .string_buf = buf,
+                                    .extern_string_buf = extern_string_buf,
+                                };
+
+                                bin_linker.link(this.manager.options.global);
+                                if (bin_linker.err) |err| {
+                                    if (comptime log_level != .silent) {
+                                        const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
+                                        const args = .{ alias, @errorName(err) };
+
+                                        if (comptime log_level.showProgress()) {
+                                            switch (Output.enable_ansi_colors) {
+                                                inline else => |enable_ansi_colors| {
+                                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                                },
+                                            }
+                                        } else {
+                                            Output.prettyErrorln(fmt, args);
+                                        }
                                     }
 
-                                    var bin_linker = Bin.Linker{
-                                        .bin = bin,
-                                        .package_installed_node_modules = bun.toFD(this.node_modules_folder.dir.fd),
-                                        .global_bin_path = this.options.bin_path,
-                                        .global_bin_dir = this.options.global_bin_dir.dir,
-
-                                        // .destination_dir_subpath = destination_dir_subpath,
-                                        .root_node_modules_folder = bun.toFD(this.root_node_modules_folder.dir.fd),
-                                        .package_name = strings.StringOrTinyString.init(alias),
-                                        .string_buf = buf,
-                                        .extern_string_buf = extern_string_buf,
-                                    };
-
-                                    bin_linker.link(this.manager.options.global);
-                                    if (bin_linker.err) |err| {
-                                        if (comptime log_level != .silent) {
-                                            const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
-                                            const args = .{ alias, @errorName(err) };
-
-                                            if (comptime log_level.showProgress()) {
-                                                switch (Output.enable_ansi_colors) {
-                                                    inline else => |enable_ansi_colors| {
-                                                        this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                                    },
-                                                }
-                                            } else {
-                                                Output.prettyErrorln(fmt, args);
-                                            }
-                                        }
-
-                                        if (this.manager.options.enable.fail_early) {
-                                            installer.uninstall();
-                                            Global.crash();
-                                        }
+                                    if (this.manager.options.enable.fail_early) {
+                                        installer.uninstall();
+                                        Global.crash();
                                     }
                                 }
                             }
@@ -8490,85 +8470,6 @@ pub const PackageManager = struct {
             if (!installer.options.do.install_packages) return error.InstallFailed;
 
             summary.successfully_installed = installer.successfully_installed;
-            {
-                var parts = lockfile.packages.slice();
-                var metas = parts.items(.meta);
-                var names = parts.items(.name);
-                var dependencies = lockfile.buffers.dependencies.items;
-                const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
-                const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
-                outer: for (installer.platform_binlinks.items) |deferred| {
-                    const dependency_id = deferred.dependency_id;
-                    const package_id = resolutions_buffer[dependency_id];
-                    const folder = deferred.node_modules_folder;
-
-                    const package_resolutions: []const PackageID = resolution_lists[package_id].get(resolutions_buffer);
-                    const original_bin: Bin = installer.bins[package_id];
-
-                    for (package_resolutions) |resolved_id| {
-                        if (resolved_id >= names.len) continue;
-                        const meta: Lockfile.Package.Meta = metas[resolved_id];
-
-                        // This is specifically for platform-specific binaries
-                        if (meta.os == .all and meta.arch == .all) continue;
-
-                        // Don't attempt to link incompatible binaries
-                        if (meta.isDisabled()) continue;
-
-                        const name = lockfile.str(&dependencies[dependency_id].name);
-
-                        var bin_linker = Bin.Linker{
-                            .bin = original_bin,
-                            .package_installed_node_modules = bun.toFD(folder.dir.fd),
-                            .root_node_modules_folder = bun.toFD(node_modules_folder.dir.fd),
-                            .global_bin_path = this.options.bin_path,
-                            .global_bin_dir = this.options.global_bin_dir.dir,
-
-                            .package_name = strings.StringOrTinyString.init(name),
-                            .string_buf = lockfile.buffers.string_bytes.items,
-                            .extern_string_buf = lockfile.buffers.extern_strings.items,
-                        };
-
-                        bin_linker.link(this.options.global);
-
-                        if (bin_linker.err) |err| {
-                            if (comptime log_level != .silent) {
-                                const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
-                                const args = .{ name, @errorName(err) };
-
-                                if (comptime log_level.showProgress()) {
-                                    switch (Output.enable_ansi_colors) {
-                                        inline else => |enable_ansi_colors| {
-                                            this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                        },
-                                    }
-                                } else {
-                                    Output.prettyErrorln(fmt, args);
-                                }
-                            }
-
-                            if (this.options.enable.fail_early) Global.crash();
-                        }
-
-                        continue :outer;
-                    }
-
-                    if (comptime log_level != .silent) {
-                        const fmt = "\n<r><yellow>warn:<r> no compatible binaries found for <b>{s}<r>\n";
-                        const args = .{lockfile.str(&names[package_id])};
-
-                        if (comptime log_level.showProgress()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                },
-                            }
-                        } else {
-                            Output.prettyErrorln(fmt, args);
-                        }
-                    }
-                }
-            }
 
             while (this.pending_lifecycle_script_tasks > 0) {
                 this.uws_event_loop.tickWithTimeout(125);

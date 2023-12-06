@@ -54,6 +54,61 @@ describe("esbuild integration test", () => {
   test("install and use estrella", async () => {
     const packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-ebuild-estrella-test-"));
 
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "bun-esbuild-estrella-test",
+        version: "1.0.0",
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "estrella@1.4.1"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("estrella@1.4.1");
+    expect(await exited).toBe(0);
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "estrella", "--estrella-version"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toBe("");
+    expect(out).toContain("1.4.1");
+    expect(await exited).toBe(0);
+
+    await cp(join(import.meta.dir, "build-file.js"), join(packageDir, "build-file.js"));
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "estrella", "build-file.js"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toBe("");
+    expect(out).toBe('console.log("hello"),console.log("estrella");\n');
+    expect(await exited).toBe(0);
+
     await rm(packageDir, { recursive: true, force: true });
   });
 });

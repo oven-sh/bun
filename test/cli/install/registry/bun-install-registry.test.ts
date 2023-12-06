@@ -1313,7 +1313,7 @@ test("missing package on reinstall, some with binaries", async () => {
 });
 
 for (const forceWaiterThread of [false, true]) {
-  const testEnv = forceWaiterThread ? { ...env, BUN_FORCE_WAITER_THREAD: "1" } : env;
+  const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", COLORTERM: "0" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {
       const writeScript = async (name: string) => {
@@ -2038,7 +2038,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stderr: "pipe",
         stdin: "pipe",
-        env,
+        testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2253,7 +2253,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stdin: "pipe",
           stderr: "pipe",
-          env,
+          testEnv,
         });
 
         const err = await new Response(stderr).text();

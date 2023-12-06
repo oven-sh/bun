@@ -109,6 +109,97 @@ describe("esbuild integration test", () => {
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);
 
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "bun-esbuild-estrella-test",
+        version: "1.0.0",
+        dependencies: {
+          "estrella": "1.4.1",
+          // different version of esbuild
+          "esbuild": "0.19.8",
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("estrella@1.4.1");
+    expect(out).toContain("esbuild@0.19.8");
+    expect(await exited).toBe(0);
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "estrella", "--estrella-version"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toBe("");
+    expect(out).toContain("1.4.1");
+    expect(await exited).toBe(0);
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "esbuild", "--version"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toBe("");
+    expect(out).toContain("0.19.8");
+    expect(await exited).toBe(0);
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "esbuild", "--version"],
+      cwd: join(packageDir, "node_modules", "estrella"),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toBe("");
+    expect(out).toContain("0.11.23");
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "estrella", "build-file.js"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toBe("");
+    expect(out).toBe('console.log("hello"),console.log("estrella");\n');
+    expect(await exited).toBe(0);
+
     await rm(packageDir, { recursive: true, force: true });
   });
 });

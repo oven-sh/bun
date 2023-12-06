@@ -10,7 +10,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const uws = @import("../deps/uws.zig");
+const uws = bun.uws;
 const JSC = bun.JSC;
 
 const lex = bun.js_lexer;

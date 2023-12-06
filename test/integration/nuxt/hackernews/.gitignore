@@ -13,3 +13,5 @@ package-lock.json
 public/manifest*.json
 public/sw.js
 public/workbox-sw*.js*
+
+CounterComponent.vue

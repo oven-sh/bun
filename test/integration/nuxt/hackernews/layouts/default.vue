@@ -34,7 +34,7 @@ useHead({
           {{ list.title }}
         </NuxtLink>
         <CounterComponent />
-        <code>{{ bunVersion }}</code>
+        <code class="font-mono font-bold">{{ bunVersion }}</code>
         <span class="github">
           <a
             href="https://github.com/nuxt/hackernews"
@@ -56,6 +56,14 @@ code {
   border-radius: 0.2em;
   font-size: 0.8em;
   margin-right: 1em;
+}
+
+.font-mono {
+  font-family: "Fira Mono", "Roboto Mono", Menlo, monospace;
+}
+
+.font-bold {
+  font-weight: 700;
 }
 
 body {

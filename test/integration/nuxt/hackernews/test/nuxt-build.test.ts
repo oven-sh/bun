@@ -109,6 +109,9 @@ test("nuxt build works", async () => {
       [/\d+(\.\d+)?(s|ms|kB|MB)/g, "X.XX$2"], // Normalize time & size measurements
       [/\/bun-nuxt-build-[a-zA-Z0-9]+\//g, "/bun-nuxt-build-XXXXXX/"], // Normalize dynamic paths in build output
       [/\d+ kB/g, "XXX kB"], // Normalize kB sizes
+      [/_nuxt\/[a-z0-9_.-]+\.js/g, "_nuxt/filename.HASH.js"], // Normalize hashes in filenames
+      [/_nuxt\/error-(404|500)-styles\.[a-f0-9]+\.mjs/g, "_nuxt/error-HTTP_CODE-styles.HASH.mjs"], // Normalize error styles with HTTP codes
+      [/_nuxt\/[a-z0-9_-]+\.([a-f0-9]+)\.(js|mjs)/g, "_nuxt/${1}.HASH.${2}"], // Normalize hashes in filenames for .js and .mjs files
     ];
 
     return regexPatterns.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), text);

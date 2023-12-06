@@ -1,6 +1,6 @@
 <template>
-  <div id="counter-fixture" class="rounded-bl-full">
-    <p>Count A: {{ count }}</p>
+  <div id="counter-fixture" class="rounded-br-full">
+    <p>Count B: {{ count }}</p>
     <button class="inc" @click="increment">
       +
     </button>
@@ -17,12 +17,15 @@ export default {
       count: 0,
     };
   },
+  mounted() {
+    console.log('counter b loaded');
+  },
   methods: {
     increment() {
-      this.count++;
+      this.count += 2;
     },
     decrement() {
-      this.count--;
+      this.count -= 2;
     },
   },
 };
@@ -30,11 +33,10 @@ export default {
 
 <style lang="postcss">
 #counter-fixture {
+  color: #fff;
   margin-left: 2rem;
   padding: 10px;
   border: 1px solid #ccc;
-  border-radius: 8px;
-  /* rounded-bl-full in Tailwind */
   text-align: center;
 }
 
@@ -65,5 +67,9 @@ button.dec {
 
 button.dec:hover {
   background-color: #d32f2f;
+}
+
+.rounded-bl-full {
+  border-bottom-left-radius: 9999px;
 }
 </style>

@@ -3,6 +3,12 @@ import { copyFileSync } from "fs";
 import { join } from "path";
 import { ConsoleMessage, Page, launch } from "puppeteer";
 
+process.on("SIGINT", () => {
+  console.log("Caught interrupt signal");
+  // Perform cleanup
+  process.exit();
+});
+
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "components/Counter1.txt"), join(root, "components/CounterComponent.vue"));
@@ -13,7 +19,8 @@ if (process.argv.length > 2) {
 }
 
 const b = await launch({
-  headless: "new",
+  // headless: "new",
+  headless: false,
 });
 
 const p = await b.newPage();

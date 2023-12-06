@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import path from "path";
 import sharp from "sharp";
 
 describe("sharp integration tests", () => {
   it("should resize an image", async () => {
-    const inputBuffer = await sharp(path.join(import.meta.dir, "bun.png")).resize(200, 200).toBuffer();
+    const inputBuffer = await sharp(path.join(import.meta.dir, "bun.png"))
+      .resize(200, 200)
+      .toBuffer();
 
     const image = sharp(inputBuffer);
     const metadata = await image.metadata();

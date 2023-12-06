@@ -9,9 +9,9 @@
     "bun-types": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "5.3.2"
   },
   "dependencies": {
-    "sharp": "^0.33.0"
+    "sharp": "0.33.0"
   }
 }

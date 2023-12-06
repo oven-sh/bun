@@ -7463,7 +7463,7 @@ pub const PackageManager = struct {
         /// tree id to number of successfully installed deps for id. when count == tree.dependencies.len, mark as complete above
         tree_install_counts: []usize,
         /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
-        tree_ids_to_trees_the_id_depends_on: []Bitset,
+        tree_ids_to_trees_the_id_depends_on: Bitset.List,
         pending_lifecycle_scripts: std.ArrayListUnmanaged(struct {
             list: Lockfile.Package.Scripts.List,
             tree_id: Lockfile.Tree.Id,
@@ -7532,7 +7532,7 @@ pub const PackageManager = struct {
 
         /// Check if a tree is ready to start running lifecycle scripts
         pub fn canRunScripts(this: *PackageInstaller, scripts_tree_id: Lockfile.Tree.Id) bool {
-            const deps = this.tree_ids_to_trees_the_id_depends_on[scripts_tree_id];
+            const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
             return deps.subsetOf(this.completed_trees) or deps.eql(this.completed_trees);
         }
 
@@ -7551,10 +7551,7 @@ pub const PackageManager = struct {
             this.pending_lifecycle_scripts.deinit(this.manager.allocator);
             this.completed_trees.deinit(allocator);
             allocator.free(this.tree_install_counts);
-            for (this.tree_ids_to_trees_the_id_depends_on) |*tree_ids_to_trees_the_id_depends_on| {
-                tree_ids_to_trees_the_id_depends_on.deinit(allocator);
-            }
-            allocator.free(this.tree_ids_to_trees_the_id_depends_on);
+            this.tree_ids_to_trees_the_id_depends_on.deinit(allocator);
         }
 
         /// Call when you mutate the length of `lockfile.packages`
@@ -8308,7 +8305,7 @@ pub const PackageManager = struct {
             skip_verify_installed_version_number = true;
             skip_delete = false;
 
-            // TODO(dylan-conway): depth first search installation
+            // TODO(dylan-conway): depth first installation
             // var node_modules_iter = node_modules_folder.iterateAssumeFirstIteration();
             // defer node_modules_iter.reset();
             // while (try node_modules_iter.next()) |entry| {
@@ -8333,7 +8330,7 @@ pub const PackageManager = struct {
                 const completed_trees, const tree_ids_to_trees_the_id_depends_on, const tree_install_counts = trees: {
                     const trees = lockfile.buffers.trees.items;
                     var completed_trees = try Bitset.initEmpty(this.allocator, trees.len);
-                    var tree_ids_to_trees_the_id_depends_on = try this.allocator.alloc(Bitset, trees.len);
+                    var tree_ids_to_trees_the_id_depends_on = try Bitset.List.initEmpty(this.allocator, trees.len, trees.len);
 
                     {
                         // For each tree id, traverse through it's parents and mark all visited tree
@@ -8342,21 +8339,11 @@ pub const PackageManager = struct {
                         defer deps.deinit(this.allocator);
                         for (trees) |_curr| {
                             var curr = _curr;
-                            if (!completed_trees.isSet(curr.id)) {
-                                tree_ids_to_trees_the_id_depends_on[curr.id] = try Bitset.initEmpty(this.allocator, trees.len);
-                                completed_trees.set(curr.id);
-                            }
-
-                            tree_ids_to_trees_the_id_depends_on[curr.id].set(curr.id);
+                            tree_ids_to_trees_the_id_depends_on.set(curr.id, curr.id);
 
                             while (curr.parent != Lockfile.Tree.invalid_id) {
-                                if (!completed_trees.isSet(curr.parent)) {
-                                    tree_ids_to_trees_the_id_depends_on[curr.parent] = try Bitset.initEmpty(this.allocator, trees.len);
-                                    completed_trees.set(curr.parent);
-                                }
-
                                 deps.set(curr.id);
-                                tree_ids_to_trees_the_id_depends_on[curr.parent].setUnion(deps);
+                                tree_ids_to_trees_the_id_depends_on.setUnion(curr.parent, deps);
                                 curr = trees[curr.parent];
                             }
 
@@ -8368,23 +8355,18 @@ pub const PackageManager = struct {
                     @memset(tree_install_counts, 0);
 
                     if (comptime Environment.allow_assert) {
-                        // each tree is initialized
-                        std.debug.assert(completed_trees.count() == trees.len);
-
                         if (trees.len > 0) {
                             // last tree should not depend on another except for itself
-                            std.debug.assert(tree_ids_to_trees_the_id_depends_on[trees.len - 1].count() == 1 and tree_ids_to_trees_the_id_depends_on[trees.len - 1].isSet(trees.len - 1));
+                            std.debug.assert(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).count() == 1 and tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).isSet(trees.len - 1));
                             // root tree should always depend on all trees
-                            std.debug.assert(tree_ids_to_trees_the_id_depends_on[0].count() == trees.len);
+                            std.debug.assert(tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len);
                         }
 
                         // a tree should always depend on itself
                         for (0..trees.len) |j| {
-                            std.debug.assert(tree_ids_to_trees_the_id_depends_on[j].isSet(j));
+                            std.debug.assert(tree_ids_to_trees_the_id_depends_on.at(j).isSet(j));
                         }
                     }
-
-                    completed_trees.setAll(false);
 
                     break :trees .{
                         completed_trees,

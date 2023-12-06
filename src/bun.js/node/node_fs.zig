@@ -5065,40 +5065,7 @@ pub const NodeFS = struct {
             // Handle Base64 encoding. Fixes:
             // https://github.com/oven-sh/bun/issues/4845
             // https://github.com/bpampuch/pdfmake/issues/2648
-            .base64 => string: {
-                // Chunk size should be a multiple of 3 bytes to be able to split base64 calculation
-                const chunk_size = 16383;
-                const encoded_chunk_size = comptime Base64.encodeLenFromSize(chunk_size);
-                var offset: usize = 0;
-                const temp_buffer = bun.default_allocator.alloc(u8, encoded_chunk_size) catch @panic("oom");
-
-                defer bun.default_allocator.free(temp_buffer);
-
-                while (offset < buf.items.len) {
-                    const remaining_bytes = buf.items.len - offset;
-                    const chunk_to_be_encoded = if (remaining_bytes <= chunk_size) {
-                        const final_buffer = bun.default_allocator.alloc(u8, Base64.encodeLenFromSize(remaining_bytes)) catch @panic("oom");
-                        defer bun.default_allocator.free(final_buffer);
-
-                        const final_result = Base64.encode(final_buffer, buf.items[offset..]);
-                        if (final_result == 0) {
-                            return .{ .err = Syscall.Error.oom };
-                        }
-
-                        buf.replaceRange(offset, remaining_bytes, final_buffer) catch @panic("oom");
-
-                        break :string .{ .result = .{ .string = buf.items } };
-                    } else buf.items[offset..(offset + chunk_size)];
-
-                    const encoding_result = Base64.encode(temp_buffer, chunk_to_be_encoded);
-                    if (encoding_result == 0) {
-                        return .{ .err = Syscall.Error.oom };
-                    }
-
-                    buf.replaceRange(offset, chunk_size, temp_buffer) catch @panic("oom");
-                    offset += encoded_chunk_size;
-                }
-            },
+            .base64 => .{ .result = .{ .string = base64Conversion(&buf) catch @panic("oom") } },
             else => brk: {
                 if (comptime string_type == .default) {
                     break :brk .{
@@ -5115,6 +5082,38 @@ pub const NodeFS = struct {
                 }
             },
         };
+    }
+
+    /// Calculate Base64 encoded string from an ArrayList of bytes.
+    /// Conversion happens in place, in the same input array, with an hardcoded chunk size of 16383 bytes.
+    /// Memory is allocated as needed and not at once time, preventing double allocations for input and output.
+    /// Returns an owned slice of the converted input.
+    fn base64Conversion(buf: *std.ArrayList(u8)) anyerror![]u8 {
+        // Chunk size should be a multiple of 3 bytes to be able to split base64 calculation
+        const chunk_size = 16383;
+        const encoded_chunk_size = comptime Base64.encodeLenFromSize(chunk_size);
+        var offset: usize = 0;
+
+        // Declare buffer to store encoded Base64 Chunk over every chunked input
+        const temp_encoding_buffer = bun.default_allocator.alloc(u8, encoded_chunk_size) catch |err| return err;
+        defer bun.default_allocator.free(temp_encoding_buffer);
+
+        while (true) {
+            const remaining_bytes = buf.items.len - offset;
+            const chunk_to_be_encoded = if (remaining_bytes <= chunk_size) {
+                const final_buffer = bun.default_allocator.alloc(u8, Base64.encodeLenFromSize(remaining_bytes)) catch |err| return err;
+                defer bun.default_allocator.free(final_buffer);
+
+                _ = Base64.encode(final_buffer, buf.items[offset..]);
+                buf.replaceRange(offset, remaining_bytes, final_buffer) catch |err| return err;
+
+                return buf.toOwnedSlice() catch |err| return err;
+            } else buf.items[offset..(offset + chunk_size)];
+
+            _ = Base64.encode(temp_encoding_buffer, chunk_to_be_encoded);
+            buf.replaceRange(offset, chunk_size, temp_encoding_buffer) catch |err| return err;
+            offset += encoded_chunk_size;
+        }
     }
 
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {

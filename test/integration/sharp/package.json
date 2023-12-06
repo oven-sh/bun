@@ -2,9 +2,6 @@
   "name": "bun-integration-test-sharp",
   "module": "index.ts",
   "type": "module",
-  "trustedDependencies": [
-    "sharp"
-  ],
   "devDependencies": {
     "bun-types": "latest"
   },

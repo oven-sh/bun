@@ -1014,11 +1014,11 @@ pub const RunCommand = struct {
 
         {
             var remain = cwd;
-            while (strings.lastIndexOfChar(remain, '/')) |i| {
-                new_path_len += strings.withoutTrailingSlash(remain).len + "/node_modules/.bin".len + 1;
+            while (strings.lastIndexOfChar(remain, std.fs.path.sep)) |i| {
+                new_path_len += strings.withoutTrailingSlash(remain).len + "node_modules.bin".len + 1 + 2; // +2 for path separators
                 remain = remain[0..i];
             } else {
-                new_path_len += strings.withoutTrailingSlash(remain).len + "/node_modules/.bin".len + 1;
+                new_path_len += strings.withoutTrailingSlash(remain).len + "node_modules.bin".len + 1 + 2; // +2 for path separators
             }
         }
 
@@ -1046,14 +1046,20 @@ pub const RunCommand = struct {
             }
 
             var remain = cwd;
-            while (strings.lastIndexOfChar(remain, '/')) |i| {
+            while (strings.lastIndexOfChar(remain, std.fs.path.sep)) |i| {
                 try new_path.appendSlice(strings.withoutTrailingSlash(remain));
-                try new_path.appendSlice("/node_modules/.bin");
+                try new_path.append(std.fs.path.sep);
+                try new_path.appendSlice("node_modules");
+                try new_path.append(std.fs.path.sep);
+                try new_path.appendSlice(".bin");
                 try new_path.append(std.fs.path.delimiter);
                 remain = remain[0..i];
             } else {
                 try new_path.appendSlice(strings.withoutTrailingSlash(remain));
-                try new_path.appendSlice("/node_modules/.bin");
+                try new_path.append(std.fs.path.sep);
+                try new_path.appendSlice("node_modules");
+                try new_path.append(std.fs.path.sep);
+                try new_path.appendSlice(".bin");
                 try new_path.append(std.fs.path.delimiter);
             }
 

@@ -176,6 +176,7 @@ pub const Loop = struct {
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             for (current_events) |event| {
                 const pollable: Pollable = Pollable.from(event.data.u64);
+                if (pollable.tag() == .empty) continue;
                 Poll.onUpdateEpoll(pollable.poll(), pollable.tag(), event.events);
             }
         }
@@ -398,6 +399,7 @@ const WriteFile = bun.JSC.WebCore.Blob.Store.WriteFile;
 
 const Pollable = struct {
     const Tag = enum(bun.TaggedPointer.Tag) {
+        empty,
         ReadFile,
         WriteFile,
 
@@ -405,6 +407,7 @@ const Pollable = struct {
             return switch (T) {
                 .ReadFile => ReadFile,
                 .WriteFile => WriteFile,
+                .empty => unreachable,
             };
         }
     };
@@ -426,6 +429,7 @@ const Pollable = struct {
     }
 
     pub fn tag(this: Pollable) Tag {
+        if (this.value.data == 0) return .empty;
         return @enumFromInt(this.value.data);
     }
 
@@ -717,6 +721,9 @@ pub const Poll = struct {
         const tag = pollable.tag();
         const poll = pollable.poll();
         switch (tag) {
+            // ignore empty tags. This case should be unreachable in practice
+            .empty => {},
+
             inline else => |t| {
                 var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
                 if (event.flags == std.c.EV_ERROR) {
@@ -736,6 +743,9 @@ pub const Poll = struct {
         event: linux.epoll_event,
     ) JSC.Maybe(void) {
         switch (tag) {
+            // ignore empty tags. This case should be unreachable in practice
+            .empty => {},
+
             inline else => |t| {
                 var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
                 if (event.events & linux.EPOLL.ERR != 0) {

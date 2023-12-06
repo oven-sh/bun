@@ -620,7 +620,7 @@ pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: us
 pub export fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status {
     log("napi_instanceof", .{});
     // TODO: does this throw object_expected in node?
-    result.* = object.isCell() and object.isInstanceOf(env, constructor);
+    result.* = object.isObject() and object.isInstanceOf(env, constructor);
     return .ok;
 }
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;

@@ -2,7 +2,9 @@ $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
   var stream = Bun.stdin.stream();
 
-  var decoder = new TextDecoder("utf-8", { fatal: false });
+  const StringDecoder: typeof import("string_decoder").StringDecoder = require("node:string_decoder").StringDecoder;
+  const decoder = new StringDecoder("utf8");
+
   var indexOf = Bun.indexOfLine;
   var actualChunk: Uint8Array;
   var i: number = -1;
@@ -12,9 +14,8 @@ export function asyncIterator(this: Console) {
   var value: Uint8Array[];
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
-
+  var reader: ReadableStreamDefaultReader | undefined = stream.getReader();
   async function* ConsoleAsyncIterator() {
-    var reader = stream.getReader();
     var deferredError;
     try {
       if (i !== -1) {
@@ -22,7 +23,7 @@ export function asyncIterator(this: Console) {
         i = indexOf(actualChunk, last);
 
         while (i !== -1) {
-          yield decoder.decode(actualChunk.subarray(last, i));
+          yield decoder.write(actualChunk.subarray(last, i));
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
@@ -38,7 +39,7 @@ export function asyncIterator(this: Console) {
           // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
           while (i !== -1) {
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.write(actualChunk.subarray(last, i));
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -50,16 +51,22 @@ export function asyncIterator(this: Console) {
       }
 
       while (true) {
-        const firstResult = reader.readMany();
+        reader ??= stream.getReader();
+        const firstResult = reader!.readMany();
         if ($isPromise(firstResult)) {
           ({ done, value } = await firstResult);
         } else {
           ({ done, value } = firstResult);
         }
 
+        reader.releaseLock();
+        stream.cancel().finally(() => {});
+        reader = undefined;
+        stream = Bun.stdin.stream();
+
         if (done) {
           if (pendingChunk) {
-            yield decoder.decode(pendingChunk);
+            yield decoder.write(pendingChunk);
           }
           return;
         }
@@ -78,7 +85,7 @@ export function asyncIterator(this: Console) {
           while (i !== -1) {
             // This yield may end the function, in that case we need to be able to recover state
             // if the iterator was fired up again.
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.write(actualChunk.subarray(last, i));
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -91,7 +98,7 @@ export function asyncIterator(this: Console) {
     } catch (e) {
       deferredError = e;
     } finally {
-      reader.releaseLock();
+      reader?.releaseLock?.();
 
       if (deferredError) {
         throw deferredError;

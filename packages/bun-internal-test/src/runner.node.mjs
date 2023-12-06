@@ -1,11 +1,9 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { readdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { StringDecoder } from "node:string_decoder";
+import { resolve, basename } from "node:path";
 import { totalmem } from "os";
-import { relative } from "path";
 import { fileURLToPath } from "url";
 
 const nativeMemory = totalmem();

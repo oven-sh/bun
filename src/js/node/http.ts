@@ -1675,7 +1675,7 @@ class ClientRequest extends OutgoingMessage {
 
     var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-    setTimeout(emitContinueNT, 1, this);
+    process.nextTick(emitContinueNT, this);
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

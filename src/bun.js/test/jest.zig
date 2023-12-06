@@ -1216,7 +1216,7 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: DescribeScope.
     return struct {
         pub fn wrapped(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
             if (Jest.runner == null) {
-                globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\"", .{});
+                globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
                 return .zero;
             }
             if (globalThis.bunVM().is_in_preload) {

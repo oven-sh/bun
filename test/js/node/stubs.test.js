@@ -72,7 +72,6 @@ var specifiers = [
   "vm",
   "worker_threads",
   "zlib",
-  "bun:test",
 ];
 specifiers = [...weirdInternalSpecifiers, ...specifiers.flatMap(a => ["node:" + a, a])];
 
@@ -94,3 +93,8 @@ for (let specifier of specifiers) {
     }
   });
 }
+
+test("you can import bun:test", async () => {
+  const bunTest1 = await import("bun:test" + String(""));
+  const bunTest2 = require("bun:test" + String(""));
+});

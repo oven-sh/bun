@@ -881,7 +881,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
 
 class OutgoingMessage extends Writable {
   #headers;
-  #continueEmitted: boolean = false;
   headersSent = false;
   sendDate = true;
   req;
@@ -945,14 +944,6 @@ class OutgoingMessage extends Writable {
 
   appendHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    if (
-      !this.#continueEmitted &&
-      "expect".localeCompare(name, "en", { sensitivity: "base" }) === 0 &&
-      "100-continue".localeCompare(value, "en", { sensitivity: "base" }) === 0
-    ) {
-      this.#continueEmitted = true;
-      process.nextTick(emitContinueNT, this);
-    }
     headers.append(name, value);
   }
 
@@ -980,14 +971,6 @@ class OutgoingMessage extends Writable {
 
   setHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    if (
-      !this.#continueEmitted &&
-      "expect".localeCompare(name, "en", { sensitivity: "base" }) === 0 &&
-      "100-continue".localeCompare(value, "en", { sensitivity: "base" }) === 0
-    ) {
-      this.#continueEmitted = true;
-      process.nextTick(emitContinueNT, this);
-    }
     headers.set(name, value);
     return this;
   }
@@ -1692,6 +1675,9 @@ class ClientRequest extends OutgoingMessage {
 
     var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
+    if (this.getHeader("expect") === "100-continue") {
+      process.nextTick(emitContinueNT, this);
+    }
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

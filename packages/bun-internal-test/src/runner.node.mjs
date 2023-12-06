@@ -20,12 +20,18 @@ process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
 
+const extensions = [".js", ".ts", ".jsx", ".tsx"];
+
+function isTest(path) {
+  return basename(path).includes(".test.") && extensions.some(ext => path.endsWith(ext));
+}
+
 function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
     const path = resolve(dir, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
       yield* findTests(path, query);
-    } else if (entry.name.includes(".test.")) {
+    } else if (isTest(path)) {
       yield path;
     }
   }

@@ -1028,7 +1028,7 @@ class OutgoingMessage extends Writable {
 }
 
 function emitContinueNT(self) {
-  if (!self._closed) {
+  if (!self._closed && self.getHeader("expect") === "100-continue") {
     self.emit("continue");
   }
 }
@@ -1675,9 +1675,8 @@ class ClientRequest extends OutgoingMessage {
 
     var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-    if (this.getHeader("expect") === "100-continue") {
-      process.nextTick(emitContinueNT, this);
-    }
+
+    process.nextTick(emitContinueNT, this);
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

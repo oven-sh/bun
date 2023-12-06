@@ -38,13 +38,13 @@ test("the dev server can start", async () => {
   console.error("Failed to start dev server :/");
   dev_server.kill();
   dev_server = undefined;
-}, 30000);
+}, 30_000);
 
 test("ssr works for 100 requests", async () => {
   expect(dev_server).not.toBeUndefined();
   expect(baseUrl).not.toBeUndefined();
 
-  const promises = [];
+  const promises: Promise<void>[] = [];
   for (let i = 0; i < 100; i++) {
     promises.push(
       (async () => {
@@ -56,7 +56,7 @@ test("ssr works for 100 requests", async () => {
         expect(x.status).toBe(200);
         const text = await x.text();
         console.count("Completed request");
-        expect(text).toContain(`Open on GitHub`);
+        expect(text).toContain(`>${Bun.version}</code>`);
       })(),
     );
   }
@@ -65,7 +65,7 @@ test("ssr works for 100 requests", async () => {
   for (const y of x) {
     expect(y.status).toBe("fulfilled");
   }
-}, 10000);
+}, 10_000);
 
 test("hot reloading works on the client", async () => {
   expect(dev_server).not.toBeUndefined();
@@ -77,7 +77,7 @@ test("hot reloading works on the client", async () => {
     stdio: ["ignore", "inherit", "inherit"],
   });
   expect(result.exitCode).toBe(0);
-}, 30000);
+}, 30_000);
 
 afterAll(() => {
   Bun.spawnSync(["pkill", "-P", dev_server!.pid.toString()]);

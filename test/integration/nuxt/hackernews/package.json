@@ -1,8 +1,7 @@
 {
-  "name": "nuxt-hn",
+  "name": "bun-integration-test-nuxt-hn",
   "private": true,
-  "packageManager": "pnpm@8.3.1",
-  "description": "Nuxt Hacker News",
+  "description": "Nuxt Hacker News for Bun Integration Test",
   "author": "Evan You <yyx990803@gmail.com>",
   "contributors": [
     {
@@ -26,14 +25,14 @@
     "postinstall": "cd node_modules/puppeteer && bun install.mjs"
   },
   "devDependencies": {
-    "@nuxt/devtools": "0.4.2",
-    "@nuxt/eslint-config": "0.1.1",
-    "@types/node": "18.16.0",
+    "@nuxt/devtools": "1.0.4",
+    "@nuxt/eslint-config": "0.2.0",
+    "@types/node": "20.10.3",
     "bun-types": "^1.0.15",
-    "eslint": "8.39.0",
-    "nuxt": "3.4.2",
-    "postcss-nesting": "11.2.2",
-    "puppeteer": "21.3.4",
-    "typescript": "5.0.4"
+    "eslint": "8.55.0",
+    "nuxt": "3.8.2",
+    "postcss-nesting": "12.0.1",
+    "puppeteer": "21.5.2",
+    "typescript": "5.3.2"
   }
 }

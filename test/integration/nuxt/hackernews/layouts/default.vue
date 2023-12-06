@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const route = useRoute();
 const host = process.server ? useRequestHeaders().host : window.location.host;
+const bunVersion = process.server ? Bun.version : null;
 
 useHead({
   link: [
@@ -33,6 +34,7 @@ useHead({
           {{ list.title }}
         </NuxtLink>
         <CounterComponent />
+        <code>{{ bunVersion }}</code>
         <span class="github">
           <a
             href="https://github.com/nuxt/hackernews"
@@ -47,6 +49,15 @@ useHead({
 </template>
 
 <style lang="postcss">
+code {
+  color: #fff;
+  background-color: #000;
+  padding: 0.2em 0.4em;
+  border-radius: 0.2em;
+  font-size: 0.8em;
+  margin-right: 1em;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans",
     "Droid Sans", "Helvetica Neue", sans-serif;

@@ -7953,7 +7953,7 @@ pub const PackageManager = struct {
                     buf,
                     path_str,
                     name,
-                    resolution.isGit(),
+                    resolution.tag,
                     add_node_gyp_rebuild_script,
                 )) |scripts_list| {
                     if (this.manager.options.do.run_scripts) {
@@ -9074,7 +9074,7 @@ pub const PackageManager = struct {
                 manager.lockfile.buffers.string_bytes.items,
                 strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
                 root.name.slice(manager.lockfile.buffers.string_bytes.items),
-                true,
+                .root,
                 add_node_gyp_rebuild_script,
             );
         } else {
@@ -9085,7 +9085,7 @@ pub const PackageManager = struct {
                     manager.lockfile.buffers.string_bytes.items,
                     strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
                     root.name.slice(manager.lockfile.buffers.string_bytes.items),
-                    true,
+                    .root,
                     true,
                 );
             }

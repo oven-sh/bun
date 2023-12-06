@@ -2375,7 +2375,7 @@ pub const Package = extern struct {
             lockfile_buf: []const u8,
             _cwd: string,
             package_name: string,
-            enqueue_prepare_scripts: bool,
+            resolution_tag: Resolution.Tag,
             add_node_gyp_rebuild_script: bool,
         ) ?Package.Scripts.List {
             var cwd: ?string = null;
@@ -2442,31 +2442,52 @@ pub const Package = extern struct {
                 }
             }
 
-            if (enqueue_prepare_scripts) {
-                const prepare_scripts = .{
-                    "preprepare",
-                    "prepare",
-                    "postprepare",
-                };
+            switch (resolution_tag) {
+                .git, .github, .gitlab, .root => {
+                    const prepare_scripts = .{
+                        "preprepare",
+                        "prepare",
+                        "postprepare",
+                    };
 
-                inline for (prepare_scripts) |hook| {
-                    const script = @field(this, hook);
-                    if (!script.isEmpty()) {
+                    inline for (prepare_scripts) |hook| {
+                        const script = @field(this, hook);
+                        if (!script.isEmpty()) {
+                            const entry: Lockfile.Scripts.Entry = .{
+                                .cwd = cwd orelse brk: {
+                                    cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                                    break :brk cwd.?;
+                                },
+                                .script = lockfile.allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
+                                .package_name = package_name,
+                            };
+                            if (first_script_index == -1) first_script_index = @intCast(script_index);
+                            scripts[script_index] = entry;
+                            @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                            counter += 1;
+                        }
+                        script_index += 1;
+                    }
+                },
+                .workspace => {
+                    script_index += 1;
+                    if (!this.prepare.isEmpty()) {
                         const entry: Lockfile.Scripts.Entry = .{
                             .cwd = cwd orelse brk: {
                                 cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
                                 break :brk cwd.?;
                             },
-                            .script = lockfile.allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
+                            .script = lockfile.allocator.dupe(u8, this.prepare.slice(lockfile_buf)) catch unreachable,
                             .package_name = package_name,
                         };
                         if (first_script_index == -1) first_script_index = @intCast(script_index);
                         scripts[script_index] = entry;
-                        @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                        lockfile.scripts.prepare.append(lockfile.allocator, entry) catch unreachable;
                         counter += 1;
                     }
-                    script_index += 1;
-                }
+                    script_index += 2;
+                },
+                else => {},
             }
 
             if (first_script_index != -1) {
@@ -2572,7 +2593,7 @@ pub const Package = extern struct {
                 tmp.buffers.string_bytes.items,
                 cwd,
                 name,
-                resolution.isGit(),
+                resolution.tag,
                 add_node_gyp_rebuild_script,
             );
         }
@@ -4484,7 +4505,9 @@ pub const Package = extern struct {
 
         man_dir: String = String{},
         integrity: Integrity = Integrity{},
-        _padding_integrity: [3]u8 = .{0} ** 3,
+        _padding_integrity: [2]u8 = .{0} ** 2,
+
+        has_scripts: u8 = 0,
 
         /// Does the `cpu` arch and `os` match the requirements listed in the package?
         /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc

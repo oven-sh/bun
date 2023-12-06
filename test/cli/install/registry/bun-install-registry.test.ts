@@ -1495,6 +1495,102 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
+    test("workspace lifecycle scripts", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          scripts: {
+            preinstall: `touch preinstall.txt`,
+            install: `touch install.txt`,
+            postinstall: `touch postinstall.txt`,
+            preprepare: `touch preprepare.txt`,
+            prepare: `touch prepare.txt`,
+            postprepare: `touch postprepare.txt`,
+          },
+        }),
+      );
+
+      await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
+      await writeFile(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          scripts: {
+            preinstall: `touch preinstall.txt`,
+            install: `touch install.txt`,
+            postinstall: `touch postinstall.txt`,
+            preprepare: `touch preprepare.txt`,
+            prepare: `touch prepare.txt`,
+            postprepare: `touch postprepare.txt`,
+          },
+        }),
+      );
+
+      await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
+      await writeFile(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          version: "1.0.0",
+          scripts: {
+            preinstall: `touch preinstall.txt`,
+            install: `touch install.txt`,
+            postinstall: `touch postinstall.txt`,
+            preprepare: `touch preprepare.txt`,
+            prepare: `touch prepare.txt`,
+            postprepare: `touch postprepare.txt`,
+          },
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        testEnv,
+      });
+
+      expect(stderr).toBeDefined();
+      var err = await new Response(stderr).text();
+      expect(stdout).toBeDefined();
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      var out = await new Response(stdout).text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        " + pkg1@workspace:packages/pkg1",
+        " + pkg2@workspace:packages/pkg2",
+        "",
+        " 2 packages installed",
+      ]);
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "preprepare.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "prepare.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "postprepare.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg1", "preinstall.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg1", "install.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg1", "postinstall.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg1", "preprepare.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "packages", "pkg1", "prepare.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg1", "postprepare.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "packages", "pkg2", "preinstall.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg2", "install.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg2", "postinstall.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg2", "preprepare.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "packages", "pkg2", "prepare.txt"))).toBeTrue();
+      expect(await exists(join(packageDir, "packages", "pkg2", "postprepare.txt"))).toBeFalse();
+    });
+
     test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(

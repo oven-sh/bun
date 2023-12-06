@@ -666,24 +666,48 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var scanner = Scanner{
-            .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
-            .options = &vm.bundler.options,
-            .fs = vm.bundler.fs,
-            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
-            .results = std.ArrayList(PathString).init(ctx.allocator),
-        };
-        const dir_to_scan = brk: {
-            if (ctx.debug.test_directory.len > 0) {
-                break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
+        defer results.deinit();
+
+        const test_files, const search_count = scan: {
+            if (for (ctx.positionals) |arg| {
+                if (std.fs.path.isAbsolute(arg) or
+                    strings.startsWith(arg, "./") or
+                    strings.startsWith(arg, "../") or
+                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                    strings.startsWith(arg, "..\\")))) break true;
+            } else false) {
+                // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
+                for (ctx.positionals[1..]) |arg| {
+                    results.appendAssumeCapacity(PathString.init(arg));
+                }
+                break :scan .{ results.items, 0 };
             }
 
-            break :brk scanner.fs.top_level_dir;
+            // Treat arguments as filters and scan the codebase
+            const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
+
+            var scanner = Scanner{
+                .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
+                .options = &vm.bundler.options,
+                .fs = vm.bundler.fs,
+                .filter_names = filter_names,
+                .results = results,
+            };
+            const dir_to_scan = brk: {
+                if (ctx.debug.test_directory.len > 0) {
+                    break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+                }
+
+                break :brk scanner.fs.top_level_dir;
+            };
+
+            scanner.scan(dir_to_scan);
+            scanner.dirs_to_scan.deinit();
+
+            break :scan .{ scanner.results.items, scanner.search_count };
         };
 
-        scanner.scan(dir_to_scan);
-        scanner.dirs_to_scan.deinit();
-        const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
 
@@ -736,22 +760,51 @@ pub const TestCommand = struct {
 
         Output.flush();
 
-        if (scanner.filter_names.len == 0 and test_files.len == 0) {
-            Output.prettyErrorln(
-                \\<b><yellow>No tests found!<r>
-                \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                \\
-            ,
-                .{},
-            );
+        if (test_files.len == 0) {
+            if (ctx.positionals.len == 0) {
+                Output.prettyErrorln(
+                    \\<yellow>No tests found!<r>
+                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                    \\
+                , .{});
+            } else {
+                Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                var has_file_like: ?usize = null;
+                Output.prettyError(" ", .{});
+                for (ctx.positionals[1..], 1..) |filter, i| {
+                    Output.prettyError(" {s}", .{filter});
 
-            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-            if (scanner.search_count > 0)
-                Output.prettyError(
-                    \\ {d} files searched
-                , .{
-                    scanner.search_count,
-                });
+                    if (has_file_like == null and
+                        (strings.hasSuffixComptime(filter, ".ts") or
+                        strings.hasSuffixComptime(filter, ".tsx") or
+                        strings.hasSuffixComptime(filter, ".js") or
+                        strings.hasSuffixComptime(filter, ".jsx")))
+                    {
+                        has_file_like = i;
+                    }
+                }
+                if (search_count > 0) {
+                    Output.prettyError("\n{d} files were searched ", .{search_count});
+                    Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+                }
+
+                Output.prettyErrorln(
+                    \\
+                    \\
+                    \\<blue>note<r><d>:<r> Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                , .{});
+
+                // print a helpful note
+                if (has_file_like) |i| {
+                    Output.prettyErrorln(
+                        \\<blue>note<r><d>:<r> To treat the "{s}" filter as a path, run "bun test ./{s}"<r>
+                    , .{ ctx.positionals[i], ctx.positionals[i] });
+                }
+            }
+            Output.prettyError(
+                \\
+                \\Learn more about the test runner: <magenta>https://bun.sh/docs/cli/test<r>
+            , .{});
         } else {
             Output.prettyError("\n", .{});
 

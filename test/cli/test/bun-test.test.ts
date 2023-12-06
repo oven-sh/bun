@@ -772,18 +772,58 @@ describe("bun test", () => {
     });
     test.todo("check formatting for %p", () => {});
   });
+
+  test("path to a non-test.ts file will work", () => {
+    const stderr = runTest({
+      args: ["./index.ts"],
+      input: [
+        {
+          filename: "index.ts",
+          contents: `
+            import { test, expect } from "bun:test";
+            test("test #1", () => {
+              expect(true).toBe(true);
+            });
+          `,
+        },
+      ],
+    });
+    expect(stderr).toContain("test #1");
+  });
+
+  test("path to a non-test.ts without ./ will print a helpful hint", () => {
+    const stderr = runTest({
+      args: ["index.ts"],
+      input: [
+        {
+          filename: "index.ts",
+          contents: `
+            import { test, expect } from "bun:test";
+            test("test #1", () => {
+              expect(true).toBe(true);
+            });
+          `,
+        },
+      ],
+    });
+    expect(stderr).not.toContain("test #1");
+    expect(stderr).toContain("index.ts");
+  });
 });
 
-function createTest(input?: string | string[], filename?: string): string {
+function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {
   const cwd = mkdtempSync(join(tmpdir(), "bun-test-"));
   const inputs = Array.isArray(input) ? input : [input ?? ""];
   for (const input of inputs) {
-    const path = join(cwd, filename ?? `bun-test-${Math.random()}.test.ts`);
+    const contents = typeof input === "string" ? input : input.contents;
+    const name = typeof input === "string" ? filename ?? `bun-test-${Math.random()}.test.ts` : input.filename;
+
+    const path = join(cwd, name);
     try {
-      writeFileSync(path, input);
+      writeFileSync(path, contents);
     } catch {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, input);
+      writeFileSync(path, contents);
     }
   }
   return cwd;
@@ -795,7 +835,7 @@ function runTest({
   args = [],
   env = {},
 }: {
-  input?: string | string[];
+  input?: string | (string | { filename: string; contents: string })[];
   cwd?: string;
   args?: string[];
   env?: Record<string, string | undefined>;

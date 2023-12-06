@@ -274,6 +274,11 @@ pub const Jest = struct {
                 globalThis: *JSC.JSGlobalObject,
                 callframe: *JSC.CallFrame,
             ) callconv(.C) JSValue {
+                const the_runner = runner orelse {
+                    globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
+                    return .zero;
+                };
+
                 const arguments = callframe.arguments(2);
                 if (arguments.len < 1) {
                     globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
@@ -292,7 +297,7 @@ pub const Jest = struct {
                 }
 
                 function.protect();
-                @field(Jest.runner.?.global_callbacks, name).append(
+                @field(the_runner.global_callbacks, name).append(
                     bun.default_allocator,
                     function,
                 ) catch unreachable;
@@ -397,26 +402,22 @@ pub const Jest = struct {
             describe,
         );
 
-        module.put(
-            globalObject,
-            ZigString.static("beforeAll"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeAll"), 1, ThisDescribeScope.beforeAll, false, false),
-        );
-        module.put(
-            globalObject,
-            ZigString.static("beforeEach"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeEach"), 1, ThisDescribeScope.beforeEach, false, false),
-        );
-        module.put(
-            globalObject,
-            ZigString.static("afterAll"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterAll"), 1, ThisDescribeScope.afterAll, false, false),
-        );
-        module.put(
-            globalObject,
-            ZigString.static("afterEach"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterEach"), 1, ThisDescribeScope.afterEach, false, false),
-        );
+        inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
+            const function = if (outside_of_test)
+                JSC.NewFunction(globalObject, null, 1, globalHook(name), false)
+            else
+                JSC.NewRuntimeFunction(
+                    globalObject,
+                    ZigString.static(name),
+                    1,
+                    @field(DescribeScope, name),
+                    false,
+                    false,
+                );
+            module.put(globalObject, ZigString.static(name), function);
+            function.ensureStillAlive();
+        }
+
         module.put(
             globalObject,
             ZigString.static("expect"),
@@ -1248,10 +1249,6 @@ pub const WrappedDescribeScope = struct {
     pub const callIf = wrapTestFunction("describe", DescribeScope.callIf);
     pub const skipIf = wrapTestFunction("describe", DescribeScope.skipIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
-    pub const beforeAll = wrapTestFunction("describe", DescribeScope.beforeAll);
-    pub const beforeEach = wrapTestFunction("describe", DescribeScope.beforeEach);
-    pub const afterAll = wrapTestFunction("describe", DescribeScope.afterAll);
-    pub const afterEach = wrapTestFunction("describe", DescribeScope.afterEach);
 };
 
 pub const TestRunnerTask = struct {

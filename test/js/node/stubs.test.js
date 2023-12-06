@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 
 const weirdInternalSpecifiers = [
   "_http_agent",
@@ -72,6 +72,7 @@ var specifiers = [
   "vm",
   "worker_threads",
   "zlib",
+  "bun:test",
 ];
 specifiers = [...weirdInternalSpecifiers, ...specifiers.flatMap(a => ["node:" + a, a])];
 

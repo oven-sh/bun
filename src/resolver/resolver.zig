@@ -50,9 +50,7 @@ pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix
     // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    const isAbsolute = (std.fs.path.isAbsolutePosix(path) or
-        (if (Environment.isWindows) std.fs.path.isAbsoluteWindows(path) else false));
-    return !isAbsolute and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
 }
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
@@ -64,7 +62,11 @@ pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
     return !strings.startsWith(non_absolute_path, "./") and
         !strings.startsWith(non_absolute_path, "../") and
         !strings.eql(non_absolute_path, ".") and
-        !strings.eql(non_absolute_path, "..");
+        !strings.eql(non_absolute_path, "..") and if(Environment.isWindows)
+        (
+            !strings.startsWith(non_absolute_path, ".\\") and
+            !strings.startsWith(non_absolute_path, "..\\")
+        ) else true;
 }
 
 pub const SideEffectsData = struct {

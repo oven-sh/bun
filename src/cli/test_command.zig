@@ -389,7 +389,7 @@ const Scanner = struct {
         var root = this.readDirWithName(path, null) catch |err| {
             if (err == error.NotDir) {
                 if (this.isTestFile(path)) {
-                    this.results.append(bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable)) catch unreachable;
+                    this.results.append(bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch bun.outOfMemory())) catch bun.outOfMemory();
                 }
             }
 
@@ -418,7 +418,7 @@ const Scanner = struct {
                 this.open_dir_buf[path2.len] = 0;
                 var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
                 var child_dir = bun.openDir(dir, pathZ) catch continue;
-                path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
+                path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
                 FileSystem.setMaxFd(child_dir.dir.fd);
                 _ = this.readDirWithName(path2, child_dir.dir) catch continue;
             } else {
@@ -428,9 +428,9 @@ const Scanner = struct {
                 var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 var child_dir = bun.openDirAbsolute(path2) catch continue;
-                path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
+                path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
                 FileSystem.setMaxFd(child_dir.fd);
-                _ = this.readDirWithName(path2, child_dir) catch continue;
+                _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
             }
         }
     }
@@ -678,24 +678,48 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var scanner = Scanner{
-            .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
-            .options = &vm.bundler.options,
-            .fs = vm.bundler.fs,
-            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
-            .results = std.ArrayList(PathString).init(ctx.allocator),
-        };
-        const dir_to_scan = brk: {
-            if (ctx.debug.test_directory.len > 0) {
-                break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
+        defer results.deinit();
+
+        const test_files, const search_count = scan: {
+            if (for (ctx.positionals) |arg| {
+                if (std.fs.path.isAbsolute(arg) or
+                    strings.startsWith(arg, "./") or
+                    strings.startsWith(arg, "../") or
+                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                    strings.startsWith(arg, "..\\")))) break true;
+            } else false) {
+                // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
+                for(ctx.positionals[1..])|arg| {
+                    results.appendAssumeCapacity(PathString.init(arg));
+                }
+                break :scan .{results.items, 0};
             }
 
-            break :brk scanner.fs.top_level_dir;
+            // Treat arguments as filters and scan the codebase
+            const filter_names = if (ctx.positionals.len == 0)  &[0][]const u8{} else ctx.positionals[1..];
+
+            var scanner = Scanner{
+                .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
+                .options = &vm.bundler.options,
+                .fs = vm.bundler.fs,
+                .filter_names = filter_names,
+                .results = results,
+            };
+            const dir_to_scan = brk: {
+                if (ctx.debug.test_directory.len > 0) {
+                    break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+                }
+
+                break :brk scanner.fs.top_level_dir;
+            };
+
+            scanner.scan(dir_to_scan);
+            scanner.dirs_to_scan.deinit();
+
+            break :scan .{scanner.results.items, scanner.search_count};
         };
 
-        scanner.scan(dir_to_scan);
-        scanner.dirs_to_scan.deinit();
-        const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
 
@@ -748,22 +772,32 @@ pub const TestCommand = struct {
 
         Output.flush();
 
-        if (scanner.filter_names.len == 0 and test_files.len == 0) {
-            Output.prettyErrorln(
-                \\<b><yellow>No tests found!<r>
-                \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                \\
-            ,
-                .{},
-            );
-
+        if (test_files.len == 0) {
+            if (ctx.positionals.len == 0) {
+                Output.prettyErrorln(
+                    \\<b><yellow>No tests found!<r>
+                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                    \\
+                ,
+                    .{},
+                );
+            } else {
+                Output.prettyErrorln(
+                    \\<b><yellow>Filters passed did not match any test names<r>
+                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                    \\
+                ,
+                    .{},
+                );
+            }
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-            if (scanner.search_count > 0)
+            if (search_count > 0) {
                 Output.prettyError(
                     \\ {d} files searched
                 , .{
-                    scanner.search_count,
+                    search_count,
                 });
+            }
         } else {
             Output.prettyError("\n", .{});
 

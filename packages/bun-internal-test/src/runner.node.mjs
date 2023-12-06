@@ -1,11 +1,8 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
-import { readdirSync } from "node:fs";
+import { rmSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { resolve } from "node:path";
-import { StringDecoder } from "node:string_decoder";
-import { totalmem } from "os";
-import { relative } from "path";
+import { platform, totalmem } from "os";
 import { fileURLToPath } from "url";
 
 const nativeMemory = totalmem();
@@ -20,12 +17,25 @@ process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
 
+let isTestEnabled = () => true;
+
+if (process.platform == "win32") {
+  const testList = readFileSync("test/windows-test-allowlist.txt", "utf8")
+    .replaceAll("\r", "")
+    .split("\n")
+    .map(x => x.trim().replaceAll("/", "\\"))
+    .filter(x => !!x && !x.startsWith("#"));
+  isTestEnabled = name => {
+    return testList.some(testPattern => name.includes(testPattern));
+  };
+}
+
 function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
     const path = resolve(dir, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
       yield* findTests(path, query);
-    } else if (entry.name.includes(".test.")) {
+    } else if (entry.name.includes(".test.") && isTestEnabled(path)) {
       yield path;
     }
   }
@@ -33,7 +43,16 @@ function* findTests(dir, query) {
 
 var failingTests = [];
 
+let bunExe = process.argv[2] ?? "bun";
+try {
+  const { error } = spawnSync(bunExe, ["--revision"]);
+  if (error) throw error;
+} catch {
+  console.error(bunExe + " is not installed");
+}
+
 async function runTest(path) {
+  console.log(path);
   const name = path.replace(cwd, "").slice(1);
   try {
     var {
@@ -41,7 +60,7 @@ async function runTest(path) {
       stderr,
       status: exitCode,
       error: timedOut,
-    } = spawnSync("bun", ["test", path], {
+    } = spawnSync(bunExe, ["test", path.replaceAll("/", "\\")], {
       stdio: "inherit",
       timeout: 1000 * 60 * 3,
       env: {
@@ -49,6 +68,9 @@ async function runTest(path) {
         FORCE_COLOR: "1",
         BUN_GARBAGE_COLLECTOR_LEVEL: "1",
         BUN_JSC_forceRAMSize,
+        // reproduce CI results locally
+        GITHUB_ACTION: process.env.GITHUB_ACTION ?? "true",
+        BUN_DEBUG_QUIET_LOGS: "1",
       },
     });
   } catch (e) {
@@ -82,7 +104,13 @@ if (isAction) {
   action.summary.addHeading(`${tests.length} files with tests ran`).addList(testFileNames);
   await action.summary.write();
 } else {
+  if (failingTests.length > 0) {
+    console.log(`${failingTests.length} files with failing tests:`);
+    for (const test of failingTests) {
+      console.log(`- ${resolve(test)}`);
+    }
+  }
   writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
 
-process.exit(failingTests.length);
+process.exit(Math.min(failingTests.length, 127));

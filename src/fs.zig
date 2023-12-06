@@ -1051,11 +1051,11 @@ pub const FileSystem = struct {
             ) catch |err| {
                 if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
 
-                return fs.readDirectoryError(dir, err) catch unreachable;
+                return fs.readDirectoryError(dir, err) catch bun.outOfMemory();
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                var entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch unreachable;
+                var entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }

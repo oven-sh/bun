@@ -90,41 +90,29 @@ test("nuxt build works", async () => {
   const bunCliOutputRaw = await Bun.readableStreamToText(bunBuild.stdout);
   const nodeCliOutputRaw = await Bun.readableStreamToText(nodeBuild.stdout);
 
-  // Normalize Nuxt version, remove file hashes, and ignore minor size discrepancies
-  const normalizeOutput = (text: string) =>
-    text
-      .replace(/_[a-z0-9]+\.mjs/g, "_.mjs") // Normalize MJS file hashes
-      .replace(/_[a-z0-9]+\.js/g, "_.js") // Normalize JS file hashes
-      .replace(/\d+\.\d+ kB/g, "X.XX kB") // Normalize minor size discrepancies
-      .replace(/\d+\.\d+ MB/g, "X.XX MB") // Normalize MB size discrepancies
-      .replace(/\d+\.\d+s/g, "X.XXs") // Normalize build duration
-      .replace(/\d+ B gzip/g, "XXX B gzip") // Normalize exact byte sizes for gzip
-      .replace(/\d+ kB gzip/g, "XXX kB gzip") // Normalize exact kilobyte sizes for gzip
-      .replace(/\d+ B/g, "XXX B") // Normalize exact byte sizes
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/[a-z]+)-[a-z0-9]+(\.mjs)/g, "$1-HASH$2")
-      .replace(/(\.nuxt\/dist\/server\/_nuxt\/_[a-z]+-styles-\d)\.mjs-[a-z0-9]+(\.js)/g, "$1.mjs-HASH$2")
-      .replace(/(\.nuxt\/dist\/server\/_nuxt\/_id_-)[a-z0-9]+(\.js)/g, "$1HASH$2")
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/error-404)-[a-z0-9]+(\.mjs)/g, "$1-HASH$2")
-      .replace(/(_nuxt\/[a-z]+)-[a-z0-9]+(\.mjs\.map)/g, "_nuxt/$1.HASH$2")
-      .replace(/(_nuxt\/[a-z]+)-[a-z0-9]+(\.js)/g, "_nuxt/$1.HASH$2")
-      .replace(/(_nuxt\/_)-[a-z0-9]+(\.mjs)/g, "_nuxt/_HASH$2")
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.mjs\.map)/g, "$1.HASH$2")
-      .replace(/(\.nuxt\/dist\/server\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.js)/g, "$1.HASH$2")
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/_)[a-z0-9_-]+(\.mjs)/g, "$1HASH$2")
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.mjs\.map)/g, "$1.HASH$2")
-      .replace(/(\.nuxt\/dist\/server\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.js)/g, "$1.HASH$2")
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/_id_-)[a-z0-9]+(\.mjs)/g, "$1HASH$2")
-      // Enhanced regex for specific hash normalization in .nuxt/dist
-      .replace(/(\.nuxt\/dist\/(?:client|server)\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.js|\.mjs)/g, "$1.HASH$2")
-      // New regex for specific hash normalization in .output/server/chunks/app/_nuxt
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.mjs(\.map)?)/g, "$1.HASH$2")
-      .replace(/(\.output\/server\/chunks\/app\/_nuxt\/_id_-)[a-z0-9]+(\.mjs\.map)/g, "$1HASH$2")
-      .replace(/_[a-z0-9]+\.(mjs|css)/g, "_.$1") // Normalize file hashes for .mjs and .css
-      .replace(/\d+(\.\d+)?(s|ms|kB|MB)/g, "X.XX$2") // Normalize time & size measurements, including integers and decimals
-      .replace(/\d+ B (gzip)?/g, "XXX B $1") // Normalize byte sizes, including gzip
-      .replace(/\/bun-nuxt-build-[a-zA-Z0-9]+\//g, "/bun-nuxt-build-XXXXXX/") // Normalize dynamic paths in build output
-      .replace(/gzip:\s+\d+\.\d+\s+kB/g, "gzip: XXX kB") // More flexible normalization for gzip sizes
-      .replace(/(_[a-z0-9]+\.)[a-z0-9]+(\.mjs|\.js|\.css)/g, "$1HASH$2"); // Regex pattern to match hashes (e.g., _id_.5b600b5a, store.4c25e934)
+  /**
+   * Normalizes various outputs in build logs.
+   * This function applies a series of regular expressions to a given string
+   * to normalize file hashes, sizes, durations, and other build-related outputs.
+   *
+   * @param text - The input string containing build log output.
+   * @returns A string with normalized outputs.
+   */
+  const normalizeOutput = (text: string): string => {
+    const regexPatterns: Array<[RegExp, string]> = [
+      [/_([a-z0-9]+)\.(mjs|js)/g, "_.${2}"], // Normalize MJS/JS file hashes
+      [/\d+\.\d+ (kB|MB)/g, "X.XX $1"], // Normalize size discrepancies
+      [/\d+\.\d+s/g, "X.XXs"], // Normalize build duration
+      [/\d+ B (gzip)?/g, "XXX B $1"], // Normalize byte sizes, including gzip
+      [/(\.output\/server\/chunks\/app\/_nuxt\/[a-z0-9_-]+)\.[a-z0-9]+(\.mjs(\.map)?)/g, "$1.HASH$2"], // Normalize hashes in .output/server
+      [/_nuxt\/[a-z0-9_-]+-[a-z0-9]+(\.mjs|\.js|\.css)/g, "_nuxt/${1}.HASH${2}"], // Normalize hashes in _nuxt
+      [/\d+(\.\d+)?(s|ms|kB|MB)/g, "X.XX$2"], // Normalize time & size measurements
+      [/\/bun-nuxt-build-[a-zA-Z0-9]+\//g, "/bun-nuxt-build-XXXXXX/"], // Normalize dynamic paths in build output
+      [/\d+ kB/g, "XXX kB"], // Normalize kB sizes
+    ];
+
+    return regexPatterns.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), text);
+  };
 
   const bunCliOutput = normalizeOutput(bunCliOutputRaw);
   const nodeCliOutput = normalizeOutput(nodeCliOutputRaw);

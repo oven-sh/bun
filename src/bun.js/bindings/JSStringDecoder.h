@@ -46,7 +46,7 @@ public:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    static void destroy(JSCell*);
+    static void destroy(JSCell*) {}
 
     JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
     JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
@@ -63,6 +63,63 @@ private:
     BufferEncodingType m_encoding;
 };
 
-void setJSStringDecoderLazyClassStructure(JSC::LazyClassStructure&);
+class JSStringDecoderPrototype : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static JSStringDecoderPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSStringDecoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderPrototype>(vm)) JSStringDecoderPrototype(vm, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSStringDecoderPrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSStringDecoderConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSStringDecoderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSStringDecoderPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSStringDecoderConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+        : Base(vm, structure, nativeFunction, nativeFunction)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
+};
 
 }

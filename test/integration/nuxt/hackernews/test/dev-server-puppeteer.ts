@@ -19,8 +19,7 @@ if (process.argv.length > 2) {
 }
 
 const b = await launch({
-  // headless: "new",
-  headless: false,
+  headless: "new",
 });
 
 const p = await b.newPage();

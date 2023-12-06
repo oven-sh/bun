@@ -6016,6 +6016,10 @@ pub const PackageManager = struct {
             PackageManager.verbose_install = true;
         }
 
+        if (env.map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
+            JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+        }
+
         if (PackageManager.verbose_install) {
             Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
             Output.flush();

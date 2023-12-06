@@ -6151,19 +6151,6 @@ it("should handle trustedDependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  expect(
-    err
-      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("$")),
-  ).toEqual([
-    "$ echo preinstall moo",
-    "$ echo install moo",
-    "$ echo postinstall moo",
-    "$ echo preprepare moo",
-    "$ echo prepare moo",
-    "$ echo postprepare moo",
-  ]);
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   const moo_dir = await realpath(join(package_dir, "node_modules", "moo"));

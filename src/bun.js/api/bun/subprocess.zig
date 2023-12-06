@@ -16,6 +16,7 @@ const Which = @import("../../../which.zig");
 const Async = bun.Async;
 const IPC = @import("../../ipc.zig");
 const uws = bun.uws;
+const LifecycleScriptSubprocess = @import("../../../cli/run_command.zig").RunCommand.LifecycleScriptSubprocess;
 
 const PosixSpawn = @import("./spawn.zig").PosixSpawn;
 
@@ -2210,7 +2211,9 @@ pub const Subprocess = struct {
     // We use a single thread to call waitpid() in a loop.
     pub const WaiterThread = struct {
         concurrent_queue: Queue = .{},
+        lifecycle_script_concurrent_queue: LifecycleScriptTaskQueue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
+        lifecycle_script_queue: std.ArrayList(*LifecycleScriptSubprocess) = std.ArrayList(*LifecycleScriptSubprocess).init(bun.default_allocator),
         started: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
         eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
@@ -2228,10 +2231,16 @@ pub const Subprocess = struct {
             next: ?*WaitTask = null,
         };
 
+        pub const LifecycleScriptWaitTask = struct {
+            lifecycle_script_subprocess: *LifecycleScriptSubprocess,
+            next: ?*LifecycleScriptWaitTask = null,
+        };
+
         var should_use_waiter_thread = false;
 
         const stack_size = 512 * 1024;
         pub const Queue = bun.UnboundedQueue(WaitTask, .next);
+        pub const LifecycleScriptTaskQueue = bun.UnboundedQueue(LifecycleScriptWaitTask, .next);
         pub var instance: WaiterThread = .{};
         pub fn init() !void {
             std.debug.assert(should_use_waiter_thread);
@@ -2294,55 +2303,111 @@ pub const Subprocess = struct {
             }
         }
 
+        pub fn appendLifecycleScriptSubprocess(lifecycle_script: *LifecycleScriptSubprocess) void {
+            var task = bun.default_allocator.create(LifecycleScriptWaitTask) catch unreachable;
+            task.* = LifecycleScriptWaitTask{
+                .lifecycle_script_subprocess = lifecycle_script,
+            };
+            instance.lifecycle_script_concurrent_queue.push(task);
+
+            init() catch @panic("Failed to start WaiterThread");
+
+            if (comptime Environment.isLinux) {
+                const one = @as([8]u8, @bitCast(@as(usize, 1)));
+                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+            }
+        }
+
+        fn loopSubprocess(this: *WaiterThread) void {
+            {
+                var batch = this.concurrent_queue.popBatch();
+                var iter = batch.iterator();
+                this.queue.ensureUnusedCapacity(batch.count) catch unreachable;
+                while (iter.next()) |task| {
+                    this.queue.appendAssumeCapacity(task.subprocess);
+                    bun.default_allocator.destroy(task);
+                }
+            }
+
+            var queue: []*Subprocess = this.queue.items;
+            var i: usize = 0;
+            while (queue.len > 0 and i < queue.len) {
+                var process = queue[i];
+
+                // this case shouldn't really happen
+                if (process.pid == bun.invalid_fd) {
+                    _ = this.queue.orderedRemove(i);
+                    _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                    queue = this.queue.items;
+                    continue;
+                }
+
+                const result = PosixSpawn.waitpid(process.pid, std.os.W.NOHANG);
+                if (result == .err or (result == .result and result.result.pid == process.pid)) {
+                    _ = this.queue.orderedRemove(i);
+                    queue = this.queue.items;
+
+                    var task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
+                    task.* = WaitPidResultTask{
+                        .result = result,
+                        .subprocess = process,
+                    };
+
+                    process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(
+                        JSC.ConcurrentTask.create(
+                            JSC.Task.init(task),
+                        ),
+                    );
+                }
+
+                i += 1;
+            }
+        }
+
+        fn loopLifecycleScriptsSubprocess(this: *WaiterThread) void {
+            {
+                var batch = this.lifecycle_script_concurrent_queue.popBatch();
+                var iter = batch.iterator();
+                this.lifecycle_script_queue.ensureUnusedCapacity(batch.count) catch unreachable;
+                while (iter.next()) |task| {
+                    this.lifecycle_script_queue.appendAssumeCapacity(task.lifecycle_script_subprocess);
+                    bun.default_allocator.destroy(task);
+                }
+            }
+
+            var queue: []*LifecycleScriptSubprocess = this.lifecycle_script_queue.items;
+            var i: usize = 0;
+            while (queue.len > 0 and i < queue.len) {
+                var lifecycle_script_process = queue[i];
+
+                if (lifecycle_script_process.pid == bun.invalid_fd) {
+                    _ = this.lifecycle_script_queue.orderedRemove(i);
+                    queue = this.lifecycle_script_queue.items;
+                }
+
+                const result = PosixSpawn.waitpid(lifecycle_script_process.pid, std.os.W.NOHANG);
+                if (result == .err or (result == .result and result.result.pid == lifecycle_script_process.pid)) {
+                    _ = this.lifecycle_script_queue.orderedRemove(i);
+                    queue = this.lifecycle_script_queue.items;
+
+                    lifecycle_script_process.onResult(.{
+                        .pid = result.result.pid,
+                        .status = result.result.status,
+                    });
+                }
+
+                i += 1;
+            }
+        }
+
         pub fn loop() void {
             Output.Source.configureNamedThread("Waitpid");
 
             var this = &instance;
 
             while (true) {
-                {
-                    var batch = this.concurrent_queue.popBatch();
-                    var iter = batch.iterator();
-                    this.queue.ensureUnusedCapacity(batch.count) catch unreachable;
-                    while (iter.next()) |task| {
-                        this.queue.appendAssumeCapacity(task.subprocess);
-                        bun.default_allocator.destroy(task);
-                    }
-                }
-
-                var queue: []*Subprocess = this.queue.items;
-                var i: usize = 0;
-                while (queue.len > 0 and i < queue.len) {
-                    var process = queue[i];
-
-                    // this case shouldn't really happen
-                    if (process.pid == bun.invalid_fd) {
-                        _ = this.queue.orderedRemove(i);
-                        _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
-                        queue = this.queue.items;
-                        continue;
-                    }
-
-                    const result = PosixSpawn.waitpid(process.pid, std.os.W.NOHANG);
-                    if (result == .err or (result == .result and result.result.pid == process.pid)) {
-                        _ = this.queue.orderedRemove(i);
-                        queue = this.queue.items;
-
-                        var task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
-                        task.* = WaitPidResultTask{
-                            .result = result,
-                            .subprocess = process,
-                        };
-
-                        process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(
-                            JSC.ConcurrentTask.create(
-                                JSC.Task.init(task),
-                            ),
-                        );
-                    }
-
-                    i += 1;
-                }
+                this.loopSubprocess();
+                this.loopLifecycleScriptsSubprocess();
 
                 if (comptime Environment.isLinux) {
                     var polls = [_]std.os.pollfd{

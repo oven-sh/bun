@@ -244,6 +244,8 @@ pub const RunCommand = struct {
 
         finished_fds: u8 = 0,
 
+        pid: std.os.pid_t = bun.invalid_fd,
+
         output_buffer: bun.ByteList,
         pid_poll: *Async.FilePoll,
         waitpid_result: ?PosixSpawn.WaitPidResult,
@@ -398,53 +400,18 @@ pub const RunCommand = struct {
             this.waitpid_result = null;
             this.finished_fds = 0;
             this.output_buffer = .{};
+            this.pid = pid_fd;
             this.pid_poll = Async.FilePoll.initWithPackageManager(
                 manager,
-                if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else pid_fd,
+                pid_fd,
                 .{},
                 @as(*PidPollData, @ptrCast(this)),
             );
+
             this.stdout_poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, this);
             this.stderr_poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, this);
 
             try this.registerPolls();
-        }
-
-        pub fn init(
-            manager: *PackageManager,
-            script_name: []const u8,
-            package_name: []const u8,
-            scripts: [6]?Lockfile.Scripts.Entry,
-            script_index: usize,
-            stdout_fd: bun.FileDescriptor,
-            stderr_fd: bun.FileDescriptor,
-            pid_fd: bun.FileDescriptor,
-        ) !?*LifecycleScriptSubprocess {
-            // TODO: this doesnt handle some cleanup edge cases on error
-            var this = try manager.allocator.create(LifecycleScriptSubprocess);
-            errdefer this.deinit(manager.allocator);
-
-            this.* = .{
-                .package_name = package_name,
-                .script_name = script_name,
-                .manager = manager,
-                .scripts = scripts,
-                .current_script_index = script_index,
-                .waitpid_result = null,
-                .output_buffer = .{},
-                .pid_poll = Async.FilePoll.initWithPackageManager(
-                    manager,
-                    pid_fd,
-                    .{},
-                    @as(*PidPollData, @ptrCast(this)),
-                ),
-                .stdout_poll = Async.FilePoll.initWithPackageManager(manager, stdout_fd, .{}, this),
-                .stderr_poll = Async.FilePoll.initWithPackageManager(manager, stderr_fd, .{}, this),
-            };
-
-            try this.registerPolls();
-
-            return this;
         }
 
         pub fn registerPolls(this: *LifecycleScriptSubprocess) !void {
@@ -513,18 +480,22 @@ pub const RunCommand = struct {
         }
 
         pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {
-            switch (PosixSpawn.waitpid(this.pid_poll.fileDescriptor(), std.os.W.NOHANG)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.script_name,
-                        this.package_name,
-                        err.errno,
-                        @tagName(err.getErrno()),
-                    });
-                    Output.flush();
-                    this.manager.pending_lifecycle_script_tasks -= 1;
-                },
-                .result => |result| this.onResult(result),
+            if (WaiterThread.shouldUseWaiterThread()) {
+                WaiterThread.appendLifecycleScriptSubprocess(this);
+            } else {
+                switch (PosixSpawn.waitpid(this.pid_poll.fileDescriptor(), std.os.W.NOHANG)) {
+                    .err => |err| {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                            this.script_name,
+                            this.package_name,
+                            err.errno,
+                            @tagName(err.getErrno()),
+                        });
+                        Output.flush();
+                        this.manager.pending_lifecycle_script_tasks -|= 1;
+                    },
+                    .result => |result| this.onResult(result),
+                }
             }
         }
 
@@ -538,7 +509,7 @@ pub const RunCommand = struct {
                 });
                 Output.flush();
 
-                this.manager.pending_lifecycle_script_tasks -= 1;
+                this.manager.pending_lifecycle_script_tasks -|= 1;
                 return;
             }
             if (std.os.W.IFEXITED(result.status)) {
@@ -578,7 +549,7 @@ pub const RunCommand = struct {
                 }
 
                 // the last script finished
-                this.manager.pending_lifecycle_script_tasks -= 1;
+                this.manager.pending_lifecycle_script_tasks -|= 1;
                 this.deinit(this.manager.allocator);
                 return;
             }

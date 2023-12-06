@@ -2298,7 +2298,7 @@ pub const PackageManager = struct {
                 node.name = this.progress_name_buf[0 .. emoji.len + name.len];
             }
         } else {
-            @memcpy(&this.progress_name_buf, name);
+            @memcpy(this.progress_name_buf[0..name.len], name);
             node.name = this.progress_name_buf[0..name.len];
         }
     }

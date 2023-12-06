@@ -2,9 +2,9 @@
   "name": "bun-integration-test-sharp",
   "module": "index.ts",
   "type": "module",
-  "scripts": {
-    "postinstall": "cd node_modules/sharp && bun install/check.js"
-  },
+  "trustedDependencies": [
+    "sharp"
+  ],
   "devDependencies": {
     "bun-types": "latest"
   },

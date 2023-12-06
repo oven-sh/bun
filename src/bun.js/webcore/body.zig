@@ -816,7 +816,8 @@ pub const Body = struct {
                     readable.done();
                     locked.readable = null;
                 }
-
+                // will be unprotected by body value deinit
+                error_instance.protect();
                 this.* = .{ .Error = error_instance };
                 if (locked.onReceiveValue) |onReceiveValue| {
                     locked.onReceiveValue = null;
@@ -824,7 +825,8 @@ pub const Body = struct {
                 }
                 return;
             }
-
+            // will be unprotected by body value deinit
+            error_instance.protect();
             this.* = .{ .Error = error_instance };
         }
 

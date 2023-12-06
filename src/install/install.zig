@@ -3409,7 +3409,7 @@ pub const PackageManager = struct {
             }
 
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
-            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.overrides.map.count() > 0) {
+            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
                     name = switch (new.tag) {
@@ -7972,36 +7972,12 @@ pub const PackageManager = struct {
                     }
                 }
             } else if (!scripts.filled) {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable;
-
-                const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(name) and
-                    scripts.install.isEmpty() and
-                    scripts.postinstall.isEmpty())
-                brk: {
-                    const binding_dot_gyp_path = Path.joinAbsStringZ(
-                        node_modules_path,
-                        &[_]string{ destination_dir_subpath, "binding.gyp" },
-                        .posix,
-                    );
-
-                    break :brk Syscall.exists(binding_dot_gyp_path);
-                } else false;
-
-                const path_str = Path.joinAbsString(
-                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
-                    &[_]string{destination_dir_subpath},
-                    .auto,
-                );
-
                 const scripts_list = scripts.enqueueFromPackageJSON(
                     this.manager.log,
                     this.lockfile,
                     this.node_modules_folder.dir,
                     destination_dir_subpath,
-                    path_str,
                     name,
-                    add_node_gyp_rebuild_script,
                     resolution,
                 ) catch |err| {
                     if (comptime log_level != .silent) {

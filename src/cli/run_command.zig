@@ -12,6 +12,7 @@ const C = bun.C;
 const std = @import("std");
 const uws = bun.uws;
 const JSC = bun.JSC;
+const WaiterThread = JSC.Subprocess.WaiterThread;
 
 const lex = bun.js_lexer;
 const logger = @import("root").bun.logger;
@@ -338,35 +339,58 @@ pub const RunCommand = struct {
             };
 
             const pid_fd: std.os.fd_t = brk: {
-                if (!Environment.isLinux) {
+                if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
                     break :brk pid;
                 }
 
-                const kernel = @import("../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+                var pidfd_flags = JSC.Subprocess.pidfdFlagsForLinux();
 
-                // pidfd_nonblock only supported in 5.10+
-                const pidfd_flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
-                    std.os.O.NONBLOCK
-                else
-                    0;
-
-                const fd = std.os.linux.pidfd_open(
-                    pid,
+                var fd = std.os.linux.pidfd_open(
+                    @intCast(pid),
                     pidfd_flags,
                 );
 
-                switch (std.os.linux.getErrno(fd)) {
-                    .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
-                    else => |err| {
-                        var status: u32 = 0;
-                        // ensure we don't leak the child process on error
-                        _ = std.os.linux.waitpid(pid, &status, 0);
+                while (true) {
+                    switch (std.os.linux.getErrno(fd)) {
+                        .SUCCESS => break :brk @intCast(fd),
+                        .INTR => {
+                            fd = std.os.linux.pidfd_open(
+                                @intCast(pid),
+                                pidfd_flags,
+                            );
+                            continue;
+                        },
+                        else => |err| {
+                            if (err == .INVAL) {
+                                if (pidfd_flags != 0) {
+                                    fd = std.os.linux.pidfd_open(
+                                        @intCast(pid),
+                                        0,
+                                    );
+                                    pidfd_flags = 0;
+                                    continue;
+                                }
+                            }
 
-                        Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err, @tagName(err) });
-                        Output.flush();
+                            if (err == .NOSYS) {
+                                WaiterThread.setShouldUseWaiterThread();
+                                break :brk pid;
+                            }
 
-                        return null;
-                    },
+                            var status: u32 = 0;
+                            // ensure we don't leak the child process on error
+                            _ = std.os.linux.waitpid(pid, &status, 0);
+
+                            Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
+                                name,
+                                err,
+                                @tagName(err),
+                            });
+                            Output.flush();
+
+                            return null;
+                        },
+                    }
                 }
             };
 
@@ -376,7 +400,7 @@ pub const RunCommand = struct {
             this.output_buffer = .{};
             this.pid_poll = Async.FilePoll.initWithPackageManager(
                 manager,
-                pid_fd,
+                if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else pid_fd,
                 .{},
                 @as(*PidPollData, @ptrCast(this)),
             );
@@ -463,7 +487,7 @@ pub const RunCommand = struct {
 
             var remaining = size;
             while (remaining > 0) {
-                switch (bun.sys.read(fd, this.output_buffer.slice()[this.output_buffer.len..this.output_buffer.cap])) {
+                switch (bun.sys.read(fd, this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap])) {
                     .result => |bytes_read| {
                         this.output_buffer.len += @truncate(bytes_read);
                         remaining -|= @intCast(bytes_read);

@@ -1530,13 +1530,7 @@ pub const Subprocess = struct {
                 break :brk pid;
             }
 
-            const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
-
-            // pidfd_nonblock only supported in 5.10+
-            var pidfd_flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
-                std.os.O.NONBLOCK
-            else
-                0;
+            var pidfd_flags = pidfdFlagsForLinux();
 
             var rc = std.os.linux.pidfd_open(
                 @intCast(pid),
@@ -2197,6 +2191,16 @@ pub const Subprocess = struct {
         // uSocket is already freed so calling .close() on the socket can segfault
         this.ipc_mode = .none;
         this.updateHasPendingActivity();
+    }
+
+    pub fn pidfdFlagsForLinux() u32 {
+        const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+
+        // pidfd_nonblock only supported in 5.10+
+        return if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+            std.os.O.NONBLOCK
+        else
+            0;
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);

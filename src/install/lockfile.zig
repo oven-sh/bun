@@ -1972,6 +1972,10 @@ pub const PackageIndex = struct {
     };
 };
 
+pub inline fn hasOverrides(this: *Lockfile) bool {
+    return this.overrides.map.count() > 0;
+}
+
 pub const OverrideMap = struct {
     const debug = Output.scoped(.OverrideMap, false);
 
@@ -2510,11 +2514,17 @@ pub const Package = extern struct {
             lockfile: *Lockfile,
             node_modules: std.fs.Dir,
             subpath: [:0]const u8,
-            cwd: string,
             name: string,
-            add_node_gyp_rebuild_script: bool,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
+            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            const cwd = Path.joinAbsString(
+                bun.getFdPath(bun.toFD(node_modules.fd), &path_buf) catch unreachable,
+                &[_]string{subpath},
+                .auto,
+            );
+
             var json_file_fd = try bun.sys.openat(
                 bun.toFD(node_modules.fd),
                 bun.path.joinZ([_]string{ subpath, "package.json" }, .auto),
@@ -2541,6 +2551,21 @@ pub const Package = extern struct {
             Lockfile.Package.Scripts.parseCount(lockfile.allocator, &builder, json);
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
+
+            const node_modules_path = bun.getFdPath(bun.toFD(node_modules.fd), &path_buf) catch unreachable;
+
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(name) and
+                this.install.isEmpty() and
+                this.postinstall.isEmpty())
+            brk: {
+                const binding_dot_gyp_path = Path.joinAbsStringZ(
+                    node_modules_path,
+                    &[_]string{ subpath, "binding.gyp" },
+                    .posix,
+                );
+
+                break :brk bun.sys.exists(binding_dot_gyp_path);
+            } else false;
 
             return this.enqueue(
                 lockfile,

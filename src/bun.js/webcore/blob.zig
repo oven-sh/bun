@@ -2075,7 +2075,7 @@ pub const Blob = struct {
             wrote: usize = 0,
             total_written: usize = 0,
 
-            file_mode: bun.Mode = 0,
+            could_block: bool = false,
 
             pub const ResultType = SystemError.Maybe(SizeType);
             pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
@@ -2174,20 +2174,13 @@ pub const Blob = struct {
                 const fd = this.opened_fd;
                 std.debug.assert(fd != null_fd);
 
-                const result: JSC.Maybe(usize) = brk: {
-                    if (comptime Environment.isPosix) {
-                        if (std.os.S.ISSOCK(this.file_mode)) {
-                            break :brk bun.sys.send(fd, buffer, std.os.SOCK.NONBLOCK);
-                        }
-                    }
-
+                const result: JSC.Maybe(usize) =
                     // We do not use pwrite() because the file may not be
                     // seekable (such as stdout)
                     //
                     // On macOS, it is an error to use pwrite() on a
                     // non-seekable file.
-                    break :brk bun.sys.write(fd, buffer);
-                };
+                    bun.sys.write(fd, buffer);
 
                 while (true) {
                     switch (result) {
@@ -2198,7 +2191,7 @@ pub const Blob = struct {
                         .err => |err| {
                             switch (err.getErrno()) {
                                 bun.io.retry => {
-                                    if (bun.isRegularFile(this.file_blob.store.?.data.file.mode)) {
+                                    if (!this.could_block) {
                                         // regular files cannot use epoll.
                                         // this is fine on kqueue, but not on epoll.
                                         continue;
@@ -2279,64 +2272,24 @@ pub const Blob = struct {
 
                 const fd = this.opened_fd;
 
-                this.file_mode = brk: {
-                    // Skip the stat call for stdout and stderr
-                    // we already do this when Bun.stderr or Bun.stdout
-                    if (fd == 1 or fd == 2) {
-                        if (this.file_blob.store) |store| {
-                            if (store.data == .file) {
-                                if (store.data.file.seekable != null) {
-                                    break :brk store.data.file.mode;
-                                }
+                this.could_block = brk: {
+                    if (this.file_blob.store) |store| {
+                        if (store.data == .file and store.data.file.pathlike == .fd) {
+                            // If seekable was set, then so was mode
+                            if (store.data.file.seekable != null) {
+                                break :brk !bun.isRegularFile(store.data.file.mode);
                             }
                         }
                     }
 
-                    const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
-                        .result => |result| result,
-                        .err => |err| {
-                            this.system_error = err.toSystemError();
-                            this.errno = AsyncIO.asError(err.errno);
-                            if (this.system_error.?.path.isEmpty()) {
-                                this.system_error.?.path = if (this.file_blob.store.?.data.file.pathlike == .path)
-                                    bun.String.create(this.file_blob.store.?.data.file.pathlike.path.slice())
-                                else
-                                    bun.String.empty;
-                            }
-
-                            this.onFinish();
-                            return;
-                        },
-                    };
-
-                    break :brk stat.mode;
+                    // We opened the file descriptor with O_NONBLOCK, so we
+                    // shouldn't have to worry about blocking reads/writes
+                    break :brk false;
                 };
 
-                // Don't allow Bun.write() on a directory, as it is non-sensical.
-                if (std.os.S.ISDIR(this.file_mode)) {
-                    this.system_error = JSC.SystemError{
-                        .code = bun.String.static("EISDIR"),
-                        .message = bun.String.static("Directories cannot be written like files"),
-                        .syscall = bun.String.static("write"),
-                        .path = if (this.file_blob.store.?.data.file.pathlike == .path)
-                            bun.String.create(this.file_blob.store.?.data.file.pathlike.path.slice())
-                        else
-                            bun.String.empty,
-                        .fd = if (this.file_blob.store.?.data.file.pathlike == .fd)
-                            @intCast(this.file_blob.store.?.data.file.pathlike.fd)
-                        else
-                            -1,
-                    };
-
-                    this.errno = AsyncIO.asError(std.os.E.ISDIR);
-                    this.onFinish();
-                    return;
-                }
-
-                // We do not support offset currently.
+                // We have never supported offset in Bun.write().
                 // and properly adding support means we need to also support it
                 // with splice, sendfile, and the other cases.
-                //
                 //
                 // if (this.file_blob.offset > 0) {
                 //     // if we start at an offset in the file
@@ -2351,7 +2304,7 @@ pub const Blob = struct {
                 //     }
                 // }
 
-                if (!bun.isRegularFile(this.file_mode) and bun.isWritable(fd) == .not_ready) {
+                if (this.could_block and bun.isWritable(fd) == .not_ready) {
                     this.waitForWritable();
                     return;
                 }
@@ -2384,7 +2337,7 @@ pub const Blob = struct {
                         }
 
                         // Do not immediately attempt to write again if it's not a regular file.
-                        if (!bun.isRegularFile(this.file_mode) and bun.isWritable(this.opened_fd) == .not_ready) {
+                        if (this.could_block and bun.isWritable(this.opened_fd) == .not_ready) {
                             this.waitForWritable();
                             return;
                         }

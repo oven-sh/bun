@@ -5068,10 +5068,9 @@ pub const NodeFS = struct {
             .base64 => string: {
                 // Chunk size should be a multiple of 3 bytes to be able to split base64 calculation
                 const chunk_size = 16383;
-                const encoded_buffer_size = comptime Base64.encodeLenFromSize(chunk_size);
+                const encoded_chunk_size = comptime Base64.encodeLenFromSize(chunk_size);
                 var offset: usize = 0;
-                var base64_buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, encoded_buffer_size) catch @panic("oom");
-                const temp_buffer = bun.default_allocator.alloc(u8, encoded_buffer_size) catch @panic("oom");
+                const temp_buffer = bun.default_allocator.alloc(u8, encoded_chunk_size) catch @panic("oom");
 
                 defer bun.default_allocator.free(temp_buffer);
 
@@ -5086,10 +5085,9 @@ pub const NodeFS = struct {
                             return .{ .err = Syscall.Error.oom };
                         }
 
-                        base64_buffer.appendSlice(final_buffer) catch @panic("oom");
-                        defer buf.deinit();
+                        buf.replaceRange(offset, remaining_bytes, final_buffer) catch @panic("oom");
 
-                        break :string .{ .result = .{ .string = base64_buffer.items } };
+                        break :string .{ .result = .{ .string = buf.items } };
                     } else buf.items[offset..(offset + chunk_size)];
 
                     const encoding_result = Base64.encode(temp_buffer, chunk_to_be_encoded);
@@ -5097,14 +5095,8 @@ pub const NodeFS = struct {
                         return .{ .err = Syscall.Error.oom };
                     }
 
-                    const input_slice_to_deallocate = buf.items[offset .. offset + chunk_size];
-
-                    buf.items = buf.items[offset + chunk_size ..];
-                    buf.capacity -= chunk_size;
-
-                    bun.default_allocator.free(input_slice_to_deallocate);
-                    offset += chunk_size;
-                    base64_buffer.appendSlice(temp_buffer) catch @panic("oom");
+                    buf.replaceRange(offset, chunk_size, temp_buffer) catch @panic("oom");
+                    offset += encoded_chunk_size;
                 }
             },
             else => brk: {

@@ -149,6 +149,10 @@ pub const Waker = struct {
         return initWithFileDescriptor(allocator, @as(os.fd_t, @intCast(try std.os.eventfd(0, 0))));
     }
 
+    pub fn getFd(this: *const Waker) os.fd_t {
+        return this.fd;
+    }
+
     pub fn initWithFileDescriptor(_: std.mem.Allocator, fd: os.fd_t) Waker {
         return Waker{
             .fd = fd,

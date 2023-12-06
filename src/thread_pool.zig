@@ -690,10 +690,15 @@ pub const Thread = struct {
         };
         self.idle_queue.push(list);
     }
-
+    var counter: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
-        Output.Source.configureNamedThread("Bun Pool");
+        {
+            var counter_buf: [100]u8 = undefined;
+            const int = counter.fetchAdd(1, .SeqCst);
+            const named = std.fmt.bufPrintZ(&counter_buf, "Bun Pool {d}", .{int}) catch "Bun Pool";
+            Output.Source.configureNamedThread(named);
+        }
 
         var self_ = Thread{};
         var self = &self_;

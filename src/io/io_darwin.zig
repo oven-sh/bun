@@ -287,7 +287,7 @@ pub fn init(_: u12, _: u32, waker: Waker) !IO {
         .waker = waker,
     };
 }
-
+const Kevent64 = std.os.system.kevent64_s;
 pub const Waker = struct {
     kq: os.fd_t,
     machport: *anyopaque = undefined,
@@ -304,6 +304,10 @@ pub const Waker = struct {
             return;
         }
         this.has_pending_wake = true;
+    }
+
+    pub fn getFd(this: *const Waker) os.fd_t {
+        return this.kq;
     }
 
     pub fn wait(this: Waker) void {

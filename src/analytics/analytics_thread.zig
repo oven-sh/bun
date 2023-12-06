@@ -13,7 +13,7 @@ const C = bun.C;
 const sync = @import("../sync.zig");
 const std = @import("std");
 const HTTP = @import("root").bun.http;
-const NetworkThread = HTTP.NetworkThread;
+
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
@@ -420,7 +420,6 @@ fn readloop() anyerror!void {
     ) catch return;
 
     event_list.async_http.client.verbose = FeatureFlags.verbose_analytics;
-    NetworkThread.init() catch unreachable;
     // everybody's random should be random
     while (true) {
         // Wait for the next event by blocking

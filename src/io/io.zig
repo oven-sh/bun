@@ -26,10 +26,45 @@ pub const Loop = struct {
     active: usize = 0,
 
     var loop: Loop = undefined;
+    var has_loaded_loop: bool = false;
+
+    pub fn get() *Loop {
+        if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
+            loop = Loop{
+                .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
+            };
+            var thread = std.Thread.spawn(.{
+                .allocator = bun.default_allocator,
+
+                // smaller thread, since it's not doing much.
+                .stack_size = 1024 * 1024 * 2,
+            }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
+            thread.detach();
+        }
+        return &loop;
+    }
+
+    pub fn onSpawnIOThread() void {
+        loop.tick();
+    }
 
     pub fn schedule(this: *Loop, request: *Request) void {
+        std.debug.assert(!request.scheduled);
+        request.scheduled = true;
         this.pending.push(request);
         this.waker.wake();
+    }
+
+    pub fn tick(this: *Loop) void {
+        bun.Output.Source.configureNamedThread("IO Watcher");
+
+        if (comptime Environment.isLinux) {
+            this.tickEpoll();
+        } else if (comptime Environment.isMac) {
+            this.tickKqueue();
+        } else {
+            @compileError("TODO: implement poll for this platform");
+        }
     }
 
     pub fn tickEpoll(this: *Loop) void {
@@ -67,12 +102,9 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            switch (close.poll.unregisterWithFd(this, @intCast(close.fd))) {
-                                .result, .err => {
-                                    this.active -= 1;
-                                    close.onDone(request);
-                                },
-                            }
+                            close.poll.unregisterWithFd(this, @intCast(close.fd));
+                            this.active -= 1;
+                            close.onDone(request);
                         },
                         .timer => |timer| {
                             while (true) {
@@ -127,7 +159,7 @@ pub const Loop = struct {
             var events: [EventType]256 = undefined;
 
             const rc = linux.epoll_wait(
-                this.fd(),
+                @intCast(this.fd()),
                 &events,
                 @intCast(events.len),
                 timeout,
@@ -149,6 +181,10 @@ pub const Loop = struct {
         }
     }
 
+    pub fn fd(this: *const Loop) std.os.fd_t {
+        return this.waker.getFd();
+    }
+
     pub fn tickKqueue(this: *Loop) void {
         if (comptime !Environment.isMac) {
             @compileError("not implemented");
@@ -156,7 +192,7 @@ pub const Loop = struct {
 
         while (true) {
             var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.default_allocator);
-            var events_list: std.ArrayList(EventType) = std.ArrayList(EventType).initCapacity(stack_fallback.allocator, 256) catch unreachable;
+            var events_list: std.ArrayList(EventType) = std.ArrayList(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
             defer events_list.deinit();
 
             // Process pending requests
@@ -164,6 +200,7 @@ pub const Loop = struct {
                 var pending_batch = this.pending.popBatch();
                 var pending = pending_batch.iterator();
                 events_list.ensureUnusedCapacity(pending.batch.count) catch bun.outOfMemory();
+                @memset(std.mem.sliceAsBytes(events_list.items.ptr[0..events_list.capacity]), 0);
 
                 while (pending.next()) |request| {
                     switch (request.callback(request)) {
@@ -205,6 +242,7 @@ pub const Loop = struct {
                                 close.fd,
                                 &events_list.items.ptr[i],
                             );
+                            close.onDone(close.ctx);
                         },
                         .timer => |timer| {
                             while (true) {
@@ -277,11 +315,10 @@ pub const Loop = struct {
             this.update_now();
 
             assert(rc <= events_list.capacity);
-            const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..rc];
+            const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
 
             for (current_events) |event| {
-                const pollable: Pollable = Pollable.from(event.udata);
-                Poll.onUpdateKQueue(pollable.poll(), pollable.tag(), event);
+                Poll.onUpdateKQueue(event);
             }
         }
     }
@@ -328,6 +365,7 @@ const EventType = if (Environment.isLinux) linux.epoll_event else std.os.system.
 pub const Request = struct {
     next: ?*Request = null,
     callback: *const fn (*Request) Action,
+    scheduled: bool = false,
 
     pub const Queue = bun.UnboundedQueue(Request, .next);
 };
@@ -355,14 +393,32 @@ pub const Action = union(enum) {
     };
 };
 
+const ReadFile = bun.JSC.WebCore.Blob.Store.ReadFile;
+const WriteFile = bun.JSC.WebCore.Blob.Store.WriteFile;
+
 const Pollable = struct {
+    const Tag = enum(bun.TaggedPointer.Tag) {
+        ReadFile,
+        WriteFile,
+
+        pub fn Type(comptime T: Tag) type {
+            return switch (T) {
+                .ReadFile => ReadFile,
+                .WriteFile => WriteFile,
+            };
+        }
+    };
+
     value: bun.TaggedPointer,
 
-    const Tag = enum(bun.TaggedPointer.Tag) {};
     pub fn init(t: Tag, p: *Poll) Pollable {
         return Pollable{
             .value = bun.TaggedPointer.init(p, @intFromEnum(t)),
         };
+    }
+
+    pub fn from(int: u64) Pollable {
+        return Pollable{ .value = bun.TaggedPointer.from(int) };
     }
 
     pub fn poll(this: Pollable) *Poll {
@@ -371,6 +427,10 @@ const Pollable = struct {
 
     pub fn tag(this: Pollable) Tag {
         return @enumFromInt(this.value.data);
+    }
+
+    pub fn get(this: Pollable, comptime t: Tag) *Tag.Type(t) {
+        return this.value.get(Tag.Type(t));
     }
 
     pub fn ptr(this: Pollable) *anyopaque {
@@ -392,6 +452,24 @@ pub const Timer = struct {
     heap: heap.IntrusiveField(Timer) = .{},
 
     state: State = .PENDING,
+
+    tag: Tag = .TimerCallback,
+
+    pub const Tag = enum {
+        TimerCallback,
+
+        pub fn Type(comptime T: Tag) type {
+            return switch (T) {
+                .TimerCallback => TimerCallback,
+            };
+        }
+    };
+
+    const TimerCallback = struct {
+        callback: *const fn (*TimerCallback) Arm,
+        ctx: *anyopaque,
+        timer: Timer,
+    };
 
     pub const State = enum {
         /// The timer is waiting to be enabled.
@@ -428,10 +506,33 @@ pub const Timer = struct {
         return std.math.add(u64, s_ns, @as(u64, @intCast(self.next.tv_nsec))) catch
             return max;
     }
+
+    pub const Arm = union(enum) {
+        rearm: std.os.timespec,
+        disarm,
+    };
+
+    pub fn fire(this: *Timer) Arm {
+        switch (this.tag) {
+            inline else => |t| {
+                var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
+                return container.callback(container);
+            },
+        }
+    }
+
+    pub fn deinit(_: *Timer) void {}
 };
 
 pub const Poll = struct {
-    flags: Flags,
+    flags: Flags.Set = Flags.Set.initEmpty(),
+    generation_number: GenerationNumberInt = 0,
+
+    const GenerationNumberInt = if (Environment.isMac and Environment.allow_assert) u64 else u0;
+
+    var generation_number: GenerationNumberInt = 0;
+
+    pub const Tag = Pollable.Tag;
 
     pub const Flags = enum {
         // What are we asking the event loop about?
@@ -529,6 +630,7 @@ pub const Poll = struct {
             fd: bun.FileDescriptor,
             kqueue_event: *std.os.system.kevent64_s,
         ) void {
+            log("register({s}, {d})", .{ @tagName(action), fd });
             defer {
                 switch (comptime action) {
                     .readable => poll.flags.insert(Flags.poll_readable),
@@ -551,13 +653,15 @@ pub const Poll = struct {
                 }
             }
 
+            const one_shot_flag = std.os.system.EV_ONESHOT;
+
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
                     .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ generation_number, 0 },
                 },
@@ -566,7 +670,7 @@ pub const Poll = struct {
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ generation_number, 0 },
                 },
@@ -575,7 +679,7 @@ pub const Poll = struct {
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
                     .flags = std.c.EV_DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
@@ -583,7 +687,7 @@ pub const Poll = struct {
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
                     .flags = std.c.EV_DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else unreachable,
@@ -593,17 +697,56 @@ pub const Poll = struct {
         }
     };
 
-    pub fn unregisterWithFd(this: *Poll, fd: u64) JSC.Maybe(void) {}
+    pub fn unregisterWithFd(this: *Poll, watcher_fd: u64, fd: u64) void {
+        _ = linux.epoll_ctl(
+            watcher_fd,
+            linux.EPOLL.CTL_DEL,
+            @intCast(fd),
+            null,
+        );
+        this.flags.remove(.was_ever_registered);
+    }
 
     pub fn onUpdateKQueue(
-        this: *Poll,
         event: std.os.system.kevent64_s,
-    ) JSC.Maybe(void) {}
+    ) void {
+        if (event.filter == std.c.EVFILT_MACHPORT)
+            return;
+
+        const pollable = Pollable.from(event.udata);
+        const tag = pollable.tag();
+        const poll = pollable.poll();
+        switch (tag) {
+            inline else => |t| {
+                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                if (event.flags == std.c.EV_ERROR) {
+                    log("error({d}) = {d}", .{ event.ident, event.data });
+                    this.onIOError(bun.sys.Error.fromCode(@enumFromInt(event.data), .kevent));
+                } else {
+                    log("ready({d}) = {d}", .{ event.ident, event.data });
+                    this.onReady();
+                }
+            },
+        }
+    }
 
     pub fn onUpdateEpoll(
-        this: *Poll,
+        poll: *Poll,
+        tag: Pollable.Tag,
         event: linux.epoll_event,
-    ) JSC.Maybe(void) {}
+    ) JSC.Maybe(void) {
+        switch (tag) {
+            inline else => |t| {
+                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                if (event.events & linux.EPOLL.ERR != 0) {
+                    const errno = std.os.linux.getErrno(event.events);
+                    this.onIOError(bun.sys.Error.fromCode(errno, .epoll));
+                } else {
+                    this.onReady();
+                }
+            },
+        }
+    }
 
     pub fn registerForEpoll(this: *Poll, loop: *Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
@@ -642,58 +785,10 @@ pub const Poll = struct {
                 this.deactivate(loop);
                 return errno;
             }
-        } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-
-            // output events only include change errors
-            const KEVENT_FLAG_ERROR_EVENTS = 0x000002;
-
-            // The kevent() system call returns the number of events placed in
-            // the eventlist, up to the value given by nevents.  If the time
-            // limit expires, then kevent() returns 0.
-            const rc = rc: {
-                while (true) {
-                    const rc = std.os.system.kevent64(
-                        watcher_fd,
-                        &changelist,
-                        1,
-                        // The same array may be used for the changelist and eventlist.
-                        &changelist,
-                        // we set 0 here so that if we get an error on
-                        // registration, it becomes errno
-                        0,
-                        KEVENT_FLAG_ERROR_EVENTS,
-                        &timeout,
-                    );
-
-                    if (std.c.getErrno(rc) == .INTR) continue;
-                    break :rc rc;
-                }
-            };
-
-            this.flags.insert(.was_ever_registered);
-
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR and changelist[0].data != 0) {
-                return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-
-            const errno = std.c.getErrno(rc);
-
-            if (errno != .SUCCESS) {
-                this.deactivate(loop);
-                return JSC.Maybe(void){
-                    .err = bun.sys.Error.fromCode(errno, .kqueue),
-                };
-            }
         } else {
-            bun.todo(@src(), {});
+            @compileError("epoll not supported on this platform");
         }
+
         this.flags.insert(switch (flag) {
             .readable => .poll_readable,
             .process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
@@ -706,3 +801,5 @@ pub const Poll = struct {
         return JSC.Maybe(void).success;
     }
 };
+
+pub const retry = if (Environment.isMac) std.os.system.E.AGAIN else std.os.system.E.WOULDBLOCK;

@@ -4,11 +4,10 @@ const bun = @import("root").bun;
 const MimeType = http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const http = @import("root").bun.http;
-const NetworkThread = http.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
-
+const io = bun.io;
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
@@ -1540,7 +1539,6 @@ pub const Blob = struct {
 
         pub fn FileOpenerMixin(comptime This: type) type {
             return struct {
-                open_completion: AsyncIO.Completion = undefined,
                 context: *This,
 
                 const State = @This();
@@ -1600,61 +1598,6 @@ pub const Blob = struct {
 
                     Callback(this, this.getFdImpl());
                 }
-
-                const WrappedOpenCallback = *const fn (*State, *http.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
-                fn OpenCallbackWrapper(comptime Callback: OpenCallback) WrappedOpenCallback {
-                    return struct {
-                        const callback = Callback;
-                        const StateHolder = State;
-                        pub fn onOpen(state: *State, completion: *http.NetworkThread.Completion, result: AsyncIO.OpenError!bun.FileDescriptor) void {
-                            var this = state.context;
-                            var path_buffer = completion.operation.open.path;
-                            defer bun.default_allocator.free(bun.span(path_buffer));
-                            defer bun.default_allocator.destroy(state);
-                            if (comptime Environment.isPosix) {
-                                this.opened_fd = result catch {
-                                    this.errno = AsyncIO.asError(-completion.result);
-                                    // do not use path_buffer here because it is a temporary
-                                    var path_string = if (@hasField(This, "file_store"))
-                                        this.file_store.pathlike.path
-                                    else
-                                        this.file_blob.store.?.data.file.pathlike.path;
-
-                                    this.system_error = (bun.sys.Error{
-                                        .errno = @as(bun.sys.Error.Int, @intCast(-completion.result)),
-                                        .path = path_string.slice(),
-                                        .syscall = .open,
-                                    }).toSystemError();
-
-                                    callback(this, null_fd);
-                                    return;
-                                };
-                            } else if (comptime Environment.isWindows) {
-                                this.opened_fd = result catch |err| {
-                                    this.errno = err;
-                                    // do not use path_buffer here because it is a temporary
-                                    var path_string = if (@hasField(This, "file_store"))
-                                        this.file_store.pathlike.path
-                                    else
-                                        this.file_blob.store.?.data.file.pathlike.path;
-
-                                    this.system_error = (bun.sys.Error{
-                                        .errno = @as(bun.sys.Error.Int, @intFromEnum(bun.C.SystemErrno.fromError(err).?)),
-                                        .path = path_string.slice(),
-                                        .syscall = .open,
-                                    }).toSystemError();
-
-                                    callback(this, null_fd);
-                                    return;
-                                };
-                            } else {
-                                @compileError("Unsupported platform");
-                            }
-
-                            callback(this, this.opened_fd);
-                        }
-                    }.onOpen;
-                }
             };
         }
 
@@ -1662,11 +1605,53 @@ pub const Blob = struct {
             return struct {
                 const Closer = @This();
 
-                pub fn doClose(this: *This) void {
+                fn scheduleClose(request: *io.Request) io.Action {
+                    var this: *This = @fieldParentPtr(This, "io_request", request);
+                    return io.Action{
+                        .close = .{
+                            .ctx = this,
+                            .fd = this.opened_fd,
+                            .onDone = @ptrCast(&onIORequestClosed),
+                            .poll = &this.io_poll,
+                            .tag = This.io_tag,
+                        },
+                    };
+                }
+
+                fn onIORequestClosed(this: *This) void {
+                    this.io_poll.flags.remove(.was_ever_registered);
+                    this.task = .{ .callback = &onCloseIORequest };
+                    bun.JSC.WorkPool.schedule(&this.task);
+                }
+
+                fn onCloseIORequest(task: *JSC.WorkPoolTask) void {
+                    var this: *This = @fieldParentPtr(This, "task", task);
+                    std.debug.assert(!this.doClose());
+
+                    var io_task = this.io_task orelse bun.unreachablePanic("io_task should not be null", .{});
+                    this.io_task = null;
+                    io_task.onFinish();
+                }
+
+                pub fn doClose(
+                    this: *This,
+                ) bool {
                     const fd = this.opened_fd;
                     std.debug.assert(fd != null_fd);
 
-                    _ = bun.sys.close(fd);
+                    if (this.io_poll.flags.contains(.was_ever_registered)) {
+                        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
+                        if (!this.io_request.scheduled)
+                            io.Loop.get().schedule(&this.io_request);
+                        return true;
+                    }
+
+                    this.opened_fd = null_fd;
+
+                    if (fd > 2)
+                        _ = bun.sys.close(fd);
+
+                    return false;
                 }
             };
         }
@@ -1678,18 +1663,19 @@ pub const Blob = struct {
             offset: SizeType = 0,
             max_length: SizeType = Blob.max_size,
             opened_fd: bun.FileDescriptor = null_fd,
-            read_completion: http.NetworkThread.Completion = undefined,
             read_len: SizeType = 0,
             read_off: SizeType = 0,
             read_eof: bool = false,
             size: SizeType = 0,
             buffer: []u8 = undefined,
-            task: http.NetworkThread.Task = undefined,
+            task: bun.ThreadPool.Task = undefined,
             system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnReadFileCallback = undefined,
             io_task: ?*ReadFileTask = null,
+            io_poll: bun.io.Poll = .{},
+            io_request: bun.io.Request = .{ .callback = &onRequestReadable },
 
             pub const Read = struct {
                 buf: []u8,
@@ -1742,23 +1728,102 @@ pub const Blob = struct {
                 return try ReadFile.createWithCtx(allocator, store, @as(*anyopaque, @ptrCast(context)), Handler.run, off, max_len);
             }
 
-            pub fn doRead(this: *ReadFile) void {
-                var aio = &AsyncIO.global;
+            pub const io_tag = io.Poll.Tag.ReadFile;
 
-                var remaining = this.buffer[this.read_off..];
-                this.read_len = 0;
-                aio.read(
-                    *ReadFile,
-                    this,
-                    onRead,
-                    &this.read_completion,
-                    this.opened_fd,
-                    remaining[0..@min(remaining.len, this.max_length - this.read_off)],
-                    this.offset + this.read_off,
-                );
+            pub fn onReadable(request: *io.Request) void {
+                var this: *ReadFile = @fieldParentPtr(ReadFile, "io_request", request);
+                this.onReady();
             }
 
-            pub const ReadFileTask = JSC.IOTask(@This());
+            pub fn onReady(this: *ReadFile) void {
+                this.task.callback = &doReadLoopTask;
+                JSC.WorkPool.schedule(&this.task);
+            }
+
+            pub fn onIOError(this: *ReadFile, err: bun.sys.Error) void {
+                this.errno = AsyncIO.asError(err.errno);
+                this.system_error = err.toSystemError();
+                this.task.callback = &doReadLoopTask;
+                JSC.WorkPool.schedule(&this.task);
+            }
+
+            pub fn onRequestReadable(request: *io.Request) io.Action {
+                request.scheduled = false;
+                var this: *ReadFile = @fieldParentPtr(ReadFile, "io_request", request);
+                return io.Action{
+                    .readable = .{
+                        .onError = @ptrCast(&onIOError),
+                        .ctx = this,
+                        .fd = this.opened_fd,
+                        .poll = &this.io_poll,
+                        .tag = ReadFile.io_tag,
+                    },
+                };
+            }
+
+            pub fn waitForReadable(this: *ReadFile) void {
+                @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestReadable, .SeqCst);
+                if (!this.io_request.scheduled)
+                    io.Loop.get().schedule(&this.io_request);
+            }
+
+            pub fn doRead(this: *ReadFile) bool {
+                var remaining = this.buffer[this.read_off..];
+                remaining = remaining[0..@min(remaining.len, this.max_length - this.read_off)];
+                this.read_len = 0;
+
+                const result: JSC.Maybe(usize) = brk: {
+                    if (comptime Environment.isPosix) {
+                        if (std.os.S.ISSOCK(this.file_store.mode)) {
+                            break :brk bun.sys.recv(this.opened_fd, remaining, std.os.SOCK.NONBLOCK);
+                        }
+                    }
+
+                    if (!bun.isRegularFile(this.file_store.mode)) {
+                        break :brk bun.sys.read(this.opened_fd, remaining);
+                    }
+
+                    break :brk bun.sys.pread(this.opened_fd, remaining, this.read_off + this.offset);
+                };
+
+                while (true) {
+                    switch (result) {
+                        .result => |res| {
+                            this.read_len = @truncate(res);
+                            this.read_eof = res == 0;
+                        },
+                        .err => |err| {
+                            switch (err.getErrno()) {
+                                bun.io.retry => {
+                                    if (bun.isRegularFile(this.file_store.mode)) {
+                                        // regular files cannot use epoll.
+                                        // this is fine on kqueue, but not on epoll.
+                                        continue;
+                                    }
+                                    this.waitForReadable();
+                                    return false;
+                                },
+                                else => {
+                                    this.errno = AsyncIO.asError(err.errno);
+                                    this.system_error = err.toSystemError();
+                                    if (this.system_error.?.path.isEmpty()) {
+                                        this.system_error.?.path = if (this.file_store.pathlike == .path)
+                                            bun.String.create(this.file_store.pathlike.path.slice())
+                                        else
+                                            bun.String.empty;
+                                    }
+                                    return false;
+                                },
+                            }
+                        },
+                    }
+                    break;
+                }
+
+                return true;
+            }
+
+            pub const ReadFileTask = JSC.WorkTask(@This());
 
             pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
                 var cb = this.onCompleteCallback;
@@ -1797,35 +1862,6 @@ pub const Blob = struct {
                 this.runAsync(task);
             }
 
-            pub fn onRead(this: *ReadFile, completion: *http.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-                defer this.doReadLoop();
-                const read_len = @as(SizeType, @truncate(result catch |err| {
-                    if (@hasField(http.NetworkThread.Completion, "result")) {
-                        this.errno = AsyncIO.asError(-completion.result);
-                        this.system_error = (bun.sys.Error{
-                            .errno = @as(bun.sys.Error.Int, @intCast(-completion.result)),
-                            .syscall = .read,
-                        }).toSystemError();
-                    } else {
-                        this.system_error = JSC.SystemError{
-                            .code = bun.String.static(bun.asByteSlice(@errorName(err))),
-                            .path = if (this.file_store.pathlike == .path)
-                                bun.String.create(this.file_store.pathlike.path.slice())
-                            else
-                                bun.String.empty,
-                            .syscall = bun.String.static("read"),
-                        };
-
-                        this.errno = err;
-                    }
-
-                    this.read_len = 0;
-                    return;
-                }));
-                this.read_eof = read_len == 0;
-                this.read_len = read_len;
-            }
-
             fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
                 this.io_task = task;
 
@@ -1839,12 +1875,15 @@ pub const Blob = struct {
             fn onFinish(this: *ReadFile) void {
                 const fd = this.opened_fd;
                 const file = &this.file_store;
-                const needs_close = fd != null_fd and file.pathlike == .path and fd > 2;
+                const needs_close = file.pathlike == .path or fd > 2;
 
                 this.size = @max(this.read_len, this.size);
 
                 if (needs_close) {
-                    this.doClose();
+                    if (this.doClose()) {
+                        // we have to wait for the close to finish
+                        return;
+                    }
                 }
 
                 if (this.io_task) |io_task| {
@@ -1920,28 +1959,81 @@ pub const Blob = struct {
                     this.onFinish();
                 }
 
-                this.buffer = bun.default_allocator.alloc(u8, this.size) catch |err| {
+                // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
+                this.buffer = bun.default_allocator.alloc(u8, this.size + 16) catch |err| {
                     this.errno = err;
                     this.onFinish();
                     return;
                 };
                 this.read_len = 0;
+
+                // If it's not a regular file, it might be something
+                // which would block on the next read. So we should
+                // avoid immediately reading again until the next time
+                // we're scheduled to read.
+                //
+                // An example of where this happens is stdin.
+                //
+                //    await Bun.stdin.text();
+                //
+                // If we immediately call read(), it will block until stdin is
+                // readable.
+                if (!bun.isRegularFile(this.file_store.mode)) {
+                    if (bun.isReadable(fd) == .not_ready) {
+                        this.waitForReadable();
+                        return;
+                    }
+                }
+
+                this.doReadLoop();
+            }
+
+            fn doReadLoopTask(task: *JSC.WorkPoolTask) void {
+                var this: *ReadFile = @fieldParentPtr(ReadFile, "task", task);
                 this.doReadLoop();
             }
 
             fn doReadLoop(this: *ReadFile) void {
-                this.read_off += this.read_len;
-                var remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
+                while (true) {
+                    // Consume the amount we read. `doRead()` will update `this.read_len` to 0.
+                    this.read_off += this.read_len;
 
-                if (remain.len > 0 and this.errno == null and !this.read_eof) {
-                    this.doRead();
-                    return;
+                    const remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
+
+                    if (remain.len > 0 and this.errno == null and !this.read_eof) {
+                        if (!this.doRead()) {
+                            // Stop reading, we errored or need to wait for it to become readable.
+                            return;
+                        }
+
+                        // If it's not a regular file, it might be something
+                        // which would block on the next read. So we should
+                        // avoid immediately reading again until the next time
+                        // we're scheduled to read.
+                        //
+                        // An example of where this happens is stdin.
+                        //
+                        //    await Bun.stdin.text();
+                        //
+                        // If we immediately call read(), it will block until stdin is
+                        // readable.
+                        if (!bun.isRegularFile(this.file_store.mode) and bun.isReadable(this.opened_fd) == .not_ready) {
+                            
+                            this.waitForReadable();
+                            return;
+                        }
+
+                        // There can be more to read
+                        continue;
+                    }
+
+                    // We are done reading.
+                    _ = bun.default_allocator.resize(this.buffer, this.read_off);
+                    this.buffer = this.buffer[0..this.read_off];
+                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+                    this.onFinish();
+                    break;
                 }
-
-                _ = bun.default_allocator.resize(this.buffer, this.read_off);
-                this.buffer = this.buffer[0..this.read_off];
-                this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
-                this.onFinish();
             }
         };
 
@@ -1952,9 +2044,10 @@ pub const Blob = struct {
             opened_fd: bun.FileDescriptor = null_fd,
             system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
-            write_completion: http.NetworkThread.Completion = undefined,
-            task: http.NetworkThread.Task = undefined,
+            task: bun.ThreadPool.Task = undefined,
             io_task: ?*WriteFileTask = null,
+            io_poll: bun.io.Poll = .{},
+            io_request: bun.io.Request = .{ .callback = &onRequestWritable },
 
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnWriteFileCallback = undefined,
@@ -1962,12 +2055,50 @@ pub const Blob = struct {
 
             pub const ResultType = SystemError.Maybe(SizeType);
             pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
+            pub const io_tag = io.Poll.Tag.WriteFile;
 
             pub usingnamespace FileOpenerMixin(WriteFile);
             pub usingnamespace FileCloserMixin(WriteFile);
 
             // Do not open with APPEND because we may use pwrite()
-            pub const open_flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+            pub const open_flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC | std.os.O.NONBLOCK;
+
+            pub fn onWritable(request: *io.Request) void {
+                var this: *WriteFile = @fieldParentPtr(WriteFile, "io_request", request);
+                this.onReady();
+            }
+
+            pub fn onReady(this: *WriteFile) void {
+                this.task.callback = &doWriteLoopTask;
+                JSC.WorkPool.schedule(&this.task);
+            }
+
+            pub fn onIOError(this: *WriteFile, err: bun.sys.Error) void {
+                this.errno = AsyncIO.asError(err.errno);
+                this.system_error = err.toSystemError();
+                this.task.callback = &doWriteLoopTask;
+                JSC.WorkPool.schedule(&this.task);
+            }
+
+            pub fn onRequestWritable(request: *io.Request) io.Action {
+                request.scheduled = false;
+                var this: *WriteFile = @fieldParentPtr(WriteFile, "io_request", request);
+                return io.Action{
+                    .writable = .{
+                        .onError = @ptrCast(&onIOError),
+                        .ctx = this,
+                        .fd = this.opened_fd,
+                        .poll = &this.io_poll,
+                        .tag = WriteFile.io_tag,
+                    },
+                };
+            }
+
+            pub fn waitForWritable(this: *WriteFile) void {
+                @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestWritable, .SeqCst);
+                if (!this.io_request.scheduled)
+                    io.Loop.get().schedule(&this.io_request);
+            }
 
             pub fn createWithCtx(
                 allocator: std.mem.Allocator,
@@ -2015,23 +2146,55 @@ pub const Blob = struct {
                 this: *WriteFile,
                 buffer: []const u8,
                 file_offset: u64,
-            ) void {
-                var aio = &AsyncIO.global;
+            ) bool {
                 this.wrote = 0;
                 const fd = this.opened_fd;
                 std.debug.assert(fd != null_fd);
-                aio.write(
-                    *WriteFile,
-                    this,
-                    onWrite,
-                    &this.write_completion,
-                    fd,
-                    buffer,
-                    if (fd > 2) file_offset else 0,
-                );
+
+                const result: JSC.Maybe(usize) = brk: {
+                    if (comptime Environment.isPosix) {
+                        if (std.os.S.ISSOCK(this.file_blob.store.?.data.file.mode)) {
+                            break :brk bun.sys.send(fd, buffer, std.os.SOCK.NONBLOCK);
+                        }
+                    }
+
+                    if (!bun.isRegularFile(this.file_blob.store.?.data.file.mode))
+                        break :brk bun.sys.write(fd, buffer);
+
+                    break :brk bun.sys.pwrite(fd, buffer, @intCast(file_offset));
+                };
+
+                while (true) {
+                    switch (result) {
+                        .result => |res| {
+                            this.wrote = res;
+                        },
+                        .err => |err| {
+                            switch (err.getErrno()) {
+                                bun.io.retry => {
+                                    if (bun.isRegularFile(this.file_blob.store.?.data.file.mode)) {
+                                        // regular files cannot use epoll.
+                                        // this is fine on kqueue, but not on epoll.
+                                        continue;
+                                    }
+                                    this.waitForWritable();
+                                    return false;
+                                },
+                                else => {
+                                    this.errno = AsyncIO.asError(err.getErrno());
+                                    this.system_error = err.toSystemError();
+                                    return false;
+                                },
+                            }
+                        },
+                    }
+                    break;
+                }
+
+                return true;
             }
 
-            pub const WriteFileTask = JSC.IOTask(@This());
+            pub const WriteFileTask = JSC.WorkTask(@This());
 
             pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) void {
                 var cb = this.onCompleteCallback;
@@ -2057,31 +2220,18 @@ pub const Blob = struct {
                 this.runAsync();
             }
 
-            pub fn onWrite(this: *WriteFile, _: *http.NetworkThread.Completion, result: AsyncIO.WriteError!usize) void {
-                defer this.doWriteLoop();
-                this.wrote += @as(SizeType, @truncate(result catch |errno| {
-                    this.errno = errno;
-                    this.system_error = this.system_error orelse JSC.SystemError{
-                        .code = bun.String.static(bun.asByteSlice(@errorName(errno))),
-                        .syscall = bun.String.static("write"),
-                    };
-
-                    this.wrote = 0;
-                    return;
-                }));
-            }
-
             fn runAsync(this: *WriteFile) void {
                 this.getFd(runWithFD);
             }
 
             fn onFinish(this: *WriteFile) void {
                 const fd = this.opened_fd;
-                const file = this.file_blob.store.?.data.file;
-                const needs_close = fd != null_fd and file.pathlike == .path and fd > 2;
+                const needs_close = this.io_poll.flags.contains(.was_ever_registered) or fd != null_fd;
 
                 if (needs_close) {
-                    this.doClose();
+                    if (this.doClose()) {
+                        return;
+                    }
                 }
 
                 if (this.io_task) |io_task| {
@@ -2099,17 +2249,33 @@ pub const Blob = struct {
                 this.doWriteLoop();
             }
 
+            fn doWriteLoopTask(task: *JSC.WorkPoolTask) void {
+                var this: *WriteFile = @fieldParentPtr(WriteFile, "task", task);
+                this.doWriteLoop();
+            }
+
             fn doWriteLoop(this: *WriteFile) void {
-                var remain = this.bytes_blob.sharedView();
-                var file_offset = this.file_blob.offset;
+                while (true) {
+                    var remain = this.bytes_blob.sharedView();
+                    var file_offset = this.file_blob.offset;
 
-                const this_tick = file_offset + this.wrote;
-                remain = remain[@min(this.wrote, remain.len)..];
+                    const this_tick = file_offset + this.wrote;
+                    remain = remain[@min(this.wrote, remain.len)..];
 
-                if (remain.len > 0 and this.errno == null) {
-                    this.doWrite(remain, this_tick);
-                } else {
-                    this.onFinish();
+                    if (remain.len > 0 and this.errno == null) {
+                        if (!this.doWrite(remain, this_tick)) {
+                            // Stop writing, we errored or need to wait for it to become writable.
+                            return;
+                        }
+
+                        if (this.wrote == 0) {
+                            // we are done, we received EOF
+                            this.onFinish();
+                            return;
+                        }
+                    } else {
+                        this.onFinish();
+                    }
                 }
             }
         };

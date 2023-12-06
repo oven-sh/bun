@@ -41,7 +41,6 @@ const Lock = @import("../lock.zig").Lock;
 const URL = @import("../url.zig").URL;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const HTTPChannel = bun.http.HTTPChannel;
-const NetworkThread = bun.http.NetworkThread;
 
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;

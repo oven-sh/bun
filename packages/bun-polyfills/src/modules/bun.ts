@@ -48,13 +48,17 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '989a670682e8906b874000bbdfd79aad2933f4f2' satisfies typeof Bun.revision;
+export const revision = '798ca1ff8ceaef17f1e93812a0ac61d1d87a85b5' satisfies typeof Bun.revision;
 
-export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
-    const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
-    Error.captureStackTrace(err, gc);
-    throw err;
-})) satisfies typeof Bun.gc;
+export const gc = (
+    globalThis.gc
+        ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed))
+        : process.env.BUN_POLYFILLS_TEST_RUNNER ? () => 0 : (() => {
+            const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
+            Error.captureStackTrace(err, gc);
+            throw err;
+        })
+) satisfies typeof Bun.gc;
 
 //getter(bun, 'cwd', proc.cwd); //! Can't named export a getter
 export const origin = '' satisfies typeof Bun.origin;

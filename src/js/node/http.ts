@@ -879,153 +879,165 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   return true;
 }
 
-class OutgoingMessage extends Writable {
-  #headers;
-  headersSent = false;
-  sendDate = true;
-  req;
-  timeout;
-
-  #finished = false;
-  [kEndCalled] = false;
-
-  #fakeSocket;
-  #timeoutTimer?: Timer;
-  [kAbortController]: AbortController | null = null;
-
-  // Express "compress" package uses this
-  _implicitHeader() {}
-
-  // For compat with IncomingRequest
-  get headers() {
-    if (!this.#headers) return kEmptyObject;
-    return this.#headers.toJSON();
-  }
-
-  get shouldKeepAlive() {
-    return true;
-  }
-
-  get chunkedEncoding() {
-    return false;
-  }
-
-  set chunkedEncoding(value) {
-    // throw new Error('not implemented');
-  }
-
-  set shouldKeepAlive(value) {
-    // throw new Error('not implemented');
-  }
-
-  get useChunkedEncodingByDefault() {
-    return true;
-  }
-
-  set useChunkedEncodingByDefault(value) {
-    // throw new Error('not implemented');
-  }
-
-  get socket() {
-    return (this.#fakeSocket ??= new FakeSocket());
-  }
-
-  set socket(val) {
-    this.#fakeSocket = val;
-  }
-
-  get connection() {
-    return this.socket;
-  }
-
-  get finished() {
-    return this.#finished;
-  }
-
-  appendHeader(name, value) {
-    var headers = (this.#headers ??= new Headers());
-    headers.append(name, value);
-  }
-
-  flushHeaders() {}
-
-  getHeader(name) {
-    return getHeader(this.#headers, name);
-  }
-
-  getHeaders() {
-    if (!this.#headers) return kEmptyObject;
-    return this.#headers.toJSON();
-  }
-
-  getHeaderNames() {
-    var headers = this.#headers;
-    if (!headers) return [];
-    return Array.from(headers.keys());
-  }
-
-  removeHeader(name) {
-    if (!this.#headers) return;
-    this.#headers.delete(name);
-  }
-
-  setHeader(name, value) {
-    var headers = (this.#headers ??= new Headers());
-    headers.set(name, value);
-    return this;
-  }
-
-  hasHeader(name) {
-    if (!this.#headers) return false;
-    return this.#headers.has(name);
-  }
-
-  addTrailers(headers) {
-    throw new Error("not implemented");
-  }
-
-  [kClearTimeout]() {
-    if (this.#timeoutTimer) {
-      clearTimeout(this.#timeoutTimer);
-      this.removeAllListeners("timeout");
-      this.#timeoutTimer = undefined;
-    }
-  }
-
-  #onTimeout() {
-    this.#timeoutTimer = undefined;
-    this[kAbortController]?.abort();
-    this.emit("timeout");
-  }
-
-  setTimeout(msecs, callback) {
-    if (this.destroyed) return this;
-
-    this.timeout = msecs = validateMsecs(msecs, "msecs");
-
-    // Attempt to clear an existing timer in both cases -
-    //  even if it will be rescheduled we don't want to leak an existing timer.
-    clearTimeout(this.#timeoutTimer!);
-
-    if (msecs === 0) {
-      if (callback !== undefined) {
-        validateFunction(callback, "callback");
-        this.removeListener("timeout", callback);
-      }
-
-      this.#timeoutTimer = undefined;
-    } else {
-      this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref();
-
-      if (callback !== undefined) {
-        validateFunction(callback, "callback");
-        this.once("timeout", callback);
-      }
-    }
-
-    return this;
-  }
+function OutgoingMessage(options) {
+  Writable.$call(this, options);
+  this.headersSent = false;
+  this.sendDate = true;
+  setPrivate(this, "finished", false);
+  this[kEndCalled] = false;
+  this[kAbortController] = null;
 }
+
+Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
+Object.setPrototypeOf(OutgoingMessage, Writable);
+
+OutgoingMessage.prototype._implicitHeader = function () {};
+
+OutgoingMessage.prototype.appendHeader = function (name, value) {
+  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
+  var headers = getPrivate(this, "headers");
+  headers.append(name, value);
+};
+
+OutgoingMessage.prototype.flushHeaders = function () {};
+
+OutgoingMessage.prototype.getHeader = function (name) {
+  return getHeader(getPrivate(this, "headers"), name);
+};
+
+OutgoingMessage.prototype.getHeaders = function () {
+  if (!getPrivate(this, "headers")) return kEmptyObject;
+  return getPrivate(this, "headers").toJSON();
+};
+
+OutgoingMessage.prototype.getHeaderNames = function () {
+  var headers = getPrivate(this, "headers");
+  if (!headers) return [];
+  return Array.from(headers.keys());
+};
+
+OutgoingMessage.prototype.removeHeader = function (name) {
+  if (!getPrivate(this, "headers")) return;
+  getPrivate(this, "headers").delete(name);
+};
+
+OutgoingMessage.prototype.setHeader = function (name, value) {
+  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
+  var headers = getPrivate(this, "headers");
+  headers.set(name, value);
+  return this;
+};
+
+OutgoingMessage.prototype.hasHeader = function (name) {
+  if (!getPrivate(this, "headers")) return false;
+  return getPrivate(this, "headers").has(name);
+};
+
+OutgoingMessage.prototype.addTrailers = function (headers) {
+  throw new Error("not implemented");
+};
+
+OutgoingMessage.prototype[kClearTimeout] = function () {
+  if (getPrivate(this, "timeoutTimer")) {
+    clearTimeout(getPrivate(this, "timeoutTimer"));
+    this.removeAllListeners("timeout");
+    setPrivate(this, "timeoutTimer", undefined);
+  }
+};
+
+function onTimeout() {
+  setPrivate(this, "timeoutTimer", undefined);
+  getPrivate(this, kAbortController)?.abort();
+  this.emit("timeout");
+}
+
+OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
+  if (this.destroyed) return this;
+
+  this.timeout = msecs = validateMsecs(msecs, "msecs");
+
+  // Attempt to clear an existing timer in both cases -
+  //  even if it will be rescheduled we don't want to leak an existing timer.
+  clearTimeout(getPrivate(this, "timeoutTimer"));
+
+  if (msecs === 0) {
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+      this.removeListener("timeout", callback);
+    }
+
+    setPrivate(this, "timeoutTimer", undefined);
+  } else {
+    setPrivate(this, "timeoutTimer", setTimeout(onTimeout.bind(this), msecs).unref());
+
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+      this.once("timeout", callback);
+    }
+  }
+
+  return this;
+};
+
+Object.defineProperty(OutgoingMessage.prototype, "headers", {
+  get: function () {
+    if (!getPrivate(this, "headers")) return kEmptyObject;
+    return getPrivate(this, "headers").toJSON();
+  },
+});
+
+Object.defineProperty(OutgoingMessage.prototype, "chunkedEncoding", {
+  get: function () {
+    return false;
+  },
+
+  set: function (value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(OutgoingMessage.prototype, "shouldKeepAlive", {
+  get: function () {
+    return true;
+  },
+
+  set: function (value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(OutgoingMessage.prototype, "useChunkedEncodingByDefault", {
+  get: function () {
+    return true;
+  },
+
+  set: function (value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(OutgoingMessage.prototype, "socket", {
+  get: function () {
+    setPrivate(this, "fakeSocket", getPrivate(this, "fakeSocket") ?? new FakeSocket());
+    return getPrivate(this, "fakeSocket");
+  },
+
+  set: function (val) {
+    setPrivate(this, "fakeSocket", val);
+  },
+});
+
+Object.defineProperty(OutgoingMessage.prototype, "connection", {
+  get: function () {
+    return this.socket;
+  },
+});
+
+Object.defineProperty(OutgoingMessage.prototype, "finished", {
+  get: function () {
+    return getPrivate(this, "finished");
+  },
+});
 
 function emitCloseNT(self) {
   if (!self._closed) {
@@ -1060,246 +1072,247 @@ function onServerResponseClose() {
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
-class ServerResponse extends OutgoingMessage {
-  declare _writableState: any;
-
-  constructor(req, reply) {
-    super();
-    this.req = req;
-    this._reply = reply;
-    this.sendDate = true;
-    this.statusCode = 200;
-    this.headersSent = false;
-    this.statusMessage = undefined;
-    this.#controller = undefined;
-    this.#firstWrite = undefined;
-    this._writableState.decodeStrings = false;
-    this.#deferred = undefined;
-
-    // this is matching node's behaviour
-    // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
-    if (req.method === "HEAD") this._hasBody = false;
-  }
-
-  req;
-  _reply;
-  sendDate;
-  statusCode;
-  #headers;
-  headersSent = false;
-  statusMessage;
-  #controller;
-  #firstWrite;
-  _sent100 = false;
-  _defaultKeepAlive = false;
-  _removedConnection = false;
-  _removedContLen = false;
-  _hasBody = true;
-  #deferred: (() => void) | undefined = undefined;
-  #finished = false;
-  // Express "compress" package uses this
-  _implicitHeader() {
-    // @ts-ignore
-    this.writeHead(this.statusCode);
-  }
-
-  _write(chunk, encoding, callback) {
-    if (!this.#firstWrite && !this.headersSent) {
-      this.#firstWrite = chunk;
-      callback();
-      return;
-    }
-
-    this.#ensureReadableStreamController(controller => {
-      controller.write(chunk);
-      callback();
-    });
-  }
-
-  _writev(chunks, callback) {
-    if (chunks.length === 1 && !this.headersSent && !this.#firstWrite) {
-      this.#firstWrite = chunks[0].chunk;
-      callback();
-      return;
-    }
-
-    this.#ensureReadableStreamController(controller => {
-      for (const chunk of chunks) {
-        controller.write(chunk.chunk);
-      }
-
-      callback();
-    });
-  }
-
-  #ensureReadableStreamController(run) {
-    var thisController = this.#controller;
-    if (thisController) return run(thisController);
-    this.headersSent = true;
-    var firstWrite = this.#firstWrite;
-    this.#firstWrite = undefined;
-    this._reply(
-      new Response(
-        new ReadableStream({
-          type: "direct",
-          pull: controller => {
-            this.#controller = controller;
-            if (firstWrite) controller.write(firstWrite);
-            firstWrite = undefined;
-            run(controller);
-            if (!this.#finished) {
-              return new Promise(resolve => {
-                this.#deferred = resolve;
-              });
-            }
-          },
-        }),
-        {
-          headers: this.#headers,
-          status: this.statusCode,
-          statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-        },
-      ),
-    );
-  }
-
-  #drainHeadersIfObservable() {
-    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn) {
-      return;
-    }
-
-    this._implicitHeader();
-  }
-
-  _final(callback) {
-    if (!this.headersSent) {
-      var data = this.#firstWrite || "";
-      this.#firstWrite = undefined;
-      this.#finished = true;
-      this.#drainHeadersIfObservable();
-      this._reply(
-        new Response(data, {
-          headers: this.#headers,
-          status: this.statusCode,
-          statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-        }),
-      );
-      callback && callback();
-      return;
-    }
-
-    this.#finished = true;
-    this.#ensureReadableStreamController(controller => {
-      controller.end();
-
-      callback();
-      var deferred = this.#deferred;
-      if (deferred) {
-        this.#deferred = undefined;
-        deferred();
-      }
-    });
-  }
-
-  writeProcessing() {
-    throw new Error("not implemented");
-  }
-
-  addTrailers(headers) {
-    throw new Error("not implemented");
-  }
-
-  assignSocket(socket) {
-    if (socket._httpMessage) {
-      throw new ERR_HTTP_SOCKET_ASSIGNED();
-    }
-    socket._httpMessage = this;
-    socket.on("close", onServerResponseClose);
-    this.socket = socket;
-    this.emit("socket", socket);
-  }
-
-  detachSocket(socket) {
-    throw new Error("not implemented");
-  }
-
-  writeContinue(callback) {
-    throw new Error("not implemented");
-  }
-
-  setTimeout(msecs, callback) {
-    throw new Error("not implemented");
-  }
-
-  get shouldKeepAlive() {
-    return true;
-  }
-
-  get chunkedEncoding() {
-    return false;
-  }
-
-  set chunkedEncoding(value) {
-    // throw new Error('not implemented');
-  }
-
-  set shouldKeepAlive(value) {
-    // throw new Error('not implemented');
-  }
-
-  get useChunkedEncodingByDefault() {
-    return true;
-  }
-
-  set useChunkedEncodingByDefault(value) {
-    // throw new Error('not implemented');
-  }
-
-  appendHeader(name, value) {
-    var headers = (this.#headers ??= new Headers());
-    headers.append(name, value);
-  }
-
-  flushHeaders() {}
-
-  getHeader(name) {
-    return getHeader(this.#headers, name);
-  }
-
-  getHeaders() {
-    var headers = this.#headers;
-    if (!headers) return kEmptyObject;
-    return headers.toJSON();
-  }
-
-  getHeaderNames() {
-    var headers = this.#headers;
-    if (!headers) return [];
-    return Array.from(headers.keys());
-  }
-
-  removeHeader(name) {
-    if (!this.#headers) return;
-    this.#headers.delete(name);
-  }
-
-  setHeader(name, value) {
-    var headers = (this.#headers ??= new Headers());
-    setHeader(headers, name, value);
-    return this;
-  }
-
-  hasHeader(name) {
-    if (!this.#headers) return false;
-    return this.#headers.has(name);
-  }
-
-  writeHead(statusCode, statusMessage, headers) {
-    _writeHead(statusCode, statusMessage, headers, this);
-
-    return this;
-  }
+const privateAttribute = Symbol("privateAttribute");
+function getPrivate(obj, key) {
+  return obj[privateAttribute]?.[key];
 }
+function setPrivate(obj, key, value) {
+  obj[privateAttribute] = obj[privateAttribute] || {};
+  obj[privateAttribute][key] = value;
+}
+function ServerResponse(req, reply) {
+  OutgoingMessage.$call(this, reply);
+  this.req = req;
+  this._reply = reply;
+  this.sendDate = true;
+  this.statusCode = 200;
+  this.headersSent = false;
+  this.statusMessage = undefined;
+  setPrivate(this, "controller", undefined);
+  setPrivate(this, "firstWrite", undefined);
+  this._writableState.decodeStrings = false;
+  setPrivate(this, "deferred", undefined);
+
+  this._sent100 = false;
+  this._defaultKeepAlive = false;
+  this._removedConnection = false;
+  this._removedContLen = false;
+  this._hasBody = true;
+  setPrivate(this, "finished", false);
+
+  // this is matching node's behaviour
+  // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
+  if (req.method === "HEAD") this._hasBody = false;
+}
+Object.setPrototypeOf((ServerResponse.prototype = {}), OutgoingMessage.prototype);
+Object.setPrototypeOf(ServerResponse, OutgoingMessage);
+
+ServerResponse.prototype._implicitHeader = function () {
+  // @ts-ignore
+  this.writeHead(this.statusCode);
+};
+
+ServerResponse.prototype._write = function (chunk, encoding, callback) {
+  if (!getPrivate(this, "firstWrite") && !this.headersSent) {
+    setPrivate(this, "firstWrite", chunk);
+    callback();
+    return;
+  }
+
+  ensureReadableStreamController.$call(this, controller => {
+    controller.write(chunk);
+    callback();
+  });
+};
+
+ServerResponse.prototype._writev = function (chunks, callback) {
+  if (chunks.length === 1 && !this.headersSent && !getPrivate(this, "firstWrite")) {
+    setPrivate(this, "firstWrite", chunks[0].chunk);
+    callback();
+    return;
+  }
+
+  ensureReadableStreamController.$call(this, controller => {
+    for (const chunk of chunks) {
+      controller.write(chunk.chunk);
+    }
+
+    callback();
+  });
+};
+
+function ensureReadableStreamController(run) {
+  const thisController = getPrivate(this, "controller");
+  if (thisController) return run(thisController);
+  this.headersSent = true;
+  let firstWrite = getPrivate(this, "firstWrite");
+  setPrivate(this, "controller", undefined);
+  this._reply(
+    new Response(
+      new ReadableStream({
+        type: "direct",
+        pull: controller => {
+          setPrivate(this, "controller", controller);
+          if (firstWrite) controller.write(firstWrite);
+          firstWrite = undefined;
+          run(controller);
+          if (!getPrivate(this, "finished")) {
+            return new Promise(resolve => {
+              setPrivate(this, "deferred", resolve);
+            });
+          }
+        },
+      }),
+      {
+        headers: getPrivate(this, "headers"),
+        status: this.statusCode,
+        statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
+      },
+    ),
+  );
+}
+
+function drainHeadersIfObservable() {
+  if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn) {
+    return;
+  }
+
+  this._implicitHeader();
+}
+
+ServerResponse.prototype._final = function (callback) {
+  if (!this.headersSent) {
+    var data = getPrivate(this, "firstWrite") || "";
+    setPrivate(this, "firstWrite", undefined);
+    setPrivate(this, "finished", true);
+    drainHeadersIfObservable.$call(this);
+    this._reply(
+      new Response(data, {
+        headers: getPrivate(this, "headers"),
+        status: this.statusCode,
+        statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
+      }),
+    );
+    callback && callback();
+    return;
+  }
+
+  setPrivate(this, "finished", true);
+  ensureReadableStreamController.$call(this, controller => {
+    controller.end();
+
+    callback();
+    const deferred = getPrivate(this, "deferred");
+    if (deferred) {
+      setPrivate(this, "deferred", undefined);
+      deferred();
+    }
+  });
+};
+
+ServerResponse.prototype.writeProcessing = function () {
+  throw new Error("not implemented");
+};
+
+ServerResponse.prototype.addTrailers = function (headers) {
+  throw new Error("not implemented");
+};
+
+ServerResponse.prototype.assignSocket = function (socket) {
+  if (socket._httpMessage) {
+    throw ERR_HTTP_SOCKET_ASSIGNED();
+  }
+  socket._httpMessage = this;
+  socket.on("close", onServerResponseClose);
+  this.socket = socket;
+  this.emit("socket", socket);
+};
+
+ServerResponse.prototype.detachSocket = function (socket) {
+  throw new Error("not implemented");
+};
+
+ServerResponse.prototype.writeContinue = function (callback) {
+  throw new Error("not implemented");
+};
+
+ServerResponse.prototype.setTimeout = function (msecs, callback) {
+  throw new Error("not implemented");
+};
+
+ServerResponse.prototype.appendHeader = function (name, value) {
+  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
+  const headers = getPrivate(this, "headers");
+  headers.append(name, value);
+};
+
+ServerResponse.prototype.flushHeaders = function () {};
+
+ServerResponse.prototype.getHeader = function (name) {
+  return getHeader(getPrivate(this, "headers"), name);
+};
+
+ServerResponse.prototype.getHeaders = function () {
+  const headers = getPrivate(this, "headers");
+  if (!headers) return kEmptyObject;
+  return headers.toJSON();
+};
+
+ServerResponse.prototype.getHeaderNames = function () {
+  const headers = getPrivate(this, "headers");
+  if (!headers) return [];
+  return Array.from(headers.keys());
+};
+
+ServerResponse.prototype.removeHeader = function (name) {
+  if (!getPrivate(this, "headers")) return;
+  getPrivate(this, "headers").delete(name);
+};
+
+ServerResponse.prototype.setHeader = function (name, value) {
+  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
+  const headers = getPrivate(this, "headers");
+  setHeader(headers, name, value);
+  return this;
+};
+
+ServerResponse.prototype.hasHeader = function (name) {
+  if (!getPrivate(this, "headers")) return false;
+  return getPrivate(this, "headers").has(name);
+};
+
+ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
+  _writeHead(statusCode, statusMessage, headers, this);
+
+  return this;
+};
+
+Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
+  get() {
+    return true;
+  },
+  set(value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "chunkedEncoding", {
+  get() {
+    return false;
+  },
+  set(value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "useChunkedEncodingByDefault", {
+  get() {
+    return true;
+  },
+  set(value) {
+    // throw new Error('not implemented');
+  },
+});
 
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;

@@ -463,17 +463,29 @@ pub const RunCommand = struct {
 
             var remaining = size;
             while (remaining > 0) {
-                const n: u32 = @truncate(std.os.read(
-                    fd,
-                    this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap],
-                ) catch return);
-                this.output_buffer.len += n;
-                remaining -|= n;
+                switch (bun.sys.read(fd, this.output_buffer.slice()[this.output_buffer.len..this.output_buffer.cap])) {
+                    .result => |bytes_read| {
+                        this.output_buffer.len += @truncate(bytes_read);
+                        remaining -|= @intCast(bytes_read);
+                    },
+                    .err => |err| {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                            this.script_name,
+                            this.package_name,
+                            err.errno,
+                            @tagName(err.getErrno()),
+                        });
+                        return;
+                    },
+                }
             }
         }
 
         pub fn printOutput(this: *LifecycleScriptSubprocess) void {
+            Output.disableBuffering();
+            Output.flush();
             Output.errorWriter().print("{s}\n", .{this.output_buffer.slice()}) catch {};
+            Output.enableBuffering();
         }
 
         pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {

@@ -2277,6 +2277,8 @@ pub const Blob = struct {
                         if (store.data == .file and store.data.file.pathlike == .fd) {
                             // If seekable was set, then so was mode
                             if (store.data.file.seekable != null) {
+                                // This is mostly to handle pipes which were passsed to the process somehow
+                                // such as stderr, stdout. Bun.stdin and Bun.stderr will automatically set `mode` for us.
                                 break :brk !bun.isRegularFile(store.data.file.mode);
                             }
                         }
@@ -2284,6 +2286,8 @@ pub const Blob = struct {
 
                     // We opened the file descriptor with O_NONBLOCK, so we
                     // shouldn't have to worry about blocking reads/writes
+                    //
+                    // We do not call fstat() because that is very expensive.
                     break :brk false;
                 };
 

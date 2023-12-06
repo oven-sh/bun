@@ -1,0 +1,14 @@
+{
+  "name": "bun-integration-test-sharp",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "sharp": "^0.33.0"
+  }
+}

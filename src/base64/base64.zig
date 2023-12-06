@@ -68,7 +68,11 @@ pub fn decodeLen(source: anytype) usize {
 }
 
 pub fn encodeLen(source: anytype) usize {
-    return zig_base64.standard.Encoder.calcSize(source.len);
+    return encodeLenFromSize(source.len);
+}
+
+pub fn encodeLenFromSize(len: usize) usize {
+    return zig_base64.standard.Encoder.calcSize(len);
 }
 
 pub fn urlSafeEncodeLen(source: anytype) usize {

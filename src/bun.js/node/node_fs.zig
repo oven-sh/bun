@@ -5066,15 +5066,46 @@ pub const NodeFS = struct {
             // https://github.com/oven-sh/bun/issues/4845
             // https://github.com/bpampuch/pdfmake/issues/2648
             .base64 => string: {
-                const base64_buffer = bun.default_allocator.alloc(u8, Base64.encodeLen(buf.items)) catch @panic("oom");
-                const encoding_result = Base64.encode(base64_buffer, buf.items);
+                // Chunk size should be a multiple of 3 bytes to be able to split base64 calculation
+                const chunk_size = 16383;
+                const encoded_buffer_size = comptime Base64.encodeLenFromSize(chunk_size);
+                var offset: usize = 0;
+                var base64_buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, encoded_buffer_size) catch @panic("oom");
+                const temp_buffer = bun.default_allocator.alloc(u8, encoded_buffer_size) catch @panic("oom");
 
-                if (encoding_result == 0) {
-                    return .{ .err = Syscall.Error.oom };
+                defer bun.default_allocator.free(temp_buffer);
+
+                while (offset < buf.items.len) {
+                    const remaining_bytes = buf.items.len - offset;
+                    const chunk_to_be_encoded = if (remaining_bytes <= chunk_size) {
+                        const final_buffer = bun.default_allocator.alloc(u8, Base64.encodeLenFromSize(remaining_bytes)) catch @panic("oom");
+                        defer bun.default_allocator.free(final_buffer);
+
+                        const final_result = Base64.encode(final_buffer, buf.items[offset..]);
+                        if (final_result == 0) {
+                            return .{ .err = Syscall.Error.oom };
+                        }
+
+                        base64_buffer.appendSlice(final_buffer) catch @panic("oom");
+                        defer buf.deinit();
+
+                        break :string .{ .result = .{ .string = base64_buffer.items } };
+                    } else buf.items[offset..(offset + chunk_size)];
+
+                    const encoding_result = Base64.encode(temp_buffer, chunk_to_be_encoded);
+                    if (encoding_result == 0) {
+                        return .{ .err = Syscall.Error.oom };
+                    }
+
+                    const input_slice_to_deallocate = buf.items[offset .. offset + chunk_size];
+
+                    buf.items = buf.items[offset + chunk_size ..];
+                    buf.capacity -= chunk_size;
+
+                    bun.default_allocator.free(input_slice_to_deallocate);
+                    offset += chunk_size;
+                    base64_buffer.appendSlice(temp_buffer) catch @panic("oom");
                 }
-
-                defer buf.deinit();
-                break :string .{ .result = .{ .string = base64_buffer } };
             },
             else => brk: {
                 if (comptime string_type == .default) {

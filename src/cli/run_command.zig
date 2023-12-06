@@ -325,6 +325,7 @@ pub const RunCommand = struct {
                     actions,
                     attr,
                     argv,
+                    // TODO(dylan-conway): cache this to avoid allocation for each script
                     try env.map.createNullDelimitedEnvMap(arena.allocator()),
                 )) {
                     .err => |err| {

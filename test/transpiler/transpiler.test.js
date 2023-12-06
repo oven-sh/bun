@@ -1253,6 +1253,24 @@ export default <>hi</>
       `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
 `,
     );
+
+    // key after spread props
+    // https://github.com/oven-sh/bun/issues/7328
+    expect(bun.transformSync(`console.log(<div {...obj} key="after" />, <div key="before" {...obj} />);`)).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
+`,
+    );
+    expect(bun.transformSync(`console.log(<div {...obj} key="after" {...obj2} />);`)).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
+`,
+    );
+    expect(
+      bun.transformSync(`// @jsx foo;
+console.log(<div {...obj} key="after" />);`),
+    ).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
+`,
+    );
   });
 
   it.todo("JSX", () => {

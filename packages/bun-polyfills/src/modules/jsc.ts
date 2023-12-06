@@ -82,7 +82,7 @@ export const isRope = (() => false) satisfies typeof jsc.isRope;
 
 export const memoryUsage = (() => {
     const stats = v8.getHeapStatistics();
-    const resUse = process.resourceUsage();
+    const resUse = (process as unknown as NodeJS.Process).resourceUsage();
     return {
         current: stats.malloced_memory,
         peak: stats.peak_malloced_memory,

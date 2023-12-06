@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '7c841d1aa3686b0c46f4c10ad16457a68c049698' satisfies typeof Bun.revision;
+export const revision = '989a670682e8906b874000bbdfd79aad2933f4f2' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -267,7 +267,7 @@ export const spawn = ((...args) => {
         if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream() as import("stream/web").ReadableStream);
         else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream() as import("stream/web").ReadableStream);
         else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std as import("stream/web").ReadableStream);
-        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
+        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body! as import("stream/web").ReadableStream);
         else stdio[i] = std;
     }
     let stdinSrc: typeof opts.stdio[0] = null;
@@ -369,7 +369,7 @@ export const spawnSync = ((...args): SyncSubprocess => {
         if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream() as import("stream/web").ReadableStream);
         else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream() as import("stream/web").ReadableStream);
         else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std as import("stream/web").ReadableStream);
-        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
+        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body! as import("stream/web").ReadableStream);
         else stdio[i] = std;
     }
     let input: ArrayBufferView | string | undefined;
@@ -436,7 +436,8 @@ export const semver = {
 export const readableStreamToFormData = (async (stream, boundary?) => {
     if (boundary) {
         if (typeof boundary !== 'string') boundary = new TextDecoder().decode(boundary);
-        // @ts-expect-error @types/node Response parameters are missing ReadableStream but its supported.
+        // Keeping this comment in case it's a types load order case
+        // x@ts-expect-error @types/node Response parameters are missing ReadableStream but its supported.
         return await new Response(stream, { headers: { 'content-type': `multipart/form-data; boundary="-${boundary}"` } }).formData() as FormData;
     }
     const fd = new FormData() as FormData;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const ArrayList = std.ArrayList;
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
@@ -52,9 +53,16 @@ const Request = JSC.WebCore.Request;
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
     value: Value, // = Value.empty,
-
+    body_clones: ArrayList(*Body) = ArrayList(*Body){ .capacity = 0, .items = undefined, .allocator = undefined },
+    original_body: ?*Body = null,
+    is_waiting: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
     pub inline fn len(this: *const Body) Blob.SizeType {
         return this.value.size();
+    }
+
+    pub fn isWaiting(this: *Body) bool {
+        @fence(.Acquire);
+        return this.is_waiting.load(.Acquire);
     }
 
     pub fn slice(this: *const Body) []const u8 {
@@ -97,8 +105,50 @@ pub const Body = struct {
             }
         }
     }
+    pub fn removeClone(this: *Body, other: *Body) void {
+        if (this.body_clones.capacity > 0) {
+            for (this.body_clones.items, 0..) |entry, i| {
+                if (other == entry) {
+                    _ = this.body_clones.orderedRemove(i);
+                    break;
+                }
+            }
+        }
+    }
+    pub fn unrefParentBody(this: *Body, other: *Body) void {
+        if (this.original_body) |original_body| {
+            if (original_body == other) {
+                this.original_body = null;
+            }
+        }
+    }
 
+    pub fn maybeAddClone(this: *Body, other: *Body) void {
+        if (this.original_body) |original_body| {
+            original_body.maybeAddClone(other);
+        } else {
+            if (this.value == .Locked) {
+                if (this.body_clones.capacity == 0)
+                    this.body_clones = ArrayList(*Body).init(bun.default_allocator);
+                this.body_clones.append(other) catch @panic("oom!");
+                other.is_waiting.store(true, .Release);
+                other.original_body = this;
+            }
+        }
+    }
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
+        if (this.original_body) |original_body| {
+            original_body.removeClone(this);
+            this.original_body = null;
+        }
+        if (this.body_clones.capacity > 0) {
+            for (this.body_clones.items) |entry| {
+                entry.unrefParentBody(this);
+            }
+            this.body_clones.deinit();
+            this.body_clones.capacity = 0;
+        }
+
         this.value.deinit();
     }
 
@@ -134,6 +184,14 @@ pub const Body = struct {
                 }
             }
             return this.size_hint;
+        }
+
+        pub fn clone(this: *PendingValue) PendingValue {
+            return PendingValue{
+                .global = this.global,
+                .task = this.task,
+                .size_hint = this.size_hint,
+            };
         }
 
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
@@ -894,6 +952,14 @@ pub const Body = struct {
             // if (this.* == .InlineBlob) {
             //     return this.*;
             // }
+
+            if (this.* == .Error) {
+                return Value{ .Error = this.Error };
+            }
+
+            if (this.* == .Locked) {
+                return Value{ .Locked = this.Locked.clone() };
+            }
 
             if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };

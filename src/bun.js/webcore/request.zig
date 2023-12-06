@@ -717,6 +717,11 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        if (this.body.value == .Used or (this.body.value == .Locked and (this.body.value.Locked.promise != null or this.body.value.Locked.readable != null))) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Request.clone: body already used", .{}, globalThis);
+            globalThis.throwValue(err);
+            return .zero;
+        }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         return cloned.toJS(globalThis);
     }
@@ -782,10 +787,14 @@ pub const Request = struct {
             .url = if (preserve_url) original_url else this.url.dupeRef(),
             .method = this.method,
             .headers = this.cloneHeaders(globalThis),
+            .request_context = this.request_context,
         };
 
         if (this.signal) |signal| {
             req.signal = signal.ref();
+        }
+        if (body.value == .Locked) {
+            this.request_context.pushRequestClone(body);
         }
     }
 

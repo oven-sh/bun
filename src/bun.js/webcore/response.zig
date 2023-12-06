@@ -96,6 +96,10 @@ pub const Response = struct {
         };
     }
 
+    pub fn hasPendingActivity(this: *Response) callconv(.C) bool {
+        return this.body.isWaiting();
+    }
+
     pub fn getBodyValue(
         this: *Response,
     ) *Body.Value {
@@ -253,8 +257,14 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        if (this.body.value == .Used or (this.body.value == .Locked and (this.body.value.Locked.promise != null or this.body.value.Locked.readable != null))) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Response.clone: body already used", .{}, globalThis);
+            globalThis.throwValue(err);
+            return .zero;
+        }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
-        return Response.makeMaybePooled(globalThis, cloned);
+        var js_value = Response.makeMaybePooled(globalThis, cloned);
+        return js_value;
     }
 
     pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {
@@ -274,6 +284,8 @@ pub const Response = struct {
             .url = this.url.clone(),
             .redirected = this.redirected,
         };
+
+        this.body.maybeAddClone(&new_response.body);
     }
 
     pub fn clone(this: *Response, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Response {
@@ -761,8 +773,10 @@ pub const Fetch = struct {
         is_waiting_body: bool = false,
         is_waiting_abort: bool = false,
         mutex: Mutex,
+        need_entire_buffer: bool = false,
 
         tracker: JSC.AsyncTaskTracker,
+        stream_offset: usize = 0,
 
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
@@ -870,125 +884,156 @@ pub const Fetch = struct {
                 }
             }
 
-            if (!success) {
-                const err = this.onReject();
-                err.ensureStillAlive();
-                // if we are streaming update with error
-                if (this.readable_stream_ref.get()) |readable| {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = err },
-                        },
-                        bun.default_allocator,
-                    );
-                }
-                // if we are buffering resolve the promise
-                if (this.response.get()) |response_js| {
-                    if (response_js.as(Response)) |response| {
-                        const body = response.body;
-                        if (body.value.Locked.promise) |promise_| {
-                            const promise = promise_.asAnyPromise().?;
-                            promise.reject(globalThis, err);
-                        }
-
-                        response.body.value.toErrorInstance(err, globalThis);
-                    }
-                }
-                return;
-            }
-
-            if (this.readable_stream_ref.get()) |readable| {
-                if (readable.ptr == .Bytes) {
-                    readable.ptr.Bytes.size_hint = this.getSizeHint();
-                    // body can be marked as used but we still need to pipe the data
-                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
-
-                    const chunk = scheduled_response_buffer.items;
-
-                    if (this.result.has_more) {
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = bun.ByteList.initConst(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-
-                        // clean for reuse later
-                        this.scheduled_response_buffer.reset();
-                    } else {
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .temporary_and_done = bun.ByteList.initConst(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    }
-                    return;
-                }
-            }
-
             if (this.response.get()) |response_js| {
                 if (response_js.as(Response)) |response| {
-                    const body = response.body;
-                    if (body.value == .Locked) {
-                        if (body.value.Locked.readable) |readable| {
-                            if (readable.ptr == .Bytes) {
-                                readable.ptr.Bytes.size_hint = this.getSizeHint();
+                    const clones_len = if (response.body.body_clones.capacity > 0)
+                        response.body.body_clones.items.len
+                    else
+                        0;
+                    const response_list = bun.default_allocator.alloc(*Body, 1 + clones_len) catch @panic("OOM");
+                    defer bun.default_allocator.free(response_list);
+                    response_list[0] = &response.body;
+                    if (response.body.body_clones.capacity > 0) {
+                        for (response.body.body_clones.items, 0..) |clone, i| {
+                            response_list[1 + i] = clone;
+                        }
+                    }
 
-                                var scheduled_response_buffer = this.scheduled_response_buffer.list;
-
-                                const chunk = scheduled_response_buffer.items;
-
-                                if (this.result.has_more) {
+                    if (!success) {
+                        for (0..1 + clones_len) |i| {
+                            var body = response_list[i];
+                            defer {
+                                body.is_waiting.store(false, .Release);
+                            }
+                            const err = this.onReject();
+                            err.ensureStillAlive();
+                            if (i == 0) {
+                                if (this.readable_stream_ref.get()) |readable| {
                                     readable.ptr.Bytes.onData(
                                         .{
-                                            .temporary = bun.ByteList.initConst(chunk),
-                                        },
-                                        bun.default_allocator,
-                                    );
-
-                                    // clean for reuse later
-                                    this.scheduled_response_buffer.reset();
-                                } else {
-                                    readable.ptr.Bytes.onData(
-                                        .{
-                                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                                            .err = .{ .JSValue = err },
                                         },
                                         bun.default_allocator,
                                     );
                                 }
-
-                                return;
                             }
-                        } else {
-                            response.body.value.Locked.size_hint = this.getSizeHint();
+                            if ((i > 0 or this.readable_stream_ref.get() == null) and body.value.Locked.readable != null) {
+                                body.value.Locked.readable.?.ptr.Bytes.onData(
+                                    .{
+                                        .err = .{ .JSValue = err },
+                                    },
+                                    bun.default_allocator,
+                                );
+                            }
+
+                            if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
+                                // dont ask me why but in this case the JSValue is not protected and the Value deinit function will attempt a unprotect
+                                err.protect();
+                            }
+                            body.value.toErrorInstance(err, globalThis);
                         }
-                        // we will reach here when not streaming
-                        if (!this.result.has_more) {
-                            var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
 
-                            // done resolve body
-                            var old = body.value;
-                            var body_value = Body.Value{
-                                .InternalBlob = .{
-                                    .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                                },
-                            };
-                            response.body.value = body_value;
+                        return;
+                    }
+                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
 
-                            this.scheduled_response_buffer = .{
-                                .allocator = this.memory_reporter.allocator(),
-                                .list = .{
-                                    .items = &.{},
-                                    .capacity = 0,
-                                },
-                            };
+                    const chunk = scheduled_response_buffer.items;
 
-                            if (old == .Locked) {
-                                old.resolve(&response.body.value, this.global_this);
+                    var list = if (!this.result.has_more) scheduled_response_buffer.toManaged(bun.default_allocator) else null;
+                    if (!this.result.has_more) {
+                        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                    }
+                    const has_copies = clones_len > 0;
+                    const stream_subset = chunk[this.stream_offset..];
+                    for (0..1 + clones_len) |i| {
+                        if (i == 0 and this.readable_stream_ref.get() != null) {
+                            var readable = this.readable_stream_ref.get().?;
+                            if (readable.ptr == .Bytes) {
+                                readable.ptr.Bytes.size_hint = this.getSizeHint();
+
+                                if (this.result.has_more) {
+                                    readable.ptr.Bytes.onData(
+                                        .{
+                                            .temporary = bun.ByteList.initConst(stream_subset),
+                                        },
+                                        bun.default_allocator,
+                                    );
+                                } else {
+                                    readable.ptr.Bytes.onData(
+                                        .{
+                                            .temporary_and_done = bun.ByteList.initConst(stream_subset),
+                                        },
+                                        bun.default_allocator,
+                                    );
+                                }
+                                continue;
                             }
                         }
+                        var body = response_list[i];
+                        if (body.value == .Locked) {
+                            if (body.value.Locked.readable) |readable| {
+                                if (readable.ptr == .Bytes) {
+                                    readable.ptr.Bytes.size_hint = this.getSizeHint();
+
+                                    if (this.result.has_more) {
+                                        readable.ptr.Bytes.onData(
+                                            .{
+                                                .temporary = bun.ByteList.initConst(stream_subset),
+                                            },
+                                            bun.default_allocator,
+                                        );
+                                    } else {
+                                        readable.ptr.Bytes.onData(
+                                            .{
+                                                .temporary_and_done = bun.ByteList.initConst(stream_subset),
+                                            },
+                                            bun.default_allocator,
+                                        );
+                                        body.is_waiting.store(false, .Release);
+                                    }
+
+                                    continue;
+                                }
+                            } else {
+                                body.value.Locked.size_hint = this.getSizeHint();
+                                // we have a body without a readable and need to store everything since it might call json/text/arrayBuffer
+                                this.need_entire_buffer = true;
+                            }
+                            if (!this.result.has_more) {
+                                var old = body.value;
+                                var body_value = Body.Value{
+                                    .InternalBlob = .{
+                                        .bytes = if (has_copies) (list.?.clone() catch unreachable) else list.?,
+                                    },
+                                };
+                                body.value = body_value;
+                                if (old == .Locked) {
+                                    old.resolve(&body.value, this.global_this);
+                                    body.is_waiting.store(false, .Release);
+                                }
+                            }
+                        }
+                    }
+                    if (this.need_entire_buffer)
+                        this.stream_offset = chunk.len;
+                    if (this.result.has_more and !this.need_entire_buffer) {
+                        // clean for reuse later
+                        this.scheduled_response_buffer.reset();
+                    }
+                    if (!this.result.has_more) {
+                        // this is required as when the promise resolves otherwise the request and bodies are freed prematurely
+                        if (has_copies) {
+                            // we might have cloned the list so deinit it
+                            list.?.deinit();
+                        }
+
+                        this.scheduled_response_buffer = .{
+                            .allocator = this.memory_reporter.allocator(),
+                            .list = .{
+                                .items = &.{},
+                                .capacity = 0,
+                            },
+                        };
                     }
                 }
             }

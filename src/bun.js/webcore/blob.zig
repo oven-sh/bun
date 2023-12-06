@@ -1687,6 +1687,7 @@ pub const Blob = struct {
             io_task: ?*ReadFileTask = null,
             io_poll: bun.io.Poll = .{},
             io_request: bun.io.Request = .{ .callback = &onRequestReadable },
+            could_block: bool = false,
 
             pub const Read = struct {
                 buf: []u8,
@@ -1802,7 +1803,7 @@ pub const Blob = struct {
                         .err => |err| {
                             switch (err.getErrno()) {
                                 bun.io.retry => {
-                                    if (bun.isRegularFile(this.file_store.mode)) {
+                                    if (!this.could_block) {
                                         // regular files cannot use epoll.
                                         // this is fine on kqueue, but not on epoll.
                                         continue;
@@ -1937,14 +1938,16 @@ pub const Blob = struct {
                     return;
                 }
 
-                if (stat.size > 0 and bun.isRegularFile(stat.mode)) {
+                this.could_block = !bun.isRegularFile(stat.mode);
+
+                if (stat.size > 0 and !this.could_block) {
                     this.size = @min(
                         @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
                     // they didn't explicitly set a size and we're reading from something that's not a regular file
-                } else if (stat.size == 0 and !bun.isRegularFile(stat.mode)) {
+                } else if (stat.size == 0 and this.could_block) {
                     this.size = if (this.max_length == Blob.max_size)
                         4096
                     else
@@ -2000,7 +2003,7 @@ pub const Blob = struct {
                 //
                 // If we immediately call read(), it will block until stdin is
                 // readable.
-                if (!bun.isRegularFile(this.file_store.mode)) {
+                if (this.could_block) {
                     if (bun.isReadable(fd) == .not_ready) {
                         this.waitForReadable();
                         return;
@@ -2039,7 +2042,7 @@ pub const Blob = struct {
                         //
                         // If we immediately call read(), it will block until stdin is
                         // readable.
-                        if (!bun.isRegularFile(this.file_store.mode) and bun.isReadable(this.opened_fd) == .not_ready) {
+                        if (this.could_block and bun.isReadable(this.opened_fd) == .not_ready) {
                             this.waitForReadable();
                             return;
                         }

@@ -82,7 +82,7 @@ pub const Loop = struct {
                 while (pending.next()) |request| {
                     switch (request.callback(request)) {
                         .readable => |readable| {
-                            switch (readable.poll.registerWithFd(this, .poll_readable, true, @intCast(readable.fd))) {
+                            switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, @intCast(readable.fd))) {
                                 .err => |err| {
                                     readable.onError(request, err);
                                 },
@@ -92,7 +92,7 @@ pub const Loop = struct {
                             }
                         },
                         .writable => |writable| {
-                            switch (writable.poll.registerWithFd(this, .poll_writable, true, @intCast(writable.fd))) {
+                            switch (writable.poll.registerForEpoll(writable.tag, this, .poll_writable, true, @intCast(writable.fd))) {
                                 .err => |err| {
                                     writable.onError(request, err);
                                 },
@@ -102,7 +102,7 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            close.poll.unregisterWithFd(this, @intCast(close.fd));
+                            close.poll.unregisterWithFd(@intCast(this.fd()), @intCast(close.fd));
                             this.active -= 1;
                             close.onDone(request);
                         },
@@ -156,7 +156,7 @@ pub const Loop = struct {
                 break :timeout @as(i32, @intCast(ms_next -| ms_now));
             };
 
-            var events: [EventType]256 = undefined;
+            var events: [256]EventType = undefined;
 
             const rc = linux.epoll_wait(
                 @intCast(this.fd()),
@@ -177,7 +177,7 @@ pub const Loop = struct {
             for (current_events) |event| {
                 const pollable: Pollable = Pollable.from(event.data.u64);
                 if (pollable.tag() == .empty) continue;
-                Poll.onUpdateEpoll(pollable.poll(), pollable.tag(), event.events);
+                _ = Poll.onUpdateEpoll(pollable.poll(), pollable.tag(), event);
             }
         }
     }
@@ -576,6 +576,7 @@ pub const Poll = struct {
         ignore_updates,
 
         cancelled,
+        registered,
 
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
@@ -703,12 +704,13 @@ pub const Poll = struct {
 
     pub fn unregisterWithFd(this: *Poll, watcher_fd: u64, fd: u64) void {
         _ = linux.epoll_ctl(
-            watcher_fd,
+            @intCast(watcher_fd),
             linux.EPOLL.CTL_DEL,
             @intCast(fd),
             null,
         );
         this.flags.remove(.was_ever_registered);
+        this.flags.remove(.registered);
     }
 
     pub fn onUpdateKQueue(
@@ -741,7 +743,7 @@ pub const Poll = struct {
         poll: *Poll,
         tag: Pollable.Tag,
         event: linux.epoll_event,
-    ) JSC.Maybe(void) {
+    ) void {
         switch (tag) {
             // ignore empty tags. This case should be unreachable in practice
             .empty => {},
@@ -750,16 +752,18 @@ pub const Poll = struct {
                 var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
                 if (event.events & linux.EPOLL.ERR != 0) {
                     const errno = std.os.linux.getErrno(event.events);
-                    this.onIOError(bun.sys.Error.fromCode(errno, .epoll));
+                    log("error() = {s}", .{@tagName(errno)});
+                    this.onIOError(bun.sys.Error.fromCode(errno, .epoll_ctl));
                 } else {
+                    log("ready()", .{});
                     this.onReady();
                 }
             },
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, loop: *Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
-        const watcher_fd = loop.fd;
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
+        const watcher_fd = loop.fd();
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
 
@@ -780,9 +784,9 @@ pub const Poll = struct {
                 else => unreachable,
             };
 
-            var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
+            var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(tag, this).ptr()) } };
 
-            var op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
+            var op: u32 = if (this.flags.contains(.registered) or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
             const ctl = linux.epoll_ctl(
                 watcher_fd,
@@ -790,9 +794,9 @@ pub const Poll = struct {
                 @intCast(fd),
                 &event,
             );
+            this.flags.insert(.registered);
             this.flags.insert(.was_ever_registered);
             if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
-                this.deactivate(loop);
                 return errno;
             }
         } else {
@@ -812,4 +816,4 @@ pub const Poll = struct {
     }
 };
 
-pub const retry = if (Environment.isMac) std.os.system.E.AGAIN else std.os.system.E.WOULDBLOCK;
+pub const retry = std.os.system.E.AGAIN;

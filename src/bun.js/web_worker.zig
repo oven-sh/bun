@@ -51,7 +51,7 @@ pub const WebWorker = struct {
         worker.cpp_worker = ptr;
 
         var thread = std.Thread.spawn(
-            .{ .stack_size = bun.default_stack_size },
+            .{ .stack_size = bun.default_thread_stack_size },
             startWithErrorHandling,
             .{worker},
         ) catch {

@@ -1027,6 +1027,11 @@ class OutgoingMessage extends Writable {
   }
 }
 
+function emitContinueNT(self) {
+  if (!self._closed) {
+    self.emit("continue");
+  }
+}
 function emitCloseNT(self) {
   if (!self._closed) {
     self.destroyed = true;
@@ -1670,6 +1675,7 @@ class ClientRequest extends OutgoingMessage {
 
     var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
+    setTimeout(emitContinueNT, 1, this);
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '71d99f5658f7a42439ea7c9efda0bd17ab0a5513' satisfies typeof Bun.revision;
+export const revision = 'ce129594a6e99c471cb6576b66bc39d499893f98' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -134,8 +134,14 @@ export const sleepSync = (ms => {
 //? Of course in Node's case some didn't listen and relied on the output of util.inspect() anyway, but hopefully this won't happen with this one.
 export const inspect = util.inspect satisfies typeof Bun.inspect;
 
-export const resolveSync = ((id: string, parent: string) => import.meta.resolveSync(id, parent)) satisfies typeof Bun.resolveSync;
-export const resolve = (async (id: string, parent: string) => import.meta.resolve!(id, parent)) satisfies typeof Bun.resolve;
+export const resolveSync = ((id: string, parent: string) => {
+    const require2 = createRequire(path.join(parent, 'caller'));
+    if (id.startsWith('file://')) id = fileURLToPath(id);
+    return require2.resolve(id);
+}) satisfies typeof Bun.resolveSync;
+export const resolve = (async (id: string, parent: string) => {
+    return resolveSync(id, parent);
+}) satisfies typeof Bun.resolve;
 
 //? Yes, this is faster than new Uint8Array(Buffer.allocUnsafe(size).buffer) by about 2.5x in Node.js
 export const allocUnsafe = ((size: number) => new Uint8Array(size)) satisfies typeof Bun.allocUnsafe;

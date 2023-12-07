@@ -84,9 +84,10 @@ export async function resolve(specifier, context, nextResolve) {
     else return next;
 }
 
-const APPLY_IMPORT_META_POLYFILL = /*js*/`
-    ;(await import("${pathToFileURL(path.resolve(libRoot, 'global', 'importmeta.js')).href}")).default(import.meta);
-`.trim();
+const APPLY_IMPORT_META_POLYFILL = (/*js*/`
+    ;(await import("${pathToFileURL(path.resolve(libRoot, 'global', 'importmeta.js')).href}")).default(import.meta);` +
+    /*js*/`Reflect.set(globalThis, 'require', (await import('node:module')).createRequire(import.meta.url));`
+).trim();
 /** @type {load} */
 export async function load(url, context, nextLoad) {
     //console.debug('Loading', url, 'with context', context);

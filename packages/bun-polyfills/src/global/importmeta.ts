@@ -24,6 +24,7 @@ export default function polyfillImportMeta(metaIn: ImportMeta) {
             return this.resolveSync(id, parent);
         },
         resolveSync(id: string, parent?: string) {
+            if (id.startsWith('file://')) id = fileURLToPath(id);
             return require2.resolve(id, {
                 paths: typeof parent === 'string' ? [
                     path.resolve(parent.startsWith('file://') ? fileURLToPath(parent) : parent, '..')

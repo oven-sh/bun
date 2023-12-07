@@ -4,8 +4,7 @@ const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.http;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -817,7 +816,8 @@ pub const Body = struct {
                     readable.done();
                     locked.readable = null;
                 }
-
+                // will be unprotected by body value deinit
+                error_instance.protect();
                 this.* = .{ .Error = error_instance };
                 if (locked.onReceiveValue) |onReceiveValue| {
                     locked.onReceiveValue = null;
@@ -825,7 +825,8 @@ pub const Body = struct {
                 }
                 return;
             }
-
+            // will be unprotected by body value deinit
+            error_instance.protect();
             this.* = .{ .Error = error_instance };
         }
 

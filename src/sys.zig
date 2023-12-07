@@ -1133,7 +1133,7 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(bun.fdcast(dirfd), to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }

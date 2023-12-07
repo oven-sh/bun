@@ -105,8 +105,9 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
+// TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
@@ -126,8 +127,9 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.f
     }
 }
 
+// TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {

@@ -2200,6 +2200,7 @@ pub const ModuleLoader = struct {
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
                 .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
+                .@"bun:test" => return jsSyntheticModule(.@"bun:test", specifier),
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
@@ -2377,6 +2378,7 @@ pub const HardcodedModule = enum {
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
+    @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sqlite",
     @"detect-libc",
     @"node:assert",
@@ -2450,6 +2452,7 @@ pub const HardcodedModule = enum {
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
+            .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
@@ -2658,6 +2661,7 @@ pub const HardcodedModule = enum {
 
         const bun_extra_alias_kvs = .{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
+            .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },

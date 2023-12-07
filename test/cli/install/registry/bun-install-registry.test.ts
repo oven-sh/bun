@@ -1362,7 +1362,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       expect(stderr).toBeDefined();
@@ -1412,7 +1412,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       expect(stderr).toBeDefined();
@@ -1465,7 +1465,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       expect(stderr).toBeDefined();
@@ -1553,7 +1553,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       expect(stderr).toBeDefined();
@@ -1622,7 +1622,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       expect(stderr).toBeDefined();
@@ -1654,7 +1654,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       expect(stderr).toBeDefined();
@@ -1699,7 +1699,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       expect(stderr).toBeDefined();
@@ -1741,7 +1741,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       expect(stderr).toBeDefined();
@@ -1752,7 +1752,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        " + what-bin@1.0.0 (v1.5.0 available)",
+        " + what-bin@1.0.0",
         "",
         " 1 package installed",
       ]);
@@ -1766,7 +1766,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       err = await new Response(stderr).text();
@@ -1798,7 +1798,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       err = await new Response(stderr).text();
@@ -1807,7 +1807,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        " + what-bin@1.0.0 (v1.5.0 available)",
+        " + what-bin@1.0.0",
         "",
         " 1 package installed",
       ]);
@@ -1821,7 +1821,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       err = await new Response(stderr).text();
@@ -1856,7 +1856,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       err = await new Response(stderr).text();
@@ -1891,7 +1891,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
       expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
@@ -1915,7 +1915,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
       expect(stderr).toBeDefined();
       err = await new Response(stderr).text();
@@ -1969,7 +1969,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2008,7 +2008,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       expect(await exited).toBe(1);
@@ -2038,7 +2038,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stderr: "pipe",
         stdin: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2074,7 +2074,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2107,7 +2107,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2132,7 +2132,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       expect(await exited).toBe(0);
@@ -2159,7 +2159,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2183,7 +2183,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       expect(await exited).toBe(0);
@@ -2215,7 +2215,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2253,7 +2253,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stdin: "pipe",
           stderr: "pipe",
-          testEnv,
+          env: testEnv,
         });
 
         const err = await new Response(stderr).text();
@@ -2289,7 +2289,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -2328,7 +2328,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       }));
 
       expect(await exited).toBe(0);
@@ -2367,7 +2367,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: null,
         stdin: "pipe",
         stderr: "pipe",
-        testEnv,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();

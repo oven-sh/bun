@@ -518,7 +518,7 @@ ReadStream = (function (InternalReadStream) {
 })(
   class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
-      if (options && typeof options !== "object" & typeof options !== "string") {
+      if (options && (typeof options !== "object") & (typeof options !== "string")) {
         throw new TypeError("Expected options to be an object or a string");
       }
 

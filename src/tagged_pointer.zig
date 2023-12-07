@@ -16,8 +16,13 @@ pub const TaggedPointer = packed struct {
     _ptr: AddressableSize,
     data: TagSize,
 
+    pub const Tag = TagSize;
+
     pub inline fn init(ptr: anytype, data: TagSize) TaggedPointer {
         const Ptr = @TypeOf(ptr);
+        if (comptime Ptr == @TypeOf(null)) {
+            return .{ ._ptr = 0, .data = data };
+        }
 
         if (comptime @typeInfo(Ptr) != .Pointer and Ptr != ?*anyopaque) {
             @compileError(@typeName(Ptr) ++ " must be a ptr, received: " ++ @tagName(@typeInfo(Ptr)));

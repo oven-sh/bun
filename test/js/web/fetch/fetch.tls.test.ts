@@ -103,7 +103,7 @@ it("fetch with self-sign tls should throw", async () => {
     for (const url of urls) {
       try {
         await fetch(url).then((res: Response) => res.text());
-        throw new Error("unreachable");
+        expect.unreachable();
       } catch (e: any) {
         expect(e.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
       }
@@ -117,7 +117,7 @@ it("fetch with invalid tls should throw", async () => {
     for (const url of urls) {
       try {
         await fetch(url).then((res: Response) => res.text());
-        throw new Error("unreachable");
+        expect.unreachable();
       } catch (e: any) {
         expect(e.code).toBe("CERT_HAS_EXPIRED");
       }
@@ -136,7 +136,7 @@ it("fetch with checkServerIdentity failing should throw", async () => {
       },
     }).then((res: Response) => res.text());
 
-    throw new Error("unreachable");
+    expect.unreachable();
   } catch (e: any) {
     expect(e.message).toBe("CustomError");
   }

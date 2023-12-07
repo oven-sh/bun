@@ -24,7 +24,6 @@ const Zlib = @import("./zlib.zig");
 const StringBuilder = @import("./string_builder.zig");
 const AsyncIO = bun.AsyncIO;
 const ThreadPool = bun.ThreadPool;
-pub const NetworkThread = @import("./network_thread.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
@@ -40,7 +39,7 @@ pub var default_allocator: std.mem.Allocator = undefined;
 var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
-const Batch = NetworkThread.Batch;
+const Batch = bun.ThreadPool.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
@@ -1893,7 +1892,7 @@ pub const AsyncHTTP = struct {
             sendSyncCallback,
         ).init(ctx);
 
-        var batch = NetworkThread.Batch{};
+        var batch = bun.ThreadPool.Batch{};
         this.schedule(bun.default_allocator, &batch);
         http_thread.schedule(batch);
         while (true) {

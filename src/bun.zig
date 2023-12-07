@@ -874,7 +874,7 @@ fn Span(comptime T: type) type {
             new_ptr_info.size = .Slice;
             return @Type(.{ .Pointer = new_ptr_info });
         },
-        else => @compileError("invalid type given to std.mem.Span"),
+        else => @compileError("invalid type given to std.mem.Span: " ++ @typeName(T)),
     }
 }
 // fn Span(comptime T: type) type {
@@ -2559,3 +2559,4 @@ pub fn outOfMemory() noreturn {
 }
 
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
+pub const io = @import("./io/io.zig");

@@ -5,8 +5,7 @@ const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const http = @import("root").bun.http;
 const FetchRedirect = http.FetchRedirect;
-const NetworkThread = http.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -875,22 +874,25 @@ pub const Fetch = struct {
                 err.ensureStillAlive();
                 // if we are streaming update with error
                 if (this.readable_stream_ref.get()) |readable| {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = err },
-                        },
-                        bun.default_allocator,
-                    );
+                    if (readable.ptr == .Bytes) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{ .JSValue = err },
+                            },
+                            bun.default_allocator,
+                        );
+                    }
                 }
                 // if we are buffering resolve the promise
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
                         const body = response.body;
-                        if (body.value.Locked.promise) |promise_| {
-                            const promise = promise_.asAnyPromise().?;
-                            promise.reject(globalThis, err);
+                        if (body.value == .Locked) {
+                            if (body.value.Locked.promise) |promise_| {
+                                const promise = promise_.asAnyPromise().?;
+                                promise.reject(globalThis, err);
+                            }
                         }
-
                         response.body.value.toErrorInstance(err, globalThis);
                     }
                 }
@@ -1096,6 +1098,7 @@ pub const Fetch = struct {
                 }
             }
             const success = this.result.isSuccess();
+
             const result = switch (success) {
                 true => this.onResolve(),
                 false => this.onReject(),
@@ -1190,16 +1193,29 @@ pub const Fetch = struct {
             this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
             return false;
         }
+
+        pub fn getAbortError(this: *FetchTasklet) ?JSValue {
+            // If this thread already received a signal we should abort
+            if (this.abort_reason != .zero) {
+                return this.abort_reason;
+            }
+            if (this.signal) |signal| {
+                if (signal.aborted()) {
+                    this.abort_reason = signal.abortReason();
+                    if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
+                        return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                    }
+                    this.abort_reason.protect();
+                    return this.abort_reason;
+                }
+            }
+            return null;
+        }
         pub fn onReject(this: *FetchTasklet) JSValue {
             log("onReject", .{});
 
-            if (this.signal) |signal| {
-                this.signal = null;
-                signal.detach(this);
-            }
-
-            if (!this.abort_reason.isEmptyOrUndefinedOrNull()) {
-                return this.abort_reason;
+            if (this.getAbortError()) |err| {
+                return err;
             }
 
             if (this.result.isTimeout()) {
@@ -1359,6 +1375,9 @@ pub const Fetch = struct {
         }
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
+            if (this.getAbortError()) |err| {
+                return .{ .Error = err };
+            }
             if (this.is_waiting_body) {
                 const response = Body.Value{
                     .Locked = .{
@@ -1585,7 +1604,7 @@ pub const Fetch = struct {
                 fetch_options,
             );
 
-            var batch = NetworkThread.Batch{};
+            var batch = bun.ThreadPool.Batch{};
             node.http.?.schedule(allocator, &batch);
             node.poll_ref.ref(global.bunVM());
 

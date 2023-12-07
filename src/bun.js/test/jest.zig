@@ -6,7 +6,6 @@ const Api = @import("../../api/schema.zig").Api;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.http;
-const NetworkThread = HTTPClient.NetworkThread;
 const Environment = bun.Environment;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;

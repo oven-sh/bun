@@ -180,6 +180,7 @@ pub const BufferedInput = struct {
 
 pub const ShellBufferedOutput = struct {
     fifo: JSC.WebCore.FIFO = undefined,
+    // subproc:
     auto_sizer: ?JSC.WebCore.AutoSizer = null,
     /// Sometimes the `internal_buffer` may be filled with memory from JSC,
     /// for example an array buffer. In that case we shouldn't dealloc

@@ -32,13 +32,13 @@ describe("structured clone", () => {
   ];
   for (let { description, value } of primitives_tests) {
     test(description, () => {
-      var cloned = structuredClone(value);
+      const cloned = structuredClone(value);
       expect(cloned).toBe(value);
     });
   }
 
   test("Array with primitives", () => {
-    var input = [
+    const input = [
       undefined,
       null,
       true,
@@ -62,7 +62,7 @@ describe("structured clone", () => {
       -0n,
       0n,
     ];
-    var cloned = structuredClone(input);
+    const cloned = structuredClone(input);
     expect(cloned).toBeInstanceOf(Array);
     expect(cloned).not.toBe(input);
     expect(cloned.length).toEqual(input.length);
@@ -71,7 +71,7 @@ describe("structured clone", () => {
     }
   });
   test("Object with primitives", () => {
-    var input: any = {
+    const input: any = {
       undefined: undefined,
       null: null,
       true: true,
@@ -95,7 +95,7 @@ describe("structured clone", () => {
       "-0n": -0n,
       "0n": 0n,
     };
-    var cloned = structuredClone(input);
+    const cloned = structuredClone(input);
     expect(cloned).toBeInstanceOf(Object);
     expect(cloned).not.toBeInstanceOf(Array);
     expect(cloned).not.toBe(input);
@@ -105,11 +105,11 @@ describe("structured clone", () => {
   });
 
   test("map", () => {
-    var input = new Map();
+    const input = new Map();
     input.set("a", 1);
     input.set("b", 2);
     input.set("c", 3);
-    var cloned = structuredClone(input);
+    const cloned = structuredClone(input);
     expect(cloned).toBeInstanceOf(Map);
     expect(cloned).not.toBe(input);
     expect(cloned.size).toEqual(input.size);
@@ -119,11 +119,11 @@ describe("structured clone", () => {
   });
 
   test("set", () => {
-    var input = new Set();
+    const input = new Set();
     input.add("a");
     input.add("b");
     input.add("c");
-    var cloned = structuredClone(input);
+    const cloned = structuredClone(input);
     expect(cloned).toBeInstanceOf(Set);
     expect(cloned).not.toBe(input);
     expect(cloned.size).toEqual(input.size);
@@ -192,7 +192,7 @@ describe("structured clone", () => {
     });
     test("A detached ArrayBuffer cannot be transferred", () => {
       const buffer = new ArrayBuffer(2);
-      const cloned = structuredClone(buffer, { transfer: [buffer] });
+      structuredClone(buffer, { transfer: [buffer] });
       expect(() => {
         structuredClone(buffer, { transfer: [buffer] });
       }).toThrow(DOMException);

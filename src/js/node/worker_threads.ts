@@ -86,6 +86,7 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.emit = function (event, ...args) {
     this.dispatchEvent(new (EventClass(event))(event, ...args));
+
     return this;
   };
 
@@ -206,7 +207,7 @@ class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
 
-  // this is used by wt.Worker.terminate();
+  // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 

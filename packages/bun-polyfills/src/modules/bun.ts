@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'ce129594a6e99c471cb6576b66bc39d499893f98' satisfies typeof Bun.revision;
+export const revision = '9342cf2080824551040d5e73a00e4821b0711de3' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -260,13 +260,14 @@ export const spawn = ((...args) => {
     if (opts.stdin) opts.stdio[0] = opts.stdin;
     if (opts.stdout) opts.stdio[1] = opts.stdout;
     if (opts.stderr) opts.stdio[2] = opts.stderr;
+    const ioNeedsPipeHandler: [ArrayBufferView | null, ArrayBufferView | null] = [null, null];
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
-        let std = opts.stdio[i];
-        // @types/node and bun-types have conflicting types for ReadableStream because of generics
-        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream() as import("stream/web").ReadableStream);
-        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream() as import("stream/web").ReadableStream);
-        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std as import("stream/web").ReadableStream);
-        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body! as import("stream/web").ReadableStream);
+        let std = opts.stdio[i] as SpawnOptions.Readable;
+        if (isFileBlob(std)) stdio[i] = (Reflect.get(std, '@@toStream') as () => fs.WriteStream).call(std);
+        else if (isArrayBufferView(std)) {
+            stdio[i] = 'pipe';
+            ioNeedsPipeHandler[i - 1] = std;
+        }
         else stdio[i] = std;
     }
     let stdinSrc: typeof opts.stdio[0] = null;
@@ -289,6 +290,14 @@ export const spawn = ((...args) => {
             return this;
         });
         (<Mutable<Subprocess>>subp).stdout = rstream;
+        if (ioNeedsPipeHandler[0]) {
+            const dest = new Uint8Array(ioNeedsPipeHandler[0].buffer);
+            let offset = 0;
+            subpAsNode.stdout.on('data', (chunk: Uint8Array) => {
+                dest.set(chunk, offset);
+                offset += chunk.byteLength;
+            });
+        }
     }
     if (subpAsNode.stderr) {
         const rstream = streams.Readable.toWeb(subpAsNode.stderr) as ReadableStream;
@@ -297,6 +306,14 @@ export const spawn = ((...args) => {
             return this;
         });
         (<Mutable<Subprocess>>subp).stderr = rstream;
+        if (ioNeedsPipeHandler[1]) {
+            const dest = new Uint8Array(ioNeedsPipeHandler[1].buffer);
+            let offset = 0;
+            subpAsNode.stderr.on('data', (chunk: Uint8Array) => {
+                dest.set(chunk, offset);
+                offset += chunk.byteLength;
+            });
+        }
     }
     let internalStdinStream: streams.Writable;
     if (subpAsNode.stdin) {
@@ -362,13 +379,14 @@ export const spawnSync = ((...args): SyncSubprocess => {
     if (opts.stdin) opts.stdio[0] = opts.stdin;
     if (opts.stdout) opts.stdio[1] = opts.stdout;
     if (opts.stderr) opts.stdio[2] = opts.stderr;
+    const ioNeedsPipeHandler: [ArrayBufferView | null, ArrayBufferView | null] = [null, null];
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
-        let std = opts.stdio[i];
-        // @types/node and bun-types have conflicting types for ReadableStream because of generics
-        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream() as import("stream/web").ReadableStream);
-        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream() as import("stream/web").ReadableStream);
-        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std as import("stream/web").ReadableStream);
-        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body! as import("stream/web").ReadableStream);
+        let std = opts.stdio[i] as SpawnOptions.Readable;
+        if (isFileBlob(std)) stdio[i] = (Reflect.get(std, '@@toStream') as () => fs.WriteStream).call(std);
+        else if (isArrayBufferView(std)) {
+            stdio[i] = 'pipe';
+            ioNeedsPipeHandler[i - 1] = std;
+        }
         else stdio[i] = std;
     }
     let input: ArrayBufferView | string | undefined;
@@ -389,7 +407,14 @@ export const spawnSync = ((...args): SyncSubprocess => {
     }) as unknown as SyncSubprocess;
     const subpAsNode = subp as unknown as SpawnSyncReturns<Buffer>;
     if (subpAsNode.error) throw subpAsNode.error;
-
+    if (subpAsNode.stdout && ioNeedsPipeHandler[0]) {
+        const dest = new Uint8Array(ioNeedsPipeHandler[0].buffer);
+        dest.set(subpAsNode.stdout);
+    }
+    if (subpAsNode.stderr && ioNeedsPipeHandler[1]) {
+        const dest = new Uint8Array(ioNeedsPipeHandler[1].buffer);
+        dest.set(subpAsNode.stderr);
+    }
     subp.exitCode = subpAsNode.status ?? NaN; //! not sure what Bun would return here (child killed by signal)
     subp.success = subp.exitCode === 0;
     return subp;

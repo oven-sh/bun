@@ -141,6 +141,13 @@ export class FileBlob extends Blob implements BunFileBlob {
     #fdOrPath: string | number | URL;
     readonly name?: string;
 
+    //! package-internal use only
+    protected ['@@toStream']() {
+        const fd = typeof this.#fdOrPath === 'number' ? this.#fdOrPath : fs.openSync(this.#fdOrPath, 'w+');
+        const wstream = fs.createWriteStream('', { fd, start: this.#slice[0] });
+        return wstream;
+    }
+
     #read(): Blob {
         const read = fs.readFileSync(this.#fdOrPath);
         return new Blob([read.subarray(...this.#slice)], { type: this.type });

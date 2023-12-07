@@ -189,7 +189,6 @@ describe("Duplex", () => {
     function Subclass(opts) {
       if (!(this instanceof Subclass)) return new Subclass(opts);
       Duplex.call(this, opts);
-      x;
     }
 
     Object.setPrototypeOf(Subclass.prototype, Duplex.prototype);

@@ -68,6 +68,12 @@ scoop install nodejs-lts go rust nasm ruby perl
 scoop llvm@16.0.4 # scoop bug if you install llvm and the rest at the same time
 ```
 
+If you intend on building WebKit locally (optional), you should install some more packages:
+
+```bash
+scoop install make cygwin python
+```
+
 From here on out, it is **expected you use a Developer PowerShell Terminal with `.\scripts\env.ps1 sourced**. This script is available in the Bun repository and can be loaded by executing it.
 
 ```ps1

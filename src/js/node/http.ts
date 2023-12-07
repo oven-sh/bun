@@ -879,11 +879,15 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   return true;
 }
 
+const headersSymbol = Symbol("headers");
+const finishedSymbol = Symbol("finished");
+const timeoutTimerSymbol = Symbol("timeoutTimer");
+const fakeSocketSymbol = Symbol("fakeSocket");
 function OutgoingMessage(options) {
   Writable.$call(this, options);
   this.headersSent = false;
   this.sendDate = true;
-  setPrivate(this, "finished", false);
+  this[finishedSymbol] = false;
   this[kEndCalled] = false;
   this[kAbortController] = null;
 }
@@ -894,43 +898,43 @@ Object.setPrototypeOf(OutgoingMessage, Writable);
 OutgoingMessage.prototype._implicitHeader = function () {};
 
 OutgoingMessage.prototype.appendHeader = function (name, value) {
-  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
-  var headers = getPrivate(this, "headers");
+  this[headersSymbol] = this[headersSymbol] ?? new Headers();
+  var headers = this[headersSymbol];
   headers.append(name, value);
 };
 
 OutgoingMessage.prototype.flushHeaders = function () {};
 
 OutgoingMessage.prototype.getHeader = function (name) {
-  return getHeader(getPrivate(this, "headers"), name);
+  return getHeader(this[headersSymbol], name);
 };
 
 OutgoingMessage.prototype.getHeaders = function () {
-  if (!getPrivate(this, "headers")) return kEmptyObject;
-  return getPrivate(this, "headers").toJSON();
+  if (!this[headersSymbol]) return kEmptyObject;
+  return this[headersSymbol].toJSON();
 };
 
 OutgoingMessage.prototype.getHeaderNames = function () {
-  var headers = getPrivate(this, "headers");
+  var headers = this[headersSymbol];
   if (!headers) return [];
   return Array.from(headers.keys());
 };
 
 OutgoingMessage.prototype.removeHeader = function (name) {
-  if (!getPrivate(this, "headers")) return;
-  getPrivate(this, "headers").delete(name);
+  if (!this[headersSymbol]) return;
+  this[headersSymbol].delete(name);
 };
 
 OutgoingMessage.prototype.setHeader = function (name, value) {
-  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
-  var headers = getPrivate(this, "headers");
+  this[headersSymbol] = this[headersSymbol] ?? new Headers();
+  var headers = this[headersSymbol];
   headers.set(name, value);
   return this;
 };
 
 OutgoingMessage.prototype.hasHeader = function (name) {
-  if (!getPrivate(this, "headers")) return false;
-  return getPrivate(this, "headers").has(name);
+  if (!this[headersSymbol]) return false;
+  return this[headersSymbol].has(name);
 };
 
 OutgoingMessage.prototype.addTrailers = function (headers) {
@@ -938,16 +942,16 @@ OutgoingMessage.prototype.addTrailers = function (headers) {
 };
 
 OutgoingMessage.prototype[kClearTimeout] = function () {
-  if (getPrivate(this, "timeoutTimer")) {
-    clearTimeout(getPrivate(this, "timeoutTimer"));
+  if (this[timeoutTimerSymbol]) {
+    clearTimeout(this[timeoutTimerSymbol]);
     this.removeAllListeners("timeout");
-    setPrivate(this, "timeoutTimer", undefined);
+    this[timeoutTimerSymbol] = undefined;
   }
 };
 
 function onTimeout() {
-  setPrivate(this, "timeoutTimer", undefined);
-  getPrivate(this, kAbortController)?.abort();
+  this[timeoutTimerSymbol] = undefined;
+  this[kAbortController]?.abort();
   this.emit("timeout");
 }
 
@@ -958,7 +962,7 @@ OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
 
   // Attempt to clear an existing timer in both cases -
   //  even if it will be rescheduled we don't want to leak an existing timer.
-  clearTimeout(getPrivate(this, "timeoutTimer"));
+  clearTimeout(this[timeoutTimerSymbol]);
 
   if (msecs === 0) {
     if (callback !== undefined) {
@@ -966,9 +970,9 @@ OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
       this.removeListener("timeout", callback);
     }
 
-    setPrivate(this, "timeoutTimer", undefined);
+    this[timeoutTimerSymbol] = undefined;
   } else {
-    setPrivate(this, "timeoutTimer", setTimeout(onTimeout.bind(this), msecs).unref());
+    this[timeoutTimerSymbol] = setTimeout(onTimeout.bind(this), msecs).unref();
 
     if (callback !== undefined) {
       validateFunction(callback, "callback");
@@ -981,8 +985,8 @@ OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
 
 Object.defineProperty(OutgoingMessage.prototype, "headers", {
   get: function () {
-    if (!getPrivate(this, "headers")) return kEmptyObject;
-    return getPrivate(this, "headers").toJSON();
+    if (!this[headersSymbol]) return kEmptyObject;
+    return this[headersSymbol].toJSON();
   },
 });
 
@@ -1018,12 +1022,12 @@ Object.defineProperty(OutgoingMessage.prototype, "useChunkedEncodingByDefault", 
 
 Object.defineProperty(OutgoingMessage.prototype, "socket", {
   get: function () {
-    setPrivate(this, "fakeSocket", getPrivate(this, "fakeSocket") ?? new FakeSocket());
-    return getPrivate(this, "fakeSocket");
+    this[fakeSocketSymbol] = this[fakeSocketSymbol] ?? new FakeSocket();
+    return this[fakeSocketSymbol];
   },
 
   set: function (val) {
-    setPrivate(this, "fakeSocket", val);
+    this[fakeSocketSymbol] = val;
   },
 });
 
@@ -1035,7 +1039,7 @@ Object.defineProperty(OutgoingMessage.prototype, "connection", {
 
 Object.defineProperty(OutgoingMessage.prototype, "finished", {
   get: function () {
-    return getPrivate(this, "finished");
+    return this[finishedSymbol];
   },
 });
 
@@ -1072,14 +1076,9 @@ function onServerResponseClose() {
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
-const privateAttribute = Symbol("privateAttribute");
-function getPrivate(obj, key) {
-  return obj[privateAttribute]?.[key];
-}
-function setPrivate(obj, key, value) {
-  obj[privateAttribute] = obj[privateAttribute] || {};
-  obj[privateAttribute][key] = value;
-}
+const controllerSymbol = Symbol("controller");
+const firstWriteSymbol = Symbol("firstWrite");
+const deferredSymbol = Symbol("deferred");
 function ServerResponse(req, reply) {
   OutgoingMessage.$call(this, reply);
   this.req = req;
@@ -1088,17 +1087,17 @@ function ServerResponse(req, reply) {
   this.statusCode = 200;
   this.headersSent = false;
   this.statusMessage = undefined;
-  setPrivate(this, "controller", undefined);
-  setPrivate(this, "firstWrite", undefined);
+  this[controllerSymbol] = undefined;
+  this[firstWriteSymbol] = undefined;
   this._writableState.decodeStrings = false;
-  setPrivate(this, "deferred", undefined);
+  this[deferredSymbol] = undefined;
 
   this._sent100 = false;
   this._defaultKeepAlive = false;
   this._removedConnection = false;
   this._removedContLen = false;
   this._hasBody = true;
-  setPrivate(this, "finished", false);
+  this[finishedSymbol] = false;
 
   // this is matching node's behaviour
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
@@ -1113,8 +1112,8 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 ServerResponse.prototype._write = function (chunk, encoding, callback) {
-  if (!getPrivate(this, "firstWrite") && !this.headersSent) {
-    setPrivate(this, "firstWrite", chunk);
+  if (this[firstWriteSymbol] === undefined && !this.headersSent) {
+    this[firstWriteSymbol] = chunk;
     callback();
     return;
   }
@@ -1126,8 +1125,8 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
 };
 
 ServerResponse.prototype._writev = function (chunks, callback) {
-  if (chunks.length === 1 && !this.headersSent && !getPrivate(this, "firstWrite")) {
-    setPrivate(this, "firstWrite", chunks[0].chunk);
+  if (chunks.length === 1 && !this.headersSent && this[firstWriteSymbol] === undefined) {
+    this[firstWriteSymbol] = chunks[0].chunk;
     callback();
     return;
   }
@@ -1142,29 +1141,29 @@ ServerResponse.prototype._writev = function (chunks, callback) {
 };
 
 function ensureReadableStreamController(run) {
-  const thisController = getPrivate(this, "controller");
+  const thisController = this[controllerSymbol];
   if (thisController) return run(thisController);
   this.headersSent = true;
-  let firstWrite = getPrivate(this, "firstWrite");
-  setPrivate(this, "controller", undefined);
+  let firstWrite = this[firstWriteSymbol];
+  this[controllerSymbol] = undefined;
   this._reply(
     new Response(
       new ReadableStream({
         type: "direct",
         pull: controller => {
-          setPrivate(this, "controller", controller);
+          this[controllerSymbol] = controller;
           if (firstWrite) controller.write(firstWrite);
           firstWrite = undefined;
           run(controller);
-          if (!getPrivate(this, "finished")) {
+          if (!this[finishedSymbol]) {
             return new Promise(resolve => {
-              setPrivate(this, "deferred", resolve);
+              this[deferredSymbol] = resolve;
             });
           }
         },
       }),
       {
-        headers: getPrivate(this, "headers"),
+        headers: this[headersSymbol],
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
       },
@@ -1182,13 +1181,13 @@ function drainHeadersIfObservable() {
 
 ServerResponse.prototype._final = function (callback) {
   if (!this.headersSent) {
-    var data = getPrivate(this, "firstWrite") || "";
-    setPrivate(this, "firstWrite", undefined);
-    setPrivate(this, "finished", true);
+    var data = this[firstWriteSymbol] || "";
+    this[firstWriteSymbol] = undefined;
+    this[finishedSymbol] = true;
     drainHeadersIfObservable.$call(this);
     this._reply(
       new Response(data, {
-        headers: getPrivate(this, "headers"),
+        headers: this[headersSymbol],
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
       }),
@@ -1197,14 +1196,14 @@ ServerResponse.prototype._final = function (callback) {
     return;
   }
 
-  setPrivate(this, "finished", true);
+  this[finishedSymbol] = true;
   ensureReadableStreamController.$call(this, controller => {
     controller.end();
 
     callback();
-    const deferred = getPrivate(this, "deferred");
+    const deferred = this[deferredSymbol];
     if (deferred) {
-      setPrivate(this, "deferred", undefined);
+      this[deferredSymbol] = undefined;
       deferred();
     }
   });
@@ -1241,44 +1240,44 @@ ServerResponse.prototype.setTimeout = function (msecs, callback) {
 };
 
 ServerResponse.prototype.appendHeader = function (name, value) {
-  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
-  const headers = getPrivate(this, "headers");
+  this[headersSymbol] = this[headersSymbol] ?? new Headers();
+  const headers = this[headersSymbol];
   headers.append(name, value);
 };
 
 ServerResponse.prototype.flushHeaders = function () {};
 
 ServerResponse.prototype.getHeader = function (name) {
-  return getHeader(getPrivate(this, "headers"), name);
+  return getHeader(this[headersSymbol], name);
 };
 
 ServerResponse.prototype.getHeaders = function () {
-  const headers = getPrivate(this, "headers");
+  const headers = this[headersSymbol];
   if (!headers) return kEmptyObject;
   return headers.toJSON();
 };
 
 ServerResponse.prototype.getHeaderNames = function () {
-  const headers = getPrivate(this, "headers");
+  const headers = this[headersSymbol];
   if (!headers) return [];
   return Array.from(headers.keys());
 };
 
 ServerResponse.prototype.removeHeader = function (name) {
-  if (!getPrivate(this, "headers")) return;
-  getPrivate(this, "headers").delete(name);
+  if (!this[headersSymbol]) return;
+  this[headersSymbol].delete(name);
 };
 
 ServerResponse.prototype.setHeader = function (name, value) {
-  setPrivate(this, "headers", getPrivate(this, "headers") ?? new Headers());
-  const headers = getPrivate(this, "headers");
+  this[headersSymbol] = this[headersSymbol] ?? new Headers();
+  const headers = this[headersSymbol];
   setHeader(headers, name, value);
   return this;
 };
 
 ServerResponse.prototype.hasHeader = function (name) {
-  if (!getPrivate(this, "headers")) return false;
-  return getPrivate(this, "headers").has(name);
+  if (!this[headersSymbol]) return false;
+  return this[headersSymbol].has(name);
 };
 
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {

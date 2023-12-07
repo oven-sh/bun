@@ -89,6 +89,7 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.emit = function (event, ...args) {
     this.dispatchEvent(new (EventClass(event))(event, ...args));
+
     return this;
   };
 

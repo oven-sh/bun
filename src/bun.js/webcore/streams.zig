@@ -4,8 +4,7 @@ const bun = @import("root").bun;
 const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -4328,93 +4327,45 @@ pub const File = struct {
 
     const Concurrent = struct {
         read: Blob.SizeType = 0,
-        task: NetworkThread.Task = .{ .callback = Concurrent.taskCallback },
-        completion: AsyncIO.Completion = undefined,
+        task: bun.ThreadPool.Task = .{ .callback = Concurrent.taskCallback },
         chunk_size: Blob.SizeType = 0,
         main_thread_task: JSC.AnyTask = .{ .callback = onJSThread, .ctx = null },
         concurrent_task: JSC.ConcurrentTask = .{},
 
-        pub fn taskCallback(task: *NetworkThread.Task) void {
+        pub fn taskCallback(task: *bun.ThreadPool.Task) void {
             var this = @fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task));
             runAsync(this);
         }
 
-        pub fn onRead(this: *File, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-            this.concurrent.read = @as(Blob.SizeType, @truncate(result catch |err| {
-                if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
-                    this.pending.result = .{
-                        .err = .{
-                            .Error = Syscall.Error{
-                                .errno = @as(Syscall.Error.Int, @intCast(-completion.result)),
-                                .syscall = .read,
-                            },
-                        },
-                    };
-                } else {
-                    this.pending.result = .{
-                        .err = .{
-                            .Error = Syscall.Error{
-                                // this is too hacky
-                                .errno = @as(Syscall.Error.Int, @truncate(@as(u16, @intCast(@max(1, @intFromError(err)))))),
-                                .syscall = .read,
-                            },
-                        },
-                    };
-                }
-                this.concurrent.read = 0;
-                scheduleMainThreadTask(this);
-                return;
-            }));
-
-            scheduleMainThreadTask(this);
-        }
-
         pub fn scheduleRead(this: *File) void {
-            if (comptime Environment.isMac) {
-                var remaining = this.buf[this.concurrent.read..];
+            var remaining = this.buf[this.concurrent.read..];
 
-                while (remaining.len > 0) {
-                    const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
-                    switch (Syscall.read(this.fd, remaining[0..to_read])) {
-                        .err => |err| {
-                            const retry = E.AGAIN;
+            while (remaining.len > 0) {
+                const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
+                switch (Syscall.read(this.fd, remaining[0..to_read])) {
+                    .err => |err| {
+                        const retry = E.AGAIN;
 
-                            switch (err.getErrno()) {
-                                retry => break,
-                                else => {},
-                            }
+                        switch (err.getErrno()) {
+                            retry => break,
+                            else => {},
+                        }
 
-                            this.pending.result = .{ .err = .{ .Error = err } };
-                            scheduleMainThreadTask(this);
-                            return;
-                        },
-                        .result => |result| {
-                            this.concurrent.read += @as(Blob.SizeType, @intCast(result));
-                            remaining = remaining[result..];
+                        this.pending.result = .{ .err = .{ .Error = err } };
+                        scheduleMainThreadTask(this);
+                        return;
+                    },
+                    .result => |result| {
+                        this.concurrent.read += @as(Blob.SizeType, @intCast(result));
+                        remaining = remaining[result..];
 
-                            if (result == 0) {
-                                remaining.len = 0;
-                                break;
-                            }
-                        },
-                    }
-                }
-
-                if (remaining.len == 0) {
-                    scheduleMainThreadTask(this);
-                    return;
+                        if (result == 0) {
+                            remaining.len = 0;
+                            break;
+                        }
+                    },
                 }
             }
-
-            AsyncIO.global.read(
-                *File,
-                this,
-                onRead,
-                &this.concurrent.completion,
-                this.fd,
-                this.buf[this.concurrent.read..],
-                null,
-            );
 
             scheduleMainThreadTask(this);
         }
@@ -4467,10 +4418,8 @@ pub const File = struct {
     ) void {
         this.scheduled_count += 1;
         this.poll_ref.ref(globalThis.bunVM());
-        NetworkThread.init() catch {};
-
         this.concurrent.chunk_size = chunk_size;
-        NetworkThread.global.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
+        JSC.WorkPool.schedule(&this.concurrent.task);
     }
 
     pub fn read(this: *File, buf: []u8) ReadResult {

@@ -37,7 +37,7 @@ const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HTTPChannel = HTTP.HTTPChannel;
-const NetworkThread = HTTP.NetworkThread;
+
 const HeaderBuilder = HTTP.HeaderBuilder;
 
 const Integrity = @import("./integrity.zig").Integrity;

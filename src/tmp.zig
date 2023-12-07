@@ -2,13 +2,17 @@ const bun = @import("root").bun;
 const std = @import("std");
 const Environment = bun.Environment;
 const O = std.os.O;
+
+// O_TMPFILE doesn't seem to work very well.
+const allow_tmpfile = false;
+
 // To be used with files
 // not folders!
 pub const Tmpfile = struct {
     destination_dir: bun.FileDescriptor = bun.invalid_fd,
     tmpfilename: [:0]const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
-    using_tmpfile: bool = Environment.isLinux,
+    using_tmpfile: bool = allow_tmpfile,
 
     pub fn create(
         destination_dir: bun.FileDescriptor,
@@ -21,7 +25,7 @@ pub const Tmpfile = struct {
         };
 
         open: while (true) {
-            if (comptime Environment.isLinux) {
+            if (comptime allow_tmpfile) {
                 switch (bun.sys.openat(destination_dir, ".", O.WRONLY | O.TMPFILE | O.CLOEXEC, perm)) {
                     .result => |fd| {
                         tmpfile.fd = fd;
@@ -49,9 +53,28 @@ pub const Tmpfile = struct {
     }
 
     pub fn finish(this: *Tmpfile, destname: [:0]const u8) !void {
-        if (comptime Environment.isLinux) {
+        if (comptime allow_tmpfile) {
             if (this.using_tmpfile) {
-                return try bun.sys.linkatTmpfile(this.fd, this.destination_dir, destname).unwrap();
+                var retry = true;
+                const basename: [:0]const u8 = @ptrCast(std.fs.path.basename(destname));
+                while (retry) {
+                    const ret = bun.sys.linkatTmpfile(this.fd, this.destination_dir, basename);
+                    switch (ret) {
+                        .result => {
+                            return;
+                        },
+                        .err => |err| {
+                            if (err.getErrno() == .EXIST and retry) {
+                                _ = bun.sys.unlinkat(this.destination_dir, basename);
+                                retry = false;
+                                continue;
+                            } else {
+                                try ret.unwrap();
+                                return;
+                            }
+                        },
+                    }
+                }
             }
         }
 

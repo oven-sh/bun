@@ -620,6 +620,21 @@ describe("mock()", () => {
     expect(fn).toHaveBeenNthCalledWith(5, 1, undefined);
     expect(fn).not.toHaveBeenNthCalledWith(5, 1);
   });
+
+  it("no segmentation fault when passing jest.fn into another jest.fn, issue#5900", () => {
+    function foo() {
+      return true;
+    }
+
+    function bar(fn = jest.fn(foo)) {
+      expect(fn.getMockName()).toBe("foo");
+      let newFn = jest.fn(fn);
+      expect(newFn.getMockName()).toBe("foo");
+      return newFn;
+    }
+
+    expect(bar()()).toBe(true);
+  });
 });
 
 describe("spyOn", () => {

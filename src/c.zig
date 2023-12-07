@@ -160,6 +160,10 @@ pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.
 pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
 
+    // Attempt to delete incase it already existed.
+    // This fixes ETXTBUSY on Linux
+    _ = bun.sys.unlinkat(to_dir, destination);
+
     const out_handle = try bun.sys.openat(
         to_dir,
         destination,

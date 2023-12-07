@@ -11,7 +11,8 @@ import { createInternalModuleRegistry } from "./internal-module-registry-scanner
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
-const CMAKE_BUILD_ROOT = process.argv[3];
+const dynamicLoading = process.argv[2] === "--dynamic-loading=ON";
+const CMAKE_BUILD_ROOT = process.argv[4];
 
 if (!CMAKE_BUILD_ROOT) {
   console.error("Usage: bun bundle-modules.ts <CMAKE_WORK_DIR>");
@@ -189,21 +190,6 @@ if (out.exitCode !== 0) {
   process.exit(out.exitCode);
 }
 
-// const config = ({ debug }: { debug?: boolean }) =>
-//   ({
-//     entrypoints: bundledEntryPoints,
-//     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
-//     minify: { syntax: !debug, whitespace: false },
-//     root: TMP_DIR,
-//     target: "bun",
-//     external: builtinModules,
-//     define: {
-//       ...define,
-//       IS_BUN_DEVELOPMENT: String(!!debug),
-//       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
-//     },
-//   } satisfies BuildConfig);
-
 mark("Bundle modules");
 
 const outputs = new Map();
@@ -327,7 +313,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 //
 // We cannot use ASCIILiteral's `_s` operator for the module source code because for long
 // strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
-if (!debug) {
+if (!dynamicLoading) {
   writeIfNotChanged(
     path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
     `// clang-format off

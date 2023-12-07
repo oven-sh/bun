@@ -59,14 +59,17 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
         JSC::getCallData(func),                                                             \
         globalObject, JSC::MarkedArgumentBuffer());                                         \
                                                                                             \
+    ASSERT_INTERNAL_MODULE(vm, result, moduleName);                                         \
     RETURN_IF_EXCEPTION(throwScope, {});                                                    \
-    ASSERT_INTERNAL_MODULE(result, moduleName);                                             \
     return result;
 
-#if BUN_DEBUG
-#define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
-    if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
-        printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
+#if BUN_USE_DEBUG_MODULE_REGISTRY
+#define ASSERT_INTERNAL_MODULE(vm, result, moduleName)                                                      \
+    if (vm.exeception()) {                                                                                  \
+        printf("Loading \"%s\" threw an exception. Bun might crash.\n", moduleName.utf8().data());          \
+    }                                                                                                       \
+    if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                                 \
+        printf("Expected \"%s\" to export a JSObject. Bun is going to crash.\n", moduleName.utf8().data()); \
     }
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
@@ -88,14 +91,14 @@ JSValue initializeInternalModuleFromDisk(
 }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
     return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
-#else
+#else // BUN_USE_DEBUG_MODULE_REGISTRY
 
-#define ASSERT_INTERNAL_MODULE(result, moduleName) \
-    {                                              \
+#define ASSERT_INTERNAL_MODULE(vm, result, moduleName) \
+    {                                                  \
     }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
     INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleId, urlString)
-#endif
+#endif // BUN_USE_DEBUG_MODULE_REGISTRY
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };
 

@@ -50,6 +50,7 @@ jobs:
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
             target: "artifact"
+            build-type: "Release"
           - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
@@ -58,6 +59,17 @@ jobs:
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
+            target: "artifact"
+            build-type: "Release"
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            build_machine_arch: x86_64
+            build-type: "Debug"
+            assertions: "ON"
+            zig_optimize: "ReleaseSafe"
             target: "artifact"
           # - cpu: haswell
           #   tag: linux-x64-assertions
@@ -114,6 +126,7 @@ jobs:
             GIT_SHA=${{github.sha}}
             ASSERTIONS=${{matrix.assertions}}
             ZIG_OPTIMIZE=${{matrix.zig_optimize}}
+            CMAKE_BUILD_TYPE${{matrix.build-type}}
             SCCACHE_BUCKET=bun
             SCCACHE_REGION=auto
             SCCACHE_S3_USE_SSL=true

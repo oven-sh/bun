@@ -1,7 +1,39 @@
 import { describe, expect, it, test } from "bun:test";
 
 describe("UTF-8 BOM should be ignored", () => {
+  test("handles empty strings", async () => {
+    const blob = new Response(new Blob([Buffer.from([0xef, 0xbb, 0xbf])]));
+
+    expect(await blob.text()).toHaveLength(0);
+    expect(async () => await blob.json()).toThrow();
+  });
+
+  test("handles UTF8 BOM + emoji", async () => {
+    const blob = new Response(new Blob([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("🌎")]));
+
+    expect(await blob.text()).toHaveLength(2);
+    expect(async () => await blob.json()).toThrow();
+  });
+
   describe("Blob", () => {
+    describe("with emoji", () => {
+      it("in text()", async () => {
+        const blob = new Blob(["\uFEFFHello, World! 🌎"], { type: "text/plain" });
+        expect(await blob.text()).toBe("Hello, World! 🌎");
+      });
+
+      it("in json()", async () => {
+        const blob = new Blob(['\uFEFF{"hello":"World 🌎"}'], { type: "application/json" });
+        expect(await blob.json()).toStrictEqual({ "hello": "World 🌎" } as any);
+      });
+
+      it("in formData()", async () => {
+        const blob = new Blob(["\uFEFFhello=world 🌎"], { type: "application/x-www-form-urlencoded" });
+        const formData = await blob.formData();
+        expect(formData.get("hello")).toBe("world 🌎");
+      });
+    });
+
     it("in text()", async () => {
       const blob = new Blob(["\uFEFFHello, World!"], { type: "text/plain" });
       expect(await blob.text()).toBe("Hello, World!");

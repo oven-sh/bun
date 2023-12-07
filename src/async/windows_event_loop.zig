@@ -198,7 +198,7 @@ pub const FilePoll = struct {
     }
 
     pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
-        return @intCast(this.fd);
+        return this.fd;
     }
 
     pub const deinitForceUnregister = deinit;

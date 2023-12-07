@@ -1884,7 +1884,6 @@ pub const PackageManager = struct {
     total_scripts: usize = 0,
 
     root_lifecycle_scripts: ?Package.Scripts.List = null,
-    _configured_env_for_scripts: bool = false,
 
     env_configure: ?struct {
         root_dir_info: *DirInfo,
@@ -1929,7 +1928,6 @@ pub const PackageManager = struct {
             return .{ env_configure.root_dir_info, env_configure.bundler };
         }
 
-        this._configured_env_for_scripts = true;
         // We need to figure out the PATH and other environment variables
         // to do that, we re-use the code from bun run
         // this is expensive, it traverses the entire directory tree going up to the root
@@ -8642,7 +8640,7 @@ pub const PackageManager = struct {
                     }
 
                     if (manager.summary.new_trusted_dependencies.count() > 0) {
-                        needs_new_lockfile = needs_new_lockfile or true;
+                        needs_new_lockfile = true;
                     }
 
                     if (had_any_diffs) {
@@ -8965,10 +8963,7 @@ pub const PackageManager = struct {
             .posix,
         );
         if (root.scripts.hasAny()) {
-            const add_node_gyp_rebuild_script = if (root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty())
-                Syscall.exists(binding_dot_gyp_path)
-            else
-                false;
+            const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
             manager.root_lifecycle_scripts = root.scripts.enqueue(
                 manager.lockfile,

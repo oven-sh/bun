@@ -1313,13 +1313,9 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 
 const utf8_bom = [_]u8{ 0xef, 0xbb, 0xbf };
 
-pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
-    return toUTF16AllocAllowBOM(allocator, bytes, fail_if_invalid, false);
-}
-
 pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
-    if (bytes.len > 3 and strings.eqlComptime(bytes[0..3], utf8_bom)) {
-        return bytes[3..];
+    if (strings.hasPrefixComptime(bytes, utf8_bom)) {
+        return bytes[utf8_bom.len..];
     } else {
         return bytes;
     }
@@ -1328,20 +1324,8 @@ pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
-pub fn toUTF16AllocAllowBOM(allocator: std.mem.Allocator, bytes_: []const u8, comptime fail_if_invalid: bool, comptime allow_bom: bool) !?[]u16 {
-    var bytes = bytes_;
+pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
-        if (comptime allow_bom) {
-            // we could avoid the allocation here when it's otherwise ASCII. But
-            // it gets really complicated because most memory allocators need
-            // the head pointer to be the allocated one so if we instead return
-            // a non-head pointer and try to free that the allocator might not
-            // be able to free it, and we would have a big problem.
-            if (i == 0 and bytes.len > 3 and strings.eqlComptime(bytes[0..3], utf8_bom)) {
-                bytes = bytes[3..];
-            }
-        }
-
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const trimmed = bun.simdutf.trim.utf8(bytes);
 

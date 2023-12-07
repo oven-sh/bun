@@ -3815,15 +3815,17 @@ pub const Blob = struct {
         return this.store != null and this.store.?.data == .file;
     }
 
-    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, buf: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
 
+        const buf = strings.withoutUTF8BOM(buf_);
+
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
-            if (strings.toUTF16AllocAllowBOM(bun.default_allocator, buf, false, true) catch unreachable) |external| {
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
 
@@ -3850,21 +3852,36 @@ pub const Blob = struct {
             // we don't need to clone
             .clone => {
                 this.store.?.ref();
+                // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
                 return ZigString.init(buf).external(global, this.store.?, Store.external);
             },
             .transfer => {
                 var store = this.store.?;
                 std.debug.assert(store.data == .bytes);
                 this.transfer();
+                // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
                 return ZigString.init(buf).external(global, store, Store.external);
             },
             // strings are immutable
             // sharing isn't really a thing
             .share => {
                 this.store.?.ref();
+                // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.s
                 return ZigString.init(buf).external(global, this.store.?, Store.external);
             },
             .temporary => {
+                // if there was a UTF-8 BOM, we need to clone the buffer because
+                // external doesn't support this case here yet.
+                if (buf.len != buf_.len) {
+                    var out = bun.String.createLatin1(buf);
+                    defer {
+                        bun.default_allocator.free(buf_);
+                        out.deref();
+                    }
+
+                    return out.toJS(global);
+                }
+
                 return ZigString.init(buf).toExternalValue(global);
             },
         }
@@ -3894,7 +3911,8 @@ pub const Blob = struct {
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, buf: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
+        const buf = strings.withoutUTF8BOM(buf_);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
         // null == unknown
         // false == can't be
@@ -3905,7 +3923,7 @@ pub const Blob = struct {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16AllocAllowBOM(allocator, buf, false, true) catch null) |external| {
+            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
                 const result = ZigString.init16(external).toJSONObject(global);
                 allocator.free(external);
@@ -4534,11 +4552,19 @@ pub const InternalBlob = struct {
     was_string: bool = false,
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
-        if (strings.toUTF16AllocAllowBOM(globalThis.allocator(), this.bytes.items, false, true) catch &[_]u16{}) |out| {
+        const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
+        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();
             return return_value;
+        } else if
+        // If there was a UTF8 BOM, we clone it
+        (bytes_without_bom.len != this.bytes.items.len) {
+            defer this.deinit();
+            var out = bun.String.createLatin1(this.bytes.items[3..]);
+            defer out.deref();
+            return out.toJS(globalThis);
         } else {
             var str = ZigString.init(this.toOwnedSlice());
             str.mark();

@@ -5095,23 +5095,25 @@ pub const NodeFS = struct {
         var offset: usize = 0;
 
         // Declare buffer to store encoded Base64 Chunk over every chunked input
-        const temp_encoding_buffer = bun.default_allocator.alloc(u8, encoded_chunk_size) catch |err| return err;
-        defer bun.default_allocator.free(temp_encoding_buffer);
+        var encoding_buffer: [encoded_chunk_size]u8 = undefined;
 
         while (true) {
             const remaining_bytes = buf.items.len - offset;
-            const chunk_to_be_encoded = if (remaining_bytes <= chunk_size) {
-                const final_buffer = bun.default_allocator.alloc(u8, Base64.encodeLenFromSize(remaining_bytes)) catch |err| return err;
+
+            if (remaining_bytes <= chunk_size) {
+                const final_buffer = try bun.default_allocator.alloc(u8, Base64.encodeLenFromSize(remaining_bytes));
                 defer bun.default_allocator.free(final_buffer);
 
                 _ = Base64.encode(final_buffer, buf.items[offset..]);
-                buf.replaceRange(offset, remaining_bytes, final_buffer) catch |err| return err;
+                try buf.replaceRange(offset, remaining_bytes, final_buffer);
 
-                return buf.toOwnedSlice() catch |err| return err;
-            } else buf.items[offset..(offset + chunk_size)];
+                return try buf.toOwnedSlice();
+            }
 
-            _ = Base64.encode(temp_encoding_buffer, chunk_to_be_encoded);
-            buf.replaceRange(offset, chunk_size, temp_encoding_buffer) catch |err| return err;
+            const chunk_to_be_encoded = buf.items[offset..(offset + chunk_size)];
+
+            _ = Base64.encode(&encoding_buffer, chunk_to_be_encoded);
+            try buf.replaceRange(offset, chunk_size, &encoding_buffer);
             offset += encoded_chunk_size;
         }
     }

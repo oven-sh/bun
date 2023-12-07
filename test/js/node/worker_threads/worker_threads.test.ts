@@ -51,12 +51,12 @@ test("all worker_threads module properties are present", () => {
 
   expect(() => {
     // @ts-expect-error no args
-    wt.markAsUntransferable();
+    markAsUntransferable();
   }).toThrow("not yet implemented");
 
   expect(() => {
     // @ts-expect-error no args
-    wt.moveMessagePortToContext();
+    moveMessagePortToContext();
   }).toThrow("not yet implemented");
 });
 
@@ -116,6 +116,47 @@ test("all worker_threads worker instance properties are present", async () => {
   await worker.terminate();
 });
 
+test("worker with process.exit", done => {
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-process-exit.js", import.meta.url).href, {
+    smol: true,
+  });
+  worker.on("exit", code => {
+    try {
+      expect(code).toBe(2);
+    } catch (e) {
+      done(e);
+      return;
+    }
+    done();
+  });
+});
+
+test("worker terminate", async () => {
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-hang.js", import.meta.url).href, {
+    smol: true,
+  });
+  const code = await worker.terminate();
+  expect(code).toBe(0);
+});
+
+test("worker with process.exit (delay) and terminate", async () => {
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-process-exit.js", import.meta.url).href, {
+    smol: true,
+  });
+  await Bun.sleep(200);
+  const code = await worker.terminate();
+  expect(code).toBe(2);
+});
+
+test.todo("worker terminating forcefully properly interrupts", async () => {
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-while-true.js", import.meta.url).href);
+  await new Promise<void>(done => {
+    worker.on("message", () => done());
+  });
+  const code = await worker.terminate();
+  expect(code).toBe(0);
+});
+
 test("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
   expect(threadId).toBe(0);
@@ -128,7 +169,7 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
-test("receiveMessageOnPort works across threads", async () => {
+test("receiveMessageOnPort works across workers", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
     workerData: port2,

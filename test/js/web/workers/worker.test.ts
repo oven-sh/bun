@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
-import wt from "worker_threads";
 
 describe("web worker", () => {
   test("worker", done => {
@@ -164,52 +163,32 @@ describe("web worker", () => {
         expect(e.code).toBe(2);
       } catch (e) {
         done(e);
-      }
-      done();
-    });
-  });
-});
-
-// TODO: move to node:worker_threads tests directory
-describe("worker_threads", () => {
-  test("worker with process.exit", done => {
-    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
-      smol: true,
-    });
-    worker.on("exit", code => {
-      try {
-        expect(code).toBe(2);
-      } catch (e) {
-        done(e);
         return;
       }
       done();
     });
   });
 
-  test("worker terminate", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
+  test("worker terminate", () => {
+    const worker = new Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
       smol: true,
     });
-    const code = await worker.terminate();
-    expect(code).toBe(0);
+    worker.terminate();
   });
 
   test("worker with process.exit (delay) and terminate", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
     await Bun.sleep(200);
-    const code = await worker.terminate();
-    expect(code).toBe(2);
+    worker.terminate();
   });
 
   test.todo("worker terminating forcefully properly interrupts", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
+    const worker = new Worker(new URL("worker-fixture-while-true.js", import.meta.url).href);
     await new Promise<void>(done => {
-      worker.on("message", () => done());
+      worker.addEventListener("message", () => done());
     });
-    const code = await worker.terminate();
-    expect(code).toBe(0);
+    worker.terminate();
   });
 });

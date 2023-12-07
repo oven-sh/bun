@@ -1569,10 +1569,15 @@ pub const Resolver = struct {
 
         // Find the parent directory with the "package.json" file
         var dir_info_package_json: ?*DirInfo = dir_info;
-        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null) : (dir_info_package_json = dir_info_package_json.?.getParent()) {}
+        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null)
+            dir_info_package_json = dir_info_package_json.?.getParent();
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
-        if (dir_info_package_json != null and strings.hasPrefix(import_path, "#") and !forbid_imports and dir_info_package_json.?.package_json.?.imports != null) {
+        if (dir_info_package_json != null and
+            strings.hasPrefixComptime(import_path, "#") and
+            !forbid_imports and
+            dir_info_package_json.?.package_json.?.imports != null)
+        {
             return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
         }
 
@@ -2871,7 +2876,9 @@ pub const Resolver = struct {
 
         const esmodule = ESModule{
             .conditions = switch (kind) {
-                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                ast.ImportKind.require,
+                ast.ImportKind.require_resolve,
+                => r.opts.conditions.require,
                 else => r.opts.conditions.import,
             },
             .allocator = r.allocator,
@@ -2881,7 +2888,27 @@ pub const Resolver = struct {
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
 
-        if (esm_resolution.status == .PackageResolve)
+        if (esm_resolution.status == .PackageResolve) {
+            // https://github.com/oven-sh/bun/issues/4972
+            // Resolve a subpath import to a Bun or Node.js builtin
+            //
+            // Code example:
+            //
+            //     import { readFileSync } from '#fs';
+            //
+            // package.json:
+            //
+            //     "imports": {
+            //       "#fs": "node:fs"
+            //     }
+            if (JSC.HardcodedModule.Aliases.get(esm_resolution.path, r.opts.target)) |builtin| {
+                return .{
+                    .success = .{
+                        .path_pair = .{ .primary = bun.fs.Path.init(builtin.path) },
+                    },
+                };
+            }
+
             return r.loadNodeModules(
                 esm_resolution.path,
                 kind,
@@ -2889,6 +2916,7 @@ pub const Resolver = struct {
                 global_cache,
                 true,
             );
+        }
 
         if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, "")) |result| {
             return .{ .success = result };

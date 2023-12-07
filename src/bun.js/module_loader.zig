@@ -13,7 +13,7 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
-const NetworkThread = @import("root").bun.http.NetworkThread;
+
 const IO = @import("root").bun.AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;

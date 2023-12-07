@@ -35,6 +35,10 @@ const validateHeaderValue = (name, value) => {
   }
 };
 
+function ERR_HTTP_SOCKET_ASSIGNED() {
+  return new Error(`ServerResponse has an already assigned socket`);
+}
+
 // Cheaper to duplicate this than to import it from node:net
 function isIPv6(input) {
   const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -540,7 +544,7 @@ class Server extends EventEmitter {
 
           const upgrade = http_req.headers.upgrade;
 
-          const http_res = new ResponseClass({ reply, req: http_req });
+          const http_res = new ResponseClass(http_req, reply);
 
           http_req.socket[kInternalSocketData] = [_server, http_res, req];
 
@@ -1023,15 +1027,44 @@ class OutgoingMessage extends Writable {
   }
 }
 
+function emitCloseNT(self) {
+  if (!self._closed) {
+    self.destroyed = true;
+    self._closed = true;
+    self.emit("close");
+  }
+}
+
+function onServerResponseClose() {
+  // EventEmitter.emit makes a copy of the 'close' listeners array before
+  // calling the listeners. detachSocket() unregisters onServerResponseClose
+  // but if detachSocket() is called, directly or indirectly, by a 'close'
+  // listener, onServerResponseClose is still in that copy of the listeners
+  // array. That is, in the example below, b still gets called even though
+  // it's been removed by a:
+  //
+  //   const EventEmitter = require('events');
+  //   const obj = new EventEmitter();
+  //   obj.on('event', a);
+  //   obj.on('event', b);
+  //   function a() { obj.removeListener('event', b) }
+  //   function b() { throw "BAM!" }
+  //   obj.emit('event');  // throws
+  //
+  // Ergo, we need to deal with stale 'close' events and handle the case
+  // where the ServerResponse object has already been deconstructed.
+  // Fortunately, that requires only a single if check. :-)
+  if (this._httpMessage) {
+    emitCloseNT(this._httpMessage);
+  }
+}
+
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
-class ServerResponse extends Writable {
+class ServerResponse extends OutgoingMessage {
   declare _writableState: any;
 
-  constructor(c) {
+  constructor(req, reply) {
     super();
-    if (!c) c = {};
-    var req = c.req || {};
-    var reply = c.reply;
     this.req = req;
     this._reply = reply;
     this.sendDate = true;
@@ -1177,7 +1210,13 @@ class ServerResponse extends Writable {
   }
 
   assignSocket(socket) {
-    throw new Error("not implemented");
+    if (socket._httpMessage) {
+      throw new ERR_HTTP_SOCKET_ASSIGNED();
+    }
+    socket._httpMessage = this;
+    socket.on("close", onServerResponseClose);
+    this.socket = socket;
+    this.emit("socket", socket);
   }
 
   detachSocket(socket) {

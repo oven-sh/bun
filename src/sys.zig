@@ -407,6 +407,12 @@ pub fn openDirAtWindows(
         log("NtCreateFile({d}, {}, ) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
+    if (Environment.isDebug) {
+        if (rc == std.os.windows.NTSTATUS.OBJECT_PATH_SYNTAX_BAD) {
+            @breakpoint();
+        }
+    }
+
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
             return JSC.Maybe(bun.FileDescriptor){
@@ -518,6 +524,12 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
 
         if (comptime Environment.allow_assert) {
             log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfD, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
+        }
+
+        if (Environment.isDebug) {
+            if (rc == std.os.windows.NTSTATUS.OBJECT_PATH_SYNTAX_BAD) {
+                @breakpoint();
+            }
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1025,6 +1037,17 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
+pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.renameat(from_dir, from, to_dir, to), .rename)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
 pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
@@ -1089,6 +1112,28 @@ pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1569,5 +1614,26 @@ pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun
         ),
         .link,
         basename,
+    ) orelse Maybe(void).success;
+}
+
+pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isLinux) {
+        @compileError("Linux only.");
+    }
+
+    if (comptime Environment.allow_assert)
+        std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+
+    return Maybe(void).errnoSysP(
+        std.os.linux.linkat(
+            bun.fdcast(tmpfd),
+            "",
+            dirfd,
+            name,
+            os.AT.EMPTY_PATH,
+        ),
+        .link,
+        name,
     ) orelse Maybe(void).success;
 }

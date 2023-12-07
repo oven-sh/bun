@@ -690,14 +690,14 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "..\\")))) break true;
             } else false) {
                 // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
-                for(ctx.positionals[1..])|arg| {
+                for (ctx.positionals[1..]) |arg| {
                     results.appendAssumeCapacity(PathString.init(arg));
                 }
-                break :scan .{results.items, 0};
+                break :scan .{ results.items, 0 };
             }
 
             // Treat arguments as filters and scan the codebase
-            const filter_names = if (ctx.positionals.len == 0)  &[0][]const u8{} else ctx.positionals[1..];
+            const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
 
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
@@ -717,7 +717,7 @@ pub const TestCommand = struct {
             scanner.scan(dir_to_scan);
             scanner.dirs_to_scan.deinit();
 
-            break :scan .{scanner.results.items, scanner.search_count};
+            break :scan .{ scanner.results.items, scanner.search_count };
         };
 
         if (test_files.len > 0) {
@@ -775,29 +775,48 @@ pub const TestCommand = struct {
         if (test_files.len == 0) {
             if (ctx.positionals.len == 0) {
                 Output.prettyErrorln(
-                    \\<b><yellow>No tests found!<r>
+                    \\<yellow>No tests found!<r>
                     \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
                     \\
-                ,
-                    .{},
-                );
+                , .{});
             } else {
+                Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                var has_file_like: ?usize = null;
+                Output.prettyError(" ", .{});
+                for (ctx.positionals[1..], 1..) |filter, i| {
+                    Output.prettyError(" {s}", .{filter});
+
+                    if (has_file_like == null and
+                        (strings.hasSuffixComptime(filter, ".ts") or
+                        strings.hasSuffixComptime(filter, ".tsx") or
+                        strings.hasSuffixComptime(filter, ".js") or
+                        strings.hasSuffixComptime(filter, ".jsx")))
+                    {
+                        has_file_like = i;
+                    }
+                }
+                if (search_count > 0) {
+                    Output.prettyError("\n{d} files were searched ", .{search_count});
+                    Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+                }
+
                 Output.prettyErrorln(
-                    \\<b><yellow>Filters passed did not match any test names<r>
-                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
                     \\
-                ,
-                    .{},
-                );
+                    \\
+                    \\<blue>note<r><d>:<r> Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                , .{});
+
+                // print a helpful note
+                if (has_file_like) |i| {
+                    Output.prettyErrorln(
+                        \\<blue>note<r><d>:<r> To treat the "{s}" filter as a path, run "bun test ./{s}"<r>
+                    , .{ ctx.positionals[i], ctx.positionals[i] });
+                }
             }
-            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-            if (search_count > 0) {
-                Output.prettyError(
-                    \\ {d} files searched
-                , .{
-                    search_count,
-                });
-            }
+            Output.prettyError(
+                \\
+                \\Learn more about the test runner: <magenta>https://bun.sh/docs/cli/test<r>
+            , .{});
         } else {
             Output.prettyError("\n", .{});
 

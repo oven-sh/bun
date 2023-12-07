@@ -1,8 +1,9 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, readdirSync } from "fs";
-import { resolve } from "node:path";
-import { platform, totalmem } from "os";
+import { rmSync, writeFileSync } from "fs";
+import { readdirSync } from "node:fs";
+import { resolve, basename } from "node:path";
+import { totalmem } from "os";
 import { fileURLToPath } from "url";
 
 const nativeMemory = totalmem();
@@ -17,17 +18,24 @@ process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
 
-let isTestEnabled = () => true;
-
+let testList = [];
 if (process.platform == "win32") {
-  const testList = readFileSync("test/windows-test-allowlist.txt", "utf8")
+  testList = readFileSync("test/windows-test-allowlist.txt", "utf8")
     .replaceAll("\r", "")
     .split("\n")
     .map(x => x.trim().replaceAll("/", "\\"))
     .filter(x => !!x && !x.startsWith("#"));
-  isTestEnabled = name => {
+}
+
+const extensions = [".js", ".ts", ".jsx", ".tsx"];
+
+function isTest(path) {
+  if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
+    return false;
+  }
+  if (testList) {
     return testList.some(testPattern => name.includes(testPattern));
-  };
+  }
 }
 
 function* findTests(dir, query) {
@@ -35,7 +43,7 @@ function* findTests(dir, query) {
     const path = resolve(dir, entry.name);
     if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
       yield* findTests(path, query);
-    } else if (entry.name.includes(".test.") && isTestEnabled(path)) {
+    } else if (isTest(path)) {
       yield path;
     }
   }
@@ -52,7 +60,6 @@ try {
 }
 
 async function runTest(path) {
-  console.log(path);
   const name = path.replace(cwd, "").slice(1);
   try {
     var {
@@ -68,6 +75,7 @@ async function runTest(path) {
         FORCE_COLOR: "1",
         BUN_GARBAGE_COLLECTOR_LEVEL: "1",
         BUN_JSC_forceRAMSize,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
         // reproduce CI results locally
         GITHUB_ACTION: process.env.GITHUB_ACTION ?? "true",
         BUN_DEBUG_QUIET_LOGS: "1",

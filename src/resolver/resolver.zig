@@ -62,11 +62,11 @@ pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
     return !strings.startsWith(non_absolute_path, "./") and
         !strings.startsWith(non_absolute_path, "../") and
         !strings.eql(non_absolute_path, ".") and
-        !strings.eql(non_absolute_path, "..") and if(Environment.isWindows)
-        (
-            !strings.startsWith(non_absolute_path, ".\\") and
-            !strings.startsWith(non_absolute_path, "..\\")
-        ) else true;
+        !strings.eql(non_absolute_path, "..") and if (Environment.isWindows)
+        (!strings.startsWith(non_absolute_path, ".\\") and
+            !strings.startsWith(non_absolute_path, "..\\"))
+    else
+        true;
 }
 
 pub const SideEffectsData = struct {
@@ -575,6 +575,22 @@ pub const Resolver = struct {
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
         // TODO: enable auto-install on Windows
         if (Environment.isWindows) return false;
+
+        // TODO(@paperdave): make this configurable. the rationale for disabling
+        // auto-install in standalone mode is that such executable must either:
+        //
+        // - bundle the dependency itself. dynamic `require`/`import` could be
+        //   changed to bundle potential dependencies specified in package.json
+        //
+        // - want to load the user's node_modules, which is what currently happens.
+        //
+        // auto install, as of writing, is also quite buggy and untested, it always
+        // installs the latest version regardless of a user's package.json or specifier.
+        // in addition to being not fully stable, it is completely unexpected to invoke
+        // a package manager after bundling an executable. if enough people run into
+        // this, we could implement point 1
+        if (self.standalone_module_graph) |_| return false;
+
         return self.opts.global_cache.isEnabled();
     }
 

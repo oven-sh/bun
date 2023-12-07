@@ -55,6 +55,7 @@ test("ssr works for 100 requests", async () => {
         });
         expect(x.status).toBe(200);
         const text = await x.text();
+        console.count("Completed request");
         expect(text).toContain(`>${Bun.version}</code>`);
       })(),
     );

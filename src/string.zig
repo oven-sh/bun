@@ -774,7 +774,7 @@ pub const String = extern struct {
         std.debug.assert(chr < 128);
         return switch (this.isUTF16()) {
             true => std.mem.indexOfScalar(u16, this.utf16(), @intCast(chr)),
-            false => std.mem.indexOfScalar(u8, this.byteSlice(), chr),
+            false => bun.strings.indexOfCharUsize(this.byteSlice(), chr),
         };
     }
 

@@ -10,9 +10,11 @@ import {
   validateHeaderValue,
   ServerResponse,
   IncomingMessage,
+  OutgoingMessage,
 } from "node:http";
 
 import https from "node:https";
+import { EventEmitter } from "node:events";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -1108,6 +1110,62 @@ describe("server.address should be valid IP", () => {
         unlinkSync(socketPath);
       }
     });
+  });
+  test("ServerResponse init", done => {
+    try {
+      const req = {};
+      const res = new ServerResponse(req);
+      expect(res.req).toBe(req);
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  test("ServerResponse reply", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    try {
+      const req = {};
+      const sendedText = "Bun\n";
+      const res = new ServerResponse(req, async (res: Response) => {
+        expect(await res.text()).toBe(sendedText);
+        doneRequest();
+      });
+      res.write(sendedText);
+      res.end();
+    } catch (err) {
+      doneRequest(err);
+    }
+  });
+  test("ServerResponse instanceof OutgoingMessage", () => {
+    expect(new ServerResponse({}) instanceof OutgoingMessage).toBe(true);
+  });
+  test("ServerResponse assign assignSocket", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    const waitSocket = createDone();
+    const doneSocket = createDone();
+    try {
+      const socket = new EventEmitter();
+      const res = new ServerResponse({});
+      res.once("socket", socket => {
+        expect(socket).toBe(socket);
+        waitSocket();
+      });
+      res.once("close", () => {
+        doneRequest();
+      });
+      res.assignSocket(socket);
+      setImmediate(() => {
+        expect(res.socket).toBe(socket);
+        expect(socket._httpMessage).toBe(res);
+        expect(() => res.assignSocket(socket)).toThrow("ServerResponse has an already assigned socket");
+        socket.emit("close");
+        doneSocket();
+      });
+    } catch (err) {
+      doneRequest(err);
+    }
   });
 });
 

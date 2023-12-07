@@ -267,6 +267,10 @@ pub const FilePoll = struct {
             },
 
             @field(Owner.Tag, "GetAddrInfoRequest") => {
+                if (comptime !Environment.isMac) {
+                    unreachable;
+                }
+
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
@@ -899,4 +903,4 @@ pub const FilePoll = struct {
     }
 };
 
-pub const Waker = @import("io").Waker;
+pub const Waker = bun.AsyncIO.Waker;

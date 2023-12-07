@@ -39,7 +39,6 @@ const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
 const Headers = @import("root").bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
-const NetworkThread = HTTP.NetworkThread;
 
 pub var initialized_store = false;
 pub fn initializeStore() void {

@@ -1678,7 +1678,7 @@ pub const Blob = struct {
             read_off: SizeType = 0,
             read_eof: bool = false,
             size: SizeType = 0,
-            buffer: []u8 = undefined,
+            buffer: []u8 = &.{},
             task: bun.ThreadPool.Task = undefined,
             system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
@@ -1779,19 +1779,23 @@ pub const Blob = struct {
                     io.Loop.get().schedule(&this.io_request);
             }
 
+            fn remainingBuffer(this: *const ReadFile) []u8 {
+                var remaining = this.buffer[@min(this.read_off, this.buffer.len)..];
+                remaining = remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
+                return remaining;
+            }
+
             pub fn doRead(this: *ReadFile) bool {
-                var remaining = this.buffer[this.read_off..];
-                remaining = remaining[0..@min(remaining.len, this.max_length - this.read_off)];
                 this.read_len = 0;
 
                 const result: JSC.Maybe(usize) = brk: {
                     if (comptime Environment.isPosix) {
                         if (std.os.S.ISSOCK(this.file_store.mode)) {
-                            break :brk bun.sys.recv(this.opened_fd, remaining, std.os.SOCK.NONBLOCK);
+                            break :brk bun.sys.recv(this.opened_fd, this.remainingBuffer(), std.os.SOCK.NONBLOCK);
                         }
                     }
 
-                    break :brk bun.sys.read(this.opened_fd, remaining);
+                    break :brk bun.sys.read(this.opened_fd, this.remainingBuffer());
                 };
 
                 while (true) {
@@ -2023,9 +2027,7 @@ pub const Blob = struct {
                     // Consume the amount we read. `doRead()` will update `this.read_len` to 0.
                     this.read_off += this.read_len;
 
-                    const remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
-
-                    if (remain.len > 0 and this.errno == null and !this.read_eof) {
+                    if (this.remainingBuffer().len > 0 and this.errno == null and !this.read_eof) {
                         if (!this.doRead()) {
                             // Stop reading, we errored or need to wait for it to become readable.
                             return;

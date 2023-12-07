@@ -51,12 +51,12 @@ test("all worker_threads module properties are present", () => {
 
   expect(() => {
     // @ts-expect-error no args
-    wt.markAsUntransferable();
+    markAsUntransferable();
   }).toThrow("not yet implemented");
 
   expect(() => {
     // @ts-expect-error no args
-    wt.moveMessagePortToContext();
+    moveMessagePortToContext();
   }).toThrow("not yet implemented");
 });
 
@@ -140,7 +140,7 @@ test("message port starts at message listener registration", async () => {
   await expect(responsePromise).resolves.toStrictEqual({ text: messageText });
   messageChannel.port1.close();
   messageChannel.port2.close();
-  worker.terminate();
+  await worker.terminate();
 });
 
 test("receiveMessageOnPort works across threads", async () => {

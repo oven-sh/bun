@@ -30,6 +30,38 @@ it("should create selected template with @ prefix", async () => {
   );
 });
 
+it("should create selected template with @ prefix implicit `/create`", async () => {
+  const { stderr } = spawn({
+    cmd: [bunExe(), "create", "@second-quick-start"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(
+    `error: package "@second-quick-start/create" not found registry.npmjs.org/@second-quick-start%2fcreate 404`,
+  );
+});
+
+it("should create selected template with @ prefix implicit `/create` with version", async () => {
+  const { stderr } = spawn({
+    cmd: [bunExe(), "create", "@second-quick-start"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(
+    `error: package "@second-quick-start/create" not found registry.npmjs.org/@second-quick-start%2fcreate 404`,
+  );
+});
+
 it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";

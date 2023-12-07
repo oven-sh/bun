@@ -23,11 +23,27 @@ pub const BunxCommand = struct {
 
         var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
         if (input[0] == '@') {
-            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
-                const index = slashIndex + 1;
+            // @org/some -> @org/create-some
+            // @org/some@v -> @org/create-some@v
+            if (strings.indexOfChar(input, '/')) |slash_i| {
+                const index = slash_i + 1;
                 @memcpy(new_str[0..index], input[0..index]);
                 @memcpy(new_str[index .. index + prefixLength], "create-");
                 @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org@v -> @org/create@v
+            else if (strings.indexOfChar(input[1..], '@')) |at_i| {
+                const index = at_i + 1;
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "/create");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org -> @org/create
+            else {
+                @memcpy(new_str[0..input.len], input);
+                @memcpy(new_str[input.len..], "/create");
                 return new_str;
             }
         }

@@ -4,28 +4,28 @@ import path from "path";
 import wt from "worker_threads";
 
 describe("web worker", () => {
-  test("worker", done => {
-    const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
-      smol: true,
+  for (const workerFile of ["worker-fixture.js", "worker-fixture.ts", "worker-fixture.tsx"]) {
+    test(`worker file type ${path.extname(workerFile)}`, done => {
+      const worker = new Worker(new URL(workerFile, import.meta.url).href, {
+        smol: true,
+      });
+      expect(worker.threadId).toBeGreaterThan(0);
+      worker.postMessage("hello");
+      worker.onerror = e => {
+        done(e.error);
+      };
+      worker.onmessage = e => {
+        try {
+          expect(e.data).toEqual("initial message");
+        } catch (e) {
+          done(e);
+        } finally {
+          worker.terminate();
+          done();
+        }
+      };
     });
-    expect(worker.threadId).toBeGreaterThan(0);
-    worker.postMessage("hello");
-    worker.onerror = e => {
-      done(e.error);
-    };
-    worker.onmessage = e => {
-      try {
-        expect(e.data).toEqual("initial message");
-      } catch (e) {
-        done(e);
-      } finally {
-        worker.terminate();
-        done();
-      }
-      worker.terminate();
-      done();
-    };
-  });
+  }
 
   test("worker-env", done => {
     const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {

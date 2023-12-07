@@ -28,6 +28,7 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
     constructor(source: NodeJSStream, slice: [number?, number?] = [undefined, undefined], type = 'application/octet-stream') {
         super(undefined, { type });
         Reflect.deleteProperty(this, 'size');
+        Object.defineProperty(this, '@@isFileBlob', { value: true });
         if (source === process.stdout || source === process.stdin || source === process.stderr) {
             this.#iostream = true;
         }
@@ -101,11 +102,11 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
 };
 
 export class FileBlob extends Blob implements BunFileBlob {
-    constructor(fdOrPath: number | string, opts: BlobPropertyBag = {}) {
+    constructor(fdOrPath: number | string | URL, opts: BlobPropertyBag = {}) {
         opts.type ??= 'application/octet-stream'; // TODO: Get MIME type from file extension
         super(undefined, opts);
         Reflect.deleteProperty(this, 'size');
-        if (Reflect.get(opts, '__data')) this.#data = Reflect.get(opts, '__data') as Blob;
+        Object.defineProperty(this, '@@isFileBlob', { value: true });
         const slice = Reflect.get(opts, '__slice') as [number?, number?] | undefined;
         if (slice) {
             slice[0] &&= slice[0] | 0; // int cast
@@ -117,52 +118,65 @@ export class FileBlob extends Blob implements BunFileBlob {
             }
             else if (slice[0] < 0 && slice[1] < 0) this.#sliceSize = -(slice[0] - slice[1]);
             else if (slice[0] >= 0 && slice[1] >= 0) this.#sliceSize = slice[1] - slice[0];
-        } 
-        if (typeof fdOrPath === 'string') try {
-            this.#fd = fs.openSync(fdOrPath, 'r+');
-        } catch (err) {
-            this.#error = err as SystemError;
+            Object.defineProperty(this, '@@writeSlice', { value: this.#sliceSize - slice[0] });
         }
-        else {
-            this.#fd = fdOrPath;
-            this.#error = Reflect.get(opts, '__error') as SystemError | undefined;
+        this.#fdOrPath = fdOrPath;
+        this.#instancedTime = Date.now();
+        try {
+            this.#instancedSize = typeof this.#fdOrPath === 'number'
+                ? fs.fstatSync(this.#fdOrPath).size
+                : fs.statSync(this.#fdOrPath).size;
+        } catch {
+            this.#instancedSize = 0;
         }
-        if (!this.#error) {
-            const rstream = fs.createReadStream('', { fd: this.#fd, start: this.#slice[0], end: this.#slice[1] });
-            this.#readable = streams.Readable.toWeb(rstream);
-        }
+        this.name = typeof fdOrPath === 'string' ? fdOrPath : (
+            // for now, this seems to be what Bun does, but this is problematic for Windows, so we'll see how this goes
+            fdOrPath instanceof URL ? fdOrPath.pathname : undefined
+        );
     }
-    readonly #readable?: NodeWebReadableStream;
-    readonly #error?: SystemError;
+    readonly #instancedTime: number;
+    readonly #instancedSize: number;
     readonly #slice: [number?, number?] = [];
     readonly #sliceSize: number = 0;
-    readonly #fd: number = NaN;
-    #data?: Blob;
+    #fdOrPath: string | number | URL;
+    readonly name?: string;
 
-    #read() {
-        if (this.#error) throw this.#error;
-        const read = fs.readFileSync(this.#fd);
-        this.#data = new Blob([read.subarray(...this.#slice)], { type: this.type });
+    #read(): Blob {
+        const read = fs.readFileSync(this.#fdOrPath);
+        return new Blob([read.subarray(...this.#slice)], { type: this.type });
     }
 
-    //! Bun 0.2 seems to return undefined for this, this might not be accurate or it's broken on Bun's side
+    //! Bun seems to return undefined for this, this might not be accurate or it's broken on Bun's side
     get readable(): ReadableStream<any> {
-        if (this.#error) throw this.#error;
-        return this.#readable! as ReadableStream;
+        return undefined as any;
+        //const fd = typeof this.#pathlikeOrFd === 'number' ? this.#pathlikeOrFd : fs.openSync(this.#pathlikeOrFd, 'r');
+        //const rstream = fs.createReadStream('', { fd, start: this.#slice[0], end: this.#slice[1] });
+        //return streams.Readable.toWeb(rstream);
     }
 
     get lastModified(): number {
-        if (this.#error) throw this.#error;
-        return fs.fstatSync(this.#fd).mtimeMs;
+        try {
+            return typeof this.#fdOrPath === 'number'
+                ? fs.fstatSync(this.#fdOrPath).mtimeMs
+                : fs.statSync(this.#fdOrPath).mtimeMs;
+        } catch {
+            return this.#instancedTime; // Bun seems to fallback to when the Bun.file was created
+        }
     }
 
     async exists(): Promise<boolean> {
-        return !this.#error;
+        if (typeof this.#fdOrPath !== 'number') return fs.existsSync(this.#fdOrPath);
+        try {
+            fs.fstatSync(this.#fdOrPath);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     writer(): BunFileSink {
-        if (this.#error) throw this.#error;
-        return new FileSink(this.#fd);
+        const fdOrPath = this.#fdOrPath;
+        return new FileSink(typeof fdOrPath === 'string' || fdOrPath instanceof URL ? fs.openSync(fdOrPath, 'w+') : fdOrPath);
     }
 
     // TODO: what's contentType?
@@ -175,34 +189,28 @@ export class FileBlob extends Blob implements BunFileBlob {
             contentType = end;
             end = undefined;
         }
-        return new FileBlob(this.#fd, {
-            __error: this.#error,
+        return new FileBlob(this.#fdOrPath, {
             __slice: [begin, end],
-            __data: this.#data?.slice(begin, end),
         } as BlobPropertyBag);
     }
     override arrayBuffer(): Promise<ArrayBuffer> {
-        if (!this.#data) this.#read();
-        return new Blob([this.#data ?? '']).arrayBuffer();
+        return new Blob([this.#read() ?? '']).arrayBuffer();
     }
     override text(): Promise<string> {
-        if (!this.#data) this.#read();
-        return new Blob([this.#data ?? '']).text();
+        return new Blob([this.#read() ?? '']).text();
     }
     override json(): Promise<any>;
     override json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
     override json<TJSONReturnType = unknown>(): Promise<TJSONReturnType> | Promise<any> {
-        if (!this.#data) this.#read();
-        return new Blob([this.#data ?? '']).json();
+        return new Blob([this.#read() ?? '']).json();
     }
     override stream(): NodeJS.ReadableStream;
     override stream(): ReadableStream<Uint8Array>;
     override stream(): ReadableStream<Uint8Array> | NodeJS.ReadableStream {
-        if (!this.#data) this.#read();
-        return new Blob([this.#data ?? '']).stream();
+        return new Blob([this.#read() ?? '']).stream();
     }
 
     override get size(): number {
-        return this.#data?.size ?? (this.#sliceSize || 0);
+        return this.#instancedSize <= (this.#sliceSize || 0) ? this.#sliceSize : this.#instancedSize;
     }
 }

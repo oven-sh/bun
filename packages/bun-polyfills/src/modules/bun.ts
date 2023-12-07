@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '798ca1ff8ceaef17f1e93812a0ac61d1d87a85b5' satisfies typeof Bun.revision;
+export const revision = '71d99f5658f7a42439ea7c9efda0bd17ab0a5513' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -183,41 +183,30 @@ export const file = ((path: string | URL | Uint8Array | ArrayBufferLike | number
     return new FileBlob(path, options);
 }) satisfies typeof Bun.file;
 
-export const write = (async (dest: BunFileBlob | PathLike, input: string | Blob | TypedArray | ArrayBufferLike | BlobPart[] | Response | BunFileBlob): ReturnType<typeof Bun.write> => {
+export const write = (async (
+    dest: BunFileBlob | PathLike,
+    input: string | Blob | TypedArray | ArrayBufferLike | BlobPart[] | Response | BunFileBlob,
+    options?
+): ReturnType<typeof Bun.write> => {
     if (!isFileBlob(dest)) {
-        let fd: number;
-        if (dest instanceof ArrayBuffer || dest instanceof SharedArrayBuffer) fd = fs.openSync(Buffer.from(dest), 'w');
-        // bun-types thought it'd be funny to make their own URL definition which doesnt match with the correct URL definition...
-        else if (typeof dest === 'string' || dest instanceof URL) fd = fs.openSync(dest as import('url').URL, 'w');
-        else fd = fs.openSync(Buffer.from(dest.buffer), 'w');
-
-        if (input instanceof Response || input instanceof Blob) {
-            const data = await input.text();
-            return new Promise((resolve, reject) => {
-                fs.write(fd, data, (err, written) => err ? reject(err) : resolve(written));
-            });
+        if (typeof dest === 'string' || dest instanceof URL) dest = new FileBlob(fs.openSync(dest, 'w+'));
+        else {
+            dest = new FileBlob(fs.openSync(Buffer.from(
+                dest instanceof ArrayBuffer || dest instanceof SharedArrayBuffer ? dest : dest.buffer
+            ), 'w+'));
         }
-        if (Array.isArray(input)) {
-            const data = await new Blob(input).text();
-            return new Promise((resolve, reject) => {
-                fs.write(fd, data, (err, written) => err ? reject(err) : resolve(written));
-            });
-        }
-        return new Promise((resolve, reject) => {
-            if (typeof input === 'string') return fs.write(fd, input, (err, written) => err ? reject(err) : resolve(written));
-            if (input instanceof Uint8Array) return fs.write(fd, input, (err, written) => err ? reject(err) : resolve(written));
-            if (input instanceof ArrayBuffer) return fs.write(fd, new Uint8Array(input), (err, written) => err ? reject(err) : resolve(written));
-            if (input instanceof SharedArrayBuffer) return fs.write(fd, new Uint8Array(input), (err, written) => err ? reject(err) : resolve(written));
-            return write(dest, String(input)); // if all else fails, it seems Bun tries to convert to string and write that.
-        });
-    } else {
-        const writer = dest.writer();
-        if (Array.isArray(input)) input = new Blob(input);
-        if (input instanceof Blob || input instanceof Response) return writer.write(await input.arrayBuffer());
-        if (input instanceof ArrayBuffer || input instanceof SharedArrayBuffer || ArrayBuffer.isView(input)) return writer.write(input);
-        if (typeof input === 'string') return writer.write(input);
-        else return write(dest, String(input)); // if all else fails, it seems Bun tries to convert to string and write that.
     }
+    if (Reflect.get(dest, '@@writeSlice') && isFileBlob(input)) {
+        const slice = Reflect.get(dest, '@@writeSlice') as number;
+        input = input.slice(0, slice);
+    }
+    const writer = dest.writer();
+    if (Array.isArray(input)) input = new Blob(input);
+    if (input instanceof Blob || input instanceof Response) return writer.write(await input.arrayBuffer());
+    if (input instanceof ArrayBuffer || input instanceof SharedArrayBuffer || ArrayBuffer.isView(input)) return writer.write(input);
+    if (typeof input === 'string') return writer.write(input);
+    // if all else fails, it seems Bun tries to convert to string and write that.
+    else return write(dest, String(input));
 }) satisfies typeof Bun.write;
 
 export const sha = SHA512_256.hash satisfies typeof Bun.sha;

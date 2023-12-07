@@ -222,7 +222,7 @@ pub fn main() anyerror!void {
 
     {
         var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(bytes));
+        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(0, bytes));
         const zig_time = clock1.read();
         std.debug.print(
             "xxhash:\n\n     zig: {any}\n\n",

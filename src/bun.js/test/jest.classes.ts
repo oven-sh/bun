@@ -199,12 +199,12 @@ export default [
         getter: "getNot",
         this: true,
       },
-      resolvedTo: {
-        getter: "getResolvedTo",
+      resolvesTo: {
+        getter: "getResolvesTo",
         this: true,
       },
-      rejectedTo: {
-        getter: "getRejectedTo",
+      rejectsTo: {
+        getter: "getRejectsTo",
         this: true,
       },
     },
@@ -265,11 +265,11 @@ export default [
       not: {
         getter: "getStaticNot",
       },
-      resolvedTo: {
-        getter: "getStaticResolvedTo",
+      resolvesTo: {
+        getter: "getStaticResolvesTo",
       },
-      rejectedTo: {
-        getter: "getStaticRejectedTo",
+      rejectsTo: {
+        getter: "getStaticRejectsTo",
       },
       unreachable: {
         fn: "doUnreachable",

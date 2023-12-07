@@ -30,7 +30,7 @@ const bundler = bun.bundler;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = @import("root").bun.http;
-const NetworkThread = HTTP.NetworkThread;
+
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");

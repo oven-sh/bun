@@ -369,6 +369,8 @@ pub const PackageJSONVersionChecker = struct {
     has_found_name: bool = false,
     has_found_version: bool = false,
 
+    name_loc: logger.Loc = logger.Loc.Empty,
+
     const opts = if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else js_lexer.JSONOptions{
         .is_json = true,
         .json_warn_duplicate_keys = false,
@@ -463,6 +465,7 @@ pub const PackageJSONVersionChecker = struct {
                     try p.lexer.expect(.t_string_literal);
 
                     try p.lexer.expect(.t_colon);
+
                     const value = try p.parseExpr();
 
                     if (p.depth == 1) {
@@ -478,6 +481,7 @@ pub const PackageJSONVersionChecker = struct {
                                 bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
+                                p.name_loc = value.loc;
                             } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
                                 const len = @min(
                                     value.data.e_string.data.len,

@@ -57,10 +57,26 @@ pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
     pub usingnamespace JSC.Codegen.JSExpect;
-
-    test_id: TestRunner.Test.ID,
-    scope: *DescribeScope,
     flags: Flags = .{},
+    parent: ParentScope = .{ .global = {} },
+
+    pub const TestScope = struct {
+        test_id: TestRunner.Test.ID,
+        describe: *DescribeScope,
+    };
+
+    pub const ParentScope = union(enum) {
+        global: void,
+        TestScope: TestScope,
+    };
+
+    pub fn testScope(this: *const Expect) ?*const TestScope {
+        if (this.parent == .TestScope) {
+            return &this.parent.TestScope;
+        }
+
+        return null;
+    }
 
     pub const Flags = packed struct {
         // note: keep this struct in sync with C++ implementation (at bindings.cpp)
@@ -145,11 +161,6 @@ pub const Expect = struct {
     }
 
     pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, matcher_name: string, comptime matcher_params_fmt: string) ?JSValue {
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("{s}() must be called in a test", .{matcher_name});
-            return null;
-        }
-
         const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalThis.throw("Internal error: the expect(value) was garbage collected but it should not have been!", .{});
             return null;
@@ -173,12 +184,12 @@ pub const Expect = struct {
                     promise.setHandled(vm);
 
                     const now = std.time.Instant.now() catch unreachable;
-                    const pending_test = Jest.runner.?.pending_test.?;
-                    const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
+                    const elapsed = if (Jest.runner.?.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
                     const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
 
                     if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                        pending_test.timeout();
+                        if (Jest.runner.?.pending_test) |pending_test|
+                            pending_test.timeout();
                         return null;
                     }
 
@@ -263,10 +274,12 @@ pub const Expect = struct {
     }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
-        const test_name = this.scope.tests.items[this.test_id].label;
+        var parent = this.testScope() orelse return error.NoTest;
+
+        const test_name = parent.describe.tests.items[parent.test_id].label;
 
         var length: usize = 0;
-        var curr_scope: ?*DescribeScope = this.scope;
+        var curr_scope: ?*DescribeScope = parent.describe;
         while (curr_scope) |scope| {
             if (scope.label.len > 0) {
                 length += scope.label.len + 1;
@@ -292,7 +305,7 @@ pub const Expect = struct {
             bun.copy(u8, buf[index..], test_name);
         }
         // copy describe scopes in reverse order
-        curr_scope = this.scope;
+        curr_scope = parent.describe;
         while (curr_scope) |scope| {
             if (scope.label.len > 0) {
                 index -= scope.label.len + 1;
@@ -320,16 +333,17 @@ pub const Expect = struct {
             return .zero;
         };
 
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
-
         expect.* = .{
-            .scope = Jest.runner.?.pending_test.?.describe,
-            .test_id = Jest.runner.?.pending_test.?.test_id,
+            .parent = if (Jest.runner) |runner|
+                if (runner.pending_test) |pending|
+                    Expect.ParentScope{ .TestScope = Expect.TestScope{
+                        .describe = pending.describe,
+                        .test_id = pending.test_id,
+                    } }
+                else
+                    Expect.ParentScope{ .global = {} }
+            else
+                Expect.ParentScope{ .global = {} },
         };
         const expect_js_value = expect.toJS(globalObject);
         expect_js_value.ensureStillAlive();
@@ -375,7 +389,7 @@ pub const Expect = struct {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = true;
@@ -428,7 +442,7 @@ pub const Expect = struct {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -465,7 +479,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
         const right = arguments[0];
         right.ensureStillAlive();
         const left = this.getValue(globalObject, thisValue, "toBe", "<green>expected<r>") orelse return .zero;
@@ -549,7 +563,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected: JSValue = arguments[0];
         const value: JSValue = this.getValue(globalObject, thisValue, "toHaveLength", "<green>expected<r>") orelse return .zero;
@@ -635,7 +649,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected = arguments[0];
         expected.ensureStillAlive();
@@ -697,7 +711,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeTruthy", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -739,7 +753,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeUndefined", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -780,7 +794,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeNaN", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -824,7 +838,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeNull", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = value.isNull();
@@ -863,7 +877,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeDefined", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = !value.isUndefined();
@@ -903,7 +917,7 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeFalsy", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -952,7 +966,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected = arguments[0];
         const value: JSValue = this.getValue(globalObject, thisValue, "toEqual", "<green>expected<r>") orelse return .zero;
@@ -996,7 +1010,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected = arguments[0];
         const value: JSValue = this.getValue(globalObject, thisValue, "toStrictEqual", "<green>expected<r>") orelse return .zero;
@@ -1043,7 +1057,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected_property_path = arguments[0];
         expected_property_path.ensureStillAlive();
@@ -1166,7 +1180,7 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeEven", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -1235,7 +1249,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
@@ -1309,7 +1323,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
@@ -1380,7 +1394,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
@@ -1451,7 +1465,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
@@ -1611,7 +1625,7 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeOdd", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -1673,7 +1687,7 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected_value: JSValue = if (arguments.len > 0) brk: {
             const value = arguments[0];
@@ -2037,13 +2051,20 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(2);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         if (not) {
             const signature = comptime getSignature("toMatchSnapshot", "", true);
             const fmt = signature ++ "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n";
             globalObject.throwPretty(fmt, .{});
+        }
+
+        if (this.testScope() == null) {
+            const signature = comptime getSignature("toMatchSnapshot", "", true);
+            const fmt = signature ++ "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
         }
 
         var hint_string: ZigString = ZigString.Empty;
@@ -2102,7 +2123,7 @@ pub const Expect = struct {
 
         const result = Jest.runner.?.snapshots.getOrPut(this, value, hint.slice(), globalObject) catch |err| {
             var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-            const test_file_path = Jest.runner.?.files.get(this.scope.file_id).source.path.text;
+            const test_file_path = Jest.runner.?.files.get(this.testScope().?.describe.file_id).source.path.text;
             switch (err) {
                 error.FailedToOpenSnapshotFile => globalObject.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalObject.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
@@ -2149,7 +2170,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalObject, thisValue, "toBeEmpty", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -2227,7 +2248,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeNil", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isUndefinedOrNull() != not;
@@ -2254,12 +2275,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeArray", "") orelse return .zero;
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeArray() must be called in a test", .{});
-            return .zero;
-        }
-
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.jsType().isArray() != not;
@@ -2294,11 +2310,6 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeArrayOfSize", "") orelse return .zero;
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeArrayOfSize() must be called in a test", .{});
-            return .zero;
-        }
-
         const size = arguments[0];
         size.ensureStillAlive();
 
@@ -2307,7 +2318,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = value.jsType().isArray() and @as(i32, @intCast(value.getLength(globalThis))) == size.toInt32();
@@ -2335,7 +2346,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeBoolean", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isBoolean() != not;
@@ -2368,18 +2379,13 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeTypeOf() must be called in a test", .{});
-            return .zero;
-        }
-
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeTypeOf", "") orelse return .zero;
 
         const expected = arguments[0];
         expected.ensureStillAlive();
 
         const expectedAsStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         if (!expected.isString()) {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
@@ -2443,7 +2449,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeTrue", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = (value.isBoolean() and value.toBoolean()) != not;
@@ -2470,7 +2476,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeFalse", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = (value.isBoolean() and !value.toBoolean()) != not;
@@ -2497,7 +2503,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeNumber", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isNumber() != not;
@@ -2524,7 +2530,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeInteger", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isAnyInt() != not;
@@ -2551,7 +2557,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeFinite", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isNumber();
         if (pass) {
@@ -2584,7 +2590,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBePositive", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isNumber();
         if (pass) {
@@ -2617,7 +2623,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeNegative", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isNumber();
         if (pass) {
@@ -2674,7 +2680,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isNumber();
         if (pass) {
@@ -2719,7 +2725,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected = arguments[0];
         const value: JSValue = this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>") orelse return .zero;
@@ -2790,7 +2796,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeSymbol", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isSymbol() != not;
@@ -2817,7 +2823,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeFunction", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isCallable(globalThis.vm()) != not;
@@ -2844,7 +2850,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeDate", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isDate() != not;
@@ -2871,7 +2877,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeString", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isString() != not;
@@ -2914,7 +2920,7 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalThis, thisValue, "toInclude", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isString();
         if (pass) {
@@ -2959,12 +2965,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toIncludeRepeated() must be called in a test", .{});
-            return .zero;
-        }
-
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const substring = arguments[0];
         substring.ensureStillAlive();
@@ -3075,12 +3076,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toSatisfy() must be called in a test", .{});
-            return .zero;
-        }
-
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const predicate = arguments[0];
         predicate.ensureStillAlive();
@@ -3169,7 +3165,7 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalThis, thisValue, "toStartWith", "<green>expected<r>") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isString();
         if (pass) {
@@ -3224,7 +3220,7 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalThis, thisValue, "toEndWith", "<green>expected<r>") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var pass = value.isString();
         if (pass) {
@@ -3269,7 +3265,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
         const expected_value = arguments[0];
@@ -3323,7 +3319,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
@@ -3381,7 +3377,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenCalled", "") orelse return .zero;
 
         const calls = JSMockFunction__getCalls(value);
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         if (calls == .zero or !calls.jsType().isArray()) {
             globalObject.throw("Expected value must be a mock function: {}", .{value});
@@ -3417,7 +3413,7 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
         const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenCalledTimes", "<green>expected<r>") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const calls = JSMockFunction__getCalls(value);
 
@@ -3460,7 +3456,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const args = callFrame.arguments(1).slice();
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
 
@@ -3528,7 +3524,7 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
         const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenCalledWith", "<green>expected<r>") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const calls = JSMockFunction__getCalls(value);
 
@@ -3594,7 +3590,7 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
         const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenLastCalledWith", "<green>expected<r>") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const calls = JSMockFunction__getCalls(value);
 
@@ -3659,7 +3655,7 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
         const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenNthCalledWith", "<green>expected<r>") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const calls = JSMockFunction__getCalls(value);
 
@@ -3734,11 +3730,11 @@ pub const Expect = struct {
         return ExpectStatic.create(globalObject, .{ .not = true });
     }
 
-    pub fn getStaticResolvedTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticResolvesTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
         return ExpectStatic.create(globalObject, .{ .promise = .resolves });
     }
 
-    pub fn getStaticRejectedTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticRejectsTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
         return ExpectStatic.create(globalObject, .{ .promise = .rejects });
     }
 
@@ -3911,12 +3907,12 @@ pub const Expect = struct {
             promise.setHandled(vm);
 
             const now = std.time.Instant.now() catch unreachable;
-            const pending_test = Jest.runner.?.pending_test.?;
-            const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
+            const elapsed = if (Jest.runner.?.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
             const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
 
             if (!globalObject.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                pending_test.timeout();
+                if (Jest.runner.?.pending_test) |pending_test|
+                    pending_test.timeout();
                 globalObject.throw("Timed out while awaiting the promise returned by matcher \"{s}\"", .{matcher_name});
                 return false;
             }
@@ -4022,11 +4018,6 @@ pub const Expect = struct {
         // retrieve the matcher name
         const matcher_name = matcher_fn.getName(globalObject);
 
-        if (expect.scope.tests.items.len <= expect.test_id) {
-            globalObject.throw("expect.{s}() must be called in a test", .{matcher_name});
-            return .zero;
-        }
-
         const matcher_params = CustomMatcherParamsFormatter{
             .colors = Output.enable_ansi_colors,
             .globalObject = globalObject,
@@ -4041,7 +4032,7 @@ pub const Expect = struct {
         value = Expect.processPromise(expect.flags, globalObject, value, matcher_name, matcher_params, false) orelse return .zero;
         value.ensureStillAlive();
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         // prepare the args array
         const args_ptr = callFrame.argumentsPtr();
@@ -4142,16 +4133,16 @@ pub const ExpectStatic = struct {
         return create(globalObject, flags);
     }
 
-    pub fn getResolvedTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
         var flags = this.flags;
-        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "resolvedTo");
+        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "resolvesTo");
         flags.promise = .resolves;
         return create(globalObject, flags);
     }
 
-    pub fn getRejectedTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getRejectsTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
         var flags = this.flags;
-        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "rejectedTo");
+        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "rejectsTo");
         flags.promise = .rejects;
         return create(globalObject, flags);
     }
@@ -4159,8 +4150,8 @@ pub const ExpectStatic = struct {
     fn asyncChainingError(globalObject: *JSGlobalObject, flags: Expect.Flags, name: string) JSValue {
         @setCold(true);
         var str = switch (flags.promise) {
-            .resolves => "resolvedTo",
-            .rejects => "rejectedTo",
+            .resolves => "resolvesTo",
+            .rejects => "rejectsTo",
             else => unreachable,
         };
         globalObject.throw("expect.{s}: already called expect.{s} on this chain", .{ name, str });
@@ -4221,13 +4212,6 @@ pub const ExpectAnything = struct {
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.anything() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
-
         const anything = globalObject.bunVM().allocator.create(ExpectAnything) catch {
             globalObject.throwOutOfMemory();
             return .zero;
@@ -4265,13 +4249,6 @@ pub const ExpectStringMatching = struct {
         }
 
         const test_value = args[0];
-
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.stringContaining() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
 
         const string_matching = globalObject.bunVM().allocator.create(ExpectStringMatching) catch {
             globalObject.throwOutOfMemory();
@@ -4317,13 +4294,6 @@ pub const ExpectCloseTo = struct {
             return .zero;
         }
 
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.closeTo() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
-
         const instance = globalObject.bunVM().allocator.create(ExpectCloseTo) catch {
             globalObject.throwOutOfMemory();
             return .zero;
@@ -4364,13 +4334,6 @@ pub const ExpectObjectContaining = struct {
 
         const object_value = args[0];
 
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.objectContaining() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
-
         const instance = globalObject.bunVM().allocator.create(ExpectObjectContaining) catch {
             globalObject.throwOutOfMemory();
             return .zero;
@@ -4407,13 +4370,6 @@ pub const ExpectStringContaining = struct {
         }
 
         const string_value = args[0];
-
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.stringContaining() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
 
         const string_containing = globalObject.bunVM().allocator.create(ExpectStringContaining) catch {
             globalObject.throwOutOfMemory();
@@ -4458,13 +4414,6 @@ pub const ExpectAny = struct {
             return .zero;
         }
 
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.any() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
-
         var any = globalObject.bunVM().allocator.create(ExpectAny) catch {
             globalObject.throwOutOfMemory();
             return .zero;
@@ -4504,13 +4453,6 @@ pub const ExpectArrayContaining = struct {
         }
 
         const array_value = args[0];
-
-        if (Jest.runner.?.pending_test == null) {
-            const err = globalObject.createErrorInstance("expect.arrayContaining() must be called in a test", .{});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return .zero;
-        }
 
         const array_containing = globalObject.bunVM().allocator.create(ExpectArrayContaining) catch {
             globalObject.throwOutOfMemory();
@@ -4891,4 +4833,8 @@ comptime {
     @export(ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
     @export(Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
     @export(ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
+}
+
+fn incrementExpectCallCounter() void {
+    active_test_expectation_counter.actual += 1;
 }

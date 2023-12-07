@@ -51,20 +51,20 @@ it("#imports with wildcard", async () => {
 });
 
 it("import.meta.resolve", async () => {
-  expect(await import.meta.resolve("./resolve-test.test.js")).toBe(import.meta.path);
+  expect(await import.meta.resolve("./resolve-test.js")).toBe(import.meta.path);
 
-  expect(await import.meta.resolve("./resolve-test.test.js", import.meta.path)).toBe(import.meta.path);
+  expect(await import.meta.resolve("./resolve-test.js", import.meta.path)).toBe(import.meta.path);
 
   expect(
     // optional second param can be any path, including a dir
-    await import.meta.resolve("./resolve/resolve-test.test.js", join(import.meta.path, "../")),
+    await import.meta.resolve("./resolve/resolve-test.js", join(import.meta.path, "../")),
   ).toBe(import.meta.path);
 
   // can be a package path
   expect((await import.meta.resolve("react", import.meta.path)).length > 0).toBe(true);
 
   // file extensions are optional
-  expect(await import.meta.resolve("./resolve-test.test")).toBe(import.meta.path);
+  expect(await import.meta.resolve("./resolve-test")).toBe(import.meta.path);
 
   // works with tsconfig.json "paths"
   expect(await import.meta.resolve("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
@@ -108,12 +108,12 @@ it("import.meta.resolve", async () => {
 // the slightly lower level API, which doesn't prefill the second param
 // and expects a directory instead of a filepath
 it("Bun.resolve", async () => {
-  expect(await Bun.resolve("./resolve-test.test.js", import.meta.dir)).toBe(import.meta.path);
+  expect(await Bun.resolve("./resolve-test.js", import.meta.dir)).toBe(import.meta.path);
 });
 
 // synchronous
 it("Bun.resolveSync", () => {
-  expect(Bun.resolveSync("./resolve-test.test.js", import.meta.dir)).toBe(import.meta.path);
+  expect(Bun.resolveSync("./resolve-test.js", import.meta.dir)).toBe(import.meta.path);
 });
 
 it("self-referencing imports works", async () => {

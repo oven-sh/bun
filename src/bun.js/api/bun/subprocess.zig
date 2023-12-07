@@ -1,7 +1,7 @@
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.http.NetworkThread;
+
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;

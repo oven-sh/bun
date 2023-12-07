@@ -558,6 +558,8 @@ pub const Arguments = struct {
                     Command.Debugger{ .enable = .{
                         .path_or_port = inspect_flag,
                     } };
+
+                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             } else if (args.option("--inspect-wait")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{
@@ -568,6 +570,8 @@ pub const Arguments = struct {
                         .path_or_port = inspect_flag,
                         .wait_for_connection = true,
                     } };
+
+                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             } else if (args.option("--inspect-brk")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{
@@ -580,6 +584,8 @@ pub const Arguments = struct {
                         .wait_for_connection = true,
                         .set_breakpoint_on_first_line = true,
                     } };
+
+                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
         }
 
@@ -739,6 +745,11 @@ pub const Arguments = struct {
         if (cmd == .AutoCommand or cmd == .RunCommand) {
             ctx.debug.silent = args.flag("--silent");
             ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
+
+            if (opts.define) |define| {
+                if (define.keys.len > 0)
+                    bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            }
         }
 
         opts.resolve = Api.ResolveMode.lazy;
@@ -1969,9 +1980,9 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
-                        \\<b>Environment variables:
+                        \\<b>Environment variables:<r>
                         \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
-                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default \"api.github.com\".<r>
+                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
                         \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
                     ;
 

@@ -3784,32 +3784,32 @@ describe("expect()", () => {
 
   describe("async asymmetric matching", () => {
     if (isBun) {
-      test("expect.rejectedTo", async () => {
-        await expect(Promise.reject("1")).toEqual(expect.rejectedTo.stringContaining("1"));
-        await expect(Promise.reject("2")).toEqual(expect.not.rejectedTo.stringContaining("1"));
-        await expect({ a: Promise.reject("1") }).toEqual({ a: expect.rejectedTo.stringContaining("1") });
-        await expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectedTo.stringContaining("2") });
+      test("expect.rejectsTo", async () => {
+        await expect(Promise.reject("1")).toEqual(expect.rejectsTo.stringContaining("1"));
+        await expect(Promise.reject("2")).toEqual(expect.not.rejectsTo.stringContaining("1"));
+        await expect({ a: Promise.reject("1") }).toEqual({ a: expect.rejectsTo.stringContaining("1") });
+        await expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectsTo.stringContaining("2") });
         await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
 
         // a resolved promise should not match
-        await expect(Promise.resolve("a")).not.toEqual(expect.rejectedTo.stringContaining("a"));
+        await expect(Promise.resolve("a")).not.toEqual(expect.rejectsTo.stringContaining("a"));
 
         // a non-promise value should not match
-        await expect("a").not.toEqual(expect.rejectedTo.stringContaining("a"));
+        await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
 
         // Different task
         await expect(
           new Promise((_, reject) => {
             setTimeout(() => reject("a"), 0);
           }),
-        ).toEqual(expect.rejectedTo.stringContaining("a"));
+        ).toEqual(expect.rejectsTo.stringContaining("a"));
       });
 
-      test("expect.resolvedTo", async () => {
-        await expect(Promise.resolve("1")).toEqual(expect.resolvedTo.stringContaining("1"));
-        await expect(Promise.resolve("2")).toEqual(expect.not.resolvedTo.stringContaining("1"));
-        await expect({ a: Promise.resolve("1") }).toEqual({ a: expect.resolvedTo.stringContaining("1") });
-        await expect({ a: Promise.resolve("1") }).toEqual({ a: expect.not.resolvedTo.stringContaining("2") });
+      test("expect.resolvesTo", async () => {
+        await expect(Promise.resolve("1")).toEqual(expect.resolvesTo.stringContaining("1"));
+        await expect(Promise.resolve("2")).toEqual(expect.not.resolvesTo.stringContaining("1"));
+        await expect({ a: Promise.resolve("1") }).toEqual({ a: expect.resolvesTo.stringContaining("1") });
+        await expect({ a: Promise.resolve("1") }).toEqual({ a: expect.not.resolvesTo.stringContaining("2") });
         await expect(
           Promise.resolve(() => {
             throw new Error();
@@ -3817,17 +3817,17 @@ describe("expect()", () => {
         ).resolves.toThrow();
 
         // a rejected promise should not match
-        await expect(Promise.reject("a")).not.toEqual(expect.resolvedTo.stringContaining("a"));
+        await expect(Promise.reject("a")).not.toEqual(expect.resolvesTo.stringContaining("a"));
 
         // a non-promise value should not match
-        await expect("a").not.toEqual(expect.rejectedTo.stringContaining("a"));
+        await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
 
         // Different task
         await expect(
           new Promise(resolve => {
             setTimeout(() => resolve("a"), 0);
           }),
-        ).toEqual(expect.resolvedTo.stringContaining("a"));
+        ).toEqual(expect.resolvesTo.stringContaining("a"));
       });
     }
   });

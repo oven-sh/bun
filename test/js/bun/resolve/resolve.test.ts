@@ -11,7 +11,7 @@ it("spawn test file", () => {
     cmd: [bunExe(), "test", "./resolve-test.js"],
     env: bunEnv,
     cwd: import.meta.dir,
-    stdio: ['inherit', 'inherit', 'inherit'],
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   expect(exitCode).toBe(0);
@@ -290,17 +290,17 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
-it('import override to node builtin', async() => {
+it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
 });
 
-it('import override to bun', async() => {
+it("import override to bun", async () => {
   // @ts-expect-error
   expect(await import("#bun")).toBeDefined();
 });
 
-it.todo('import override to bun:test', async() => {
+it.todo("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
 });

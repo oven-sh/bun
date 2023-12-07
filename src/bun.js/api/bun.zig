@@ -546,67 +546,69 @@ pub fn shell(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const string_args = arguments.nextEat() orelse {
-        globalThis.throw("shell: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
-    };
+    _ = callframe;
+    _ = globalThis;
+    // const arguments_ = callframe.arguments(1);
+    // var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    // const string_args = arguments.nextEat() orelse {
+    //     globalThis.throw("shell: expected 2 arguments, got 0", .{});
+    //     return JSC.JSValue.jsUndefined();
+    // };
 
-    var arena = bun.ArenaAllocator.init(globalThis.bunVM().allocator);
-    defer arena.deinit();
+    // var arena = bun.ArenaAllocator.init(globalThis.bunVM().allocator);
+    // defer arena.deinit();
 
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-    defer {
-        for (jsobjs.items) |jsval| {
-            jsval.unprotect();
-        }
-    }
-    var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    })) {
-        return .undefined;
-    }
+    // const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    // var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    // defer {
+    //     for (jsobjs.items) |jsval| {
+    //         jsval.unprotect();
+    //     }
+    // }
+    // var script = std.ArrayList(u8).init(arena.allocator());
+    // if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    //     globalThis.throwOutOfMemory();
+    //     return JSValue.undefined;
+    // })) {
+    //     return .undefined;
+    // }
 
-    var lex_result = brk: {
-        if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
-            lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
-            };
-            break :brk lexer.get_result();
-        }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
-        lexer.lex() catch |err| {
-            globalThis.throwError(err, "failed to lex shell");
-            return JSValue.undefined;
-        };
-        break :brk lexer.get_result();
-    };
+    // var lex_result = brk: {
+    //     if (bun.strings.isAllASCII(script.items[0..])) {
+    //         var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+    //         lexer.lex() catch |err| {
+    //             globalThis.throwError(err, "failed to lex shell");
+    //             return JSValue.undefined;
+    //         };
+    //         break :brk lexer.get_result();
+    //     }
+    //     var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
+    //     lexer.lex() catch |err| {
+    //         globalThis.throwError(err, "failed to lex shell");
+    //         return JSValue.undefined;
+    //     };
+    //     break :brk lexer.get_result();
+    // };
 
-    var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
-        globalThis.throwError(err, "failed to create shell parser");
-        return JSValue.undefined;
-    };
+    // var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
+    //     globalThis.throwError(err, "failed to create shell parser");
+    //     return JSValue.undefined;
+    // };
 
-    const script_ast = parser.parse() catch |err| {
-        globalThis.throwError(err, "failed to parse shell");
-        return JSValue.undefined;
-    };
+    // const script_ast = parser.parse() catch |err| {
+    //     globalThis.throwError(err, "failed to parse shell");
+    //     return JSValue.undefined;
+    // };
 
-    var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
+    // var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]) catch {
+    //     globalThis.throwOutOfMemory();
+    //     return JSValue.undefined;
+    // };
 
-    interpreter.interpret(script_ast) catch {
-        // globalThis.throwError(err, "shell:");
-        return JSValue.undefined;
-    };
+    // interpreter.interpret(script_ast) catch {
+    //     // globalThis.throwError(err, "shell:");
+    //     return JSValue.undefined;
+    // };
 
     return JSValue.undefined;
 }

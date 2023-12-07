@@ -251,7 +251,7 @@ pub const FilePoll = struct {
                 loader.onExitNotificationTask();
             },
             @field(Owner.Tag, "ShellSubprocess") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocess", .{poll.fd});
                 var loader = ptr.as(ShellSubprocess);
 
                 loader.onExitNotificationTask();

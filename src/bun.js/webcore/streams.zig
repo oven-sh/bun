@@ -3963,7 +3963,9 @@ pub const FIFO = struct {
         return this.to_read;
     }
 
+    const log = bun.Output.scoped(.FIFO, false);
     pub fn ready(this: *FIFO, sizeOrOffset: i64, is_hup: bool) void {
+        log("FIFO ready", .{});
         if (this.isClosed()) {
             if (this.isWatching())
                 this.unwatch(this.poll_ref.?.fd);

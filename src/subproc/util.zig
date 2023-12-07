@@ -178,6 +178,256 @@ pub const BufferedInput = struct {
     }
 };
 
+pub const ShellBufferedOutput = struct {
+    fifo: JSC.WebCore.FIFO = undefined,
+    auto_sizer: ?JSC.WebCore.AutoSizer = null,
+    /// Sometimes the `internal_buffer` may be filled with memory from JSC,
+    /// for example an array buffer. In that case we shouldn't dealloc
+    /// memory and let the GC do it.
+    from_jsc: bool = false,
+    status: Status = .{
+        .pending = {},
+    },
+
+    pub const Status = union(enum) {
+        pending: void,
+        done: void,
+        err: bun.sys.Error,
+    };
+
+    pub fn init(fd: bun.FileDescriptor) ShellBufferedOutput {
+        return ShellBufferedOutput{
+            .internal_buffer = .{},
+            .fifo = JSC.WebCore.FIFO{
+                .fd = fd,
+            },
+        };
+    }
+
+    pub fn initWithArrayBuffer(fd: bun.FileDescriptor, slice: []u8) ShellBufferedOutput {
+        var out = ShellBufferedOutput.initWithSlice(fd, slice);
+        out.from_jsc = true;
+        return out;
+    }
+
+    pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) ShellBufferedOutput {
+        return ShellBufferedOutput{
+            // fixed capacity
+            .internal_buffer = bun.ByteList.initWithBuffer(slice),
+            .auto_sizer = null,
+            .fifo = JSC.WebCore.FIFO{
+                .fd = fd,
+            },
+        };
+    }
+
+    pub fn initWithAllocator(allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) ShellBufferedOutput {
+        var this = init(fd);
+        this.auto_sizer = .{
+            .max = max_size,
+            .allocator = allocator,
+            .buffer = &this.internal_buffer,
+        };
+        return this;
+    }
+
+    /// This is called after it is read (it's confusing because "on read" could
+    /// be interpreted as present or past tense)
+    pub fn onRead(this: *ShellBufferedOutput, result: JSC.WebCore.StreamResult) void {
+        switch (result) {
+            .pending => {
+                this.watch();
+                return;
+            },
+            .err => |err| {
+                if (err == .Error) {
+                    this.status = .{ .err = err.Error };
+                } else {
+                    this.status = .{ .err = bun.sys.Error.fromCode(.CANCELED, .read) };
+                }
+                this.fifo.close();
+
+                return;
+            },
+            .done => {
+                this.status = .{ .done = {} };
+                this.fifo.close();
+                return;
+            },
+            else => {
+                const slice = result.slice();
+                this.internal_buffer.len += @as(u32, @truncate(slice.len));
+                if (slice.len > 0)
+                    std.debug.assert(this.internal_buffer.contains(slice));
+
+                if (result.isDone() or (slice.len == 0 and this.fifo.poll_ref != null and this.fifo.poll_ref.?.isHUP())) {
+                    this.status = .{ .done = {} };
+                    this.fifo.close();
+                }
+            },
+        }
+    }
+
+    pub fn readAll(this: *ShellBufferedOutput) void {
+        if (this.auto_sizer) |auto_sizer| {
+            while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
+                var stack_buffer: [8096]u8 = undefined;
+                var stack_buf: []u8 = stack_buffer[0..];
+                var buf_to_use = stack_buf;
+                var available = this.internal_buffer.available();
+                if (available.len >= stack_buf.len) {
+                    buf_to_use = available;
+                }
+
+                const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+
+                switch (result) {
+                    .pending => {
+                        this.watch();
+                        return;
+                    },
+                    .err => |err| {
+                        this.status = .{ .err = err };
+                        this.fifo.close();
+
+                        return;
+                    },
+                    .done => {
+                        this.status = .{ .done = {} };
+                        this.fifo.close();
+                        return;
+                    },
+                    .read => |slice| {
+                        if (slice.ptr == stack_buf.ptr) {
+                            this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
+                        } else {
+                            this.internal_buffer.len += @as(u32, @truncate(slice.len));
+                        }
+
+                        if (slice.len < buf_to_use.len) {
+                            this.watch();
+                            return;
+                        }
+                    },
+                }
+            }
+        } else {
+            while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
+                var buf_to_use = this.internal_buffer.available();
+
+                const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+
+                switch (result) {
+                    .pending => {
+                        this.watch();
+                        return;
+                    },
+                    .err => |err| {
+                        this.status = .{ .err = err };
+                        this.fifo.close();
+
+                        return;
+                    },
+                    .done => {
+                        this.status = .{ .done = {} };
+                        this.fifo.close();
+                        return;
+                    },
+                    .read => |slice| {
+                        this.internal_buffer.len += @as(u32, @truncate(slice.len));
+
+                        if (slice.len < buf_to_use.len) {
+                            this.watch();
+                            return;
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    fn watch(this: *ShellBufferedOutput) void {
+        std.debug.assert(this.fifo.fd != bun.invalid_fd);
+
+        this.fifo.pending.set(ShellBufferedOutput, this, onRead);
+        if (!this.fifo.isWatching()) this.fifo.watch(this.fifo.fd);
+        return;
+    }
+
+    pub fn toBlob(this: *ShellBufferedOutput, globalThis: *JSC.JSGlobalObject) JSC.WebCore.Blob {
+        const blob = JSC.WebCore.Blob.init(this.internal_buffer.slice(), bun.default_allocator, globalThis);
+        this.internal_buffer = bun.ByteList.init("");
+        return blob;
+    }
+
+    pub fn toReadableStream(this: *ShellBufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
+        if (exited) {
+            // exited + received EOF => no more read()
+            if (this.fifo.isClosed()) {
+                // also no data at all
+                if (this.internal_buffer.len == 0) {
+                    if (this.internal_buffer.cap > 0) {
+                        if (this.auto_sizer) |auto_sizer| {
+                            this.internal_buffer.deinitWithAllocator(auto_sizer.allocator);
+                        }
+                    }
+                    // so we return an empty stream
+                    return JSC.WebCore.ReadableStream.fromJS(
+                        JSC.WebCore.ReadableStream.empty(globalThis),
+                        globalThis,
+                    ).?;
+                }
+
+                return JSC.WebCore.ReadableStream.fromJS(
+                    JSC.WebCore.ReadableStream.fromBlob(
+                        globalThis,
+                        &this.toBlob(globalThis),
+                        0,
+                    ),
+                    globalThis,
+                ).?;
+            }
+        }
+
+        {
+            const internal_buffer = this.internal_buffer;
+            this.internal_buffer = bun.ByteList.init("");
+
+            // There could still be data waiting to be read in the pipe
+            // so we need to create a new stream that will read from the
+            // pipe and then return the blob.
+            const result = JSC.WebCore.ReadableStream.fromJS(
+                JSC.WebCore.ReadableStream.fromFIFO(
+                    globalThis,
+                    &this.fifo,
+                    internal_buffer,
+                ),
+                globalThis,
+            ).?;
+            this.fifo.fd = bun.invalid_fd;
+            this.fifo.poll_ref = null;
+            return result;
+        }
+    }
+
+    pub fn close(this: *ShellBufferedOutput) void {
+        log("ShellBufferedOutput close", .{});
+        switch (this.status) {
+            .done => {},
+            .pending => {
+                this.fifo.close();
+                this.status = .{ .done = {} };
+            },
+            .err => {},
+        }
+
+        if (this.internal_buffer.cap > 0 and !this.from_jsc) {
+            this.internal_buffer.listManaged(bun.default_allocator).deinit();
+            this.internal_buffer = .{};
+        }
+    }
+};
+
 pub const BufferedOutput = struct {
     internal_buffer: bun.ByteList = .{},
     fifo: JSC.WebCore.FIFO = undefined,
@@ -232,6 +482,8 @@ pub const BufferedOutput = struct {
         return this;
     }
 
+    /// This is called after it is read (it's confusing because "on read" could
+    /// be interpreted as present or past tense)
     pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
         switch (result) {
             .pending => {

@@ -1024,17 +1024,14 @@ pub const Cmd = struct {
                         } };
 
                         if (this.node.redirect.stdin) {
-                            stdio.array_buffer.signal = this.fifoCloseSignal(.stdin);
                             spawn_args.stdio[bun.STDIN_FD] = stdio;
                         }
 
                         if (this.node.redirect.stdout) {
-                            stdio.array_buffer.signal = this.fifoCloseSignal(.stdout);
                             spawn_args.stdio[bun.STDOUT_FD] = stdio;
                         }
 
                         if (this.node.redirect.stderr) {
-                            stdio.array_buffer.signal = this.fifoCloseSignal(.stderr);
                             spawn_args.stdio[bun.STDERR_FD] = stdio;
                         }
                     } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
@@ -1096,6 +1093,18 @@ pub const Cmd = struct {
         //     }
         //     this.cmd = null;
         // }
+
+        if (this.cmd) |cmd| {
+            if (cmd.hasExited()) {
+                cmd.unref(true);
+                // cmd.deinit();
+            } else {
+                _ = cmd.tryKill(9);
+                cmd.unref(true);
+                cmd.deinit();
+            }
+            this.cmd = null;
+        }
 
         this.base.interpreter.allocator.destroy(this);
     }

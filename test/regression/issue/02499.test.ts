@@ -38,7 +38,7 @@ it("onAborted() and onWritable are not called after receiving an empty response 
       bunProcess = spawn({
         cmd: [bunExe(), "run", join(import.meta.dir, "./02499-repro.ts")],
         stdin: "pipe",
-        stderr: "ignore",
+        stderr: "inherit",
         stdout: "pipe",
         env: bunEnv,
       });

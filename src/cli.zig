@@ -368,7 +368,7 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        const print_help = args.flag("--help") or args.flag("-h");
+        const print_help = args.flag("--help");
         if (print_help) {
             cmd.printHelp(true);
             Output.flush();

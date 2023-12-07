@@ -368,7 +368,7 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        const print_help = args.flag("--help");
+        const print_help = args.flag("--help") or args.flag("-h");
         if (print_help) {
             cmd.printHelp(true);
             Output.flush();
@@ -1515,7 +1515,7 @@ pub const Command = struct {
                 const print_help = brk: {
                     for (bun.argv()) |arg_| {
                         const arg = bun.span(arg_);
-                        if (strings.eqlComptime(arg, "--help")) {
+                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                             break :brk true;
                         }
                     }

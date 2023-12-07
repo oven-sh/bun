@@ -1,5 +1,5 @@
 const channel = new MessageChannel();
-channel.port1.onmessage = e => {
+channel.port1.onmessage = () => {
   channel.port1.postMessage("done!");
 };
 

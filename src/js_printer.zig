@@ -1017,7 +1017,7 @@ fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            if (comptime !is_bun_platform) unreachable;
+            comptime std.debug.assert(is_bun_platform);
 
             switch (p.options.module_type) {
                 .cjs => {

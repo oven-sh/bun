@@ -277,7 +277,7 @@ pub const fmt = struct {
             var remain = text;
             var prev_keyword: ?Keyword = null;
 
-            while (remain.len > 0) {
+            outer: while (remain.len > 0) {
                 if (js_lexer.isIdentifierStart(remain[0])) {
                     var i: usize = 1;
 
@@ -351,23 +351,55 @@ pub const fmt = struct {
                             prev_keyword = null;
 
                             var i: usize = 1;
-                            for (remain[i..]) |c| {
-                                if (c == char) {
-                                    if (i < remain.len) {
-                                        i += 1;
-                                    }
-                                    break;
-                                } else if (c == '\\') {
-                                    i += 1;
-                                    if (i < remain.len) {
-                                        i += 1;
-                                    }
-                                } else {
-                                    if (i < remain.len) {
-                                        i += 1;
+                            while (i < remain.len and remain[i] != char) {
+                                if (comptime char == '`') {
+                                    if (remain[i] == '$' and i + 1 < remain.len and remain[i + 1] == '{') {
+                                        const curly_start = i;
+                                        i += 2;
+
+                                        while (i < remain.len and remain[i] != '}') {
+                                            if (remain[i] == '\\') {
+                                                i += 1;
+                                            }
+                                            i += 1;
+                                        }
+
+                                        try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..curly_start]});
+                                        try writer.writeAll("${");
+                                        const curly_remain = QuickAndDirtyJavaScriptSyntaxHighlighter{
+                                            .text = remain[curly_start + 2 .. i],
+                                            .enable_colors = this.enable_colors,
+                                            .limited = false,
+                                        };
+
+                                        if (curly_remain.text.len > 0) {
+                                            try curly_remain.format("", .{}, writer);
+                                        }
+
+                                        if (i < remain.len and remain[i] == '}') {
+                                            i += 1;
+                                        }
+                                        try writer.writeAll("}");
+                                        remain = remain[i..];
+                                        i = 0;
+                                        if (remain.len > 0 and remain[0] == char) {
+                                            try writer.writeAll(Output.prettyFmt("<r><green>`<r>", true));
+                                            remain = remain[1..];
+                                            continue :outer;
+                                        }
+                                        continue;
                                     }
                                 }
+
+                                if (i + 1 < remain.len and remain[i] == '\\') {
+                                    i += 1;
+                                }
+
+                                i += 1;
                             }
+
+                            // Include the trailing quote, if any
+                            i += @as(usize, @intFromBool(i > 1 and i < remain.len and remain[i] == char));
 
                             try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..i]});
                             remain = remain[i..];
@@ -842,7 +874,7 @@ fn Span(comptime T: type) type {
             new_ptr_info.size = .Slice;
             return @Type(.{ .Pointer = new_ptr_info });
         },
-        else => @compileError("invalid type given to std.mem.Span"),
+        else => @compileError("invalid type given to std.mem.Span: " ++ @typeName(T)),
     }
 }
 // fn Span(comptime T: type) type {
@@ -1198,7 +1230,7 @@ pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
-pub const default_stack_size = ThreadPool.default_stack_size;
+pub const default_thread_stack_size = ThreadPool.default_thread_stack_size;
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
@@ -2527,3 +2559,4 @@ pub fn outOfMemory() noreturn {
 }
 
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
+pub const io = @import("./io/io.zig");

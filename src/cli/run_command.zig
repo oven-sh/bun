@@ -332,7 +332,11 @@ pub const RunCommand = struct {
                     try env.map.createNullDelimitedEnvMap(arena.allocator()),
                 )) {
                     .err => |err| {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
+                        Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
+                            name,
+                            err.errno,
+                            @tagName(err.getErrno()),
+                        });
                         Output.flush();
                         return;
                     },
@@ -389,8 +393,7 @@ pub const RunCommand = struct {
                                 @tagName(err),
                             });
                             Output.flush();
-
-                            return null;
+                            return;
                         },
                     }
                 }

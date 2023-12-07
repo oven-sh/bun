@@ -2889,7 +2889,19 @@ pub const Resolver = struct {
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
 
         if (esm_resolution.status == .PackageResolve) {
-            if (JSC.HardcodedModule.Aliases.get(esm_resolution.path, .bun)) |builtin| {
+            // https://github.com/oven-sh/bun/issues/4972
+            // Resolve a subpath import to a Bun or Node.js builtin
+            //
+            // Code example:
+            //
+            //     import { readFileSync } from '#fs';
+            //
+            // package.json:
+            //
+            //     "imports": {
+            //       "#fs": "node:fs"
+            //     }
+            if (JSC.HardcodedModule.Aliases.get(esm_resolution.path, r.opts.target)) |builtin| {
                 return .{
                     .success = .{
                         .path_pair = .{ .primary = bun.fs.Path.init(builtin.path) },

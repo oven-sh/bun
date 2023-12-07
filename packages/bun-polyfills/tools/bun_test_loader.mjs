@@ -127,7 +127,7 @@ export async function load(url, context, nextLoad) {
         };
     }
     if (context.format === 'json') context.importAssertions.type = 'json';
-
+    if (context.format === 'commonjs' && !url.includes('/node_modules/')) context.format = 'module';
     const loaded = await nextLoad(url, context);
     if (url.startsWith('file://') && loaded.format === 'module') {
         const src = typeof loaded.source === 'string' ? loaded.source : decoder.decode(loaded.source);

@@ -8,7 +8,7 @@
     "test-gc": "bun run test --expose-gc",
     "test-esm": "bun run test --input-type=module",
     "test-esm-gc": "bun run test --input-type=module --expose-gc",
-    "test-all": "bun run test ../packages/bun-polyfills/tools/test_all.js",
+    "test-all": "bun run test-esm-gc ../packages/bun-polyfills/tools/test_all.js",
     "clean": "rm -rf dist",
     "preprocess": "bun tools/updateversions.ts",
     "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./lib/**/*.wasm\" dist",

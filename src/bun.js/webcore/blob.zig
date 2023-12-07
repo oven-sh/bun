@@ -74,6 +74,7 @@ pub const Blob = struct {
 
     size: SizeType = 0,
     offset: SizeType = 0,
+    was_sliced: bool = false,
     /// When set, the blob will be freed on finalization callbacks
     /// If the blob is contained in Response or Request, this must be null
     allocator: ?std.mem.Allocator = null,
@@ -3260,6 +3261,7 @@ pub const Blob = struct {
         var blob = this.dupe();
         blob.offset = offset;
         blob.size = len;
+        blob.was_sliced = true;
 
         // infer the content type if it was not specified
         if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated)

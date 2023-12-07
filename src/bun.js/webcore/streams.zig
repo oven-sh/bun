@@ -321,6 +321,10 @@ pub const ReadableStream = struct {
                         .lazy_readable = .{
                             .blob = store,
                         },
+                        .sliced_range = if (blob.was_sliced) FileReader.SlicedRange{
+                            .offset = blob.offset,
+                            .len = blob.size,
+                        } else null,
                     },
                 };
                 store.ref();
@@ -4214,6 +4218,7 @@ pub const File = struct {
     pub fn start(
         this: *File,
         file: *Blob.FileStore,
+        was_sliced: ?FileReader.SlicedRange,
     ) StreamStart {
         var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
@@ -4266,7 +4271,13 @@ pub const File = struct {
                 }
             }
         }
-        var size: Blob.SizeType = 0;
+        var file_size: Blob.SizeType = 0;
+        if (was_sliced) |range| {
+            if (range.offset > 0) {
+                _ = Syscall.setFileOffset(fd, range.offset);
+            }
+        }
+
         if (comptime Environment.isPosix) {
             const stat: bun.Stat = switch (Syscall.fstat(fd)) {
                 .result => |result| result,
@@ -4291,12 +4302,12 @@ pub const File = struct {
 
             this.seekable = bun.isRegularFile(stat.mode);
             file.seekable = this.seekable;
-            size = @intCast(stat.size);
+            file_size = @intCast(stat.size);
         } else if (comptime Environment.isWindows) outer: {
             const std_file = std.fs.File{
                 .handle = bun.fdcast(fd),
             };
-            size = @intCast(std_file.getEndPos() catch {
+            file_size = @intCast(std_file.getEndPos() catch {
                 this.seekable = false;
                 break :outer;
             });
@@ -4304,7 +4315,7 @@ pub const File = struct {
         }
 
         if (this.seekable) {
-            this.remaining_bytes = size;
+            this.remaining_bytes = if (was_sliced) |range| @min(range.len, file_size) else file_size;
             file.max_size = this.remaining_bytes;
 
             if (this.remaining_bytes == 0) {
@@ -4491,9 +4502,7 @@ const default_file_chunk_size = 1024 * 1024 * 2;
 pub const FileReader = struct {
     buffered_data: bun.ByteList = .{},
 
-    total_read: Blob.SizeType = 0,
-    max_read: Blob.SizeType = 0,
-
+    sliced_range: ?SlicedRange = null,
     cancelled: bool = false,
     started: bool = false,
     stored_global_this_: ?*JSC.JSGlobalObject = null,
@@ -4517,6 +4526,11 @@ pub const FileReader = struct {
     pub fn readable(this: *FileReader) *Readable {
         return &this.lazy_readable.readable;
     }
+
+    const SlicedRange = struct {
+        offset: Blob.SizeType,
+        len: Blob.SizeType,
+    };
 
     pub const Readable = union(enum) {
         FIFO: FIFO,
@@ -4671,7 +4685,7 @@ pub const FileReader = struct {
                     defer blob.deref();
                     var readable_file = File{ .loop = this.globalThis().bunVM().eventLoop() };
 
-                    const result = readable_file.start(&blob.data.file);
+                    const result = readable_file.start(&blob.data.file, this.sliced_range);
                     if (result == .empty) {
                         this.lazy_readable = .{ .empty = {} };
                         return result;

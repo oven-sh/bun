@@ -403,7 +403,7 @@ pub const RunCommand = struct {
             this.waitpid_result = null;
             this.finished_fds = 0;
             this.output_buffer = .{};
-            this.pid = pid_fd;
+            this.pid = pid;
             this.pid_poll = Async.FilePoll.initWithPackageManager(
                 manager,
                 pid_fd,
@@ -486,7 +486,7 @@ pub const RunCommand = struct {
             if (WaiterThread.shouldUseWaiterThread()) {
                 WaiterThread.appendLifecycleScriptSubprocess(this);
             } else {
-                switch (PosixSpawn.waitpid(this.pid_poll.fileDescriptor(), std.os.W.NOHANG)) {
+                switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
                     .err => |err| {
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
                             this.script_name,

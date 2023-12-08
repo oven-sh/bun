@@ -35,11 +35,11 @@ bunExpect.unreachable = (msg) => {
 };
 
 const bunit: typeof import('bun:test')['it'] = (name, fn) => {
-    nodetest.it(name, fn.length ? async (t, done) => void await fn(done) : async (t) => void await (fn as () => Promise<void>)());
+    nodetest.it(name, fn.length ? (t, done) => void fn(done) : async (t) => void await (fn as () => Promise<void>)());
 };
-bunit.only = (name, fn) => nodetest.only(name, fn.length ? async (t, done) => void await fn(done) : async (t) => void await (fn as () => Promise<void>)());
-bunit.todo = (name, fn) => nodetest.todo(name, fn?.length ? async (t, done) => void await fn?.(done) : async (t) => void await (fn as () => Promise<void>)());
-bunit.skip = (name, fn) => nodetest.skip(name, fn.length ? async (t, done) => void await fn(done) : async (t) => void await (fn as () => Promise<void>)());
+bunit.only = (name, fn) => nodetest.only(name, fn.length ? (t, done) => void fn(done) : async (t) => void await (fn as () => Promise<void>)());
+bunit.todo = (name, fn) => nodetest.todo(name, fn?.length ? (t, done) => void fn?.(done) : async (t) => void await (fn as () => Promise<void>)());
+bunit.skip = (name, fn) => nodetest.skip(name, fn.length ? (t, done) => void fn(done) : async (t) => void await (fn as () => Promise<void>)());
 bunit.if = (condition) => condition ? bunit : () => void 0;
 bunit.skipIf = (condition) => condition ? bunit.skip : bunit;
 bunit.each = (table: any) => {

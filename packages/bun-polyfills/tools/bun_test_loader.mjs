@@ -119,12 +119,14 @@ export async function load(url, context, nextLoad) {
                 throw err;
             }
         }
+        const jsSrc = decoder.decode(transform.files[0].data);
+        // For debugging purposes:
+        if (process.env.BUN_POLYFILLS_DUMP_TEST_TRANSFORMS)
+            fs.writeFileSync(`/tmp/bun-polyfills-testrunner-transformed--${url.split('/').at(-1)}.js`, jsSrc);
         return {
             shortCircuit: true,
             format: /** @type {ModuleFormat} */(context.format.slice(2)),
-            source: (context.format === 'tsmodule'
-                ? (url.includes('/bun-polyfills/') ? '' : APPLY_IMPORT_META_POLYFILL)
-                : '') + decoder.decode(transform.files[0].data),
+            source: (context.format === 'tsmodule' ? (url.includes('/bun-polyfills/') ? '' : APPLY_IMPORT_META_POLYFILL) : '') + jsSrc,
         };
     }
     if (context.format === 'json') context.importAssertions.type = 'json';

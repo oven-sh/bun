@@ -2378,22 +2378,38 @@ pub const Subprocess = struct {
             var queue: []*LifecycleScriptSubprocess = this.lifecycle_script_queue.items;
             var i: usize = 0;
             while (queue.len > 0 and i < queue.len) {
-                var lifecycle_script_process = queue[i];
+                var lifecycle_script_subprocess = queue[i];
 
-                if (lifecycle_script_process.pid == bun.invalid_fd) {
+                if (lifecycle_script_subprocess.pid == bun.invalid_fd) {
                     _ = this.lifecycle_script_queue.orderedRemove(i);
                     queue = this.lifecycle_script_queue.items;
                 }
 
-                const result = PosixSpawn.waitpid(lifecycle_script_process.pid, std.os.W.NOHANG);
-                if (result == .err or (result == .result and result.result.pid == lifecycle_script_process.pid)) {
-                    _ = this.lifecycle_script_queue.orderedRemove(i);
-                    queue = this.lifecycle_script_queue.items;
+                // const result = PosixSpawn.waitpid(lifecycle_script_subprocess.pid, std.os.W.NOHANG);
+                switch (PosixSpawn.waitpid(lifecycle_script_subprocess.pid, std.os.W.NOHANG)) {
+                    .err => |err| {
+                        std.debug.print("waitpid error: {s}\n", .{@tagName(err.getErrno())});
+                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                            lifecycle_script_subprocess.script_name,
+                            lifecycle_script_subprocess.package_name,
+                            err.errno,
+                            @tagName(err.getErrno()),
+                        });
+                        Output.flush();
+                        _ = lifecycle_script_subprocess.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+                        _ = LifecycleScriptSubprocess.alive_count.fetchSub(1, .Monotonic);
+                    },
+                    .result => |result| {
+                        if (result.pid == lifecycle_script_subprocess.pid) {
+                            _ = this.lifecycle_script_queue.orderedRemove(i);
+                            queue = this.lifecycle_script_queue.items;
 
-                    lifecycle_script_process.onResult(.{
-                        .pid = result.result.pid,
-                        .status = result.result.status,
-                    });
+                            lifecycle_script_subprocess.onResult(.{
+                                .pid = result.pid,
+                                .status = result.status,
+                            });
+                        }
+                    },
                 }
 
                 i += 1;

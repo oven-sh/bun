@@ -1,0 +1,41 @@
+{
+	"name": "uses-postinstall-stress-test-1-0-807",
+	"versions": {
+		"1.0.807": {
+			"name": "uses-postinstall-stress-test-1-0-807",
+			"version": "1.0.807",
+			"dependencies": {
+				"postinstall-stress-test": "1.0.807"
+			},
+			"_id": "uses-postinstall-stress-test-1-0-807@1.0.807",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "10.2.0",
+			"dist": {
+				"integrity": "sha512-JSFxLUF3FCIseM1/N4icesxC90yqQAb6cHLiZQG/bK4BHur+HUt9/jQZMfE/4BpvcoLzF0i2zVFn3UQNTds7pQ==",
+				"shasum": "8ee218bc95bfc3a50e224eed5eb478b899d51a52",
+				"tarball": "http://localhost:4873/uses-postinstall-stress-test-1-0-807/-/uses-postinstall-stress-test-1-0-807-1.0.807.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-12-07T03:16:06.314Z",
+		"created": "2023-12-07T03:16:06.314Z",
+		"1.0.807": "2023-12-07T03:16:06.314Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.807"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"uses-postinstall-stress-test-1-0-807-1.0.807.tgz": {
+			"shasum": "8ee218bc95bfc3a50e224eed5eb478b899d51a52",
+			"version": "1.0.807"
+		}
+	},
+	"_rev": "",
+	"_id": "uses-postinstall-stress-test-1-0-807",
+	"readme": "ERROR: No README data found!"
+}

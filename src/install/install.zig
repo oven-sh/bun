@@ -1879,7 +1879,8 @@ pub const PackageManager = struct {
     preallocated_network_tasks: PreallocatedNetworkTasks = .{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
-    pending_lifecycle_script_tasks: u32 = 0,
+    pending_lifecycle_script_tasks: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    max_concurrent_lifecycle_scripts: usize = Options.default_max_concurrent_lifecycle_scripts,
 
     total_scripts: usize = 0,
 
@@ -5071,6 +5072,8 @@ pub const PackageManager = struct {
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
 
+        max_concurrent_lifecycle_scripts: usize = default_max_concurrent_lifecycle_scripts,
+
         pub fn shouldPrintCommandName(this: *const Options) bool {
             return this.log_level != .silent and this.do.summary;
         }
@@ -5085,6 +5088,8 @@ pub const PackageManager = struct {
             }
             return false;
         }
+
+        pub const default_max_concurrent_lifecycle_scripts = 10;
 
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
@@ -6067,6 +6072,7 @@ pub const PackageManager = struct {
             // .progress
             .uws_event_loop = uws.Loop.get(),
             .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
+            .max_concurrent_lifecycle_scripts = cli.lifecycle_script_jobs,
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -6570,6 +6576,7 @@ pub const PackageManager = struct {
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
+        clap.parseParam("--lifecycle-script-jobs <NUM>     Maximum number of concurrent jobs for lifecycle scripts (default 10)") catch unreachable,
         // clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
         clap.parseParam("--help                            Print this help menu") catch unreachable,
@@ -6647,6 +6654,8 @@ pub const PackageManager = struct {
         omit: Omit = Omit{},
 
         exact: bool = false,
+
+        lifecycle_script_jobs: usize = Options.default_max_concurrent_lifecycle_scripts,
 
         const Omit = struct {
             dev: bool = false,
@@ -6867,6 +6876,11 @@ pub const PackageManager = struct {
                 cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
                 cli.exact = args.flag("--exact");
+            }
+
+            if (args.option("--lifecycle-script-jobs")) |concurrency| {
+                // var buf: []
+                cli.lifecycle_script_jobs = std.fmt.parseInt(usize, concurrency, 10) catch Options.default_max_concurrent_lifecycle_scripts;
             }
 
             // for (args.options("--omit")) |omit| {
@@ -7473,7 +7487,7 @@ pub const PackageManager = struct {
 
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
-        pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: PackageManager.Options.LogLevel) void {
+        pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
             }
@@ -7486,7 +7500,7 @@ pub const PackageManager = struct {
             }
         }
 
-        pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: PackageManager.Options.LogLevel) void {
+        pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
                 i -= 1;
@@ -7522,10 +7536,49 @@ pub const PackageManager = struct {
             }
         }
 
+        pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            for (this.pending_lifecycle_scripts.items) |entry| {
+                const package_name = entry.list.first().package_name;
+                while (RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.max_concurrent_lifecycle_scripts) {
+                    this.manager.uws_event_loop.tickWithTimeout(125);
+                }
+
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                    if (comptime log_level != .silent) {
+                        const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
+                        const args = .{ package_name, @errorName(err) };
+
+                        if (comptime log_level.showProgress()) {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                },
+                            }
+                        } else {
+                            Output.prettyErrorln(fmt, args);
+                        }
+                    }
+
+                    if (this.manager.options.enable.fail_early) {
+                        Global.exit(1);
+                    }
+
+                    Output.flush();
+                    this.summary.fail += 1;
+                };
+            }
+
+            while (this.manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                this.manager.uws_event_loop.tickWithTimeout(125);
+            }
+        }
+
         /// Check if a tree is ready to start running lifecycle scripts
         pub fn canRunScripts(this: *PackageInstaller, scripts_tree_id: Lockfile.Tree.Id) bool {
             const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
-            return deps.subsetOf(this.completed_trees) or deps.eql(this.completed_trees);
+            return (deps.subsetOf(this.completed_trees) or
+                deps.eql(this.completed_trees)) and
+                RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.max_concurrent_lifecycle_scripts;
         }
 
         pub fn printTreeDeps(this: *PackageInstaller) void {
@@ -8469,9 +8522,7 @@ pub const PackageManager = struct {
 
             summary.successfully_installed = installer.successfully_installed;
 
-            while (this.pending_lifecycle_script_tasks > 0) {
-                this.uws_event_loop.tickWithTimeout(125);
-            }
+            installer.completeRemainingScripts(log_level);
 
             if (root_lifecycle_scripts_count > 0) {
                 // root lifecycle scripts can run now that all dependencies are installed
@@ -8479,7 +8530,7 @@ pub const PackageManager = struct {
                 try this.spawnPackageLifecycleScripts(ctx, this.root_lifecycle_scripts.?, log_level);
             }
 
-            while (this.pending_lifecycle_script_tasks > 0) {
+            while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                 this.uws_event_loop.tickWithTimeout(125);
             }
 
@@ -9121,8 +9172,12 @@ pub const PackageManager = struct {
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         const root_dir_info, const this_bundler = try this.configureEnvForScripts(ctx, log_level);
-        try RunCommand.configurePathForRun(ctx, root_dir_info, &this_bundler, null, list.first().cwd, false);
-        try RunCommand.spawnPackageScripts(this, list);
+        var original_path: string = undefined;
+        try RunCommand.configurePathForRun(ctx, root_dir_info, &this_bundler, &original_path, list.first().cwd, false);
+        const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
+        try this_bundler.env.map.put("PATH", original_path);
+
+        try RunCommand.spawnPackageScripts(this, list, envp);
     }
 };
 

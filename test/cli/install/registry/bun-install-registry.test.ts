@@ -1313,7 +1313,7 @@ test("missing package on reinstall, some with binaries", async () => {
 });
 
 for (const forceWaiterThread of [false, true]) {
-  const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", COLORTERM: "0" } : env;
+  const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {
       const writeScript = async (name: string) => {
@@ -2382,6 +2382,46 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
     });
+
+    test.only("stress test", async () => {
+      // 1000 versions of the same package, and 1000 different packages each depending on one
+      // of the versions. This creates a node_modules folder for 999 of the package
+      // versions (minus 1 because one is hoisted) with none depending on another. This allows
+      // lifecycle scripts for each package to run in parallel if --lifecycle-script-jobs is set
+      // high enough.
+      const totalPackageVersions = 1000;
+      const maxJobs = 400;
+      var dependencies: any = {};
+      for (var i = 0; i < totalPackageVersions; i++) {
+        dependencies[`uses-postinstall-stress-test-1-0-${i}`] = `1.0.${i}`;
+      }
+
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies,
+          trustedDependencies: ["postinstall-stress-test"],
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", `--lifecycle-script-jobs=${maxJobs}`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const out = await new Response(stdout).text();
+      const err = await new Response(stderr).text();
+      expect(await exited).toBe(0);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+    }, 10000);
   });
 }
 

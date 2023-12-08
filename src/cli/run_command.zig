@@ -252,6 +252,10 @@ pub const RunCommand = struct {
         stdout_poll: *Async.FilePoll,
         stderr_poll: *Async.FilePoll,
         manager: *PackageManager,
+        envp: [:null]?[*:0]u8,
+
+        pub var max_alive = 32;
+        pub var alive_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0);
 
         /// A "nothing" struct that lets us reuse the same pointer
         /// but with a different tag for the file poll
@@ -292,6 +296,22 @@ pub const RunCommand = struct {
             argv[1] = "-c";
             argv[2] = combined_script;
 
+            // var arena = bun.ArenaAllocator.init(manager.allocator);
+            // defer arena.deinit();
+
+            // const envp = try env.map.createNullDelimitedEnvMap(arena.allocator());
+            // {
+            //     var counter: usize = 0;
+            //     for (this.envp) |e| {
+            //         if (e) |_e| {
+            //             counter += bun.span(_e).len;
+            //         }
+            //     }
+
+            //     std.debug.print("argv: \"{s}\" \"{s}\" \"{s}\"\n", .{ argv[0].?, argv[1].?, argv[2].? });
+            //     std.debug.print("env length: {d}\n", .{counter});
+            // }
+
             var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
             if (comptime Environment.isMac) {
                 flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
@@ -315,9 +335,6 @@ pub const RunCommand = struct {
 
             try actions.chdir(cwd);
 
-            var arena = bun.ArenaAllocator.init(manager.allocator);
-            defer arena.deinit();
-
             const pid = brk: {
                 defer {
                     _ = bun.sys.close(fdsOut[1]);
@@ -328,8 +345,7 @@ pub const RunCommand = struct {
                     actions,
                     attr,
                     argv,
-                    // TODO(dylan-conway): cache this to avoid allocation for each script
-                    try env.map.createNullDelimitedEnvMap(arena.allocator()),
+                    this.envp,
                 )) {
                     .err => |err| {
                         Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
@@ -416,7 +432,7 @@ pub const RunCommand = struct {
             } else {
                 this.pid_poll = Async.FilePoll.initWithPackageManager(
                     manager,
-                    pid_fd,
+                    if (comptime Environment.isLinux) pid_fd else pid,
                     .{},
                     @as(*PidPollData, @ptrCast(this)),
                 );
@@ -438,29 +454,57 @@ pub const RunCommand = struct {
                     },
                 }
             }
+
+            _ = alive_count.fetchAdd(1, .Monotonic);
         }
 
         pub fn onOutputUpdate(this: *LifecycleScriptSubprocess, size: i64, fd: bun.FileDescriptor) void {
-            // var needed_capacity = this.output_buffer.len + @as(u32, @intCast(size));
-            // _ = needed_capacity;
-            this.output_buffer.ensureUnusedCapacity(this.manager.allocator, @intCast(size)) catch @panic("Failed to allocate memory for output buffer");
-
-            if (size == 0) {
-                this.finished_fds +|= 1;
-                if (this.waitpid_result) |result| {
-                    if (this.finished_fds == 2) {
-                        this.onResult(result);
+            if (comptime Environment.isMac) {
+                this.output_buffer.ensureUnusedCapacity(this.manager.allocator, @intCast(size)) catch bun.outOfMemory();
+                if (size == 0) {
+                    this.finished_fds +|= 1;
+                    if (this.waitpid_result) |result| {
+                        if (this.finished_fds == 2) {
+                            this.onResult(result);
+                        }
+                    }
+                    return;
+                }
+                var remaining = size;
+                while (remaining > 0) {
+                    switch (bun.sys.read(fd, this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap])) {
+                        .result => |bytes_read| {
+                            this.output_buffer.len += @truncate(bytes_read);
+                            remaining -|= @intCast(bytes_read);
+                        },
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                                this.script_name,
+                                this.package_name,
+                                err.errno,
+                                @tagName(err.getErrno()),
+                            });
+                            return;
+                        },
                     }
                 }
-                return;
-            }
-
-            var remaining = size;
-            while (remaining > 0) {
+            } else {
+                this.output_buffer.ensureUnusedCapacity(this.manager.allocator, 32) catch bun.outOfMemory();
                 switch (bun.sys.read(fd, this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap])) {
                     .result => |bytes_read| {
                         this.output_buffer.len += @truncate(bytes_read);
-                        remaining -|= @intCast(bytes_read);
+                        if (bytes_read == 0) {
+                            this.finished_fds +|= 1;
+                            if (this.waitpid_result) |result| {
+                                if (this.finished_fds == 2) {
+                                    this.onResult(result);
+                                }
+                            }
+                            return;
+                        }
+                        if (bytes_read < 32) {
+                            return;
+                        }
                     },
                     .err => |err| {
                         Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
@@ -471,6 +515,28 @@ pub const RunCommand = struct {
                         });
                         return;
                     },
+                }
+
+                // var first_zero = true;
+                while (true) {
+                    this.output_buffer.ensureUnusedCapacity(this.manager.allocator, 32) catch bun.outOfMemory();
+                    switch (bun.sys.read(fd, this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap])) {
+                        .result => |bytes_read| {
+                            this.output_buffer.len += @truncate(bytes_read);
+                            if (bytes_read < 32) {
+                                return;
+                            }
+                        },
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                                this.script_name,
+                                this.package_name,
+                                err.errno,
+                                @tagName(err.getErrno()),
+                            });
+                            return;
+                        },
+                    }
                 }
             }
         }
@@ -483,22 +549,33 @@ pub const RunCommand = struct {
         }
 
         pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {
-            switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.script_name,
-                        this.package_name,
-                        err.errno,
-                        @tagName(err.getErrno()),
-                    });
-                    Output.flush();
-                    this.manager.pending_lifecycle_script_tasks -|= 1;
-                },
-                .result => |result| this.onResult(result),
+            while (true) {
+                switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
+                    .err => |err| {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                            this.script_name,
+                            this.package_name,
+                            err.errno,
+                            @tagName(err.getErrno()),
+                        });
+                        Output.flush();
+                        _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+                        _ = alive_count.fetchSub(1, .Monotonic);
+                        return;
+                    },
+                    .result => |result| {
+                        if (result.pid != this.pid) {
+                            continue;
+                        }
+                        this.onResult(result);
+                        return;
+                    },
+                }
             }
         }
 
         pub fn onResult(this: *LifecycleScriptSubprocess, result: PosixSpawn.WaitPidResult) void {
+            _ = alive_count.fetchSub(1, .Monotonic);
             if (result.pid == 0) {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
                     this.script_name,
@@ -508,7 +585,7 @@ pub const RunCommand = struct {
                 });
                 Output.flush();
 
-                this.manager.pending_lifecycle_script_tasks -|= 1;
+                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
                 return;
             }
             if (std.os.W.IFEXITED(result.status)) {
@@ -524,7 +601,7 @@ pub const RunCommand = struct {
                         this.package_name,
                         bun.SignalCode.from(code),
                     });
-                    this.deinit(this.manager.allocator);
+                    this.deinit();
                     Output.flush();
                     Global.exit(code);
                 }
@@ -535,7 +612,7 @@ pub const RunCommand = struct {
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                     if (this.scripts[new_script_index] != null) {
-                        this.resetPolls();
+                        // this.resetPolls();
                         this.spawnNextScript(new_script_index) catch |err| {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
                                 Lockfile.Scripts.names[new_script_index],
@@ -548,8 +625,8 @@ pub const RunCommand = struct {
                 }
 
                 // the last script finished
-                this.manager.pending_lifecycle_script_tasks -|= 1;
-                this.deinit(this.manager.allocator);
+                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+                this.deinit();
                 return;
             }
             if (std.os.W.IFSIGNALED(result.status)) {
@@ -599,19 +676,22 @@ pub const RunCommand = struct {
             }
         }
 
-        pub fn deinit(this: *LifecycleScriptSubprocess, alloc: std.mem.Allocator) void {
-            this.resetPolls();
-            alloc.destroy(this);
+        pub fn deinit(this: *LifecycleScriptSubprocess) void {
+            // this.resetPolls();
+            this.output_buffer.deinitWithAllocator(this.manager.allocator);
+            // this.manager.allocator.destroy(this);
         }
     };
 
     pub fn spawnPackageScripts(
         manager: *PackageManager,
         list: Lockfile.Package.Scripts.List,
+        envp: [:null]?[*:0]u8,
     ) !void {
         var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
         lifecycle_subprocess.scripts = list.items;
         lifecycle_subprocess.manager = manager;
+        lifecycle_subprocess.envp = envp;
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
@@ -620,7 +700,7 @@ pub const RunCommand = struct {
             });
         };
 
-        manager.pending_lifecycle_script_tasks += 1;
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
     }
 
     pub fn runPackageScriptForeground(

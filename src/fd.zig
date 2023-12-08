@@ -157,7 +157,9 @@ pub const FDImpl = packed struct {
                     \\
                     \\The supplier of this FileDescriptor should call 'bun.toLibUVOwnedFD'
                     \\or 'FDImpl.makeLibUVOwned', probably where open() was called.
-                , .{this},),
+                ,
+                    .{this},
+                ),
                 .uv => this.value.as_uv,
             },
         };

@@ -2717,7 +2717,7 @@ pub const io = @import("./io/io.zig");
 
 const errno_map = errno_map: {
     var max_value = 0;
-    for (std.enums.values(C.SystemErrno))  |v|
+    for (std.enums.values(C.SystemErrno)) |v|
         max_value = @max(max_value, @intFromEnum(v));
 
     var map: [max_value + 1]anyerror = undefined;
@@ -2738,7 +2738,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         std.debug.assert(num != 0);
     }
 
-    if(Environment.os == .windows) {
+    if (Environment.os == .windows) {
         // uv errors are negative, normalizing it will make this more resilient
         num = @abs(num);
     } else {

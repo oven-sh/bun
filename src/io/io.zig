@@ -29,7 +29,7 @@ pub const Loop = struct {
     var has_loaded_loop: bool = false;
 
     pub fn get() *Loop {
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             @panic("Do not use this API on windows");
         }
 

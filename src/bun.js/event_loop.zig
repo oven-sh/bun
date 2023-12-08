@@ -444,7 +444,6 @@ pub const ConcurrentTask = struct {
     }
 };
 
-
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
     gc_timer: *uws.Timer = undefined,

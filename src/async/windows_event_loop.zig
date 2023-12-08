@@ -355,14 +355,12 @@ pub const Waker = struct {
     loop: *bun.uws.UVLoop,
 
     pub fn init(_: std.mem.Allocator) !Waker {
-        return .{
-            .loop = bun.uws.UVLoop.init()
-        };
+        return .{ .loop = bun.uws.UVLoop.init() };
     }
 
     pub fn getFd(this: *const Waker) bun.FileDescriptor {
         _ = this;
-    
+
         @compileError("Waker.getFd is unsupported on Windows");
     }
 

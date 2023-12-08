@@ -7,18 +7,14 @@ it("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
 
-  copyFileSync(join(import.meta.dir, "resolve-test.js"), join(import.meta.dir, "resolve-test.test.js"));
-
   const { exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "test", "resolve-test.test.js"],
+    cmd: [bunExe(), "test", "./resolve-test.js"],
     env: bunEnv,
     cwd: import.meta.dir,
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   expect(exitCode).toBe(0);
-
-  rmSync(join(import.meta.dir, "resolve-test.test.js"));
-  expect(existsSync(join(import.meta.dir, "resolve-test.test.js"))).toBe(false);
 });
 
 function writePackageJSONExportsFixture() {
@@ -78,6 +74,8 @@ function writePackageJSONImportsFixture() {
           "#foo": "./foo/private-foo.js",
 
           "#internal-react": "react",
+
+          "#to_node_module": "async_hooks",
         },
       },
       null,
@@ -290,4 +288,19 @@ it("import long string should not segfault", async () => {
   try {
     await import.meta.require.resolve("a".repeat(10000));
   } catch {}
+});
+
+it("import override to node builtin", async () => {
+  // @ts-expect-error
+  expect(await import("#async_hooks")).toBeDefined();
+});
+
+it("import override to bun", async () => {
+  // @ts-expect-error
+  expect(await import("#bun")).toBeDefined();
+});
+
+it.todo("import override to bun:test", async () => {
+  // @ts-expect-error
+  expect(await import("#bun_test")).toBeDefined();
 });

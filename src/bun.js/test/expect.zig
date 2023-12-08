@@ -334,11 +334,14 @@ pub const Expect = struct {
         };
 
         expect.* = .{
-            .parent = if (Jest.runner.?.pending_test) |pending|
-                Expect.ParentScope{ .TestScope = Expect.TestScope{
-                    .describe = pending.describe,
-                    .test_id = pending.test_id,
-                } }
+            .parent = if (Jest.runner) |runner|
+                if (runner.pending_test) |pending|
+                    Expect.ParentScope{ .TestScope = Expect.TestScope{
+                        .describe = pending.describe,
+                        .test_id = pending.test_id,
+                    } }
+                else
+                    Expect.ParentScope{ .global = {} }
             else
                 Expect.ParentScope{ .global = {} },
         };

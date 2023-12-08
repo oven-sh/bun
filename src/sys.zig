@@ -214,7 +214,7 @@ pub fn chdir(destination: anytype) Maybe(void) {
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
-    if(Environment.isWindows) {
+    if (Environment.isWindows) {
         return sys_uv.stat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
@@ -229,7 +229,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
-    if(Environment.isWindows) {
+    if (Environment.isWindows) {
         return sys_uv.lstat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
@@ -488,11 +488,12 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
     };
     var attr = windows.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-        .RootDirectory = if(std.fs.path.isAbsoluteWindowsWTF16(path)) 
-        null
-         else if (dirfd == bun.invalid_fd) 
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
+            null
+        else if (dirfd == bun.invalid_fd)
             std.fs.cwd().fd
-         else bun.fdcast(dirfd),
+        else
+            bun.fdcast(dirfd),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -783,6 +784,12 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize)
 }
 
 pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
+    if (comptime Environment.allow_assert) {
+        if (buffers.len == 0) {
+            @panic("readv() called with 0 length buffer");
+        }
+    }
+
     if (comptime Environment.isMac) {
         const rc = readv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
@@ -811,6 +818,12 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
 }
 
 pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
+    if (comptime Environment.allow_assert) {
+        if (buffers.len == 0) {
+            @panic("preadv() called with 0 length buffer");
+        }
+    }
+
     if (comptime Environment.isMac) {
         const rc = preadv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
@@ -878,6 +891,12 @@ const fcntl_symbol = system.fcntl;
 pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
 
+    if (comptime Environment.allow_assert) {
+        if (adjusted_len == 0) {
+            @panic("pread() called with 0 length buffer");
+        }
+    }
+
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
@@ -896,6 +915,12 @@ else
     sys.pwrite;
 
 pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usize) {
+    if (comptime Environment.allow_assert) {
+        if (bytes.len == 0) {
+            @panic("pwrite() called with 0 length buffer");
+        }
+    }
+
     const adjusted_len = @min(bytes.len, max_count);
 
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
@@ -913,6 +938,11 @@ pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usiz
 }
 
 pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    if (comptime Environment.allow_assert) {
+        if (buf.len == 0) {
+            @panic("read() called with 0 length buffer");
+        }
+    }
     const debug_timer = bun.Output.DebugTimer.start();
     const adjusted_len = @min(buf.len, max_count);
     return switch (Environment.os) {
@@ -946,6 +976,11 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
+    if (comptime Environment.allow_assert) {
+        if (adjusted_len == 0) {
+            @panic("recv() called with 0 length buffer");
+        }
+    }
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, adjusted_len, flag, null, null);

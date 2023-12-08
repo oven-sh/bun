@@ -1674,11 +1674,10 @@ pub const Blob = struct {
             offset: SizeType = 0,
             max_length: SizeType = Blob.max_size,
             opened_fd: bun.FileDescriptor = null_fd,
-            read_len: SizeType = 0,
             read_off: SizeType = 0,
             read_eof: bool = false,
             size: SizeType = 0,
-            buffer: []u8 = &.{},
+            buffer: std.ArrayListUnmanaged(u8) = .{},
             task: bun.ThreadPool.Task = undefined,
             system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
@@ -1779,29 +1778,27 @@ pub const Blob = struct {
                     io.Loop.get().schedule(&this.io_request);
             }
 
-            fn remainingBuffer(this: *const ReadFile) []u8 {
-                var remaining = this.buffer[@min(this.read_off, this.buffer.len)..];
+            fn remainingBuffer(this: *const ReadFile, stack_buffer: []u8) []u8 {
+                var remaining = if (this.buffer.items.ptr[this.buffer.items.len..this.buffer.capacity].len < stack_buffer.len) stack_buffer else this.buffer.items.ptr[this.buffer.items.len..this.buffer.capacity];
                 remaining = remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
                 return remaining;
             }
 
-            pub fn doRead(this: *ReadFile) bool {
-                this.read_len = 0;
-
+            pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize) bool {
                 const result: JSC.Maybe(usize) = brk: {
                     if (comptime Environment.isPosix) {
                         if (std.os.S.ISSOCK(this.file_store.mode)) {
-                            break :brk bun.sys.recv(this.opened_fd, this.remainingBuffer(), std.os.SOCK.NONBLOCK);
+                            break :brk bun.sys.recv(this.opened_fd, buffer, std.os.SOCK.NONBLOCK);
                         }
                     }
 
-                    break :brk bun.sys.read(this.opened_fd, this.remainingBuffer());
+                    break :brk bun.sys.read(this.opened_fd, buffer);
                 };
 
                 while (true) {
                     switch (result) {
                         .result => |res| {
-                            this.read_len = @truncate(res);
+                            read_len.* = @truncate(res);
                             this.read_eof = res == 0;
                         },
                         .err => |err| {
@@ -1813,6 +1810,7 @@ pub const Blob = struct {
                                         continue;
                                     }
                                     this.waitForReadable();
+                                    this.read_eof = false;
                                     return false;
                                 },
                                 else => {
@@ -1859,7 +1857,7 @@ pub const Blob = struct {
                 }
 
                 var store = this.store.?;
-                var buf = this.buffer;
+                var buf = this.buffer.items;
 
                 defer store.deref();
                 defer bun.default_allocator.destroy(this);
@@ -1892,7 +1890,7 @@ pub const Blob = struct {
                 const fd = this.opened_fd;
                 const needs_close = fd != bun.invalid_fd;
 
-                this.size = @max(this.read_len, this.size);
+                this.size = @truncate(this.buffer.items.len);
 
                 if (needs_close) {
                     if (this.doClose(this.isAllowedToClose())) {
@@ -1980,20 +1978,20 @@ pub const Blob = struct {
                 // Special files might report a size of > 0, and be wrong.
                 // so we should check specifically that its a regular file before trusting the size.
                 if (this.size == 0 and bun.isRegularFile(this.file_store.mode)) {
-                    this.buffer = &[_]u8{};
-                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+                    this.buffer = .{};
+                    this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
 
                     this.onFinish();
                     return;
                 }
 
                 // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-                this.buffer = bun.default_allocator.alloc(u8, this.size + 16) catch |err| {
-                    this.errno = err;
-                    this.onFinish();
-                    return;
-                };
-                this.read_len = 0;
+                if (!this.could_block or (this.size > 0 and this.size != Blob.max_size))
+                    this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size + 16) catch |err| {
+                        this.errno = err;
+                        this.onFinish();
+                        return;
+                    };
                 this.read_off = 0;
 
                 // If it's not a regular file, it might be something
@@ -2024,11 +2022,37 @@ pub const Blob = struct {
 
             fn doReadLoop(this: *ReadFile) void {
                 while (true) {
-                    // Consume the amount we read. `doRead()` will update `this.read_len` to 0.
-                    this.read_off += this.read_len;
 
-                    if (this.remainingBuffer().len > 0 and this.errno == null and !this.read_eof) {
-                        if (!this.doRead()) {
+                    // we hold a 64 KB stack buffer incase the amount of data to
+                    // be read is greater than the reported amount
+                    //
+                    // 64 KB is large, but since this is running in a thread
+                    // with it's own stack, it should have sufficient space.
+                    var stack_buffer: [64 * 1024]u8 = undefined;
+                    var buffer: []u8 = this.remainingBuffer(&stack_buffer);
+
+                    if (buffer.len > 0 and this.errno == null and !this.read_eof) {
+                        var read_amount: usize = 0;
+                        const continue_reading = this.doRead(buffer, &read_amount);
+                        const read = buffer[0..read_amount];
+
+                        // We might read into the stack buffer, so we need to copy it into the heap.
+                        if (read.ptr == &stack_buffer) {
+                            if (this.buffer.capacity == 0) {
+                                // We need to allocate a new buffer
+                                // In this case, we want to use `initCapacity` so that it's an exact amount
+                                // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
+                                this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                            } else {
+                                this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                            }
+                            this.buffer.appendSliceAssumeCapacity(read);
+                        } else {
+                            // record the amount of data read
+                            this.buffer.items.len += read.len;
+                        }
+
+                        if (!continue_reading) {
                             // Stop reading, we errored or need to wait for it to become readable.
                             return;
                         }
@@ -2044,7 +2068,23 @@ pub const Blob = struct {
                         //
                         // If we immediately call read(), it will block until stdin is
                         // readable.
-                        if (this.could_block and bun.isReadable(this.opened_fd) == .not_ready) {
+                        if (this.could_block and
+                            // If we received EOF, we can skip the poll() system
+                            // call. We already know it's done.
+                            !this.read_eof and
+
+                            // - If they DID set a max length, we should stop
+                            //   reading after that.
+                            //
+                            // - If they DID NOT set a max_length, then it will
+                            //   be Blob.max_size which is an impossibly large
+                            //   amount to read.
+                            @as(usize, this.max_length) > this.buffer.items.len and
+
+                            // If it hung up, we will resume from the start, consume the EOF, and this.read_eof will be true.
+                            bun.isReadable(this.opened_fd) == .not_ready)
+                        {
+                            this.read_eof = false;
                             this.waitForReadable();
                             return;
                         }
@@ -2053,10 +2093,13 @@ pub const Blob = struct {
                         continue;
                     }
 
-                    // We are done reading.
-                    _ = bun.default_allocator.resize(this.buffer, this.read_off);
-                    this.buffer = this.buffer[0..this.read_off];
-                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+                    // -- We are done reading.
+
+                    // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
+                    if (this.buffer.items.len + 16_000 < this.buffer.capacity) {
+                        this.buffer.shrinkAndFree(bun.default_allocator, this.buffer.items.len);
+                    }
+                    this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
                     this.onFinish();
                     break;
                 }

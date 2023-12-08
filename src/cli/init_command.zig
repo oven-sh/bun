@@ -90,7 +90,7 @@ pub const InitCommand = struct {
         const print_help = brk: {
             for (argv) |arg_| {
                 const arg = bun.span(arg_);
-                if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
+                if (strings.eqlComptime(arg, "--help")) {
                     break :brk true;
                 }
             }

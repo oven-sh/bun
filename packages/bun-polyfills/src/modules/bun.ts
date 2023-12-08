@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'e7019186cdcde1a08dd4e080237443d08bbc1b77' satisfies typeof Bun.revision;
+export const revision = '93b32aef29467a842d57008688b2f66ddde70a0b' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -122,9 +122,13 @@ peek_.status = (promise => {
 export const peek = peek_ satisfies typeof Bun.peek;
 
 export const sleep = (ms => {
-    return new Promise(r => setTimeout(r, ms instanceof Date ? ms.valueOf() - Date.now() : ms));
+    if (ms instanceof Date) ms = ms.valueOf() - Date.now();
+    if (typeof ms !== 'number') throw new TypeError('argument to sleep must be a number or Date');
+    if (ms < 0) throw new TypeError('argument to sleep must not be negative');
+    return new Promise(r => setTimeout(r, ms as number));
 }) satisfies typeof Bun.sleep;
 export const sleepSync = (ms => {
+    if (typeof ms !== 'number') throw new TypeError('argument to sleepSync must be a number');
     if (ms < 0) throw new TypeError('argument to sleepSync must not be negative');
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }) satisfies typeof Bun.sleepSync;

@@ -11,8 +11,8 @@ await import('../../../test/js/bun/jsc/bun-jsc.test.js');
 // plugin: N/A
 await import('../../../test/js/bun/spawn/exit-code.test.ts');
 // These two tests below are quite slow (60+ seconds combined) so I'm skipping them for now.
-//await import('../../../test/js/bun/spawn/spawn-streaming-stdin.test.ts');
-//await import('../../../test/js/bun/spawn/spawn-streaming-stdout.test.ts');
+await import('../../../test/js/bun/spawn/spawn-streaming-stdin.test.ts');
+await import('../../../test/js/bun/spawn/spawn-streaming-stdout.test.ts');
 await import('../../../test/js/bun/spawn/spawn.test.ts');
 await import('../../../test/js/bun/sqlite/sqlite.test.ts');
 // stream: N/A
@@ -22,7 +22,7 @@ await import('../../../test/js/bun/util/bun-file-exists.test.js');
 await import('../../../test/js/bun/util/bun-isMainThread.test.js');
 await import('../../../test/js/bun/util/concat.test.js');
 // Another slow test, and not really needed for the polyfills.
-//await import('../../../test/js/bun/util/error-gc-test.test.js');
+await import('../../../test/js/bun/util/error-gc-test.test.js');
 await import('../../../test/js/bun/util/escapeHTML.test.js');
 await import('../../../test/js/bun/util/file-type.test.ts');
 // Test below currently hangs, needs investigation.
@@ -36,6 +36,8 @@ await import('../../../test/js/bun/util/mmap.test.js');
 // Test below currently hangs, needs investigation.
 //await import('../../../test/js/bun/util/password.test.ts');
 await import('../../../test/js/bun/util/peek.test.ts');
+await import('../../../test/js/bun/util/readablestreamtoarraybuffer.test.ts');
+await import('../../../test/js/bun/util/sleepSync.test.ts');
 // websocket
 // globals
 

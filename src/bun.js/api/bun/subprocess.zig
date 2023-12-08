@@ -63,7 +63,7 @@ pub const Subprocess = struct {
     flags: Flags = .{},
 
     pub const Writable = util.Writable;
-    pub const Readable = util.Readable;
+    // pub const Readable = util.Readable;
     pub const Stdio = util.Stdio;
 
     pub const BufferedInput = util.BufferedInput;
@@ -78,6 +78,196 @@ pub const Subprocess = struct {
         none,
         bun,
         // json,
+    };
+
+    pub const Readable = union(enum) {
+        fd: bun.FileDescriptor,
+
+        pipe: Pipe,
+        inherit: void,
+        ignore: void,
+        closed: void,
+
+        pub fn ref(this: *Readable) void {
+            switch (this.*) {
+                .pipe => {
+                    if (this.pipe == .buffer) {
+                        if (this.pipe.buffer.fifo.poll_ref) |poll| {
+                            poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        pub fn unref(this: *Readable) void {
+            switch (this.*) {
+                .pipe => {
+                    if (this.pipe == .buffer) {
+                        if (this.pipe.buffer.fifo.poll_ref) |poll| {
+                            poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        pub const Pipe = union(enum) {
+            stream: JSC.WebCore.ReadableStream,
+            buffer: BufferedOutput,
+
+            pub fn finish(this: *@This()) void {
+                if (this.* == .stream and this.stream.ptr == .File) {
+                    this.stream.ptr.File.finish();
+                }
+            }
+
+            pub fn done(this: *@This()) void {
+                if (this.* == .stream) {
+                    if (this.stream.ptr == .File) this.stream.ptr.File.setSignal(JSC.WebCore.Signal{});
+                    this.stream.done();
+                    return;
+                }
+
+                this.buffer.close();
+            }
+
+            pub fn toJS(this: *@This(), readable: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+                if (this.* != .stream) {
+                    const stream = this.buffer.toReadableStream(globalThis, exited);
+                    this.* = .{ .stream = stream };
+                }
+
+                if (this.stream.ptr == .File) {
+                    this.stream.ptr.File.setSignal(JSC.WebCore.Signal.init(readable));
+                }
+
+                return this.stream.toJS();
+            }
+        };
+
+        pub fn init(stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
+            return switch (stdio) {
+                .inherit => Readable{ .inherit = {} },
+                .ignore => Readable{ .ignore = {} },
+                .pipe => brk: {
+                    break :brk .{
+                        .pipe = .{
+                            .buffer = BufferedOutput.initWithAllocator(allocator, fd, max_size),
+                        },
+                    };
+                },
+                .path => Readable{ .ignore = {} },
+                .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
+                .array_buffer => Readable{
+                    .pipe = .{
+                        .buffer = if (stdio.array_buffer.from_jsc) BufferedOutput.initWithArrayBuffer(fd, stdio.array_buffer.buf.slice()) else BufferedOutput.initWithSlice(fd, stdio.array_buffer.buf.slice()),
+                    },
+                },
+            };
+        }
+
+        pub fn onClose(this: *Readable, _: ?bun.sys.Error) void {
+            this.* = .closed;
+        }
+
+        pub fn onReady(_: *Readable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
+
+        pub fn onStart(_: *Readable) void {}
+
+        pub fn close(this: *Readable) void {
+            log("READABLE close", .{});
+            switch (this.*) {
+                .fd => |fd| {
+                    _ = bun.sys.close(fd);
+                },
+                .pipe => {
+                    this.pipe.done();
+                },
+                else => {},
+            }
+        }
+
+        pub fn finalize(this: *Readable) void {
+            log("Readable::finalize", .{});
+            switch (this.*) {
+                .fd => |fd| {
+                    _ = bun.sys.close(fd);
+                },
+                .pipe => {
+                    if (this.pipe == .stream and this.pipe.stream.ptr == .File) {
+                        this.close();
+                        return;
+                    }
+
+                    this.pipe.buffer.close();
+                },
+                else => {},
+            }
+        }
+
+        pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+            switch (this.*) {
+                .fd => |fd| {
+                    return JSValue.jsNumber(fd);
+                },
+                .pipe => {
+                    return this.pipe.toJS(this, globalThis, exited);
+                },
+                else => {
+                    return JSValue.jsUndefined();
+                },
+            }
+        }
+
+        pub fn toSlice(this: *Readable) ?[]const u8 {
+            switch (this.*) {
+                .fd => return null,
+                .pipe => {
+                    this.pipe.buffer.fifo.close_on_empty_read = true;
+                    this.pipe.buffer.readAll();
+
+                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    // this.pipe.buffer.internal_buffer = .{};
+
+                    if (bytes.len > 0) {
+                        return bytes;
+                    }
+
+                    return "";
+                },
+                else => {
+                    return null;
+                },
+            }
+        }
+
+        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
+            switch (this.*) {
+                .fd => |fd| {
+                    return JSValue.jsNumber(fd);
+                },
+                .pipe => {
+                    this.pipe.buffer.fifo.close_on_empty_read = true;
+                    this.pipe.buffer.readAll();
+
+                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    this.pipe.buffer.internal_buffer = .{};
+
+                    if (bytes.len > 0) {
+                        // Return a Buffer so that they can do .toString() on it
+                        return JSC.JSValue.createBuffer(globalThis, bytes, bun.default_allocator);
+                    }
+
+                    return JSC.JSValue.createBuffer(globalThis, &.{}, bun.default_allocator);
+                },
+                else => {
+                    return JSValue.jsUndefined();
+                },
+            }
+        }
     };
 
     pub fn hasExited(this: *const Subprocess) bool {

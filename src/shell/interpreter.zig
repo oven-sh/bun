@@ -28,6 +28,14 @@ const ast = shell.AST;
 
 const log = bun.Output.scoped(.SHELL, false);
 
+pub fn assert(cond: bool, comptime msg: []const u8) void {
+    if (bun.Environment.allow_assert) {
+        std.debug.assert(cond);
+    } else {
+        @panic("Assertion failed: " ++ msg);
+    }
+}
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
@@ -900,7 +908,37 @@ pub const Cmd = struct {
     parent: ParentPtr,
     exit_code: ?u8,
     io: IO,
-    stdout_close: bool = false,
+    buffered_closed: BufferedIoClosed = .{},
+
+    const BufferedIoClosed = struct {
+        stdin: ?bool = null,
+        stdout: ?bool = null,
+        stderr: ?bool = null,
+
+        fn allClosed(this: BufferedIoClosed) bool {
+            return (this.stdin orelse true) and
+                (this.stdout orelse true) and
+                (this.stderr orelse true);
+        }
+
+        fn close(this: *BufferedIoClosed, comptime io: enum { stdout, stderr, stdin }) void {
+            if (@field(this, @tagName(io)) != null) {
+                @field(this, @tagName(io)) = true;
+            }
+        }
+
+        fn isBuffered(this: *BufferedIoClosed, comptime io: enum { stdout, stderr, stdin }) bool {
+            return @field(this, @tagName(io)) != null;
+        }
+
+        fn fromStdio(io: *const [3]Subprocess.Stdio) BufferedIoClosed {
+            return .{
+                .stdin = if (io[bun.STDIN_FD].isPiped()) false else null,
+                .stdout = if (io[bun.STDOUT_FD].isPiped()) false else null,
+                .stderr = if (io[bun.STDERR_FD].isPiped()) false else null,
+            };
+        }
+    };
 
     const ParentPtr = StatePtrUnion(.{
         Stmt,
@@ -934,12 +972,12 @@ pub const Cmd = struct {
         cmd.parent = parent;
         cmd.exit_code = null;
         cmd.io = io;
-        cmd.stdout_close = false;
+        cmd.buffered_closed = .{};
         return cmd;
     }
 
     fn initSubproc(this: *Cmd) !void {
-        log("cmd init subproc {x}", .{@intFromPtr(this)});
+        log("cmd init subproc ({x})", .{@intFromPtr(this)});
         var arena = bun.ArenaAllocator.init(this.base.interpreter.allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
@@ -1060,15 +1098,29 @@ pub const Cmd = struct {
             }
         }
 
+        this.buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
+        log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), this.buffered_closed });
+
         const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
+        subproc.ref();
         this.cmd = subproc;
+        this.cmd.?.stdout.pipe.buffer.watch();
+    }
+
+    pub fn hasFinished(this: *Cmd) bool {
+        return this.exit_code != null and this.buffered_closed.allClosed();
     }
 
     pub fn onExit(this: *Cmd, exit_code: u8) void {
         log("cmd exit code={d} ({x})", .{ exit_code, @intFromPtr(this) });
         this.exit_code = exit_code;
-        // if (this.stdout_close)
-        this.parent.childDone(this, exit_code);
+
+        if (this.hasFinished()) {
+            this.parent.childDone(this, exit_code);
+        }
+        // } else {
+        //     this.cmd.?.stdout.pipe.buffer.readAll();
+        // }
     }
 
     // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
@@ -1109,47 +1161,30 @@ pub const Cmd = struct {
         this.base.interpreter.allocator.destroy(this);
     }
 
-    pub fn fifoCloseSignal(this: *Cmd, comptime io: enum { stdin, stdout, stderr }) JSC.WebCore.Signal {
-        const Functions = struct {
-            fn onClose(this_: *anyopaque, err: ?Syscall.Error) void {
-                switch (comptime io) {
-                    // .stdin => Cmd.stdinFifoClose(@ptrCast(@alignCast(this)), err),
-                    .stdout => Cmd.stdoutFifoClose(@ptrCast(@alignCast(this_)), err),
-                    .stderr => Cmd.stderrFifoClose(@ptrCast(@alignCast(this_)), err),
-                    else => {},
-                }
-            }
-        };
-
-        return .{ .ptr = this, .vtable = JSC.WebCore.Signal.VTable{
-            .close = Functions.onClose,
-            .ready = JSC.WebCore.Signal.VTable.Dead.ready,
-            .start = JSC.WebCore.Signal.VTable.Dead.start,
-        } };
+    pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind) void {
+        switch (kind) {
+            .stdout => this.bufferedOutputCloseStdout(),
+            .stderr => this.bufferedOutputCloseStderr(),
+        }
+        if (this.hasFinished()) {
+            this.parent.childDone(this, this.exit_code orelse 0);
+        }
     }
 
-    pub fn stdoutFifoReady(this: *Cmd, amount: ?JSC.WebCore.Blob.SizeType, offset: ?JSC.WebCore.Blob.SizeType) void {
-        _ = offset;
-        const amt = amount orelse return;
-        _ = amt;
-        var cmd = this.cmd orelse return;
-
-        cmd.stdout.pipe.buffer.readAll();
+    pub fn bufferedOutputCloseStdout(this: *Cmd) void {
+        log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
+        assert(this.cmd != null, "bufferedOutputCloseStdout called while cmd is null");
+        var subproc = this.cmd.?;
+        subproc.closeIO(.stdout);
+        this.buffered_closed.close(.stdout);
     }
 
-    pub fn stdoutFifoClose(this: *Cmd, err: ?Syscall.Error) void {
-        _ = err;
-        log("stdout fifo close ({x})", .{@intFromPtr(this)});
-        this.stdout_close = true;
-        this.cmd.?.closeIO(.stdout);
-        // if (this.exit_code) |code| {
-        //     this.parent.childDone(this, code);
-        // }
-    }
-
-    pub fn stderrFifoClose(this: *Cmd, err: ?Syscall.Error) void {
-        _ = err;
-        log("stderr fifo close ({x})", .{@intFromPtr(this)});
+    pub fn bufferedOutputCloseStderr(this: *Cmd) void {
+        log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
+        assert(this.cmd != null, "bufferedOutputCloseStderr called while cmd is null");
+        var subproc = this.cmd.?;
+        subproc.closeIO(.stderr);
+        this.buffered_closed.close(.stderr);
     }
 };
 

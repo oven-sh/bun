@@ -1198,6 +1198,7 @@ export default <>hi</>
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      logLevel: "error",
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(

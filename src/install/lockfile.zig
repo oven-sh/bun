@@ -4105,7 +4105,7 @@ pub const Package = extern struct {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        var cwd_buf: bun.fs.PathBuffer = undefined;
+                        var cwd_buf: bun.PathBuffer = undefined;
                         const cwd = try bun.getcwd(&cwd_buf);
 
                         const num_notes = count: {

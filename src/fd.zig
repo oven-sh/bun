@@ -152,9 +152,9 @@ pub const FDImpl = packed struct {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
-                .system => fd: {
-                    break :fd uv_open_osfhandle(numberToHandle(this.value.as_system));
-                },
+                .system => 
+                        @panic("cast between Windows handle and UV fd not allowed here. this code should call 'makeLibUVOwned'")
+                ,
                 .uv => this.value.as_uv,
             },
         };
@@ -268,7 +268,7 @@ pub const FDImpl = packed struct {
 
     /// This forces a conversion to a UV file descriptor
     pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
-        return JSValue.jsNumberFromInt32(value.uv());
+        return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
     }
 
     pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

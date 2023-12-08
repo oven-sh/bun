@@ -194,16 +194,16 @@ pub fn chdir(destination: anytype) Maybe(void) {
     }
 
     if (comptime Environment.isWindows) {
-        if (comptime Type == bun.OSPathSlice or Type == [:0]u16) {
-            return chdirOSPath(@as(bun.OSPathSlice, destination));
-        }
-
         if (comptime Type == *[*:0]u16) {
             if (kernel32.SetCurrentDirectory(destination) != 0) {
                 return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
             }
 
             return Maybe(void).success;
+        }
+
+        if (comptime Type == bun.OSPathSlice or Type == [:0]u16) {
+            return chdirOSPath(@as(bun.OSPathSlice, destination));
         }
 
         var wbuf: bun.WPathBuffer = undefined;
@@ -214,21 +214,28 @@ pub fn chdir(destination: anytype) Maybe(void) {
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
-    var stat_ = mem.zeroes(bun.Stat);
-    const rc = statSym(path, &stat_);
+    if(Environment.isWindows) {
+        return sys_uv.stat(path);
+    } else {
+        var stat_ = mem.zeroes(bun.Stat);
+        const rc = statSym(path, &stat_);
 
-    if (comptime Environment.allow_assert)
-        log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
+        if (comptime Environment.allow_assert)
+            log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
-    if (Maybe(bun.Stat).errnoSys(rc, .stat)) |err| return err;
-    return Maybe(bun.Stat){ .result = stat_ };
+        if (Maybe(bun.Stat).errnoSys(rc, .stat)) |err| return err;
+        return Maybe(bun.Stat){ .result = stat_ };
+    }
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
-    if (Environment.isWindows) @panic("todo");
-    var stat_ = mem.zeroes(bun.Stat);
-    if (Maybe(bun.Stat).errnoSys(lstat64(path, &stat_), .lstat)) |err| return err;
-    return Maybe(bun.Stat){ .result = stat_ };
+    if(Environment.isWindows) {
+        return sys_uv.lstat(path);
+    } else {
+        var stat_ = mem.zeroes(bun.Stat);
+        if (Maybe(bun.Stat).errnoSys(lstat64(path, &stat_), .lstat)) |err| return err;
+        return Maybe(bun.Stat){ .result = stat_ };
+    }
 }
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
@@ -448,7 +455,7 @@ pub noinline fn openDirAtWindowsA(
     var wbuf: bun.WPathBuffer = undefined;
     return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
-pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
 
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
@@ -481,7 +488,11 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
     };
     var attr = windows.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (dirfD == bun.invalid_fd or std.fs.path.isAbsoluteWindowsWTF16(path)) null else bun.fdcast(dirfD),
+        .RootDirectory = if(std.fs.path.isAbsoluteWindowsWTF16(path)) 
+        null
+         else if (dirfd == bun.invalid_fd) 
+            std.fs.cwd().fd
+         else bun.fdcast(dirfd),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -523,7 +534,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfD, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
         }
 
         if (Environment.isDebug) {
@@ -1038,6 +1049,9 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 }
 
 pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+    if (Environment.isWindows) {
+        return Maybe(void).todo();
+    }
     while (true) {
         if (Maybe(void).errnoSys(sys.renameat(from_dir, from, to_dir, to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -1121,6 +1135,9 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    if (Environment.isWindows) {
+        return Maybe(void).todo();
+    }
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -1132,8 +1149,11 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 }
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    if (Environment.isWindows) {
+        return Maybe(void).todo();
+    }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(bun.fdcast(dirfd), to, 0), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }

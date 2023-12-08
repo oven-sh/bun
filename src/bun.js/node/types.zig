@@ -1589,7 +1589,7 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(bun.isRegularFile(@intCast(this.modeInternal())));
+            return JSC.JSValue.jsBoolean(bun.isRegularFile(this.modeInternal()));
         }
 
         pub fn isSocket(this: *This) JSC.JSValue {

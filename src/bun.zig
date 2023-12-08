@@ -2510,11 +2510,11 @@ pub const win32 = struct {
 
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
 
-pub fn isRegularFile(mode: Mode) bool {
+pub fn isRegularFile(mode: anytype) bool {
     if (comptime Environment.isWindows) {
         return mode & std.os.linux.S.IFMT == std.os.linux.S.IFREG;
     }
-    return std.os.S.ISREG(mode);
+    return std.os.S.ISREG(@intCast(mode));
 }
 
 pub const sys = @import("./sys.zig");

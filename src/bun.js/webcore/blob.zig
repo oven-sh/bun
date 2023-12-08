@@ -3240,20 +3240,15 @@ pub const Blob = struct {
 
     /// resolve file stat like size, last_modified
     fn resolveFileStat(store: *Store) void {
-        if (comptime Environment.isWindows) {
-            bun.todo(@src(), {});
-            return;
-        }
-
         if (store.data.file.pathlike == .path) {
             var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (bun.sys.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                 .result => |stat| {
                     store.data.file.max_size = if (bun.isRegularFile(stat.mode) or stat.size > 0)
-                        @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
+                        @truncate(@as(u64, @intCast(@max(stat.size, 0))))
                     else
                         Blob.max_size;
-                    store.data.file.mode = stat.mode;
+                    store.data.file.mode = @intCast(stat.mode);
                     store.data.file.seekable = bun.isRegularFile(stat.mode);
                     store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
@@ -3267,7 +3262,7 @@ pub const Blob = struct {
                         @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
-                    store.data.file.mode = stat.mode;
+                    store.data.file.mode = @intCast(stat.mode);
                     store.data.file.seekable = bun.isRegularFile(stat.mode);
                     store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },

@@ -24,12 +24,12 @@ import TranspilerImpl from './bun/transpiler.js';
 import { mmap as mmapper } from './bun/mmap.js';
 import { SyncWorker } from '../utils/sync.mjs';
 import fs from 'node:fs';
+import os from 'node:os';
 import v8 from 'node:v8';
 import path from 'node:path';
 import util from 'node:util';
 import zlib from 'node:zlib';
 import streams from 'node:stream';
-import nodecrypto from 'node:crypto';
 import workers from 'node:worker_threads';
 import chp, { type ChildProcess, type StdioOptions, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode } from 'node:url';
@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '9342cf2080824551040d5e73a00e4821b0711de3' satisfies typeof Bun.revision;
+export const revision = 'db7cb6fa98c68d0a7ca513623538d7f008189f0f' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -254,7 +254,7 @@ export const spawn = ((...args) => {
         opts = args[0];
         Reflect.deleteProperty(opts, 'cmd');
     }
-
+    if (opts.ipc) throw new NotImplementedError('Bun.spawn({ ipc })', spawn);
     let stdio: StdioOptions = [];
     opts.stdio ??= [undefined, undefined, undefined];
     if (opts.stdin) opts.stdio[0] = opts.stdin;
@@ -282,7 +282,6 @@ export const spawn = ((...args) => {
         stdio
     }) as unknown as Subprocess;
     const subpAsNode = subp as unknown as ChildProcess;
-    const stdstreams = [subpAsNode.stdin, subpAsNode.stdout, subpAsNode.stderr] as const;
     if (subpAsNode.stdout) {
         const rstream = streams.Readable.toWeb(subpAsNode.stdout) as ReadableStream;
         Reflect.set(rstream, 'destroy', function (this: ReadableStream, err?: Error) {
@@ -329,18 +328,23 @@ export const spawn = ((...args) => {
     Object.defineProperty(subp, 'readable', { get(this: Subprocess) { return this.stdout; } });
     Object.defineProperty(subp, 'exited', {
         value: new Promise((resolve, reject) => {
-            subpAsNode.once('exit', (code) => {
-                stdstreams[0]?.destroy();
-                stdstreams[1]?.destroy();
-                stdstreams[2]?.destroy();
-                subp.kill();
-                subp.unref();
-                subpAsNode.disconnect?.();
-                subpAsNode.removeAllListeners();
+            subpAsNode.once('exit', (code, signal) => {
+                opts.onExit?.(subp, code, signal && os.constants.signals[signal]);
                 resolve(code);
             });
         })
     });
+    const unrefFn = subpAsNode.unref;
+    subpAsNode.unref = function unref(): void {
+        unrefFn.apply(this);
+        // unref() alone is basically useless without { detached: true } in spawn options,
+        // so we have to manually force it like this.
+        this.disconnect?.();
+        this.stderr?.destroy?.();
+        this.stdout?.destroy?.();
+        this.stdin?.end?.();
+        this.stdin?.destroy?.();
+    };
     if (stdinSrc) subpAsNode.once('spawn', () => {
         const stdinWeb = streams.Writable.toWeb(internalStdinStream);
         if (isArrayBufferView(stdinSrc)) stdinSrc = new Blob([stdinSrc]);
@@ -373,7 +377,7 @@ export const spawnSync = ((...args): SyncSubprocess => {
         opts = args[0];
         Reflect.deleteProperty(opts, 'cmd');
     }
-
+    if (opts.ipc) throw new NotImplementedError('Bun.spawnSync({ ipc })', spawn);
     let stdio: StdioOptions = [];
     opts.stdio ??= [undefined, undefined, undefined];
     if (opts.stdin) opts.stdio[0] = opts.stdin;

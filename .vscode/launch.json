@@ -321,7 +321,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "/Users/dylan/code/worky",
+      "cwd": "/Users/jarred/Build/worky",
       "console": "internalConsole",
       "env": {}
     },

@@ -679,7 +679,7 @@ pub const RunCommand = struct {
         pub fn deinit(this: *LifecycleScriptSubprocess) void {
             // this.resetPolls();
             this.output_buffer.deinitWithAllocator(this.manager.allocator);
-            // this.manager.allocator.destroy(this);
+            this.manager.allocator.destroy(this);
         }
     };
 

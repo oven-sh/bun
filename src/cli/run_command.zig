@@ -404,39 +404,39 @@ pub const RunCommand = struct {
             this.finished_fds = 0;
             this.output_buffer = .{};
             this.pid = pid;
-            this.pid_poll = Async.FilePoll.initWithPackageManager(
-                manager,
-                pid_fd,
-                .{},
-                @as(*PidPollData, @ptrCast(this)),
-            );
 
             this.stdout_poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, this);
             this.stderr_poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, this);
 
-            try this.registerPolls();
-        }
-
-        pub fn registerPolls(this: *LifecycleScriptSubprocess) !void {
             _ = try this.stdout_poll.register(this.manager.uws_event_loop, .readable, false).unwrap();
             _ = try this.stderr_poll.register(this.manager.uws_event_loop, .readable, false).unwrap();
 
-            switch (this.pid_poll.register(
-                this.manager.uws_event_loop,
-                .process,
-                true,
-            )) {
-                .result => {},
-                .err => |err| {
-                    // Sometimes the pid poll can fail to register if the process exits
-                    // between posix_spawn() and pid_poll.register(), but it is unlikely.
-                    // Any other error is unexpected here.
-                    if (err.getErrno() != .SRCH) {
-                        @panic("This shouldn't happen. Could not register pid poll");
-                    }
+            if (WaiterThread.shouldUseWaiterThread()) {
+                WaiterThread.appendLifecycleScriptSubprocess(this);
+            } else {
+                this.pid_poll = Async.FilePoll.initWithPackageManager(
+                    manager,
+                    pid_fd,
+                    .{},
+                    @as(*PidPollData, @ptrCast(this)),
+                );
+                switch (this.pid_poll.register(
+                    this.manager.uws_event_loop,
+                    .process,
+                    true,
+                )) {
+                    .result => {},
+                    .err => |err| {
+                        // Sometimes the pid poll can fail to register if the process exits
+                        // between posix_spawn() and pid_poll.register(), but it is unlikely.
+                        // Any other error is unexpected here.
+                        if (err.getErrno() != .SRCH) {
+                            @panic("This shouldn't happen. Could not register pid poll");
+                        }
 
-                    this.onProcessUpdate(0);
-                },
+                        this.onProcessUpdate(0);
+                    },
+                }
             }
         }
 
@@ -483,22 +483,18 @@ pub const RunCommand = struct {
         }
 
         pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {
-            if (WaiterThread.shouldUseWaiterThread()) {
-                WaiterThread.appendLifecycleScriptSubprocess(this);
-            } else {
-                switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
-                    .err => |err| {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                            this.script_name,
-                            this.package_name,
-                            err.errno,
-                            @tagName(err.getErrno()),
-                        });
-                        Output.flush();
-                        this.manager.pending_lifecycle_script_tasks -|= 1;
-                    },
-                    .result => |result| this.onResult(result),
-                }
+            switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+                        this.script_name,
+                        this.package_name,
+                        err.errno,
+                        @tagName(err.getErrno()),
+                    });
+                    Output.flush();
+                    this.manager.pending_lifecycle_script_tasks -|= 1;
+                },
+                .result => |result| this.onResult(result),
             }
         }
 
@@ -594,11 +590,13 @@ pub const RunCommand = struct {
             const loop = this.manager.uws_event_loop;
             _ = this.stdout_poll.unregister(loop, false);
             _ = this.stderr_poll.unregister(loop, false);
-            _ = this.pid_poll.unregister(loop, false);
-
             _ = bun.sys.close(this.stdout_poll.fileDescriptor());
             _ = bun.sys.close(this.stderr_poll.fileDescriptor());
-            _ = bun.sys.close(this.pid_poll.fileDescriptor());
+
+            if (!WaiterThread.shouldUseWaiterThread()) {
+                _ = this.pid_poll.unregister(loop, false);
+                _ = bun.sys.close(this.pid_poll.fileDescriptor());
+            }
         }
 
         pub fn deinit(this: *LifecycleScriptSubprocess, alloc: std.mem.Allocator) void {

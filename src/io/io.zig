@@ -29,6 +29,10 @@ pub const Loop = struct {
     var has_loaded_loop: bool = false;
 
     pub fn get() *Loop {
+        if(Environment.isWindows) {
+            @panic("Do not use this API on windows");
+        }
+
         if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
             loop = Loop{
                 .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
@@ -63,13 +67,13 @@ pub const Loop = struct {
         } else if (comptime Environment.isMac) {
             this.tickKqueue();
         } else {
-            @compileError("TODO: implement poll for this platform");
+            @panic("TODO on this platform");
         }
     }
 
     pub fn tickEpoll(this: *Loop) void {
         if (comptime !Environment.isLinux) {
-            @compileError("not implemented");
+            @compileError("Epoll is Linux-Only");
         }
 
         while (true) {
@@ -171,7 +175,7 @@ pub const Loop = struct {
                 else => |e| bun.Output.panic("epoll_wait: {s}", .{@tagName(e)}),
             }
 
-            this.update_now();
+            this.updateNow();
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             for (current_events) |event| {
@@ -188,7 +192,7 @@ pub const Loop = struct {
 
     pub fn tickKqueue(this: *Loop) void {
         if (comptime !Environment.isMac) {
-            @compileError("not implemented");
+            @compileError("Kqueue is MacOS-Only");
         }
 
         while (true) {
@@ -313,7 +317,7 @@ pub const Loop = struct {
                 else => |e| bun.Output.panic("kevent64 failed: {s}", .{@tagName(e)}),
             }
 
-            this.update_now();
+            this.updateNow();
 
             assert(rc <= events_list.capacity);
             const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
@@ -349,7 +353,7 @@ pub const Loop = struct {
         }
     }
 
-    fn update_now(this: *Loop) void {
+    fn updateNow(this: *Loop) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, &this.cached_now);
             assert(rc == 0);
@@ -816,4 +820,4 @@ pub const Poll = struct {
     }
 };
 
-pub const retry = std.os.system.E.AGAIN;
+pub const retry = bun.C.E.AGAIN;

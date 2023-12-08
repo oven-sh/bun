@@ -6,7 +6,6 @@ const bun = @import("root").bun;
 const strings = bun.strings;
 const windows = bun.windows;
 const string = bun.string;
-const AsyncIO = @import("root").bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
@@ -47,9 +46,6 @@ const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
-pub const FlavoredIO = struct {
-    io: *AsyncIO,
-};
 
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |

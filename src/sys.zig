@@ -24,7 +24,11 @@ pub const syslog = log;
 
 // On Linux AARCh64, zig is missing stat & lstat syscalls
 const use_libc = !(Environment.isLinux and Environment.isX64);
-pub const system = if (Environment.isLinux) linux else @import("root").bun.AsyncIO.system;
+pub const system = switch (Environment.os) {
+    .linux => linux,
+    .mac => bun.AsyncIO.system,
+    else => @compileError("not implemented"),
+};
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else if (Environment.isPosix) std.os.S else struct {};
 };
@@ -411,7 +415,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}, ) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
     if (Environment.isDebug) {
@@ -586,7 +590,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
 pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-        const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
+        const rc = system.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
         if (comptime Environment.allow_assert)
             log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 

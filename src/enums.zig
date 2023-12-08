@@ -1363,6 +1363,7 @@ pub fn EnumIndexer(comptime E: type) type {
         pub const Key = E;
         pub const count = fields_len;
         pub fn indexOf(e: E) usize {
+            @setEvalBranchQuota(123456);
             for (keys, 0..) |k, i| {
                 if (k == e) return i;
             }

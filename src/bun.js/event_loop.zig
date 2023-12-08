@@ -19,6 +19,8 @@ const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
+const Waker = bun.Async.Waker;
+
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
@@ -442,7 +444,6 @@ pub const ConcurrentTask = struct {
     }
 };
 
-const AsyncIO = @import("root").bun.AsyncIO;
 
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
@@ -599,7 +600,6 @@ comptime {
 }
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
-const Waker = AsyncIO.Waker;
 pub const EventLoop = struct {
     tasks: if (JSC.is_bindgen) void else Queue = undefined,
 

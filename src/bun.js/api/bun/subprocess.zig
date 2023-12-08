@@ -968,7 +968,7 @@ pub const Subprocess = struct {
                         .allocator = globalThis.bunVM().allocator,
                         .auto_close = true,
                     };
-                    sink.mode = std.os.S.IFIFO;
+                    sink.mode = bun.S.IFIFO;
                     sink.watch(fd);
                     if (stdio == .pipe) {
                         if (stdio.pipe) |readable| {

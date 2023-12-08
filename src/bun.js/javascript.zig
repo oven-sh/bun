@@ -15,7 +15,6 @@ const ErrorableString = bun.JSC.ErrorableString;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
 
-const IO = @import("root").bun.AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
@@ -829,9 +828,9 @@ pub const VirtualMachine = struct {
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
 
-    pub fn io(this: *VirtualMachine) *IO {
+    pub fn io(this: *VirtualMachine) *bun.AsyncIO {
         if (this.io_ == null) {
-            this.io_ = IO.init(this) catch @panic("Failed to initialize IO");
+            this.io_ = bun.AsyncIO.init(this) catch @panic("Failed to initialize AsyncIO");
         }
 
         return &this.io_.?;

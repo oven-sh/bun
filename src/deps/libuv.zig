@@ -1506,7 +1506,8 @@ const union_unnamed_447 = extern union {
     io: struct_unnamed_448,
     connect: struct_unnamed_449,
 };
-pub const uv_fs_cb = ?*const fn ([*c]fs_t) callconv(.C) void;
+pub const uv_fs_cb = ?*const FSCallback;
+pub const FSCallback = fn (req: *fs_t) callconv(.C) void;
 const union_unnamed_450 = extern union {
     pathw: [*]WCHAR,
     fd: c_int,
@@ -1538,7 +1539,7 @@ pub const fs_t = extern struct {
     fs_type: uv_fs_type,
     loop: *uv_loop_t,
     cb: uv_fs_cb,
-    result: isize,
+    result: ReturnCodeI64,
     ptr: ?*anyopaque,
     path: [*:0]const u8,
     statbuf: uv_stat_t,
@@ -2360,6 +2361,29 @@ pub const ReturnCode = extern struct {
 
     comptime {
         std.debug.assert(@as(c_int, @bitCast(ReturnCode{ .value = 4021 })) == 4021);
+    }
+};
+
+pub const ReturnCodeI64 = extern struct {
+    value: i64,
+
+    pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
+        return if (this.value < 0)
+            // @intFromEnum(translateUVErrorToE(this.value))
+            @as(u16, @intCast(-this.value))
+        else
+            null;
+    }
+
+    pub inline fn errEnum(this: ReturnCodeI64) ?bun.C.E {
+        return if (this.value < 0)
+            (translateUVErrorToE(this.value))
+        else
+            null;
+    }
+
+    comptime {
+        std.debug.assert(@as(c_int, @bitCast(ReturnCodeI64{ .value = 4021000000000 })) == 4021000000000);
     }
 };
 

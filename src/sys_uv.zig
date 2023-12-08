@@ -61,11 +61,12 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 }
 
 pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
+    const uv_fd = bun.uvfdcast(fd);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    const rc = uv.uv_fs_fchmod(uv.Loop.get(), &req, bun.uvfdcast(fd), flags, null);
+    const rc = uv.uv_fs_fchmod(uv.Loop.get(), &req, uv_fd, flags, null);
 
-    log("uv fchmod({}, {d}) = {d}", .{ fd, flags, rc.value });
+    log("uv fchmod({}, {d}) = {d}", .{ uv_fd, flags, rc.value });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fchmod } }
     else
@@ -85,13 +86,13 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
 }
 
 pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
-    const uv_fd = FDImpl.decode(fd).uv();
+    const uv_fd = bun.uvfdcast(fd);
 
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fchown(uv.Loop.get(), &req, uv_fd, uid, gid, null);
 
-    log("uv chown({}, {d}, {d}) = {d}", .{ fd, uid, gid, rc.value });
+    log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.value });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .mkdir } }
     else
@@ -196,12 +197,12 @@ pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void)
 }
 
 pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
-    const uv_fd = FDImpl.decode(fd).uv();
+    const uv_fd = bun.uvfdcast(fd);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_ftruncate(uv.Loop.get(), &req, uv_fd, size, null);
 
-    log("uv ftruncate({}, {d}) = {d}", .{ fd, size, rc.value });
+    log("uv ftruncate({}, {d}) = {d}", .{ uv_fd, size, rc.value });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .ftruncate, .fd = fd } }
     else
@@ -209,12 +210,12 @@ pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
 }
 
 pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
-    const uv_fd = FDImpl.decode(fd).uv();
+    const uv_fd = bun.uvfdcast(fd);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fstat(uv.Loop.get(), &req, uv_fd, null);
 
-    log("uv fstat({}) = {d}", .{ fd, rc.value });
+    log("uv fstat({}) = {d}", .{ uv_fd, rc.value });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd } }
     else
@@ -222,12 +223,12 @@ pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
 }
 
 pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
-    const uv_fd = FDImpl.decode(fd).uv();
+    const uv_fd = bun.uvfdcast(fd);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fdatasync(uv.Loop.get(), &req, uv_fd, null);
 
-    log("uv fdatasync({}) = {d}", .{ fd, rc.value });
+    log("uv fdatasync({}) = {d}", .{ uv_fd, rc.value });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd } }
     else
@@ -239,7 +240,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
     defer req.deinit();
     const rc = uv.uv_fs_fsync(uv.Loop.get(), &req, bun.uvfdcast(fd), null);
 
-    log("uv fsync({d}) = {d}", .{ fd, rc.value });
+    log("uv fsync({d}) = {d}", .{ uv_fd, rc.value });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd } }
     else
@@ -279,7 +280,7 @@ pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?bun.sys.Error {
 }
 
 pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
-    const uv_fd = FDImpl.decode(fd).uv();
+    const uv_fd = bun.uvfdcast(fd);
     comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
@@ -302,7 +303,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         for (bufs) |buf| {
             total_bytes += buf.len;
         }
-        log("uv read({}, {d} total bytes) = {d} ({any})", .{ fd, total_bytes, rc.value, debug_timer });
+        log("uv read({}, {d} total bytes) = {d} ({any})", .{ uv_fd, total_bytes, rc.value, debug_timer });
     }
 
     if (rc.errno()) |errno| {
@@ -313,7 +314,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
 }
 
 pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
-    const uv_fd = FDImpl.decode(fd).uv();
+    const uv_fd = bun.uvfdcast(fd);
     comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
@@ -336,7 +337,7 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i6
         for (bufs) |buf| {
             total_bytes += buf.len;
         }
-        log("uv write({}, {d} total bytes) = {d} ({any})", .{ fd, total_bytes, rc.value, debug_timer });
+        log("uv write({}, {d} total bytes) = {d} ({any})", .{ uv_fd, total_bytes, rc.value, debug_timer });
     }
 
     if (rc.errno()) |errno| {

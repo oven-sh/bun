@@ -4,7 +4,6 @@ const bun = @import("root").bun;
 const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
-const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -4229,8 +4228,8 @@ pub const File = struct {
             },
         };
 
-        if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(bun.fdcast(fd)))) {
-            if (comptime Environment.isPosix) {
+        if (comptime Environment.isPosix) {
+            if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
                 var termios = std.mem.zeroes(std.os.termios);
                 _ = std.c.tcgetattr(fd, &termios);
                 bun.C.cfmakeraw(&termios);
@@ -4273,12 +4272,12 @@ pub const File = struct {
                 },
             };
 
-            if (std.os.S.ISDIR(stat.mode)) {
+            if (bun.S.ISDIR(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
             }
 
-            if (std.os.S.ISSOCK(stat.mode)) {
+            if (bun.S.ISSOCK(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
@@ -4298,6 +4297,8 @@ pub const File = struct {
                 break :outer;
             });
             this.seekable = true;
+        } else {
+            @compileError("Not Implemented");
         }
 
         if (this.seekable) {
@@ -4828,11 +4829,7 @@ pub fn NewReadyWatcher(
             }
 
             if (comptime @hasField(Context, "mode")) {
-                if (comptime Environment.isWindows) {
-                    @panic("TODO on Windows");
-                }
-
-                return std.os.S.ISFIFO(this.mode);
+                return bun.S.ISFIFO(this.mode);
             }
 
             return false;

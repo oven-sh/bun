@@ -55,7 +55,7 @@ pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
-        @compileError("Not implemented yet");
+        @compileError("Not implemented yet, conside using bun.sys.lstat()");
     }
 
     var st = zeroes(libc_stat);
@@ -120,7 +120,7 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.f
             if (err.getErrno() == .XDEV) {
                 try moveFileZSlow(from_dir, filename, to_dir, destination);
             } else {
-                return bun.AsyncIO.asError(err.errno);
+                return bun.errnoToZigErr(err.errno);
             }
         },
         .result => {},
@@ -144,7 +144,7 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
                 _ = bun.sys.unlinkat(from_dir, filename);
             }
 
-            return bun.AsyncIO.asError(err.errno);
+            return bun.errnoToZigErr(err.errno);
         },
         .result => {},
     }

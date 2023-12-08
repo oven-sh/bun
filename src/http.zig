@@ -22,7 +22,6 @@ const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const StringBuilder = @import("./string_builder.zig");
-const AsyncIO = bun.AsyncIO;
 const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
@@ -150,7 +149,7 @@ pub const Sendfile = struct {
                     return .{ .done = {} };
                 }
 
-                return .{ .err = AsyncIO.asError(errcode) };
+                return .{ .err = bun.errnoToZigErr(errcode) };
             }
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
@@ -172,7 +171,7 @@ pub const Sendfile = struct {
                     return .{ .done = {} };
                 }
 
-                return .{ .err = AsyncIO.asError(errcode) };
+                return .{ .err = bun.errnoToZigErr(errcode) };
             }
         }
 

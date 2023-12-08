@@ -350,3 +350,31 @@ pub const FilePoll = struct {
         }
     };
 };
+
+pub const Waker = struct {
+    loop: *bun.uws.UVLoop,
+
+    pub fn init(_: std.mem.Allocator) !Waker {
+        return .{
+            .loop = bun.uws.UVLoop.init()
+        };
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        _ = this;
+    
+        @compileError("Waker.getFd is unsupported on Windows");
+    }
+
+    pub fn initWithFileDescriptor(_: std.mem.Allocator, _: bun.FileDescriptor) Waker {
+        @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
+    }
+
+    pub fn wait(this: Waker) void {
+        this.loop.wait();
+    }
+
+    pub fn wake(this: *const Waker) void {
+        this.loop.wakeup();
+    }
+};

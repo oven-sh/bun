@@ -1156,7 +1156,7 @@ pub const BundleV2 = struct {
 
             var instance = bun.default_allocator.create(BundleThread) catch unreachable;
             instance.queue = .{};
-            instance.waker = bun.AsyncIO.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+            instance.waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
             instance.queue.push(completion);
             BundleThread.instance = instance;
 
@@ -1572,7 +1572,7 @@ pub const BundleV2 = struct {
     }
 
     pub const BundleThread = struct {
-        waker: bun.AsyncIO.Waker,
+        waker: bun.Async.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
         generation: bun.Generation = 0,
         pub var created = false;

@@ -2394,9 +2394,9 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         const decoded = (switch (T) {
-            FDImpl.System => @compileError("This cast (FDImpl.UV -> FDImpl.System) makes the file descriptor very hard to close. Please use toLibUVOwnedFD() instead"),
+            FDImpl.System => @compileError("This cast (FDImpl.System -> FDImpl.UV) makes this file descriptor very hard to close. Use toLibUVOwnedFD() and FileDescriptor instead. If you truly need to do this conversion (dave will probably reject your PR), use bun.FDImpl.fromSystem(fd).uv()"),
             FDImpl => fd,
-            FDImpl.UV => FDImpl.fromUV(fd),
+            FDImpl.UV => return fd,
             FileDescriptor => FDImpl.decode(fd),
             else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
         });
@@ -2511,10 +2511,7 @@ pub const win32 = struct {
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
 
 pub fn isRegularFile(mode: anytype) bool {
-    if (comptime Environment.isWindows) {
-        return mode & std.os.linux.S.IFMT == std.os.linux.S.IFREG;
-    }
-    return std.os.S.ISREG(@intCast(mode));
+    return S.ISREG(@intCast(mode));
 }
 
 pub const sys = @import("./sys.zig");
@@ -2632,9 +2629,6 @@ pub inline fn serializableInto(comptime T: type, init: anytype) T {
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
 /// symlink, it deletes the symlink and tries again.
 pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
-    if (comptime Environment.isWindows) {
-        @panic("TODO: Windows makePath");
-    }
     var it = try std.fs.path.componentIterator(sub_path);
     var component = it.last() orelse return;
     while (true) {
@@ -2646,7 +2640,7 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
                 path_buf2[component.path.len] = 0;
                 var path_to_use = path_buf2[0..component.path.len :0];
                 const result = try sys.lstat(path_to_use).unwrap();
-                const is_dir = std.os.S.ISDIR(result.mode);
+                const is_dir = S.ISDIR(@intCast(result.mode));
                 // dangling symlink
                 if (!is_dir) {
                     dir.deleteTree(component.path) catch {};
@@ -2718,4 +2712,45 @@ pub fn exitThread() noreturn {
 }
 
 pub const Tmpfile = @import("./tmp.zig").Tmpfile;
+
 pub const io = @import("./io/io.zig");
+
+const errno_map = errno_map: {
+    var max_value = 0;
+    for (std.enums.values(C.SystemErrno))  |v|
+        max_value = @max(max_value, @intFromEnum(v));
+
+    var map: [max_value + 1]anyerror = undefined;
+    @memset(&map, error.Unexpected);
+    for (std.enums.values(C.SystemErrno)) |v|
+        map[@intFromEnum(v)] = @field(anyerror, @tagName(v));
+
+    break :errno_map map;
+};
+
+pub fn errnoToZigErr(err: anytype) anyerror {
+    var num = if (@typeInfo(@TypeOf(err)) == .Enum)
+        @intFromEnum(err)
+    else
+        err;
+
+    if (Environment.allow_assert) {
+        std.debug.assert(num != 0);
+    }
+
+    if(Environment.os == .windows) {
+        // uv errors are negative, normalizing it will make this more resilient
+        num = @abs(num);
+    } else {
+        if (Environment.allow_assert) {
+            std.debug.assert(num > 0);
+        }
+    }
+
+    if (num > 0 and num < errno_map.len)
+        return errno_map[num];
+
+    return error.Unexpected;
+}
+
+pub const S = if (Environment.isWindows) windows.libuv.S else std.os.S;

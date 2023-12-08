@@ -152,9 +152,12 @@ pub const FDImpl = packed struct {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
-                .system => 
-                        @panic("cast between Windows handle and UV fd not allowed here. this code should call 'makeLibUVOwned'")
-                ,
+                .system => std.debug.panic(
+                    \\Cast {} -> FDImpl.UV makes closing impossible!
+                    \\
+                    \\The supplier of this FileDescriptor should call 'bun.toLibUVOwnedFD'
+                    \\or 'FDImpl.makeLibUVOwned', probably where open() was called.
+                , .{this},),
                 .uv => this.value.as_uv,
             },
         };
@@ -266,7 +269,7 @@ pub const FDImpl = packed struct {
         return FDImpl.fromUV(fd);
     }
 
-    /// This forces a conversion to a UV file descriptor
+    /// After calling, the input file descriptor is no longer valid and must not be used
     pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
         return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
     }

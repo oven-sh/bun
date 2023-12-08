@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const bun = @import("root").bun;
 const strings = bun.strings;
 const string = bun.string;
-const AsyncIO = @import("root").bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
@@ -94,7 +93,7 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub fn unwrap(this: @This()) !ReturnType {
             return switch (this) {
-                .err => |err| bun.AsyncIO.asError(err.errno),
+                .err => |err| bun.errnoToZigErr(err.errno),
                 .result => |result| result,
             };
         }

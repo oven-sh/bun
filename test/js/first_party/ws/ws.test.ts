@@ -263,6 +263,21 @@ it("isBinary", done => {
   });
 });
 
+it("onmessage", done => {
+  const wss = new WebSocketServer({ port: 0 });
+  wss.on("connection", ws => {
+    ws.onmessage = e => {
+      expect(e.data).toEqual(Buffer.from("hello"));
+      done();
+    };
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  ws.onopen = () => {
+    ws.send("hello");
+  };
+});
+
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
   it(
     label,

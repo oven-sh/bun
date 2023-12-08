@@ -39,6 +39,7 @@ await import('../../../test/js/bun/util/peek.test.ts');
 await import('../../../test/js/bun/util/readablestreamtoarraybuffer.test.ts');
 await import('../../../test/js/bun/util/sleepSync.test.ts');
 await import('../../../test/js/bun/util/unsafe.test.js');
+await import('../../../test/js/bun/util/which.test.ts');
 // websocket
 // globals
 

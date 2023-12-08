@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'b63fc096bf5bcab16a8a8624fda6a7c79002e428' satisfies typeof Bun.revision;
+export const revision = '6f01ddc38deee8f3900bf34b2e3fd1c9178cec8f' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -239,10 +239,8 @@ export const inflateSync = zlib.inflateSync satisfies typeof Bun.inflateSync;
 export const which = ((cmd: string, options) => {
     const opts: npm_which.Options = { all: false, nothrow: true };
     if (options?.PATH) opts.path = options.PATH;
-    const result = npm_which.sync(cmd, opts) as string | null;
-    if (!result || !options?.cwd) return result;
-    if (path.normalize(result).includes(path.normalize(options.cwd))) return result;
-    else return null;
+    if (options?.cwd) opts.path = opts.path ? `${options.cwd}:${opts.path}` : options.cwd;
+    return npm_which.sync(cmd, opts) as string | null;
 }) satisfies typeof Bun.which;
 
 export const spawn = ((...args) => {

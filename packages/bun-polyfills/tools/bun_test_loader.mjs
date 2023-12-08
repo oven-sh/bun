@@ -121,7 +121,7 @@ export async function load(url, context, nextLoad) {
         }
         const jsSrc = decoder.decode(transform.files[0].data);
         // For debugging purposes:
-        if (process.env.BUN_POLYFILLS_DUMP_TEST_TRANSFORMS)
+        if (process.env.BUN_POLYFILLS_DUMP_TEST_JS)
             fs.writeFileSync(`/tmp/bun-polyfills-testrunner-transformed--${url.split('/').at(-1)}.js`, jsSrc);
         return {
             shortCircuit: true,

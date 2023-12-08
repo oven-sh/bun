@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'aa606b23df47bc87f7eb3d4e730ea018f0de0ade' satisfies typeof Bun.revision;
+export const revision = 'c3739c5d38fe18b418edaad6f437ff51da9cd3b5' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc

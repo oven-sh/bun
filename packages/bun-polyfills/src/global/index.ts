@@ -2,7 +2,14 @@ import type { BunFile } from 'bun';
 import { version, readableStreamToFormData } from '../modules/bun.js';
 import './console.js';
 import './process.js';
+import './htmlrewriter.js';
 import os from 'node:os';
+
+//? Yet another globalThis alias, because why not right?
+Object.defineProperty(globalThis, 'self', {
+    get() { return globalThis; }, set(_) { },
+    enumerable: true, configurable: true,
+});
 
 //? NodeJS Blob doesn't implement these, so we need to polyfill them.
 Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {

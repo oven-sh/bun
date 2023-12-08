@@ -40,8 +40,8 @@ await import('../../../test/js/bun/util/readablestreamtoarraybuffer.test.ts');
 await import('../../../test/js/bun/util/sleepSync.test.ts');
 await import('../../../test/js/bun/util/unsafe.test.js');
 await import('../../../test/js/bun/util/which.test.ts');
-// websocket
-// globals
+// TODO: websocket
+await import('../../../test/js/bun/globals.test.js');
 
 // this test has to be last to run due to some weird sync/async issues with the polyfills' test runner
 await import('../../../test/js/bun/resolve/import-meta.test.js');

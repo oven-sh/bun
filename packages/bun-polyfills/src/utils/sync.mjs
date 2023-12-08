@@ -63,7 +63,7 @@ export class SyncWorker extends Worker {
         const localPort = mc.port1;
         const remotePort = mc.port2;
         super.postMessage({ port: remotePort, code: source, ab: this.#ab }, [remotePort]);
-        
+
         return (/** @type {unknown[]} */ ...args) => {
             Atomics.store(this.#int32, 0, 0);
             localPort.postMessage(args); // Send the arguments to the worker thread

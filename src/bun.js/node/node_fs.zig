@@ -5101,11 +5101,11 @@ pub const NodeFS = struct {
             const remaining_bytes = buf.items.len - offset;
 
             if (remaining_bytes <= chunk_size) {
-                const final_buffer = try bun.default_allocator.alloc(u8, Base64.encodeLenFromSize(remaining_bytes));
-                defer bun.default_allocator.free(final_buffer);
+                const last_slice_to_encode = buf.items[offset..];
+                var last_slice_encoding_size = Base64.encodeLen(last_slice_to_encode);
 
-                _ = Base64.encode(final_buffer, buf.items[offset..]);
-                try buf.replaceRange(offset, remaining_bytes, final_buffer);
+                Base64.LibBase64.base64_encode(last_slice_to_encode.ptr, remaining_bytes, &encoding_buffer, &last_slice_encoding_size, 0);
+                try buf.replaceRange(offset, remaining_bytes, encoding_buffer[0..last_slice_encoding_size]);
 
                 return try buf.toOwnedSlice();
             }

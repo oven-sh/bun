@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '93b32aef29467a842d57008688b2f66ddde70a0b' satisfies typeof Bun.revision;
+export const revision = 'b63fc096bf5bcab16a8a8624fda6a7c79002e428' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -78,8 +78,10 @@ Object.setPrototypeOf(hash, bunHashProto satisfies Hash);
 
 export const unsafe = {
     gcAggressionLevel: () => 0, //! no-op
-    arrayBufferToString: (buf) => new TextDecoder().decode(buf),
-    segfault: () => {
+    arrayBufferToString(buf) {
+        return new TextDecoder(buf instanceof Uint16Array ? 'utf-16' : 'utf-8').decode(buf);
+    },
+    segfault() {
         const segfault = new Error();
         segfault.name = 'SegfaultTest';
         segfault.message = '';

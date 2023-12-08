@@ -2120,7 +2120,6 @@ pub const Blob = struct {
 
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnWriteFileCallback = undefined,
-            wrote: usize = 0,
             total_written: usize = 0,
 
             could_block: bool = false,
@@ -2217,8 +2216,8 @@ pub const Blob = struct {
             pub fn doWrite(
                 this: *WriteFile,
                 buffer: []const u8,
+                wrote: *usize,
             ) bool {
-                this.wrote = 0;
                 const fd = this.opened_fd;
                 std.debug.assert(fd != null_fd);
 
@@ -2233,7 +2232,7 @@ pub const Blob = struct {
                 while (true) {
                     switch (result) {
                         .result => |res| {
-                            this.wrote = res;
+                            wrote.* = res;
                             this.total_written += res;
                         },
                         .err => |err| {
@@ -2369,7 +2368,7 @@ pub const Blob = struct {
                     // seemed to have zero performance impact in
                     // microbenchmarks.
                     if (!this.could_block and this.bytes_blob.sharedView().len > 1024) {
-                        bun.C.preallocate_file(fd, 0, @intCast(this.bytes_blob.sharedView().len)) catch {};
+                        bun.C.preallocate_file(fd, 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
                     }
                 }
 
@@ -2383,13 +2382,15 @@ pub const Blob = struct {
 
             fn doWriteLoop(this: *WriteFile) void {
                 while (true) {
-                    this.bytes_blob.offset += @truncate(this.wrote);
                     var remain = this.bytes_blob.sharedView();
 
                     remain = remain[@min(this.total_written, remain.len)..];
 
                     if (remain.len > 0 and this.errno == null) {
-                        if (!this.doWrite(remain)) {
+                        var wrote: usize = 0;
+                        const continue_writing = this.doWrite(remain, &wrote);
+                        this.bytes_blob.offset += @truncate(wrote);
+                        if (!continue_writing) {
                             // Stop writing, we errored
                             if (this.errno != null) {
                                 this.onFinish();
@@ -2406,7 +2407,7 @@ pub const Blob = struct {
                             return;
                         }
 
-                        if (this.wrote == 0) {
+                        if (wrote == 0) {
                             // we are done, we received EOF
                             this.onFinish();
                             return;

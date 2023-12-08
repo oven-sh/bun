@@ -2361,6 +2361,18 @@ pub const Blob = struct {
                     return;
                 }
 
+                if (comptime Environment.isLinux) {
+                    // If it's a potentially large file, lets attempt to
+                    // preallocate the saved filesystem size.
+                    //
+                    // We only do this on Linux because the equivalent on macOS
+                    // seemed to have zero performance impact in
+                    // microbenchmarks.
+                    if (!this.could_block and this.bytes_blob.sharedView().len > 1024) {
+                        bun.C.preallocate_file(fd, 0, @intCast(this.bytes_blob.sharedView().len)) catch {};
+                    }
+                }
+
                 this.doWriteLoop();
             }
 

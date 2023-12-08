@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'b55994b0596f082ed90862f2f76539cd339478b6' satisfies typeof Bun.revision;
+export const revision = 'e7019186cdcde1a08dd4e080237443d08bbc1b77' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -379,7 +379,7 @@ export const spawnSync = ((...args): SyncSubprocess => {
     }
     if (opts.ipc) throw new NotImplementedError('Bun.spawnSync({ ipc })', spawn);
     let stdio: StdioOptions = [];
-    opts.stdio ??= [undefined, undefined, undefined];
+    opts.stdio ??= ['pipe', 'pipe', 'pipe'];
     if (opts.stdin) opts.stdio[0] = opts.stdin;
     if (opts.stdout) opts.stdio[1] = opts.stdout;
     if (opts.stderr) opts.stdio[2] = opts.stderr;
@@ -407,7 +407,7 @@ export const spawnSync = ((...args): SyncSubprocess => {
     const subp = chp.spawnSync(cmd, argv, {
         cwd: opts.cwd ?? process.cwd(),
         env: { ...(opts.env as Record<string, string> ?? process.env) },
-        stdio, input
+        stdio: 'pipe', input
     }) as unknown as SyncSubprocess;
     const subpAsNode = subp as unknown as SpawnSyncReturns<Buffer>;
     if (subpAsNode.error) throw subpAsNode.error;

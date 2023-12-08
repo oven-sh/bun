@@ -15,16 +15,17 @@ Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
 };
 Blob.prototype.formData = async function formData(this: Blob): Promise<FormData> {
     if (this.type.startsWith('multipart/form-data;')) {
-        return new Response(this.stream(), { headers:
-            //? Good one Node: https://github.com/nodejs/node/issues/42266
-            { 'Content-Type': this.type.replace('webkitformboundary', 'WebkitFormBoundary') }
+        return new Response(this.stream(), {
+            headers:
+                //? Good one Node: https://github.com/nodejs/node/issues/42266
+                { 'Content-Type': this.type.replace('webkitformboundary', 'WebkitFormBoundary') }
         }).formData() as Promise<FormData>;
     } else if (this.type === 'application/x-www-form-urlencoded') {
         return readableStreamToFormData(this.stream());
     } else {
         throw new TypeError('Blob type is not well-formed multipart/form-data or application/x-www-form-urlencoded');
     }
-}
+};
 Reflect.set(Blob.prototype, 'readable', undefined /*satisfies BunFile['readable']*/);
 Reflect.set(Blob.prototype, 'lastModified', -1 satisfies BunFile['lastModified']);
 Reflect.set(Blob.prototype, 'exists', (async function exists() {
@@ -43,6 +44,11 @@ Reflect.set(globalThis, 'navigator', {
     userAgent: `Bun/${version}`,
     hardwareConcurrency: os.cpus().length,
 });
+
+//? reportError function polyfill
+Reflect.set(globalThis, 'reportError', function reportError(err: any): void {
+    console.error(err);
+} satisfies typeof reportError);
 
 //? method only available in Bun
 // this isn't quite accurate, but it shouldn't break anything and is currently here just for matching bun and node types

@@ -10,6 +10,7 @@ import * as sqlite from './modules/sqlite.js';
 
 globalThis.Bun = bun as typeof bun & {
     // TODO: Missing polyfills
+    Glob: typeof import('bun').Glob;
     build: typeof import('bun').build;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
 };

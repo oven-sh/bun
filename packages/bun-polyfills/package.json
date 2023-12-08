@@ -39,6 +39,7 @@
     "chalk": "^5.3.0",
     "dateformat": "^5.0.3",
     "expect": "^29.7.0",
+    "html-rewriter-wasm": "^0.4.1",
     "isomorphic-ws": "^5.0.0",
     "jest-each": "^29.7.0",
     "jest-extended": "^4.0.2",

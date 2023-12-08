@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '6f01ddc38deee8f3900bf34b2e3fd1c9178cec8f' satisfies typeof Bun.revision;
+export const revision = 'aa606b23df47bc87f7eb3d4e730ea018f0de0ade' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -492,7 +492,7 @@ export const readableStreamToArrayBuffer = ((stream) => {
 
 export const readableStreamToText = (async (stream) => {
     let result = '';
-    // @ts-expect-error Don't quite understand what's going wrong with these types but TextDecoderStream is supported here
+    // @ts-ignore Don't quite understand what's going wrong with these types but TextDecoderStream is supported here
     const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
     while (true) {
         const { done, value } = await reader.read();

@@ -172,10 +172,9 @@ export class FileBlob extends Blob implements BunFileBlob {
     }
 
     async exists(): Promise<boolean> {
-        if (typeof this.#fdOrPath !== 'number') return fs.existsSync(this.#fdOrPath);
         try {
-            fs.fstatSync(this.#fdOrPath);
-            return true;
+            if (typeof this.#fdOrPath !== 'number') return fs.statSync(this.#fdOrPath).isFile();
+            return fs.fstatSync(this.#fdOrPath).isFile();
         } catch {
             return false;
         }

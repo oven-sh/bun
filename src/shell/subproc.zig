@@ -165,7 +165,7 @@ pub const ShellSubprocess = struct {
                 .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
                 .array_buffer => Readable{
                     .pipe = .{
-                        .buffer = if (stdio.array_buffer.from_jsc) BufferedOutput.initWithArrayBuffer(subproc, kind, fd, stdio.array_buffer.buf.slice()) else BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice()),
+                        .buffer = if (stdio.array_buffer.from_jsc) BufferedOutput.initWithArrayBuffer(subproc, kind, fd, stdio.array_buffer.buf) else BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice()),
                     },
                 },
             };
@@ -304,9 +304,17 @@ pub const ShellSubprocess = struct {
             };
         }
 
-        pub fn initWithArrayBuffer(subproc: *ShellSubprocess, out_type: OutKind, fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
-            var out = BufferedOutput.initWithSlice(subproc, out_type, fd, slice);
+        pub fn initWithArrayBuffer(subproc: *ShellSubprocess, out_type: OutKind, fd: bun.FileDescriptor, array_buf: JSC.ArrayBuffer.Strong) BufferedOutput {
+            var out = BufferedOutput.initWithSlice(subproc, out_type, fd, array_buf.slice());
             out.from_jsc = true;
+            out.fifo.view = array_buf.held;
+            var autosizer = bun.default_allocator.create(JSC.WebCore.AutoSizer) catch bun.outOfMemory();
+            autosizer.* = JSC.WebCore.AutoSizer{
+                .buffer = &out.internal_buffer,
+                .max = ShellSubprocess.default_max_buffer_size,
+                .allocator = bun.default_allocator,
+            };
+            out.fifo.auto_sizer = autosizer;
             return out;
         }
 
@@ -346,11 +354,10 @@ pub const ShellSubprocess = struct {
         pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
             log("ON READ {s} result={s}", .{ @tagName(this.out_type), @tagName(result) });
             defer {
-                if (this.recall_readall and this.recall_readall) {
-                    this.readAll();
-                }
                 if (this.status == .err or this.status == .done) {
                     this.closeFifoSignalCmd();
+                } else if (this.recall_readall and this.recall_readall) {
+                    this.readAll();
                 }
             }
             switch (result) {
@@ -391,94 +398,97 @@ pub const ShellSubprocess = struct {
         }
 
         pub fn readAll(this: *BufferedOutput) void {
-            if (this.auto_sizer) |auto_sizer| {
-                while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
-                    var stack_buffer: [8096]u8 = undefined;
-                    var stack_buf: []u8 = stack_buffer[0..];
-                    var buf_to_use = stack_buf;
-                    var available = this.internal_buffer.available();
-                    if (available.len >= stack_buf.len) {
-                        buf_to_use = available;
-                    }
+            log("ShellBufferedOutput.readAll doing nothing", .{});
+            this.watch();
+            // this.recall_readall = false;
+            // if (this.auto_sizer) |auto_sizer| {
+            //     while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
+            //         var stack_buffer: [8096]u8 = undefined;
+            //         var stack_buf: []u8 = stack_buffer[0..];
+            //         var buf_to_use = stack_buf;
+            //         var available = this.internal_buffer.available();
+            //         if (available.len >= stack_buf.len) {
+            //             buf_to_use = available;
+            //         }
 
-                    const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+            //         const result = this.fifo.read(buf_to_use, this.fifo.to_read);
 
-                    switch (result) {
-                        .pending => {
-                            this.watch();
-                            return;
-                        },
-                        .err => |err| {
-                            this.status = .{ .err = err };
-                            // this.fifo.close();
-                            this.closeFifoSignalCmd();
-                            this.recall_readall = false;
+            //         switch (result) {
+            //             .pending => {
+            //                 this.watch();
+            //                 return;
+            //             },
+            //             .err => |err| {
+            //                 this.status = .{ .err = err };
+            //                 // this.fifo.close();
+            //                 this.closeFifoSignalCmd();
+            //                 this.recall_readall = false;
 
-                            return;
-                        },
-                        .done => {
-                            this.status = .{ .done = {} };
-                            // this.fifo.close();
-                            this.closeFifoSignalCmd();
-                            this.recall_readall = false;
-                            return;
-                        },
-                        .read => |slice| {
-                            log("buffered output ({s}) readAll (autosizer): {s}", .{ @tagName(this.out_type), slice });
-                            if (slice.ptr == stack_buf.ptr) {
-                                this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
-                            } else {
-                                this.internal_buffer.len += @as(u32, @truncate(slice.len));
-                            }
+            //                 return;
+            //             },
+            //             .done => {
+            //                 this.status = .{ .done = {} };
+            //                 // this.fifo.close();
+            //                 this.closeFifoSignalCmd();
+            //                 this.recall_readall = false;
+            //                 return;
+            //             },
+            //             .read => |slice| {
+            //                 log("buffered output ({s}) readAll (autosizer): {s}", .{ @tagName(this.out_type), slice });
+            //                 if (slice.ptr == stack_buf.ptr) {
+            //                     this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
+            //                 } else {
+            //                     this.internal_buffer.len += @as(u32, @truncate(slice.len));
+            //                 }
 
-                            if (slice.len < buf_to_use.len) {
-                                this.watch();
-                                return;
-                            }
-                        },
-                    }
-                }
-            } else {
-                while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
-                    log("we in this loop i think", .{});
-                    var buf_to_use = this.internal_buffer.available();
+            //                 if (slice.len < buf_to_use.len) {
+            //                     this.watch();
+            //                     return;
+            //                 }
+            //             },
+            //         }
+            //     }
+            // } else {
+            //     while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
+            //         log("we in this loop i think", .{});
+            //         var buf_to_use = this.internal_buffer.available();
 
-                    const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+            //         const result = this.fifo.read(buf_to_use, this.fifo.to_read);
 
-                    log("Result tag: {s}", .{@tagName(result)});
+            //         log("Result tag: {s}", .{@tagName(result)});
 
-                    switch (result) {
-                        .pending => {
-                            this.watch();
-                            return;
-                        },
-                        .err => |err| {
-                            this.status = .{ .err = err };
-                            // this.fifo.close();
-                            this.closeFifoSignalCmd();
-                            this.recall_readall = false;
+            //         switch (result) {
+            //             .pending => {
+            //                 this.watch();
+            //                 return;
+            //             },
+            //             .err => |err| {
+            //                 this.status = .{ .err = err };
+            //                 // this.fifo.close();
+            //                 this.closeFifoSignalCmd();
+            //                 this.recall_readall = false;
 
-                            return;
-                        },
-                        .done => {
-                            this.status = .{ .done = {} };
-                            // this.fifo.close();
-                            this.closeFifoSignalCmd();
-                            this.recall_readall = false;
-                            return;
-                        },
-                        .read => |slice| {
-                            log("buffered output ({s}) readAll (autosizer): {s}", .{ @tagName(this.out_type), slice });
-                            this.internal_buffer.len += @as(u32, @truncate(slice.len));
+            //                 return;
+            //             },
+            //             .done => {
+            //                 this.status = .{ .done = {} };
+            //                 // this.fifo.close();
+            //                 this.closeFifoSignalCmd();
+            //                 this.recall_readall = false;
+            //                 return;
+            //             },
+            //             .read => |slice| {
+            //                 log("buffered output ({s}) readAll (autosizer): {s}", .{ @tagName(this.out_type), slice });
+            //                 this.internal_buffer.len += @as(u32, @truncate(slice.len));
 
-                            if (slice.len < buf_to_use.len) {
-                                this.watch();
-                                return;
-                            }
-                        },
-                    }
-                }
-            }
+            //                 if (slice.len < buf_to_use.len) {
+            //                     this.watch();
+            //                     return;
+            //                 }
+            //             },
+            //         }
+            //     }
+            // }
         }
 
         pub fn watch(this: *BufferedOutput) void {
@@ -1203,29 +1213,29 @@ pub const ShellSubprocess = struct {
 
         if (this.hasExited()) {
             {
-                this.flags.waiting_for_onexit = true;
+                // this.flags.waiting_for_onexit = true;
 
-                const Holder = struct {
-                    process: *ShellSubprocess,
-                    task: JSC.AnyTask,
+                // const Holder = struct {
+                //     process: *ShellSubprocess,
+                //     task: JSC.AnyTask,
 
-                    pub fn unref(self: *@This()) void {
-                        // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
-                        self.process.flags.waiting_for_onexit = false;
-                        self.process.unref(true);
-                        // self.process.updateHasPendingActivity();
-                        bun.default_allocator.destroy(self);
-                    }
-                };
+                //     pub fn unref(self: *@This()) void {
+                //         // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
+                //         self.process.flags.waiting_for_onexit = false;
+                //         self.process.unref(true);
+                //         // self.process.updateHasPendingActivity();
+                //         bun.default_allocator.destroy(self);
+                //     }
+                // };
 
-                var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+                // var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
 
-                holder.* = .{
-                    .process = this,
-                    .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
-                };
+                // holder.* = .{
+                //     .process = this,
+                //     .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
+                // };
 
-                this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+                // this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
             }
 
             this.runOnExit(globalThis);

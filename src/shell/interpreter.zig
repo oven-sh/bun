@@ -1126,13 +1126,13 @@ pub const Cmd = struct {
     // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
     pub fn deinit(this: *Cmd) void {
         log("cmd deinit {x}", .{@intFromPtr(this)});
-        if (this.exit_code != null) {
-            if (this.cmd) |cmd| {
-                _ = cmd.tryKill(9);
-                cmd.unref(true);
-                cmd.deinit();
-            }
-        }
+        // if (this.exit_code != null) {
+        //     if (this.cmd) |cmd| {
+        //         _ = cmd.tryKill(9);
+        //         cmd.unref(true);
+        //         cmd.deinit();
+        //     }
+        // }
 
         // if (this.cmd) |cmd| {
         //     if (cmd.hasExited()) {

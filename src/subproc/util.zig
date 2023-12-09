@@ -237,6 +237,7 @@ pub const BufferedOutput = struct {
     /// This is called after it is read (it's confusing because "on read" could
     /// be interpreted as present or past tense)
     pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
+        log("onRead", .{});
         switch (result) {
             .pending => {
                 this.watch();
@@ -315,10 +316,13 @@ pub const BufferedOutput = struct {
                 }
             }
         } else {
+            log("readAll START status: {s}", .{@tagName(this.status)});
             while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
                 var buf_to_use = this.internal_buffer.available();
 
                 const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+
+                log("readAll result {s}", .{@tagName(result)});
 
                 switch (result) {
                     .pending => {
@@ -340,9 +344,11 @@ pub const BufferedOutput = struct {
                         this.internal_buffer.len += @as(u32, @truncate(slice.len));
 
                         if (slice.len < buf_to_use.len) {
+                            log("readAll less than avail space calling watch now", .{});
                             this.watch();
                             return;
                         }
+                        log("readAll looping back", .{});
                     },
                 }
             }
@@ -1085,7 +1091,8 @@ pub fn spawnMaybeSyncImpl(
             },
             .cmd_parent = spawn_args.cmd_parent,
         };
-        // subprocess.stdout.pipe.buffer.watch();
+        subprocess.stdout.pipe.buffer.fifo.auto_sizer.?.buffer = &subprocess.stdout.pipe.buffer.internal_buffer;
+        subprocess.stdout.pipe.buffer.watch();
     }
 
     if (subprocess.stdin == .pipe) {
@@ -1154,9 +1161,7 @@ pub fn spawnMaybeSyncImpl(
         if (comptime is_sync) {
             subprocess.stdout.pipe.buffer.readAll();
         } else if (!spawn_args.lazy) {
-            log("IN HERE", .{});
             subprocess.stdout.pipe.buffer.readAll();
-            log("DONE", .{});
         }
     }
 

@@ -3760,6 +3760,10 @@ pub const ReadResult = union(enum) {
                     StreamResult{ .owned = bun.ByteList.init(slice) }
                 else if (done)
                     StreamResult{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
+                else if (view != .zero and done)
+                    StreamResult{ .temporary_and_done = bun.ByteList.init(slice) }
+                else if (view != .zero)
+                    StreamResult{ .temporary = bun.ByteList.init(slice) }
                 else
                     StreamResult{ .into_array = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } };
             },

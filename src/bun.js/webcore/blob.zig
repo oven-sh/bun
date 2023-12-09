@@ -1562,7 +1562,7 @@ pub const Blob = struct {
                 else
                     std.os.O.RDONLY | __opener_flags;
 
-                pub fn getFdImpl(this: *This, comptime Callback: OpenCallback) bun.FileDescriptor {
+                pub inline fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var path_string = if (@hasField(This, "file_store"))
                         this.file_store.pathlike.path
@@ -1573,31 +1573,46 @@ pub const Blob = struct {
 
                     if (Environment.isWindows) {
                         const WrappedCallback = struct {
-                            pub fn callback(req: libuv.fs_t) callconv(.C) void {
-                                defer req.deinit();
-                                var this: *This = @alignCast(@ptrCast(req.data.?));
-                                if(req.result.errno()) |errno| {
-                                    this.errno = bun.errnoToZigErr(errno);
-                                    this.system_error = err.withPath(path_string.slice()).toSystemError();
-                                    this.opened_fd = invalid_fd;
-                                } else {
-                                    this.opened_fd = req.result.value;
+                            pub fn callback(req: *libuv.fs_t) callconv(.C) void {
+                                var self: *This = @alignCast(@ptrCast(req.data.?));
+                                {
+                                    defer req.deinit();
+                                    if (req.result.errEnum()) |errEnum| {
+                                        var path_string_2 = if (@hasField(This, "file_store"))
+                                            self.file_store.pathlike.path
+                                        else
+                                            self.file_blob.store.?.data.file.pathlike.path;
+                                        self.errno = bun.errnoToZigErr(errEnum);
+                                        self.system_error = bun.sys.Error.fromCode(errEnum, .open)
+                                            .withPath(path_string_2.slice())
+                                            .toSystemError();
+                                        self.opened_fd = invalid_fd;
+                                    } else {
+                                        self.opened_fd = bun.toFD(@as(i32, @intCast(req.result.value)));
+                                        std.debug.assert(bun.uvfdcast(self.opened_fd) == req.result.value);
+                                        std.debug.print("wtf {}????\n", .{bun.FDImpl.decode(self.opened_fd)});
+                                    }
                                 }
-                                Callback(this, this.opened_fd);
+                                Callback(self, self.opened_fd);
                             }
                         };
+
                         // use real libuv async
                         const rc = libuv.uv_fs_open(
-                            this.loop(),
+                            this.loop,
                             &this.req,
-                            path, open_flags_, JSC.Node.default_permission, &WrappedCallback.run,);
-                        if (rc.errno()) |errno| {
+                            path,
+                            open_flags_,
+                            JSC.Node.default_permission,
+                            &WrappedCallback.callback,
+                        );
+                        if (rc.errEnum()) |errno| {
                             this.errno = bun.errnoToZigErr(errno);
-                            this.system_error = err.withPath(path_string.slice()).toSystemError();
+                            this.system_error = bun.sys.Error.fromCode(errno, .open).withPath(path_string.slice()).toSystemError();
                             this.opened_fd = invalid_fd;
                             Callback(this, invalid_fd);
                         }
-                        this.req.data = &this;
+                        this.req.data = @ptrCast(this);
                         return;
                     }
 
@@ -1611,7 +1626,7 @@ pub const Blob = struct {
                         },
                     };
 
-                    return this.opened_fd;
+                    Callback(this.opened_fd);
                 }
 
                 pub const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
@@ -1638,7 +1653,7 @@ pub const Blob = struct {
                         }
                     }
 
-                    this.getFdImpl();
+                    this.getFdByOpening(Callback);
                 }
             };
         }
@@ -1681,11 +1696,13 @@ pub const Blob = struct {
                 ) bool {
                     const fd = this.opened_fd;
 
-                    if (this.io_poll.flags.contains(.was_ever_registered)) {
-                        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
-                        if (!this.io_request.scheduled)
-                            io.Loop.get().schedule(&this.io_request);
-                        return true;
+                    if (@hasField(This, "io_poll")) {
+                        if (this.io_poll.flags.contains(.was_ever_registered)) {
+                            @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
+                            if (!this.io_request.scheduled)
+                                io.Loop.get().schedule(&this.io_request);
+                            return true;
+                        }
                     }
 
                     this.opened_fd = invalid_fd;
@@ -1704,7 +1721,7 @@ pub const Blob = struct {
             store: ?*Store = null,
             offset: SizeType = 0,
             max_length: SizeType = Blob.max_size,
-            opened_fd: bun.FileDescriptor = invalid_fd,
+            opened_fd: bun.FDImpl.UV = invalid_fd,
             read_len: SizeType = 0,
             read_off: SizeType = 0,
             read_eof: bool = false,
@@ -1740,7 +1757,7 @@ pub const Blob = struct {
                 off: SizeType,
                 max_len: SizeType,
             ) !*ReadFile {
-                if(Environment.isWindows)
+                if (Environment.isWindows)
                     @compileError("dont call this function on windows");
 
                 var read_file = try allocator.create(ReadFile);
@@ -1765,7 +1782,7 @@ pub const Blob = struct {
                 context: Context,
                 comptime callback: fn (ctx: Context, bytes: ResultType) void,
             ) !*ReadFile {
-                if(Environment.isWindows)
+                if (Environment.isWindows)
                     @compileError("dont call this function on windows");
 
                 const Handler = struct {
@@ -2098,8 +2115,8 @@ pub const Blob = struct {
         };
 
         pub const ReadFileUV = struct {
-            pub usingnamespace FileOpenerMixin(ReadFile);
-            pub usingnamespace FileCloserMixin(ReadFile);
+            pub usingnamespace FileOpenerMixin(ReadFileUV);
+            pub usingnamespace FileCloserMixin(ReadFileUV);
 
             loop: *libuv.Loop,
             file_store: FileStore,
@@ -2121,26 +2138,27 @@ pub const Blob = struct {
 
             req: libuv.fs_t = libuv.fs_t.uninitialized,
 
-            pub fn create(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *Handler) void {
+            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *Handler) void {
                 var this = bun.new(ReadFileUV, .{
                     .loop = loop,
+                    .file_store = store.data.file,
                     .store = store,
-                    .off = off,
-                    .max_len = max_len,
-                    .onCompleteCtx = @ptrCast(handler),
-                    .onCompleteCallback = &Handler.run,
+                    .offset = off,
+                    .max_length = max_len,
+                    .on_complete_data = @ptrCast(handler),
+                    .on_complete_fn = @ptrCast(&Handler.run),
                 });
                 this.getFd(onFileOpen);
             }
 
-            pub fn finalize(this: *ReadFileUV, _: *JSC.JSGlobalObject) void {
+            pub fn finalize(this: *ReadFileUV) void {
                 defer {
                     this.store.deref();
                     bun.default_allocator.destroy(this);
                 }
 
-                var cb = this.onCompleteCallback;
-                var cb_ctx = this.onCompleteCtx;
+                var cb = this.on_complete_fn;
+                var cb_ctx = this.on_complete_data;
                 var buf = this.buffer;
 
                 if (this.system_error) |err| {
@@ -2149,6 +2167,10 @@ pub const Blob = struct {
                 }
 
                 cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
+            }
+
+            pub fn isAllowedToClose(this: *const ReadFileUV) bool {
+                return this.file_store.pathlike == .path;
             }
 
             fn onFinish(this: *ReadFileUV) void {
@@ -2173,9 +2195,152 @@ pub const Blob = struct {
                     return;
                 }
 
-                _ = opened_fd;
-            
+                if (libuv.uv_fs_fstat(this.loop, &this.req, bun.uvfdcast(opened_fd), &onFileInitialStat).errEnum()) |errno| {
+                    this.errno = bun.errnoToZigErr(errno);
+                    this.system_error = bun.sys.Error.fromCode(errno, .fstat).toSystemError();
+                    this.onFinish();
+                    return;
+                }
+            }
 
+            fn onFileInitialStat(req: *libuv.fs_t) callconv(.C) void {
+                var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
+
+                if (req.result.errEnum()) |errno| {
+                    this.errno = bun.errnoToZigErr(errno);
+                    this.system_error = bun.sys.Error.fromCode(errno, .fstat).toSystemError();
+                    this.onFinish();
+                    return;
+                }
+
+                const stat = req.statbuf;
+
+                // keep in sync with resolveSizeAndLastModified
+                {
+                    if (this.store.data == .file) {
+                        this.store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
+                    }
+
+                    if (bun.S.ISDIR(@intCast(stat.mode))) {
+                        this.errno = error.EISDIR;
+                        this.system_error = JSC.SystemError{
+                            .code = bun.String.static("EISDIR"),
+                            .path = if (this.file_store.pathlike == .path)
+                                bun.String.create(this.file_store.pathlike.path.slice())
+                            else
+                                bun.String.empty,
+                            .message = bun.String.static("Directories cannot be read like files"),
+                            .syscall = bun.String.static("read"),
+                        };
+                        this.onFinish();
+                        return;
+                    }
+                    this.could_block = !bun.isRegularFile(stat.mode);
+
+                    if (stat.size > 0 and !this.could_block) {
+                        this.size = @min(
+                            @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
+                            this.max_length,
+                        );
+                        // read up to 4k at a time if
+                        // they didn't explicitly set a size and we're reading from something that's not a regular file
+                    } else if (stat.size == 0 and this.could_block) {
+                        this.size = if (this.max_length == Blob.max_size)
+                            4096
+                        else
+                            this.max_length;
+                    }
+
+                    if (this.offset > 0) {
+                        // We DO support offset in Bun.file()
+                        switch (bun.sys.setFileOffset(this.opened_fd, this.offset)) {
+                            // we ignore errors because it should continue to work even if its a pipe
+                            .err, .result => {},
+                        }
+                    }
+                }
+
+                // Special files might report a size of > 0, and be wrong.
+                // so we should check specifically that its a regular file before trusting the size.
+                if (this.size == 0 and bun.isRegularFile(this.file_store.mode)) {
+                    this.buffer = &[_]u8{};
+                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+
+                    this.onFinish();
+                    return;
+                }
+
+                // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
+                this.buffer = bun.default_allocator.alloc(u8, this.size + 16) catch |err| {
+                    this.errno = err;
+                    this.onFinish();
+                    return;
+                };
+                this.read_len = 0;
+                this.read_off = 0;
+
+                this.queueRead();
+            }
+
+            fn remainingBuffer(this: *const ReadFileUV) []u8 {
+                var remaining = this.buffer[@min(this.read_off, this.buffer.len)..];
+                remaining = remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
+                return remaining;
+            }
+
+            pub fn queueRead(this: *ReadFileUV) void {
+                if (this.remainingBuffer().len > 0 and this.errno == null and !this.read_eof) {
+                    // bun.sys.read(this.opened_fd, this.remainingBuffer())
+                    var buf = this.remainingBuffer();
+                    var bufs: [1]libuv.uv_buf_t = .{
+                        libuv.uv_buf_t.init(buf),
+                    };
+                    const res = libuv.uv_fs_read(
+                        this.loop,
+                        &this.req,
+                        bun.uvfdcast(this.opened_fd),
+                        &bufs,
+                        bufs.len,
+                        @as(i64, @intCast(this.read_off)),
+                        &onRead,
+                    );
+                    if (res.errEnum()) |errno| {
+                        this.errno = bun.errnoToZigErr(errno);
+                        this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
+                        this.onFinish();
+                    }
+                } else {
+                    // We are done reading.
+                    _ = bun.default_allocator.resize(this.buffer, this.read_off);
+                    this.buffer = this.buffer[0..this.read_off];
+                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+                    this.onFinish();
+                }
+            }
+
+            pub fn onRead(req: *libuv.fs_t) callconv(.C) void {
+                var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
+
+                if (req.result.errEnum()) |errno| {
+                    this.errno = bun.errnoToZigErr(errno);
+                    this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
+                    this.finalize();
+                    return;
+                }
+
+                if (req.result.value == 0) {
+                    // We are done reading.
+                    _ = bun.default_allocator.resize(this.buffer, this.read_off);
+                    this.buffer = this.buffer[0..this.read_off];
+                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+                    this.onFinish();
+                    return;
+                }
+
+                this.read_off += @intCast(req.result.value);
+                std.debug.print("uh this.read_off = {d}\n", .{this.read_off});
+
+                this.queueRead();
             }
         };
 
@@ -2356,6 +2521,9 @@ pub const Blob = struct {
                 cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
+                if (Environment.isWindows) {
+                    @panic("todo");
+                }
                 this.io_task = task;
                 this.runAsync();
             }
@@ -3875,6 +4043,9 @@ pub const Blob = struct {
     }
 
     pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
+        if (Environment.isWindows) {
+            @panic("todo");
+        }
         var file_read = Store.ReadFile.createWithCtx(
             bun.default_allocator,
             this.store.?,
@@ -3903,8 +4074,8 @@ pub const Blob = struct {
             promise_value.ensureStillAlive();
             handler.promise.strong.set(global, promise_value);
 
-            Store.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, handler);
-            
+            Store.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, Handler, handler);
+
             return promise_value;
         }
 

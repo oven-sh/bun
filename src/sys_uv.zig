@@ -236,9 +236,10 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
 }
 
 pub fn fsync(fd: FileDescriptor) Maybe(void) {
+    const uv_fd = bun.uvfdcast(fd);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    const rc = uv.uv_fs_fsync(uv.Loop.get(), &req, bun.uvfdcast(fd), null);
+    const rc = uv.uv_fs_fsync(uv.Loop.get(), &req, uv_fd, null);
 
     log("uv fsync({d}) = {d}", .{ uv_fd, rc.value });
     return if (rc.errno()) |errno|

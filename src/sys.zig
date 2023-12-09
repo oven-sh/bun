@@ -1312,7 +1312,7 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 pub const Error = struct {
     const E = bun.C.E;
 
-    pub const Int = @TypeOf(@intFromEnum(E.BADF));
+    pub const Int = if (Environment.isWindows) u16 else u8; // @TypeOf(@intFromEnum(E.BADF));
 
     errno: Int,
     syscall: Syscall.Tag,
@@ -1324,13 +1324,24 @@ pub const Error = struct {
     }
 
     pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
-        return .{ .errno = @as(Int, @truncate(@intFromEnum(errno))), .syscall = syscall };
+        return .{
+            .errno = @as(Int, @intCast(@intFromEnum(errno))),
+            .syscall = syscall,
+        };
+    }
+
+    pub fn fromCodeInt(errno: anytype, syscall: Syscall.Tag) Error {
+        return .{
+            .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
+            .syscall = syscall,
+        };
     }
 
     pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         try self.toSystemError().format(fmt, opts, writer);
     }
 
+    /// TODO: convert to function
     pub const oom = fromCode(E.NOMEM, .read);
 
     pub const retry = Error{
@@ -1359,6 +1370,7 @@ pub const Error = struct {
     }
 
     pub inline fn withFd(this: Error, fd: anytype) Error {
+        if (Environment.allow_assert) std.debug.assert(fd != bun.invalid_fd);
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
@@ -1373,15 +1385,7 @@ pub const Error = struct {
         };
     }
 
-    pub inline fn withSyscall(this: Error, syscall: Syscall) Error {
-        return Error{
-            .errno = this.errno,
-            .syscall = syscall,
-            .path = this.path,
-        };
-    }
-
-    pub const todo_errno = std.math.maxInt(Int) - 1;
+    const todo_errno = std.math.maxInt(Int) - 1;
 
     pub inline fn todo() Error {
         if (Environment.isDebug) {

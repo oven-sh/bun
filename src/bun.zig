@@ -2349,7 +2349,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
-            // TODO: remove this case
+            // TODO: remove u32
             u32, i32 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
@@ -2358,6 +2358,11 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         // even though file descriptors are always positive, linux/mac repesents them as signed integers
         return @intCast(fd);
     }
+}
+
+comptime {
+    // TODO: report this compiler crash:
+    // _ = uvfdcast(@as(FileDescriptor, 0));
 }
 
 /// Converts a native file descriptor into a `bun.FileDescriptor`

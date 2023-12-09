@@ -2267,7 +2267,7 @@ pub const union_uv_any_req = extern union {
 pub extern fn uv_loop_get_data([*c]const uv_loop_t) ?*anyopaque;
 pub extern fn uv_loop_set_data(*uv_loop_t, data: ?*anyopaque) void;
 
-pub fn translateUVErrorToE(code: c_int) bun.C.E {
+pub fn translateUVErrorToE(code: anytype) bun.C.E {
     return switch (code) {
         UV_EPERM => bun.C.E.PERM,
         UV_ENOENT => bun.C.E.NOENT,
@@ -2383,7 +2383,7 @@ pub const ReturnCodeI64 = extern struct {
     }
 
     comptime {
-        std.debug.assert(@as(c_int, @bitCast(ReturnCodeI64{ .value = 4021000000000 })) == 4021000000000);
+        std.debug.assert(@as(i64, @bitCast(ReturnCodeI64{ .value = 4021000000000 })) == 4021000000000);
     }
 };
 

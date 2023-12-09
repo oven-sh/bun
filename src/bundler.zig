@@ -1381,6 +1381,7 @@ pub const Bundler = struct {
                     allocator,
                     opts,
                     bundler.options.define,
+                    bundler.env.map,
                     bundler.log,
                     &source,
                 ) catch null) orelse return null) {

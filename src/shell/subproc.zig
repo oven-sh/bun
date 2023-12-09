@@ -395,6 +395,8 @@ pub const ShellSubprocess = struct {
                     if (slice.len > 0)
                         std.debug.assert(this.internal_buffer.contains(slice));
 
+                    this.fifo.buf = this.internal_buffer.ptr[@min(this.internal_buffer.len, this.internal_buffer.cap)..this.internal_buffer.cap];
+
                     if (result.isDone() or (slice.len == 0 and this.fifo.poll_ref != null and this.fifo.poll_ref.?.isHUP())) {
                         this.status = .{ .done = {} };
                         // this.fifo.close();

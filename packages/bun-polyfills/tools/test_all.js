@@ -23,12 +23,11 @@ await import('../../../test/js/bun/util/concat.test.js');
 await import('../../../test/js/bun/util/error-gc-test.test.js');
 await import('../../../test/js/bun/util/escapeHTML.test.js');
 await import('../../../test/js/bun/util/file-type.test.ts');
-// Test below currently hangs, needs investigation.
-//await import('../../../test/js/bun/util/filesink.test.ts');
+await import('../../../test/js/bun/util/filesink.test.ts');
 await import('../../../test/js/bun/util/fileUrl.test.js');
 await import('../../../test/js/bun/util/hash.test.js');
 await import('../../../test/js/bun/util/index-of-line.test.ts');
-//await import('../../../test/js/bun/util/inspect.test.js'); // Can't run because of JSX :(
+//await import('../../../test/js/bun/util/inspect.test.js'); //? Can't run because of JSX :(
 await import('../../../test/js/bun/util/mmap.test.js');
 await import('../../../test/js/bun/util/password.test.ts');
 await import('../../../test/js/bun/util/peek.test.ts');

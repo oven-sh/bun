@@ -434,7 +434,7 @@ pub const RunCommand = struct {
             } else {
                 this.pid_poll = Async.FilePoll.initWithPackageManager(
                     manager,
-                    if (comptime Environment.isLinux) pid_fd else pid,
+                    pid_fd,
                     .{},
                     @as(*PidPollData, @ptrCast(this)),
                 );
@@ -508,8 +508,18 @@ pub const RunCommand = struct {
                         if (bytes_read == 0) {
                             std.debug.assert(this.finished_fds < 2);
                             this.finished_fds += 1;
+                            // close poll as soon as possible to prevent
+                            // another size=0 message.
+                            const poll = if (this.stdout_poll.fileDescriptor() == fd)
+                                this.stdout_poll
+                            else
+                                this.stderr_poll;
+                            _ = poll.unregister(this.manager.uws_event_loop, false);
+                            // FD is already closed
+
                             if (this.waitpid_result) |result| {
                                 if (this.finished_fds == 2) {
+                                    // potential free()
                                     this.onResult(result);
                                 }
                             }

@@ -5714,6 +5714,15 @@ pub const PackageManager = struct {
             var this_cwd = original_cwd;
             var created_package_json = false;
             const child_json = child: {
+                // if we are only doing `bun install` (no args), then we can open as read_only
+                // in all other cases we will need to write new data later.
+                // this is relevant because it allows us to succeed an install if package.json
+                // is readable but not writable
+                //
+                // probably wont matter as if package.json isn't writable, it's likely that
+                // the underlying directory and node_modules isn't either.
+                const need_write = (subcommand == .install and cli.positionals.len > 1) or subcommand == .add;
+
                 while (true) {
                     const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
                     var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
@@ -5723,14 +5732,33 @@ pub const PackageManager = struct {
 
                     break :child std.fs.cwd().openFileZ(
                         buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr,
-                        .{ .mode = .read_write },
-                    ) catch {
-                        if (std.fs.path.dirname(this_cwd)) |parent| {
-                            this_cwd = parent;
-                            continue;
-                        } else {
-                            break;
-                        }
+                        .{ .mode = if (need_write) .read_write else .read_only },
+                    ) catch |err| switch (err) {
+                        error.FileNotFound => {
+                            if (std.fs.path.dirname(this_cwd)) |parent| {
+                                this_cwd = parent;
+                                continue;
+                            } else {
+                                break;
+                            }
+                        },
+                        error.AccessDenied => {
+                            Output.err("EACCES", "Permission denied while opening \"{s}\"", .{
+                                buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len],
+                            });
+                            if (need_write) {
+                                Output.note("package.json must be writable to add packages", .{});
+                            } else {
+                                Output.note("package.json is missing read permissions, or is owned by another user", .{});
+                            }
+                            Global.crash();
+                        },
+                        else => {
+                            Output.err(err, "could not open \"{s}\"", .{
+                                buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len],
+                            });
+                            return err;
+                        },
                     };
                 }
 
@@ -6920,14 +6948,14 @@ pub const PackageManager = struct {
 
             switch (op) {
                 .add => {
-                    Output.prettyWarnln("<r><red><b>error:<r> <red>no package specified to add<r>", .{});
+                    Output.errGeneric("no package specified to add", .{});
                     Output.flush();
                     PackageManager.CommandLineArguments.printHelp(.add);
 
                     Global.exit(0);
                 },
                 .remove => {
-                    Output.prettyWarnln("<r><red><b>error:<r> no package specified to remove<r>", .{});
+                    Output.errGeneric("no package specified to remove", .{});
                     Output.flush();
                     PackageManager.CommandLineArguments.printHelp(.remove);
 

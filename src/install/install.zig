@@ -1072,12 +1072,6 @@ const PackageInstall = struct {
         linking,
     };
 
-    const CloneFileError = error{
-        NotSupported,
-        Unexpected,
-        FileNotFound,
-    };
-
     var supported_method: Method = if (Environment.isMac)
         Method.clonefile
     else
@@ -1131,6 +1125,7 @@ const PackageInstall = struct {
                                     .NOENT => return error.FileNotFound,
                                     // sometimes the downlowded npm package has already node_modules with it, so just ignore exist error here
                                     .EXIST => {},
+                                    .ACCES => return error.AccessDenied,
                                     else => return error.Unexpected,
                                 },
                             }
@@ -1164,7 +1159,7 @@ const PackageInstall = struct {
     }
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
-    fn installWithClonefile(this: *PackageInstall) CloneFileError!Result {
+    fn installWithClonefile(this: *PackageInstall) !Result {
         if (comptime !Environment.isMac) @compileError("clonefileat() is macOS only.");
 
         if (this.destination_dir_subpath[0] == '@') {
@@ -1193,6 +1188,7 @@ const PackageInstall = struct {
                 // We want to continue installing as many packages as we can, so we shouldn't block while downloading
                 // We use the slow path in this case
                 .EXIST => try this.installWithClonefileEachDir(),
+                .ACCES => return error.AccessDenied,
                 else => error.Unexpected,
             },
         };
@@ -7226,8 +7222,9 @@ pub const PackageManager = struct {
 
                 // This is where we clean dangling symlinks
                 // This could be slow if there are a lot of symlinks
-                if (cwd.openIterableDir(manager.options.bin_path, .{})) |node_modules_bin_| {
-                    var node_modules_bin: std.fs.IterableDir = node_modules_bin_;
+                if (cwd.openIterableDir(manager.options.bin_path, .{})) |node_modules_bin_handle| {
+                    var node_modules_bin: std.fs.IterableDir = node_modules_bin_handle;
+                    defer node_modules_bin.close();
                     var iter: std.fs.IterableDir.Iterator = node_modules_bin.iterate();
                     iterator: while (iter.next() catch null) |entry| {
                         switch (entry.kind) {
@@ -7249,7 +7246,12 @@ pub const PackageManager = struct {
                             else => {},
                         }
                     }
-                } else |_| {}
+                } else |err| {
+                    if (err != error.FileNotFound) {
+                        Output.err(err, "while reading node_modules/.bin", .{});
+                        Global.crash();
+                    }
+                }
             }
         }
     }
@@ -7680,6 +7682,45 @@ pub const PackageManager = struct {
                                 "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
                                 .{ @errorName(cause.err), this.names[package_id].slice(buf) },
                             );
+                            this.summary.fail += 1;
+                        } else if (cause.err == error.AccessDenied) {
+                            // there are two states this can happen
+                            // - Access Denied because node_modules/ is unwritable
+                            // - Access Denied because this specific package is unwritable
+                            // in the case of the former, the logs are extremely noisy, so we
+                            // will exit early, otherwise set a flag to not re-stat
+                            const Singleton = struct {
+                                var node_modules_is_ok = false;
+                            };
+                            if (!Singleton.node_modules_is_ok) {
+                                const stat = std.os.fstat(this.node_modules_folder.dir.fd) catch |err| {
+                                    Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                        this.names[package_id].slice(buf),
+                                    });
+                                    if (Environment.isDebug) {
+                                        Output.err(err, "Failed to stat node_modules", .{});
+                                    }
+                                    Global.exit(1);
+                                };
+
+                                const is_writable = if (stat.uid == bun.C.getuid())
+                                    stat.mode & std.os.S.IWUSR > 0
+                                else if (stat.gid == bun.C.getgid())
+                                    stat.mode & std.os.S.IWGRP > 0
+                                else
+                                    stat.mode & std.os.S.IWOTH > 0;
+
+                                if (!is_writable) {
+                                    Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
+                                    Global.exit(1);
+                                }
+                                Singleton.node_modules_is_ok = true;
+                            }
+
+                            Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                this.names[package_id].slice(buf),
+                            });
+
                             this.summary.fail += 1;
                         } else {
                             Output.prettyErrorln(

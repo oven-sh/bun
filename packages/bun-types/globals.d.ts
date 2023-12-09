@@ -239,7 +239,7 @@ declare namespace NodeJS {
     main: NodeModule | undefined;
   }
 
-  interface ProcessEnv {}
+  interface ProcessEnv { }
   type Signals =
     | "SIGABRT"
     | "SIGALRM"
@@ -789,7 +789,7 @@ declare module "node:process" {
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
+  json(): Promise<unknown>;
   formData(): Promise<FormData>;
 }
 
@@ -984,7 +984,7 @@ declare interface Blob {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
+  json(): Promise<unknown>;
 
   /**
    * Read the data from the blob as a {@link FormData} object.
@@ -1173,7 +1173,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
+  json(): Promise<unknown>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -1442,7 +1442,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
+  json(): Promise<unknown>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
@@ -2888,7 +2888,7 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
-interface ReadWriteStream extends ReadableStream, WritableStream {}
+interface ReadWriteStream extends ReadableStream, WritableStream { }
 
 interface TransformerFlushCallback<O> {
   (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
@@ -3567,7 +3567,7 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
+  new(byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
 
 interface ArrayBuffer {
@@ -3595,7 +3595,7 @@ interface SharedArrayBuffer {
 }
 
 declare namespace WebAssembly {
-  interface CompileError extends Error {}
+  interface CompileError extends Error { }
 
   var CompileError: {
     prototype: CompileError;
@@ -3622,7 +3622,7 @@ declare namespace WebAssembly {
     new (module: Module, importObject?: Imports): Instance;
   };
 
-  interface LinkError extends Error {}
+  interface LinkError extends Error { }
 
   var LinkError: {
     prototype: LinkError;
@@ -3640,7 +3640,7 @@ declare namespace WebAssembly {
     new (descriptor: MemoryDescriptor): Memory;
   };
 
-  interface Module {}
+  interface Module { }
 
   var Module: {
     prototype: Module;
@@ -3650,7 +3650,7 @@ declare namespace WebAssembly {
     imports(moduleObject: Module): ModuleImportDescriptor[];
   };
 
-  interface RuntimeError extends Error {}
+  interface RuntimeError extends Error { }
 
   var RuntimeError: {
     prototype: RuntimeError;
@@ -3876,3 +3876,30 @@ interface Navigator {
 }
 
 declare var navigator: Navigator;
+
+// -----------------------
+// -----------------------
+// --- ts builtins (lib.es5)
+
+interface JSON {
+  /**
+   * Converts a JavaScript Object Notation (JSON) string into an object.
+   * @param text A valid JSON string.
+   * @param reviver A function that transforms the results. This function is called for each member of the object.
+   * If a member contains nested objects, the nested objects are transformed before the parent object is.
+  */
+  parse(text: string, reviver?: (this: void, key: string, value: any) => any): unknown;
+}
+
+// Allow `<Array>.filter(Boolean)` to properly reflect
+interface Array<T> {
+  filter(predicate: BooleanConstructor, thisArg?: any): T[];
+}
+
+interface ReadonlyArray<T> {
+  filter(predicate: BooleanConstructor, thisArg?: any): T[];
+}
+
+interface ArrayConstructor {
+  isArray(arg: any): arg is unknown[];
+}

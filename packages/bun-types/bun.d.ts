@@ -207,10 +207,10 @@ declare module "bun" {
      *
      * @param {string} command The name of the executable or script
      * @param {string} options.PATH Overrides the PATH environment variable
-     * @param {string} options.cwd Limits the search to a particular directory in which to searc
+     * @param {string} options.cwd Limits the search to a particular directory in which to search
      *
      */
-    parse(input: string): object;
+    parse(input: string): Record<string, unknown>;
   }
   export const TOML: TOML;
 
@@ -494,7 +494,7 @@ declare module "bun" {
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
    */
-  export function readableStreamToJSON(stream: ReadableStream): Promise<any>;
+  export function readableStreamToJSON(stream: ReadableStream): Promise<string>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -776,7 +776,7 @@ declare module "bun" {
     unref(): void;
   }
 
-  export interface FileBlob extends BunFile {}
+  export interface FileBlob extends BunFile { }
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -2211,13 +2211,13 @@ declare module "bun" {
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+    TLSOptions {
     unix?: never;
     tls?: TLSOptions;
   }
   export interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+    TLSOptions {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -3714,8 +3714,8 @@ declare module "bun" {
     readonly unix: string;
   }
 
-  interface TCPSocket extends Socket {}
-  interface TLSSocket extends Socket {}
+  interface TCPSocket extends Socket { }
+  interface TLSSocket extends Socket { }
 
   type BinaryTypeList = {
     arraybuffer: ArrayBuffer;

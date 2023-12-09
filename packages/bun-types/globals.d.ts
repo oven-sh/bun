@@ -3567,7 +3567,7 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new(byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
 
 interface ArrayBuffer {
@@ -3888,7 +3888,7 @@ interface JSON {
    * @param reviver A function that transforms the results. This function is called for each member of the object.
    * If a member contains nested objects, the nested objects are transformed before the parent object is.
   */
-  parse(text: string, reviver?: (this: void, key: string, value: any) => any): unknown;
+  parse(text: string, reviver?: (this: any, key: string, value: any) => any): unknown;
 }
 
 // Allow `<Array>.filter(Boolean)` to properly reflect

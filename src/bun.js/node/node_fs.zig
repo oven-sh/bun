@@ -1235,7 +1235,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = JSC.Node.TimeLike.fromJS(ctx, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "atime is required",
@@ -1260,7 +1260,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = JSC.Node.TimeLike.fromJS(ctx, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "mtime is required",
@@ -2221,7 +2221,7 @@ pub const Arguments = struct {
             arguments.eat();
             if (exception.* != null) return null;
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = JSC.Node.TimeLike.fromJS(ctx, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "atime is required",
@@ -2245,7 +2245,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = JSC.Node.TimeLike.fromJS(ctx, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "mtime is required",
@@ -4079,12 +4079,12 @@ pub const NodeFS = struct {
 
         var times = [2]std.os.timespec{
             .{
-                .tv_sec = args.mtime,
-                .tv_nsec = 0,
+                .tv_sec = args.mtime.seconds,
+                .tv_nsec = args.mtime.nanos,
             },
             .{
-                .tv_sec = args.atime,
-                .tv_nsec = 0,
+                .tv_sec = args.atime.seconds,
+                .tv_nsec = args.atime.nanos,
             },
         };
 
@@ -5574,14 +5574,12 @@ pub const NodeFS = struct {
 
         var times = [2]std.c.timeval{
             .{
-                .tv_sec = args.mtime,
-                // TODO: is this correct?
-                .tv_usec = 0,
+                .tv_sec = args.mtime.seconds,
+                .tv_usec = args.mtime.nanos * 1000,
             },
             .{
-                .tv_sec = args.atime,
-                // TODO: is this correct?
-                .tv_usec = 0,
+                .tv_sec = args.mtime.seconds,
+                .tv_usec = args.mtime.nanos * 1000,
             },
         };
 
@@ -5598,14 +5596,12 @@ pub const NodeFS = struct {
 
         var times = [2]std.c.timeval{
             .{
-                .tv_sec = args.mtime,
-                // TODO: is this correct?
-                .tv_usec = 0,
+                .tv_sec = args.mtime.seconds,
+                .tv_usec = args.mtime.nanos,
             },
             .{
-                .tv_sec = args.atime,
-                // TODO: is this correct?
-                .tv_usec = 0,
+                .tv_sec = args.mtime.seconds,
+                .tv_usec = args.mtime.nanos,
             },
         };
 

@@ -1636,7 +1636,10 @@ pub const Blob = struct {
                 }
 
                 fn onCloseIORequest(task: *JSC.WorkPoolTask) void {
+                    bloblog("onCloseIORequest()", .{});
                     var this: *This = @fieldParentPtr(This, "task", task);
+                    this.io_poll.flags.remove(.was_ever_registered);
+                    this.close_after_io = false;
                     std.debug.assert(!this.doClose(this.isAllowedToClose()));
 
                     var io_task = this.io_task orelse bun.unreachablePanic("io_task should not be null", .{});
@@ -1650,17 +1653,17 @@ pub const Blob = struct {
                 ) bool {
                     const fd = this.opened_fd;
 
-                    if (this.io_poll.flags.contains(.was_ever_registered)) {
-                        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
+                    if (this.close_after_io) {
+                        this.io_request = .{ .callback = &scheduleClose };
                         if (!this.io_request.scheduled)
                             io.Loop.get().schedule(&this.io_request);
                         return true;
                     }
 
-                    this.opened_fd = null_fd;
-
-                    if (is_allowed_to_close_fd and fd > 2 and fd != null_fd)
+                    if (is_allowed_to_close_fd and fd > 2 and fd != null_fd) {
+                        this.opened_fd = null_fd;
                         _ = bun.sys.close(fd);
+                    }
 
                     return false;
                 }
@@ -1687,6 +1690,7 @@ pub const Blob = struct {
             io_poll: bun.io.Poll = .{},
             io_request: bun.io.Request = .{ .callback = &onRequestReadable },
             could_block: bool = false,
+            close_after_io: bool = false,
 
             pub const Read = struct {
                 buf: []u8,
@@ -1747,18 +1751,21 @@ pub const Blob = struct {
             }
 
             pub fn onReady(this: *ReadFile) void {
-                this.task.callback = &doReadLoopTask;
+                bloblog("ReadFile.onReady", .{});
+                this.task = .{ .callback = &doReadLoopTask };
                 JSC.WorkPool.schedule(&this.task);
             }
 
             pub fn onIOError(this: *ReadFile, err: bun.sys.Error) void {
+                bloblog("ReadFile.onIOError", .{});
                 this.errno = AsyncIO.asError(err.errno);
                 this.system_error = err.toSystemError();
-                this.task.callback = &doReadLoopTask;
+                this.task = .{ .callback = &doReadLoopTask };
                 JSC.WorkPool.schedule(&this.task);
             }
 
             pub fn onRequestReadable(request: *io.Request) io.Action {
+                bloblog("ReadFile.onRequestReadable", .{});
                 request.scheduled = false;
                 var this: *ReadFile = @fieldParentPtr(ReadFile, "io_request", request);
                 return io.Action{
@@ -1773,6 +1780,7 @@ pub const Blob = struct {
             }
 
             pub fn waitForReadable(this: *ReadFile) void {
+                this.close_after_io = true;
                 @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestReadable, .SeqCst);
                 if (!this.io_request.scheduled)
                     io.Loop.get().schedule(&this.io_request);
@@ -1887,21 +1895,21 @@ pub const Blob = struct {
             }
 
             fn onFinish(this: *ReadFile) void {
-                const fd = this.opened_fd;
-                const needs_close = fd != bun.invalid_fd;
-
                 this.size = @truncate(this.buffer.items.len);
+                const close_after_io = this.close_after_io;
 
-                if (needs_close) {
-                    if (this.doClose(this.isAllowedToClose())) {
-                        // we have to wait for the close to finish
-                        return;
-                    }
+                if (this.doClose(this.isAllowedToClose())) {
+                    bloblog("ReadFile.onFinish() = deferred", .{});
+                    // we have to wait for the close to finish
+                    return;
                 }
 
-                if (this.io_task) |io_task| {
-                    io_task.onFinish();
-                    this.io_task = null;
+                if (!close_after_io) {
+                    if (this.io_task) |io_task| {
+                        this.io_task = null;
+                        bloblog("ReadFile.onFinish() = immediately", .{});
+                        io_task.onFinish();
+                    }
                 }
             }
 
@@ -2123,6 +2131,7 @@ pub const Blob = struct {
             total_written: usize = 0,
 
             could_block: bool = false,
+            close_after_io: bool = false,
 
             pub const ResultType = SystemError.Maybe(SizeType);
             pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
@@ -2139,18 +2148,21 @@ pub const Blob = struct {
             }
 
             pub fn onReady(this: *WriteFile) void {
-                this.task.callback = &doWriteLoopTask;
+                bloblog("WriteFile.onReady()", .{});
+                this.task = .{ .callback = &doWriteLoopTask };
                 JSC.WorkPool.schedule(&this.task);
             }
 
             pub fn onIOError(this: *WriteFile, err: bun.sys.Error) void {
+                bloblog("WriteFile.onIOError()", .{});
                 this.errno = AsyncIO.asError(err.errno);
                 this.system_error = err.toSystemError();
-                this.task.callback = &doWriteLoopTask;
+                this.task = .{ .callback = &doWriteLoopTask };
                 JSC.WorkPool.schedule(&this.task);
             }
 
             pub fn onRequestWritable(request: *io.Request) io.Action {
+                bloblog("WriteFile.onRequestWritable()", .{});
                 request.scheduled = false;
                 var this: *WriteFile = @fieldParentPtr(WriteFile, "io_request", request);
                 return io.Action{
@@ -2165,6 +2177,7 @@ pub const Blob = struct {
             }
 
             pub fn waitForWritable(this: *WriteFile) void {
+                this.close_after_io = true;
                 @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestWritable, .SeqCst);
                 if (!this.io_request.scheduled)
                     io.Loop.get().schedule(&this.io_request);
@@ -2295,19 +2308,17 @@ pub const Blob = struct {
             }
 
             fn onFinish(this: *WriteFile) void {
-                const fd = this.opened_fd;
-                const needs_close = fd != null_fd;
+                bloblog("WriteFile.onFinish()", .{});
 
-                if (needs_close) {
-                    if (this.doClose(this.isAllowedToClose())) {
-                        return;
-                    }
+                const close_after_io = this.close_after_io;
+                if (this.doClose(this.isAllowedToClose())) {
+                    return;
                 }
-
-                if (this.io_task) |io_task| {
-                    this.io_task = null;
-
-                    io_task.onFinish();
+                if (!close_after_io) {
+                    if (this.io_task) |io_task| {
+                        this.io_task = null;
+                        io_task.onFinish();
+                    }
                 }
             }
 

@@ -16,6 +16,7 @@ const assert = std.debug.assert;
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
+    epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = 0,
 
     timers: TimerHeap = .{ .context = {} },
 
@@ -33,6 +34,21 @@ pub const Loop = struct {
             loop = Loop{
                 .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
             };
+            if (comptime Environment.isLinux) {
+                loop.epoll_fd = std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor");
+
+                {
+                    var epoll = std.mem.zeroes(std.os.linux.epoll_event);
+                    epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                    epoll.data.ptr = @intFromPtr(&loop);
+                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd, std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd(), &epoll);
+
+                    switch (std.os.linux.getErrno(rc)) {
+                        .SUCCESS => {},
+                        else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
+                    }
+                }
+            }
             var thread = std.Thread.spawn(.{
                 .allocator = bun.default_allocator,
 
@@ -80,6 +96,7 @@ pub const Loop = struct {
                 var pending = pending_batch.iterator();
 
                 while (pending.next()) |request| {
+                    request.scheduled = false;
                     switch (request.callback(request)) {
                         .readable => |readable| {
                             switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, @intCast(readable.fd))) {
@@ -102,9 +119,9 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            close.poll.unregisterWithFd(@intCast(this.fd()), @intCast(close.fd));
+                            close.poll.unregisterWithFd(@intCast(this.pollfd()), @intCast(close.fd));
                             this.active -= 1;
-                            close.onDone(request);
+                            close.onDone(close.ctx);
                         },
                         .timer => |timer| {
                             while (true) {
@@ -159,7 +176,7 @@ pub const Loop = struct {
             var events: [256]EventType = undefined;
 
             const rc = linux.epoll_wait(
-                @intCast(this.fd()),
+                @intCast(this.pollfd()),
                 &events,
                 @intCast(events.len),
                 timeout,
@@ -174,12 +191,30 @@ pub const Loop = struct {
             this.update_now();
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
+            if (rc != 0) {
+                log("epoll_wait({d}) = {d}", .{ this.pollfd(), rc });
+            }
+
             for (current_events) |event| {
                 const pollable: Pollable = Pollable.from(event.data.u64);
-                if (pollable.tag() == .empty) continue;
+                if (pollable.tag() == .empty) {
+                    if (event.data.ptr == @intFromPtr(&loop)) {
+                        // this is the event poll, lets read it
+                        var bytes: [8]u8 = undefined;
+                        _ = bun.sys.read(loop.fd(), &bytes);
+                    }
+                }
                 _ = Poll.onUpdateEpoll(pollable.poll(), pollable.tag(), event);
             }
         }
+    }
+
+    pub fn pollfd(this: *const Loop) std.os.fd_t {
+        if (comptime Environment.isLinux) {
+            return @intCast(this.epoll_fd);
+        }
+
+        return this.waker.getFd();
     }
 
     pub fn fd(this: *const Loop) std.os.fd_t {
@@ -232,17 +267,18 @@ pub const Loop = struct {
                             );
                         },
                         .close => |close| {
-                            const i = events_list.items.len;
-                            assert(i + 1 <= events_list.capacity);
-                            events_list.items.len += 1;
-
-                            Poll.Flags.applyKQueue(
-                                .close,
-                                close.tag,
-                                close.poll,
-                                close.fd,
-                                &events_list.items.ptr[i],
-                            );
+                            if (close.poll.flags.contains(.poll_readable) or close.poll.flags.contains(.poll_writable)) {
+                                const i = events_list.items.len;
+                                assert(i + 1 <= events_list.capacity);
+                                events_list.items.len += 1;
+                                Poll.Flags.applyKQueue(
+                                    .cancel,
+                                    close.tag,
+                                    close.poll,
+                                    close.fd,
+                                    &events_list.items.ptr[i],
+                                );
+                            }
                             close.onDone(close.ctx);
                         },
                         .timer => |timer| {
@@ -295,7 +331,7 @@ pub const Loop = struct {
             };
 
             const rc = os.system.kevent64(
-                this.fd(),
+                this.pollfd(),
                 events_list.items.ptr,
                 @intCast(change_count),
                 // The same array may be used for the changelist and eventlist.
@@ -697,7 +733,7 @@ pub const Poll = struct {
                     .ext = .{ poll.generation_number, 0 },
                 } else unreachable,
 
-                else => unreachable,
+                else => @compileError("invalid action: " ++ @tagName(action)),
             };
         }
     };
@@ -762,8 +798,8 @@ pub const Poll = struct {
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
-        const watcher_fd = loop.fd();
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
+        const watcher_fd = loop.pollfd();
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
 
@@ -776,11 +812,12 @@ pub const Poll = struct {
         if (comptime Environment.isLinux) {
             const one_shot_flag: u32 = if (!this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT;
 
-            const flags: u32 = switch (flag) {
+            // "flag" is comptime to make sure we always check
+            const flags: u32 = switch (comptime flag) {
                 .process,
-                .readable,
-                => linux.EPOLL.IN | linux.EPOLL.HUP | one_shot_flag,
-                .writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
+                .poll_readable,
+                => linux.EPOLL.IN | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
+                .poll_writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
                 else => unreachable,
             };
 
@@ -804,10 +841,9 @@ pub const Poll = struct {
         }
 
         this.flags.insert(switch (flag) {
-            .readable => .poll_readable,
-            .process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
-            .writable => .poll_writable,
-            .machport => .poll_machport,
+            .poll_readable => .poll_readable,
+            .poll_process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
+            .poll_writable => .poll_writable,
             else => unreachable,
         });
         this.flags.remove(.needs_rearm);

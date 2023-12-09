@@ -8512,6 +8512,7 @@ pub const PackageManager = struct {
             }
 
             this.finished_installing.store(true, .Monotonic);
+            scripts_node.activate();
 
             if (comptime Environment.allow_assert) {
                 for (lockfile.buffers.trees.items) |tree| {

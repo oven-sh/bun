@@ -76,6 +76,7 @@
 #include "JSDOMWrapperCache.h"
 
 #include "wtf/text/AtomString.h"
+#include "wtf/Scope.h"
 #include "HTTPHeaderNames.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JavaScriptCore/TestRunnerUtils.h"
@@ -498,6 +499,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (addToStack) {
         stack.append({ v1, v2 });
     }
+    auto removeFromStack = WTF::makeScopeExit([&] { if (addToStack) { stack.remove(originalLength); } });
 
     JSCell* c1 = v1.asCell();
     JSCell* c2 = v2.asCell();
@@ -901,10 +903,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             RETURN_IF_EXCEPTION(*scope, false);
         }
 
-        if (addToStack) {
-            stack.remove(originalLength);
-        }
-
         RETURN_IF_EXCEPTION(*scope, false);
 
         return true;
@@ -1021,10 +1019,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (addToStack) {
-                stack.remove(originalLength);
-            }
-
             return result;
         }
     }
@@ -1071,10 +1065,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         RETURN_IF_EXCEPTION(*scope, false);
-    }
-
-    if (addToStack) {
-        stack.remove(originalLength);
     }
 
     return true;

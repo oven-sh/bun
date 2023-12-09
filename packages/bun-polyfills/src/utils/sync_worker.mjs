@@ -6,7 +6,7 @@ const textEncoder = new TextEncoder();
 
 wt.parentPort?.on('message', async evt => {
     /** @type {{ port: MessagePort, code: string, ab: SharedArrayBuffer }} */
-    const { port, code, ab } = evt; 
+    const { port, code, ab } = evt;
     const data = new Uint8Array(ab, 8);
     const int32 = new Int32Array(ab, 0, 2);
 

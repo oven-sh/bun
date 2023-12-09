@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'c3739c5d38fe18b418edaad6f437ff51da9cd3b5' satisfies typeof Bun.revision;
+export const revision = '5e0160552a0b63087cdf1cd5dd62f69fdca5d875' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -576,16 +576,28 @@ const syncAwareArgonVerify = (async (hash: string, password: string, algorithm: 
 });
 
 export const password = {
-    async hash(password, algorithm = 'argon2id') {
+    hash(password, algorithm = 'argon2id') {
         if (typeof password !== 'string') password = new TextDecoder().decode(password);
+        if (!password) throw new Error('password must not be empty');
         const algo: Password.Argon2Algorithm | Password.BCryptAlgorithm = typeof algorithm === 'string' ? { algorithm } : algorithm;
         if (algo.algorithm === 'bcrypt') {
-            return bcrypt.hash(password, algo.cost ?? 10);
+            algo.cost ??= 10;
+            if (algo.cost < 4 || algo.cost > 31) throw new TypeError('cost must be between 4 and 31');
+            if (password.length > 72) password = new TextDecoder().decode(SHA512.hash(password) as unknown as Uint8Array);
+            return bcrypt.hash(password, algo.cost);
         } else {
+            const argonType = Argon2Types[algo.algorithm];
+            if (argonType === undefined) throw new TypeError(`Invalid algorithm "${algo.algorithm}"`);
+            algo.timeCost ??= 2;
+            algo.memoryCost ??= 64;
+            algo.memoryCost *= 1024;
+            if (algo.memoryCost < 1024 || algo.memoryCost > 0xFFFFFFFF)
+                throw new TypeError(`memoryCost must be between 1 and 0x3FFFFF (got ${algo.memoryCost})`);
+            if (!Number.isSafeInteger(algo.timeCost) || algo.timeCost! < 0) throw new TypeError('timeCost must be a positive safe integer');
             return argon2.hash(password, {
-                type: Argon2Types[algo.algorithm] ?? (() => { throw new TypeError(`Invalid algorithm "${algo.algorithm}"`); })(),
-                memoryCost: algo.memoryCost ?? 65536,
-                timeCost: algo.timeCost ?? 2,
+                type: argonType,
+                memoryCost: algo.memoryCost,
+                timeCost: algo.timeCost,
                 parallelism: 1,
                 version: 19,
             });
@@ -593,10 +605,21 @@ export const password = {
     },
     hashSync(password, algorithm = 'argon2id') {
         if (typeof password !== 'string') password = new TextDecoder().decode(password);
+        if (!password) throw new Error('password must not be empty');
         const algo: Password.Argon2Algorithm | Password.BCryptAlgorithm = typeof algorithm === 'string' ? { algorithm } : algorithm;
         if (algo.algorithm === 'bcrypt') {
+            algo.cost ??= 10;
+            if (algo.cost < 4 || algo.cost > 31) throw new TypeError('cost must be between 4 and 31');
+            if (password.length > 72) password = new TextDecoder().decode(SHA512.hash(password) as unknown as Uint8Array);
             return bcrypt.hashSync(password, algo.cost ?? 10);
         } else {
+            if (Argon2Types[algo.algorithm] === undefined) throw new TypeError(`Invalid algorithm "${algo.algorithm}"`);
+            algo.timeCost ??= 2;
+            algo.memoryCost ??= 64;
+            algo.memoryCost *= 1024;
+            if (algo.memoryCost < 1024 || algo.memoryCost > 0xFFFFFFFF)
+                throw new TypeError(`memoryCost must be between 1 and 0x3FFFFF (got ${algo.memoryCost})`);
+            if (!Number.isSafeInteger(algo.timeCost) || algo.timeCost < 0) throw new TypeError('timeCost must be a positive safe integer');
             const requireModules = { argon2: pathToFileURL(require.resolve('argon2')).href };
             // TODO: use import.meta.resolve once its unflagged and stable
             //const modules = { argon2: import.meta.resolve?.('argon2') ?? '' };
@@ -606,14 +629,19 @@ export const password = {
             return out;
         }
     },
-    async verify(password, hash, algorithm = 'argon2id') {
+    verify(password, hash, algorithm = 'argon2id') {
         if (typeof password !== 'string') password = new TextDecoder().decode(password);
         if (typeof hash !== 'string') hash = new TextDecoder().decode(hash);
+        if (arguments.length < 2) throw new Error('password and hash must not be empty');
+        if (!password || !hash) return Promise.resolve(false);
+        if (hash[0] !== '$') throw new TypeError('Invalid hash');
         if (algorithm === 'bcrypt') {
             return bcrypt.compare(password, hash);
         } else {
+            const argonType = Argon2Types[algorithm];
+            if (argonType === undefined) throw new TypeError(`Invalid algorithm "${algorithm}"`);
             return argon2.verify(hash, password, {
-                type: Argon2Types[algorithm] ?? (() => { throw new TypeError(`Invalid algorithm "${algorithm}"`); })(),
+                type: argonType,
                 parallelism: 1,
                 version: 19,
             });
@@ -622,9 +650,13 @@ export const password = {
     verifySync(password, hash, algorithm = 'argon2id') {
         if (typeof password !== 'string') password = new TextDecoder().decode(password);
         if (typeof hash !== 'string') hash = new TextDecoder().decode(hash);
+        if (arguments.length < 2) throw new Error('password and hash must not be empty');
+        if (!password || !hash) return false;
+        if (hash[0] !== '$') throw new TypeError('Invalid hash');
         if (algorithm === 'bcrypt') {
             return bcrypt.compareSync(password, hash);
         } else {
+            if (Argon2Types[algorithm] === undefined) throw new TypeError(`Invalid algorithm "${algorithm}"`);
             const requireModules = { argon2: pathToFileURL(require.resolve('argon2')).href };
             // TODO: use import.meta.resolve once its unflagged and stable
             //const modules = { argon2: import.meta.resolve?.('argon2') ?? '' };

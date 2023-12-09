@@ -1881,6 +1881,7 @@ pub const PackageManager = struct {
     total_tasks: u32 = 0,
     pending_lifecycle_script_tasks: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
     max_concurrent_lifecycle_scripts: usize = Options.default_max_concurrent_lifecycle_scripts,
+    finished_installing: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
     total_scripts: usize = 0,
 
@@ -5089,7 +5090,7 @@ pub const PackageManager = struct {
             return false;
         }
 
-        pub const default_max_concurrent_lifecycle_scripts = 10;
+        pub const default_max_concurrent_lifecycle_scripts = 5;
 
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
@@ -5286,6 +5287,10 @@ pub const PackageManager = struct {
                     if (frozen_lockfile) {
                         this.enable.frozen_lockfile = true;
                     }
+                }
+
+                if (bun_install.concurrent_scripts) |jobs| {
+                    this.max_concurrent_lifecycle_scripts = jobs;
                 }
 
                 if (bun_install.save_optional) |save| {
@@ -6072,7 +6077,7 @@ pub const PackageManager = struct {
             // .progress
             .uws_event_loop = uws.Loop.get(),
             .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
-            .max_concurrent_lifecycle_scripts = cli.lifecycle_script_jobs,
+            .max_concurrent_lifecycle_scripts = cli.concurrent_scripts,
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -6576,7 +6581,7 @@ pub const PackageManager = struct {
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
-        clap.parseParam("--lifecycle-script-jobs <NUM>     Maximum number of concurrent jobs for lifecycle scripts (default 10)") catch unreachable,
+        clap.parseParam("--concurrent-scripts <NUM>        Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
         // clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
         clap.parseParam("--help                            Print this help menu") catch unreachable,
@@ -6655,7 +6660,7 @@ pub const PackageManager = struct {
 
         exact: bool = false,
 
-        lifecycle_script_jobs: usize = Options.default_max_concurrent_lifecycle_scripts,
+        concurrent_scripts: usize = Options.default_max_concurrent_lifecycle_scripts,
 
         const Omit = struct {
             dev: bool = false,
@@ -6878,9 +6883,9 @@ pub const PackageManager = struct {
                 cli.exact = args.flag("--exact");
             }
 
-            if (args.option("--lifecycle-script-jobs")) |concurrency| {
+            if (args.option("--concurrent-scripts")) |concurrency| {
                 // var buf: []
-                cli.lifecycle_script_jobs = std.fmt.parseInt(usize, concurrency, 10) catch Options.default_max_concurrent_lifecycle_scripts;
+                cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch Options.default_max_concurrent_lifecycle_scripts;
             }
 
             // for (args.options("--omit")) |omit| {
@@ -7791,7 +7796,6 @@ pub const PackageManager = struct {
                         this.successfully_installed.set(package_id);
 
                         if (comptime log_level.showProgress()) {
-                            this.node.activate();
                             this.node.completeOne();
                         }
 
@@ -7997,8 +8001,6 @@ pub const PackageManager = struct {
                                 true,
                             );
                             scripts_node.setEstimatedTotalItems(scripts_node.unprotected_estimated_total_items + scripts_list.total);
-                            scripts_node.activate();
-                            this.progress.refresh();
                         }
                         this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                             .list = scripts_list,
@@ -8050,8 +8052,6 @@ pub const PackageManager = struct {
                                 true,
                             );
                             scripts_node.setEstimatedTotalItems(scripts_node.unprotected_estimated_total_items + list.total);
-                            scripts_node.activate();
-                            this.progress.refresh();
                         }
                         this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                             .list = list,
@@ -8072,7 +8072,6 @@ pub const PackageManager = struct {
 
             if (meta.isDisabled()) {
                 if (comptime log_level.showProgress()) {
-                    this.node.activate();
                     this.node.completeOne();
                 }
                 this.incrementTreeInstallCount(this.current_tree_id, log_level);
@@ -8511,6 +8510,8 @@ pub const PackageManager = struct {
                 if (this.pending_tasks > 0)
                     this.sleep();
             }
+
+            this.finished_installing.store(true, .Monotonic);
 
             if (comptime Environment.allow_assert) {
                 for (lockfile.buffers.trees.items) |tree| {
@@ -9001,7 +9002,7 @@ pub const PackageManager = struct {
                 save_node.end();
                 manager.progress.refresh();
                 manager.progress.root.end();
-                // manager.progress = .{};
+                manager.progress = .{};
             } else if (comptime log_level != .silent) {
                 Output.prettyErrorln(" Saved lockfile", .{});
                 Output.flush();

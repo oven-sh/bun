@@ -272,14 +272,16 @@ pub const RunCommand = struct {
             const name = Lockfile.Scripts.names[next_script_index];
 
             if (manager.scripts_node) |scripts_node| {
-                manager.setNodeName(
-                    scripts_node,
-                    original_script.package_name,
-                    PackageManager.ProgressStrings.script_emoji,
-                    true,
-                );
-                scripts_node.activate();
-                manager.progress.refresh();
+                if (manager.finished_installing.load(.Monotonic)) {
+                    manager.setNodeName(
+                        scripts_node,
+                        original_script.package_name,
+                        PackageManager.ProgressStrings.script_emoji,
+                        true,
+                    );
+                    scripts_node.activate();
+                    manager.progress.refresh();
+                }
             }
 
             this.script_name = name;
@@ -632,7 +634,11 @@ pub const RunCommand = struct {
                 }
 
                 if (this.manager.scripts_node) |scripts_node| {
-                    scripts_node.completeOne();
+                    if (this.manager.finished_installing.load(.Monotonic)) {
+                        scripts_node.completeOne();
+                    } else {
+                        _ = @atomicRmw(usize, &scripts_node.unprotected_completed_items, .Add, 1, .Monotonic);
+                    }
                 }
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {

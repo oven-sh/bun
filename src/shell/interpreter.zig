@@ -143,6 +143,9 @@ pub const Interpreter = struct {
     fn deinit(this: *Interpreter) void {
         this.arena.deinit();
         this.allocator.destroy(this);
+        for (this.jsobjs) |jsobj| {
+            jsobj.unprotect();
+        }
     }
 
     fn assignVar(this: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) anyerror!void {

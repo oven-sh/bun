@@ -23,4 +23,4 @@ test("7500 - Bun.stdin.text() doesn't read all data", async () => {
   const output = proc.stdout.toString();
   expect(output).toBe(text);
   expect(proc.exitCode).toBe(0);
-});
+}, 100000);

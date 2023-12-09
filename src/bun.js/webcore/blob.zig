@@ -1638,37 +1638,40 @@ pub const Blob = struct {
                 fn onCloseIORequest(task: *JSC.WorkPoolTask) void {
                     bloblog("onCloseIORequest()", .{});
                     var this: *This = @fieldParentPtr(This, "task", task);
-                    this.io_poll.flags.remove(.was_ever_registered);
                     this.close_after_io = false;
-                    std.debug.assert(!this.doClose(this.isAllowedToClose()));
-
-                    var io_task = this.io_task orelse bun.unreachablePanic("io_task should not be null", .{});
-                    this.io_task = null;
-                    io_task.onFinish();
+                    this.update();
                 }
 
                 pub fn doClose(
                     this: *This,
                     is_allowed_to_close_fd: bool,
                 ) bool {
-                    const fd = this.opened_fd;
-
                     if (this.close_after_io) {
-                        this.io_request = .{ .callback = &scheduleClose };
+                        this.io_lock.lock();
+                        defer this.io_lock.unlock();
+
+                        this.state.store(ClosingState.closing, .SeqCst);
+
+                        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
                         if (!this.io_request.scheduled)
                             io.Loop.get().schedule(&this.io_request);
                         return true;
                     }
 
-                    if (is_allowed_to_close_fd and fd > 2 and fd != null_fd) {
+                    if (is_allowed_to_close_fd and this.opened_fd > 2 and this.opened_fd != null_fd) {
                         this.opened_fd = null_fd;
-                        _ = bun.sys.close(fd);
+                        _ = bun.sys.close(this.opened_fd);
                     }
 
                     return false;
                 }
             };
         }
+
+        pub const ClosingState = enum(u8) {
+            running,
+            closing,
+        };
 
         pub const ReadFile = struct {
             file_store: FileStore,
@@ -1691,6 +1694,8 @@ pub const Blob = struct {
             io_request: bun.io.Request = .{ .callback = &onRequestReadable },
             could_block: bool = false,
             close_after_io: bool = false,
+            io_lock: bun.Lock = bun.Lock.init(),
+            state: std.atomic.Atomic(ClosingState) = std.atomic.Atomic(ClosingState).init(.running),
 
             pub const Read = struct {
                 buf: []u8,
@@ -1703,6 +1708,15 @@ pub const Blob = struct {
 
             pub usingnamespace FileOpenerMixin(ReadFile);
             pub usingnamespace FileCloserMixin(ReadFile);
+
+            pub fn update(this: *ReadFile) void {
+                switch (this.state.load(.Monotonic)) {
+                    .closing => {
+                        this.onFinish();
+                    },
+                    .running => this.doReadLoop(),
+                }
+            }
 
             pub fn createWithCtx(
                 allocator: std.mem.Allocator,
@@ -1792,7 +1806,7 @@ pub const Blob = struct {
                 return remaining;
             }
 
-            pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize) bool {
+            pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize, retry: *bool) bool {
                 const result: JSC.Maybe(usize) = brk: {
                     if (comptime Environment.isPosix) {
                         if (std.os.S.ISSOCK(this.file_store.mode)) {
@@ -1817,9 +1831,9 @@ pub const Blob = struct {
                                         // this is fine on kqueue, but not on epoll.
                                         continue;
                                     }
-                                    this.waitForReadable();
+                                    retry.* = true;
                                     this.read_eof = false;
-                                    return false;
+                                    return true;
                                 },
                                 else => {
                                     this.errno = AsyncIO.asError(err.errno);
@@ -1895,15 +1909,19 @@ pub const Blob = struct {
             }
 
             fn onFinish(this: *ReadFile) void {
-                this.size = @truncate(this.buffer.items.len);
                 const close_after_io = this.close_after_io;
+                this.size = @truncate(this.buffer.items.len);
 
-                if (this.doClose(this.isAllowedToClose())) {
-                    bloblog("ReadFile.onFinish() = deferred", .{});
-                    // we have to wait for the close to finish
-                    return;
+                {
+                    this.io_lock.lock();
+                    defer this.io_lock.unlock();
+
+                    if (this.doClose(this.isAllowedToClose())) {
+                        bloblog("ReadFile.onFinish() = deferred", .{});
+                        // we have to wait for the close to finish
+                        return;
+                    }
                 }
-
                 if (!close_after_io) {
                     if (this.io_task) |io_task| {
                         this.io_task = null;
@@ -2025,11 +2043,11 @@ pub const Blob = struct {
 
             fn doReadLoopTask(task: *JSC.WorkPoolTask) void {
                 var this: *ReadFile = @fieldParentPtr(ReadFile, "task", task);
-                this.doReadLoop();
+                this.update();
             }
 
             fn doReadLoop(this: *ReadFile) void {
-                while (true) {
+                while (this.state.load(.Monotonic) == .running) {
 
                     // we hold a 64 KB stack buffer incase the amount of data to
                     // be read is greater than the reported amount
@@ -2041,7 +2059,8 @@ pub const Blob = struct {
 
                     if (buffer.len > 0 and this.errno == null and !this.read_eof) {
                         var read_amount: usize = 0;
-                        const continue_reading = this.doRead(buffer, &read_amount);
+                        var retry = false;
+                        const continue_reading = this.doRead(buffer, &read_amount, &retry);
                         const read = buffer[0..read_amount];
 
                         // We might read into the stack buffer, so we need to copy it into the heap.
@@ -2076,24 +2095,31 @@ pub const Blob = struct {
                         //
                         // If we immediately call read(), it will block until stdin is
                         // readable.
-                        if (this.could_block and
+                        if ((retry or (this.could_block and
                             // If we received EOF, we can skip the poll() system
                             // call. We already know it's done.
-                            !this.read_eof and
-
+                            !this.read_eof)) and
                             // - If they DID set a max length, we should stop
                             //   reading after that.
                             //
                             // - If they DID NOT set a max_length, then it will
                             //   be Blob.max_size which is an impossibly large
                             //   amount to read.
-                            @as(usize, this.max_length) > this.buffer.items.len and
-
-                            // If it hung up, we will resume from the start, consume the EOF, and this.read_eof will be true.
-                            bun.isReadable(this.opened_fd) == .not_ready)
+                            @as(usize, this.max_length) > this.buffer.items.len)
                         {
+                            if ((this.could_block and
+                                // If we received EOF, we can skip the poll() system
+                                // call. We already know it's done.
+                                !this.read_eof))
+                            {
+                                switch (bun.isReadable(this.opened_fd)) {
+                                    .not_ready => {},
+                                    .ready, .hup => continue,
+                                }
+                            }
                             this.read_eof = false;
                             this.waitForReadable();
+
                             return;
                         }
 
@@ -2102,15 +2128,15 @@ pub const Blob = struct {
                     }
 
                     // -- We are done reading.
-
-                    // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
-                    if (this.buffer.items.len + 16_000 < this.buffer.capacity) {
-                        this.buffer.shrinkAndFree(bun.default_allocator, this.buffer.items.len);
-                    }
-                    this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
-                    this.onFinish();
                     break;
                 }
+
+                // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
+                if (this.buffer.items.len + 16_000 < this.buffer.capacity) {
+                    this.buffer.shrinkAndFree(bun.default_allocator, this.buffer.items.len);
+                }
+                this.byte_store = ByteStore.init(this.buffer.items, bun.default_allocator);
+                this.onFinish();
             }
         };
 
@@ -2125,6 +2151,8 @@ pub const Blob = struct {
             io_task: ?*WriteFileTask = null,
             io_poll: bun.io.Poll = .{},
             io_request: bun.io.Request = .{ .callback = &onRequestWritable },
+            io_lock: bun.Lock = bun.Lock.init(),
+            state: std.atomic.Atomic(ClosingState) = std.atomic.Atomic(ClosingState).init(.running),
 
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnWriteFileCallback = undefined,
@@ -2391,8 +2419,12 @@ pub const Blob = struct {
                 this.doWriteLoop();
             }
 
+            pub fn update(this: *WriteFile) void {
+                this.doWriteLoop();
+            }
+
             fn doWriteLoop(this: *WriteFile) void {
-                while (true) {
+                while (this.state.load(.Monotonic) == .running) {
                     var remain = this.bytes_blob.sharedView();
 
                     remain = remain[@min(this.total_written, remain.len)..];
@@ -2423,11 +2455,14 @@ pub const Blob = struct {
                             this.onFinish();
                             return;
                         }
-                    } else {
-                        this.onFinish();
-                        return;
+
+                        continue;
                     }
+
+                    break;
                 }
+
+                this.onFinish();
             }
         };
 

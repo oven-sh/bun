@@ -180,14 +180,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
   if (callFrame->argumentCount() < 1) {
     throwTypeError(globalObject, scope,
                    "createRequire() requires at least one argument"_s);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode({}));
   }
 
   auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+
+  if (val.startsWith("file://"_s)) {
+    WTF::URL url(val);
+    if (!url.isValid()) {
+      throwTypeError(globalObject, scope, makeString("createRequire() was given an invalid URL '"_s, url.string(), "'"_s));;
+      RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    }
+    if (!url.protocolIsFile()) {
+      throwTypeError(globalObject, scope, "createRequire() does not support non-file URLs"_s);
+      RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    }
+    val = url.fileSystemPath();
+  }
+
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-  RELEASE_AND_RETURN(
-      scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
-                 vm, globalObject, val)));
+  RELEASE_AND_RETURN(scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
 }
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
                                                               CallFrame *);

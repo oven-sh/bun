@@ -34,6 +34,36 @@ it("Module.createRequire", () => {
   expect(Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)).toBe(import.meta.path);
 });
 
+it("Module.createRequire works with a file url", () => {
+  const require = Module.createRequire(import.meta.url);
+  expect(require.resolve(import.meta.path)).toBe(path);
+  expect(require.resolve("./" + import.meta.file)).toBe(path);
+  const { resolve } = require;
+  expect(resolve("./" + import.meta.file)).toBe(path);
+});
+
+it("Module.createRequire works with a file url with a space", () => {
+  const path = join(import.meta.dir, "with space/hello.js");
+  const require = Module.createRequire(new URL("./with space/nonexist.js", import.meta.url).toString());
+  expect(require.resolve(import.meta.path)).toBe(import.meta.path);
+  expect(require.resolve("./hello")).toBe(path);
+  const { resolve } = require;
+  expect(resolve("./hello")).toBe(path);
+});
+
+it("Module.createRequire does not use file url as the referrer (err message check)", () => {
+  const require = Module.createRequire(import.meta.url);
+  try {
+    require("whaaat");
+    expect.unreachable();
+  } catch (e) {
+    expect(e.name).not.toBe("UnreachableError");
+    expect(e.message).not.toInclude("file:///");
+    expect(e.message).toInclude('"whaaat"');
+    expect(e.message).toInclude('"' + import.meta.path + '"');
+  }
+});
+
 it("require with a query string works on dynamically created content", () => {
   rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
     recursive: true,

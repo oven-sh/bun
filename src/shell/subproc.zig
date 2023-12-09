@@ -150,7 +150,7 @@ pub const ShellSubprocess = struct {
             }
         };
 
-        pub fn init(subproc: *ShellSubprocess, kind: OutKind, stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
+        pub fn init(subproc: *ShellSubprocess, comptime kind: OutKind, stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
@@ -163,10 +163,19 @@ pub const ShellSubprocess = struct {
                 },
                 .path => Readable{ .ignore = {} },
                 .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
-                .array_buffer => Readable{
-                    .pipe = .{
-                        .buffer = if (stdio.array_buffer.from_jsc) BufferedOutput.initWithArrayBuffer(subproc, kind, fd, stdio.array_buffer.buf) else BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice()),
-                    },
+                .array_buffer => {
+                    var subproc_readable = subproc.getIO(kind);
+                    subproc_readable.* = Readable{
+                        .pipe = .{
+                            .buffer = undefined,
+                        },
+                    };
+                    if (stdio.array_buffer.from_jsc) {
+                        BufferedOutput.initWithArrayBuffer(subproc, &subproc_readable.pipe.buffer, kind, fd, stdio.array_buffer.buf);
+                    } else {
+                        subproc_readable.pipe.buffer = BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice());
+                    }
+                    return subproc_readable.*;
                 },
             };
         }
@@ -304,21 +313,19 @@ pub const ShellSubprocess = struct {
             };
         }
 
-        pub fn initWithArrayBuffer(subproc: *ShellSubprocess, out_type: OutKind, fd: bun.FileDescriptor, array_buf: JSC.ArrayBuffer.Strong) BufferedOutput {
-            var out = BufferedOutput.initWithSlice(subproc, out_type, fd, array_buf.slice());
+        pub fn initWithArrayBuffer(subproc: *ShellSubprocess, out: *BufferedOutput, comptime out_type: OutKind, fd: bun.FileDescriptor, array_buf: JSC.ArrayBuffer.Strong) void {
+            out.* = BufferedOutput.initWithSlice(subproc, out_type, fd, array_buf.slice());
             out.from_jsc = true;
             out.fifo.view = array_buf.held;
-            var autosizer = bun.default_allocator.create(JSC.WebCore.AutoSizer) catch bun.outOfMemory();
-            autosizer.* = JSC.WebCore.AutoSizer{
+            out.auto_sizer = JSC.WebCore.AutoSizer{
                 .buffer = &out.internal_buffer,
                 .max = ShellSubprocess.default_max_buffer_size,
                 .allocator = bun.default_allocator,
             };
-            out.fifo.auto_sizer = autosizer;
-            return out;
+            out.fifo.auto_sizer = &out.auto_sizer.?;
         }
 
-        pub fn initWithSlice(subproc: *ShellSubprocess, out_type: OutKind, fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
+        pub fn initWithSlice(subproc: *ShellSubprocess, comptime out_type: OutKind, fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
             return BufferedOutput{
                 // fixed capacity
                 .internal_buffer = bun.ByteList.initWithBuffer(slice),
@@ -331,7 +338,7 @@ pub const ShellSubprocess = struct {
             };
         }
 
-        pub fn initWithAllocator(subproc: *ShellSubprocess, out_type: OutKind, allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
+        pub fn initWithAllocator(subproc: *ShellSubprocess, comptime out_type: OutKind, allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
             var this = init(subproc, out_type, fd);
             this.auto_sizer = .{
                 .max = max_size,
@@ -572,6 +579,13 @@ pub const ShellSubprocess = struct {
             }
         }
     };
+
+    pub fn getIO(this: *ShellSubprocess, comptime out_kind: OutKind) *Readable {
+        switch (out_kind) {
+            .stdout => return &this.stdout,
+            .stderr => return &this.stderr,
+        }
+    }
 
     pub fn hasExited(this: *const ShellSubprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;

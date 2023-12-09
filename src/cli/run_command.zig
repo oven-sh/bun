@@ -262,6 +262,9 @@ pub const RunCommand = struct {
         pub const PidPollData = struct { process: LifecycleScriptSubprocess };
 
         pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: usize) !void {
+            _ = alive_count.fetchAdd(1, .Monotonic);
+            errdefer _ = alive_count.fetchSub(1, .Monotonic);
+
             const manager = this.manager;
             const original_script = this.scripts[next_script_index].?;
             const cwd = original_script.cwd;
@@ -281,6 +284,10 @@ pub const RunCommand = struct {
 
             this.script_name = name;
             this.package_name = original_script.package_name;
+            this.current_script_index = next_script_index;
+            this.waitpid_result = null;
+            this.finished_fds = 0;
+            this.output_buffer = .{};
 
             const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -359,6 +366,7 @@ pub const RunCommand = struct {
                     .result => |pid| break :brk pid,
                 }
             };
+            this.pid = pid;
 
             const pid_fd: std.os.fd_t = brk: {
                 if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
@@ -415,12 +423,6 @@ pub const RunCommand = struct {
                 }
             };
 
-            this.current_script_index = next_script_index;
-            this.waitpid_result = null;
-            this.finished_fds = 0;
-            this.output_buffer = .{};
-            this.pid = pid;
-
             this.stdout_poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, this);
             this.stderr_poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, this);
 
@@ -454,22 +456,32 @@ pub const RunCommand = struct {
                     },
                 }
             }
-
-            _ = alive_count.fetchAdd(1, .Monotonic);
         }
 
         pub fn onOutputUpdate(this: *LifecycleScriptSubprocess, size: i64, fd: bun.FileDescriptor) void {
             if (comptime Environment.isMac) {
-                this.output_buffer.ensureUnusedCapacity(this.manager.allocator, @intCast(size)) catch bun.outOfMemory();
                 if (size == 0) {
-                    this.finished_fds +|= 1;
+                    std.debug.assert(this.finished_fds < 2);
+                    this.finished_fds += 1;
+
+                    // close poll as soon as possible to prevent
+                    // another size=0 message.
+                    const poll = if (this.stdout_poll.fileDescriptor() == fd)
+                        this.stdout_poll
+                    else
+                        this.stderr_poll;
+                    _ = poll.unregister(this.manager.uws_event_loop, false);
+                    // FD is already closed
+
                     if (this.waitpid_result) |result| {
                         if (this.finished_fds == 2) {
+                            // potential free()
                             this.onResult(result);
                         }
                     }
                     return;
                 }
+                this.output_buffer.ensureUnusedCapacity(this.manager.allocator, @intCast(size)) catch bun.outOfMemory();
                 var remaining = size;
                 while (remaining > 0) {
                     switch (bun.sys.read(fd, this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap])) {
@@ -494,7 +506,8 @@ pub const RunCommand = struct {
                     .result => |bytes_read| {
                         this.output_buffer.len += @truncate(bytes_read);
                         if (bytes_read == 0) {
-                            this.finished_fds +|= 1;
+                            std.debug.assert(this.finished_fds < 2);
+                            this.finished_fds += 1;
                             if (this.waitpid_result) |result| {
                                 if (this.finished_fds == 2) {
                                     this.onResult(result);
@@ -517,7 +530,6 @@ pub const RunCommand = struct {
                     },
                 }
 
-                // var first_zero = true;
                 while (true) {
                     this.output_buffer.ensureUnusedCapacity(this.manager.allocator, 32) catch bun.outOfMemory();
                     switch (bun.sys.read(fd, this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap])) {
@@ -574,6 +586,7 @@ pub const RunCommand = struct {
             }
         }
 
+        /// This function may free the *LifecycleScriptSubprocess
         pub fn onResult(this: *LifecycleScriptSubprocess, result: PosixSpawn.WaitPidResult) void {
             _ = alive_count.fetchSub(1, .Monotonic);
             if (result.pid == 0) {
@@ -583,18 +596,20 @@ pub const RunCommand = struct {
                     0,
                     "Unknown",
                 });
+                this.deinit();
                 Output.flush();
-
-                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+                Global.exit(1);
                 return;
             }
             if (std.os.W.IFEXITED(result.status)) {
+                std.debug.assert(this.finished_fds <= 2);
+                if (this.finished_fds < 2) {
+                    this.waitpid_result = result;
+                    return;
+                }
+
                 const code = std.os.W.EXITSTATUS(result.status);
                 if (code > 0) {
-                    if (this.finished_fds < 2) {
-                        this.waitpid_result = result;
-                        return;
-                    }
                     this.printOutput();
                     Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
                         this.script_name,
@@ -612,7 +627,7 @@ pub const RunCommand = struct {
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                     if (this.scripts[new_script_index] != null) {
-                        // this.resetPolls();
+                        this.resetPolls();
                         this.spawnNextScript(new_script_index) catch |err| {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
                                 Lockfile.Scripts.names[new_script_index],
@@ -626,7 +641,10 @@ pub const RunCommand = struct {
 
                 // the last script finished
                 _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
-                this.deinit();
+
+                if (this.finished_fds == 2) {
+                    this.deinit();
+                }
                 return;
             }
             if (std.os.W.IFSIGNALED(result.status)) {
@@ -661,23 +679,23 @@ pub const RunCommand = struct {
                 Output.flush();
                 Global.exit(1);
             }
+
+            std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{ this.script_name, this.package_name, result.pid, result.status });
         }
 
         pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
+            std.debug.assert(this.finished_fds == 2);
+
             const loop = this.manager.uws_event_loop;
-            _ = this.stdout_poll.unregister(loop, false);
-            _ = this.stderr_poll.unregister(loop, false);
-            _ = bun.sys.close(this.stdout_poll.fileDescriptor());
-            _ = bun.sys.close(this.stderr_poll.fileDescriptor());
 
             if (!WaiterThread.shouldUseWaiterThread()) {
                 _ = this.pid_poll.unregister(loop, false);
-                _ = bun.sys.close(this.pid_poll.fileDescriptor());
+                // FD is already closed
             }
         }
 
         pub fn deinit(this: *LifecycleScriptSubprocess) void {
-            // this.resetPolls();
+            this.resetPolls();
             this.output_buffer.deinitWithAllocator(this.manager.allocator);
             this.manager.allocator.destroy(this);
         }

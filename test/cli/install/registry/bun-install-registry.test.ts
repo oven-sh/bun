@@ -13,17 +13,19 @@ var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
 
-beforeAll(async done => {
+beforeAll(async () => {
   verdaccioServer = fork(
     await import.meta.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
     { silent: true, execPath: "bun" },
   );
 
-  verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-    if (msg.verdaccio_started) {
-      done();
-    }
+  await new Promise<void>(done => {
+    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
+      if (msg.verdaccio_started) {
+        done();
+      }
+    });
   });
 });
 
@@ -2424,8 +2426,6 @@ for (const forceWaiterThread of [false, true]) {
     }, 10000);
   });
 }
-
-// describe("lifecycle scripts", async () => {});
 
 test("it should install and use correct binary version", async () => {
   // this should install node-gyp in two places:

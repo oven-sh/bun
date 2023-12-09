@@ -619,15 +619,39 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
         return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {
-            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
-            else => null,
+            // "fd isn't a valid open file descriptor."
+            .BADF => {
+                if (Environment.isDebug) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = EBADF<r>", .{fd});
+                    std.debug.dumpCurrentStackTrace(null);
+                }
+                return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
+            },
+            else => |err| {
+                if (Environment.isDebug and err != .SUCCESS) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = {s}<r>", .{ fd, @tagName(err) });
+                }
+                return null;
+            },
         };
     }
 
     if (comptime Environment.isLinux) {
         return switch (linux.getErrno(linux.close(fd))) {
-            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
-            else => null,
+            // "fd isn't a valid open file descriptor."
+            .BADF => {
+                if (Environment.isDebug) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = EBADF<r>", .{fd});
+                    std.debug.dumpCurrentStackTrace(null);
+                }
+                return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
+            },
+            else => |err| {
+                if (Environment.isDebug and err != .SUCCESS) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = {s}<r>", .{ fd, @tagName(err) });
+                }
+                return null;
+            },
         };
     }
 
@@ -635,6 +659,7 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
         std.debug.assert(fd != 0);
 
         if (kernel32.CloseHandle(bun.fdcast(fd)) == 0) {
+            log("<red><b>close({}) = FAILED<r>", .{fd});
             return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
         }
 

@@ -154,28 +154,27 @@ pub const ShellSubprocess = struct {
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
-                .pipe => brk: {
-                    break :brk .{
-                        .pipe = .{
-                            .buffer = BufferedOutput.initWithAllocator(subproc, kind, allocator, fd, max_size),
-                        },
-                    };
+                .pipe => {
+                    var subproc_readable_ptr = subproc.getIO(kind);
+                    subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
+                    BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd, max_size);
+                    return subproc_readable_ptr.*;
                 },
                 .path => Readable{ .ignore = {} },
                 .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
                 .array_buffer => {
-                    var subproc_readable = subproc.getIO(kind);
-                    subproc_readable.* = Readable{
+                    var subproc_readable_ptr = subproc.getIO(kind);
+                    subproc_readable_ptr.* = Readable{
                         .pipe = .{
                             .buffer = undefined,
                         },
                     };
                     if (stdio.array_buffer.from_jsc) {
-                        BufferedOutput.initWithArrayBuffer(subproc, &subproc_readable.pipe.buffer, kind, fd, stdio.array_buffer.buf);
+                        BufferedOutput.initWithArrayBuffer(subproc, &subproc_readable_ptr.pipe.buffer, kind, fd, stdio.array_buffer.buf);
                     } else {
-                        subproc_readable.pipe.buffer = BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice());
+                        subproc_readable_ptr.pipe.buffer = BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice());
                     }
-                    return subproc_readable.*;
+                    return subproc_readable_ptr.*;
                 },
             };
         }
@@ -317,12 +316,7 @@ pub const ShellSubprocess = struct {
             out.* = BufferedOutput.initWithSlice(subproc, out_type, fd, array_buf.slice());
             out.from_jsc = true;
             out.fifo.view = array_buf.held;
-            out.auto_sizer = JSC.WebCore.AutoSizer{
-                .buffer = &out.internal_buffer,
-                .max = ShellSubprocess.default_max_buffer_size,
-                .allocator = bun.default_allocator,
-            };
-            out.fifo.auto_sizer = &out.auto_sizer.?;
+            out.fifo.buf = out.internal_buffer.ptr[0..out.internal_buffer.cap];
         }
 
         pub fn initWithSlice(subproc: *ShellSubprocess, comptime out_type: OutKind, fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
@@ -338,14 +332,13 @@ pub const ShellSubprocess = struct {
             };
         }
 
-        pub fn initWithAllocator(subproc: *ShellSubprocess, comptime out_type: OutKind, allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
-            var this = init(subproc, out_type, fd);
-            this.auto_sizer = .{
+        pub fn initWithAllocator(subproc: *ShellSubprocess, out: *BufferedOutput, comptime out_type: OutKind, allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) void {
+            out.* = init(subproc, out_type, fd);
+            out.auto_sizer = .{
                 .max = max_size,
                 .allocator = allocator,
-                .buffer = &this.internal_buffer,
+                .buffer = &out.internal_buffer,
             };
-            return this;
         }
 
         pub fn closeFifoSignalCmd(this: *BufferedOutput) void {

@@ -1091,8 +1091,7 @@ pub fn spawnMaybeSyncImpl(
             },
             .cmd_parent = spawn_args.cmd_parent,
         };
-        subprocess.stdout.pipe.buffer.fifo.auto_sizer.?.buffer = &subprocess.stdout.pipe.buffer.internal_buffer;
-        subprocess.stdout.pipe.buffer.watch();
+        // subprocess.stdout.pipe.buffer.watch();
     }
 
     if (subprocess.stdin == .pipe) {

@@ -3882,5 +3882,11 @@ describe("expect()", () => {
         },
       });
     });
+
+    test("Array of dates", async () => {
+      const obj = new Date("2020-01-01T00:00:00.001Z");
+      const parsed = JSON.parse(JSON.stringify([obj, obj])).map(a => new Date(a));
+      expect(parsed).toEqual([obj, obj]);
+    });
   });
 });

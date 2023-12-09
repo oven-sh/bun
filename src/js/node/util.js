@@ -16,12 +16,7 @@ const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
-// There is a memory issue in the parseArgs implementation
-// Do not expose it until that is addressed.
-// const { parseArgs } = $lazy("util");
-function parseArgs() {
-  throw new Error("Not implemented yet");
-}
+const { parseArgs } = $lazy("util");
 
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;

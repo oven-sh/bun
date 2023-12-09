@@ -3574,8 +3574,17 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("putRecord", .{ value, global, key, values, values_len });
     }
 
+    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
     pub fn put(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         return cppFn("put", .{ value, global, key, result });
+    }
+
+    extern fn JSC__JSValue__putMayBeIndex(target: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSC.JSValue) void;
+
+    /// Same as `.put` but accepts both non-numeric and numeric keys.
+    /// Prefer to use `.put` if the key is guaranteed to be non-numeric (e.g. known at comptime)
+    pub inline fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) void {
+        JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
     }
 
     pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {

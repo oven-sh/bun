@@ -653,12 +653,25 @@ pub const String = extern struct {
         return self.tag == .Empty;
     }
 
-    pub fn substring(self: String, start_index: usize) String {
-        return String.init(self.toZigString().substring(start_index));
+    pub fn substring(this: String, start_index: usize) String {
+        var len = this.length();
+        return this.substringWithLen(@min(len, start_index), len);
     }
 
-    pub fn substringWithLen(self: String, start_index: usize, end_index: usize) String {
-        return String.init(self.toZigString().substringWithLen(start_index, end_index));
+    pub fn substringWithLen(this: String, start_index: usize, end_index: usize) String {
+        switch (this.tag) {
+            .ZigString, .StaticZigString => {
+                return String.init(this.value.ZigString.substringWithLen(start_index, end_index));
+            },
+            .WTFStringImpl => {
+                if (this.value.WTFStringImpl.is8Bit()) {
+                    return String.init(ZigString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
+                } else {
+                    return String.init(ZigString.init16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
+                }
+            },
+            else => return this,
+        }
     }
 
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
@@ -757,28 +770,12 @@ pub const String = extern struct {
         };
     }
 
-    pub fn indexOfChar(this: String, chr: u16) ?usize {
-        switch (this.tag) {
-            .WTFStringImpl => {
-                if (this.value.WTFStringImpl.is8Bit()) {
-                    return std.mem.indexOfScalar(u8, this.value.WTFStringImpl.utf8Slice(), @truncate(chr));
-                } else {
-                    return std.mem.indexOfScalar(u16, this.value.WTFStringImpl.utf16Slice(), chr);
-                }
-            },
-            .ZigString, .StaticZigString => {
-                if (!this.value.ZigString.is16Bit()) {
-                    return std.mem.indexOfScalar(u8, this.value.ZigString.slice(), @truncate(chr));
-                } else {
-                    return std.mem.indexOfScalar(u16, this.value.ZigString.utf16SliceAligned(), chr);
-                }
-            },
-            else => return null,
-        }
-    }
-
-    pub fn indexOfCharU8(this: String, chr: u8) ?usize {
-        return indexOfChar(this, @intCast(chr));
+    pub fn indexOfAsciiChar(this: String, chr: u8) ?usize {
+        std.debug.assert(chr < 128);
+        return switch (this.isUTF16()) {
+            true => std.mem.indexOfScalar(u16, this.utf16(), @intCast(chr)),
+            false => bun.strings.indexOfCharUsize(this.byteSlice(), chr),
+        };
     }
 
     pub fn indexOfComptimeWithCheckLen(this: String, comptime values: []const []const u8, comptime check_len: usize) ?usize {

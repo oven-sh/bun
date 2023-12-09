@@ -296,6 +296,22 @@ WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make zstd
 
+FROM bun-base as ls-hpack
+
+ARG BUN_DIR
+
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make lshpack
+
 FROM bun-base-with-zig as bun-identifier-cache
 
 ARG DEBIAN_FRONTEND
@@ -357,7 +373,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} -DZIG_COMPILER=system \
   && bash compile-cpp-only.sh -v
 
 FROM bun-base-with-zig as bun-codegen-for-zig
@@ -412,6 +428,7 @@ RUN mkdir -p build \
   -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   -DCANARY="${CANARY}" \
+  -DZIG_COMPILER=system \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj
@@ -448,6 +465,7 @@ COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=ls-hpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
 COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
@@ -466,6 +484,7 @@ RUN cmake .. \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
+  -DZIG_COMPILER=system \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \
@@ -521,6 +540,7 @@ RUN cmake .. \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
+  -DZIG_COMPILER=system \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \

@@ -96,6 +96,8 @@ const Socket = (function (InternalSocket) {
     static #Handlers = {
       close: Socket.#Close,
       data({ data: self }, buffer) {
+        if (!self) return;
+
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
 
@@ -108,6 +110,8 @@ const Socket = (function (InternalSocket) {
       end: Socket.#Close,
       error(socket, error) {
         const self = socket.data;
+        if (!self) return;
+
         const callback = self.#writeCallback;
         if (callback) {
           self.#writeCallback = null;
@@ -117,8 +121,10 @@ const Socket = (function (InternalSocket) {
       },
       open(socket) {
         const self = socket.data;
+        if (!self) return;
+
         socket.timeout(self.timeout);
-        socket.ref();
+        if (self.#unrefOnConnected) socket.unref();
         self[bunSocketInternal] = socket;
         self.connecting = false;
         const options = self[bunTLSConnectOptions];
@@ -140,6 +146,7 @@ const Socket = (function (InternalSocket) {
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+        if (!self) return;
 
         self._securePending = false;
         self.secureConnecting = false;
@@ -168,6 +175,8 @@ const Socket = (function (InternalSocket) {
       },
       timeout(socket) {
         const self = socket.data;
+        if (!self) return;
+
         self.emit("timeout", self);
       },
       binaryType: "buffer",
@@ -175,7 +184,7 @@ const Socket = (function (InternalSocket) {
 
     static #Close(socket) {
       const self = socket.data;
-      if (self.#closed) return;
+      if (!self || self.#closed) return;
       self.#closed = true;
       //socket cannot be used after close
       self[bunSocketInternal] = null;
@@ -188,7 +197,7 @@ const Socket = (function (InternalSocket) {
 
     static #Drain(socket) {
       const self = socket.data;
-
+      if (!self) return;
       const callback = self.#writeCallback;
       if (callback) {
         const chunk = self.#writeChunk;
@@ -323,6 +332,7 @@ const Socket = (function (InternalSocket) {
     server;
     pauseOnConnect = false;
     #upgraded;
+    #unrefOnConnected = false;
 
     constructor(options) {
       const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -340,7 +350,10 @@ const Socket = (function (InternalSocket) {
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
-      signal?.once("abort", () => this.destroy());
+
+      if (signal) {
+        signal.addEventListener("abort", () => this.destroy());
+      }
       this.once("connect", () => this.emit("ready"));
     }
 
@@ -360,7 +373,7 @@ const Socket = (function (InternalSocket) {
       this.remotePort = port;
       socket.data = this;
       socket.timeout(this.timeout);
-      socket.ref();
+      if (this.#unrefOnConnected) socket.unref();
       this[bunSocketInternal] = socket;
       this.connecting = false;
       if (!this.#upgraded) {
@@ -608,7 +621,12 @@ const Socket = (function (InternalSocket) {
     }
 
     ref() {
-      this[bunSocketInternal]?.ref();
+      const socket = this[bunSocketInternal];
+      if (!socket) {
+        this.#unrefOnConnected = false;
+        return;
+      }
+      socket.ref();
     }
 
     get remoteAddress() {
@@ -641,7 +659,12 @@ const Socket = (function (InternalSocket) {
     }
 
     unref() {
-      this[bunSocketInternal]?.unref();
+      const socket = this[bunSocketInternal];
+      if (!socket) {
+        this.#unrefOnConnected = true;
+        return;
+      }
+      socket.unref();
     }
 
     _write(chunk, encoding, callback) {

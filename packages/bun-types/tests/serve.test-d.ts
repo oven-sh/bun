@@ -80,6 +80,25 @@ Bun.serve<User>({
 });
 
 Bun.serve({
+  fetch(req, server) {
+    server.upgrade(req);
+  },
+
+  websocket: {
+    open(ws) {
+      console.log("WebSocket opened");
+      ws.subscribe("test-channel");
+    },
+
+    message(ws, message) {
+      ws.publish("test-channel", `${message}`);
+    },
+
+    perMessageDeflate: true,
+  },
+});
+
+Bun.serve({
   fetch(req) {
     throw new Error("woops!");
   },

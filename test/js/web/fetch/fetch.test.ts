@@ -807,23 +807,17 @@ describe("Bun.file", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");
-      chmodSync(path, 0o000);
+      chmodSync(path, 0x000);
     });
 
-    forEachMethod(
-      m => () => {
-        const file = Bun.file(path);
-        expect(async () => await file[m]()).toThrow("Permission denied");
-      },
-      () => {
-        try {
-          readFileSync(path);
-        } catch {
-          return false;
-        }
-        return true;
-      },
-    );
+    forEachMethod(m => () => {
+      const file = Bun.file(path);
+      expect(async () => await file[m]()).toThrow("Permission denied");
+    });
+
+    afterAll(() => {
+      rmSync(path, { force: true });
+    });
   });
 
   describe("non-existent file throws", () => {
@@ -1087,7 +1081,7 @@ describe("Response", () => {
     });
     try {
       await body.json();
-      expect(false).toBe(true);
+      expect.unreachable();
     } catch (exception) {
       expect(exception instanceof SyntaxError).toBe(true);
     }

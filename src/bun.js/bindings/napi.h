@@ -61,7 +61,7 @@ public:
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
 
-class NapiRef : public RefCounted<NapiRef>, public CanMakeWeakPtr<NapiRef> {
+class NapiRef {
     WTF_MAKE_ISO_ALLOCATED(NapiRef);
 
 public:
@@ -155,8 +155,6 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    static CallData getConstructData(JSCell* cell);
-
     FFIFunction constructor()
     {
         return m_constructor;
@@ -194,17 +192,11 @@ public:
 
     DECLARE_INFO;
 
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    static NapiPrototype* create(VM& vm, Structure* structure)
     {
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
         return footprint;
-    }
-
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject)
-    {
-        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        return create(vm, globalObject, structure);
     }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

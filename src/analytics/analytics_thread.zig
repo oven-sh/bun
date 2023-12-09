@@ -12,13 +12,13 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("root").bun.HTTP;
-const NetworkThread = HTTP.NetworkThread;
+const HTTP = @import("root").bun.http;
+
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = @import("root").bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
@@ -53,6 +53,7 @@ pub const Features = struct {
     pub var fetch = false;
     pub var bunfig = false;
     pub var extracted_packages = false;
+    pub var transpiler_cache = false;
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -81,6 +82,7 @@ pub const Features = struct {
                 "fetch",
                 "bunfig",
                 "extracted_packages",
+                "transpiler_cache",
             };
             inline for (fields) |field| {
                 if (@field(Features, field)) {
@@ -418,7 +420,6 @@ fn readloop() anyerror!void {
     ) catch return;
 
     event_list.async_http.client.verbose = FeatureFlags.verbose_analytics;
-    NetworkThread.init() catch unreachable;
     // everybody's random should be random
     while (true) {
         // Wait for the next event by blocking

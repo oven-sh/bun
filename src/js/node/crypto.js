@@ -11291,7 +11291,6 @@ var require_sign = __commonJS({
       curves = require_curves2();
     function sign(hash, key, hashType, signType, tag) {
       var priv = parseKeys(getKeyFrom(key, "private"));
-
       if (priv.curve) {
         if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
         return ecSign(hash, priv);
@@ -12018,7 +12017,6 @@ const harcoded_curves = [
   "secp224r1",
   "prime256v1",
   "prime192v1",
-  "ed25519",
   "secp384r1",
   "secp521r1",
 ];
@@ -12037,6 +12035,8 @@ const {
   createPrivateKey,
   generateKeySync,
   generateKeyPairSync,
+  sign: nativeSign,
+  verify: nativeVerify,
 } = $lazy("internal/crypto");
 
 const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
@@ -12293,34 +12293,95 @@ function _createPublicKey(key) {
 }
 crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
+var webcrypto = crypto;
+var _subtle = webcrypto.subtle;
 const _createSign = crypto_exports.createSign;
-crypto_exports.sign = function (algorithm, data, key, encoding, callback) {
+
+crypto_exports.sign = function (algorithm, data, key, callback) {
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  // key must be a KeyObject
+  if (!(key instanceof KeyObject)) {
+    if ($isObject(key) && key.key) {
+      padding = key.padding;
+      saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
+    if (key.key instanceof KeyObject) {
+      key = key.key;
+    } else {
+      key = _createPrivateKey(key);
+    }
+  }
   if (typeof callback === "function") {
     try {
-      const result = _createSign(algorithm).update(data, encoding).sign(key, encoding);
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
+        result = _createSign(algorithm || "sha256")
+          .update(data)
+          .sign(key);
+      } else {
+        result = nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+      }
       callback(null, result);
     } catch (err) {
       callback(err);
     }
   } else {
-    return _createSign(algorithm).update(data, encoding).sign(key, encoding);
+    if (key.asymmetricKeyType === "rsa") {
+      return _createSign(algorithm || "sha256")
+        .update(data)
+        .sign(key);
+    } else {
+      return nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+    }
   }
 };
 const _createVerify = crypto_exports.createVerify;
+
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  // key must be a KeyObject
+  if (!(key instanceof KeyObject)) {
+    if ($isObject(key) && key.key) {
+      padding = key.padding;
+      saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
+    if (key.key instanceof KeyObject && key.key.type === "public") {
+      key = key.key;
+    } else {
+      key = _createPublicKey(key);
+    }
+  }
   if (typeof callback === "function") {
     try {
-      const result = _createVerify(algorithm).update(data).verify(key, signature);
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
+        result = _createVerify(algorithm || "sha256")
+          .update(data)
+          .verify(key, signature);
+      } else {
+        result = nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+      }
       callback(null, result);
     } catch (err) {
       callback(err);
     }
   } else {
-    return _createVerify(algorithm).update(data).verify(key, signature);
+    if (key.asymmetricKeyType === "rsa") {
+      return _createVerify(algorithm || "sha256")
+        .update(data)
+        .verify(key, signature);
+    } else {
+      return nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+    }
   }
 };
 
-var webcrypto = crypto;
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
@@ -12331,7 +12392,7 @@ __export(crypto_exports, {
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,
   webcrypto: () => webcrypto,
-  subtle: () => webcrypto.subtle,
+  subtle: () => _subtle,
 });
 
 export default crypto_exports;

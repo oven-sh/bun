@@ -1,7 +1,7 @@
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
@@ -1517,7 +1517,10 @@ pub const Subprocess = struct {
             }
 
             break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {
-                .err => |err| return err.toJSC(globalThis),
+                .err => |err| {
+                    globalThis.throwValue(err.toJSC(globalThis));
+                    return .zero;
+                },
                 .result => |pid_| pid_,
             };
         };
@@ -2223,6 +2226,7 @@ pub const Subprocess = struct {
 
         var should_use_waiter_thread = false;
 
+        const stack_size = 512 * 1024;
         pub const Queue = bun.UnboundedQueue(WaitTask, .next);
         pub var instance: WaiterThread = .{};
         pub fn init() !void {
@@ -2232,7 +2236,7 @@ pub const Subprocess = struct {
                 return;
             }
 
-            var thread = try std.Thread.spawn(.{ .stack_size = 512 * 1024 }, loop, .{});
+            var thread = try std.Thread.spawn(.{ .stack_size = stack_size }, loop, .{});
             thread.detach();
 
             if (comptime Environment.isLinux) {

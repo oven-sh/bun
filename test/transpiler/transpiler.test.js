@@ -1454,6 +1454,31 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
     });
   });
 
+  it("JSX spread children", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+    });
+    expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
+      `export var foo = jsxDEV("div", {
+  children: [
+    ...a,
+    "b"
+  ]
+}, undefined, true, undefined, this);
+`,
+    );
+
+    expect(bun.transformSync("export var foo = <div>{...a}</div>")).toBe(
+      `export var foo = jsxDEV("div", {
+  children: [...a]
+}, undefined, true, undefined, this);
+`,
+    );
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');

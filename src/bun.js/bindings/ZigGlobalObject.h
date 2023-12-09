@@ -43,6 +43,7 @@ class InternalModuleRegistry;
 #include "ProcessBindingConstants.h"
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
+#include "BunCommonStrings.h"
 
 namespace WebCore {
 class GlobalScope;
@@ -253,10 +254,12 @@ public:
     Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
-    Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressStructure() { return m_JSSocketAddressStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+
+    Structure* NapiExternalStructure() { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
+    Structure* NapiPrototypeStructure() { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -356,8 +359,6 @@ public:
     mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
-    // Value of $_BunCommonJSModule_$
-    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
@@ -424,6 +425,7 @@ public:
 
     JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+    Bun::CommonStrings& commonStrings() { return m_commonStrings; }
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -441,6 +443,7 @@ private:
     Lock m_gcLock;
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
+    Bun::CommonStrings m_commonStrings;
 
     // JSC's hashtable code-generator tries to access these properties, so we make them public.
     // However, we'd like it better if they could be protected.
@@ -500,11 +503,11 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
+    LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
@@ -515,6 +518,8 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
+    LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
@@ -533,6 +538,13 @@ private:
 };
 
 } // namespace Zig
+
+// TODO: move this
+namespace Bun {
+
+String formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+
+}
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT

@@ -280,6 +280,8 @@ public:
             if (lengthJSValue.isNumber()) {
                 this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
+        } else if (auto* fn = jsDynamicCast<JSMockFunction*>(value)) {
+            nameToUse = fn->get(global, vm.propertyNames->name).toWTFString(global);
         } else if (auto* fn = jsDynamicCast<InternalFunction*>(value)) {
             nameToUse = fn->name();
         } else {
@@ -659,7 +661,7 @@ extern "C" JSC::EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGloba
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else {
-                object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
+                object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }
 
             // mock->setName(propertyKey.publicName());

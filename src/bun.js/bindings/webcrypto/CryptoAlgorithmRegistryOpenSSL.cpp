@@ -67,11 +67,11 @@ void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
     registerAlgorithm<CryptoAlgorithmRSASSA_PKCS1_v1_5>();
     registerAlgorithm<CryptoAlgorithmRSA_OAEP>();
     registerAlgorithm<CryptoAlgorithmRSA_PSS>();
-    registerAlgorithm<CryptoAlgorithmSHA1>();
-    registerAlgorithm<CryptoAlgorithmSHA224>();
-    registerAlgorithm<CryptoAlgorithmSHA256>();
-    registerAlgorithm<CryptoAlgorithmSHA384>();
-    registerAlgorithm<CryptoAlgorithmSHA512>();
+    registerAlgorithmWithAlternativeName<CryptoAlgorithmSHA1>();
+    registerAlgorithmWithAlternativeName<CryptoAlgorithmSHA224>();
+    registerAlgorithmWithAlternativeName<CryptoAlgorithmSHA256>();
+    registerAlgorithmWithAlternativeName<CryptoAlgorithmSHA384>();
+    registerAlgorithmWithAlternativeName<CryptoAlgorithmSHA512>();
     registerAlgorithm<CryptoAlgorithmEd25519>();
 }
 

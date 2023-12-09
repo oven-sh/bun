@@ -455,7 +455,8 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-lusockets \
 		-lcares \
 		-lzstd \
-		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
+		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
+		$(BUN_DEPS_OUT_DIR)/liblshpack.a
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
 
@@ -749,11 +750,21 @@ wasm: api mimalloc-wasm build-obj-wasm-small
 build-obj-safe:
 	$(ZIG) build obj -Doptimize=ReleaseSafe -Dcpu="$(CPU_TARGET)"
 
-UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
+UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1 -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=$(CXX_VERSION) -fno-exceptions -fno-rtti
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include -I$(ZLIB_INCLUDE_DIR)
 USOCKETS_DIR = $(BUN_DIR)/packages/bun-usockets
 USOCKETS_SRC_DIR = $(USOCKETS_DIR)/src
+
+
+LSHPACK_SRC_DIR = $(BUN_DEPS_DIR)/ls-hpack
+LSHPACK_CC_FLAGS = -DXXH_HEADER_NAME="<xxhash.h>"
+LSHPACK_LDFLAGS = -I$(LSHPACK_SRC_DIR) -I$(LSHPACK_SRC_DIR)/deps/xxhash
+
+lshpack:
+	rm -rf $(LSHPACK_SRC_DIR)/*.i $(LSHPACK_SRC_DIR)/*.bc $(LSHPACK_SRC_DIR)/*.o $(LSHPACK_SRC_DIR)/*.s $(LSHPACK_SRC_DIR)/*.ii $(LSHPACK_SRC_DIR)/*.s
+	cd $(LSHPACK_SRC_DIR) && $(CC_WITH_CCACHE) -I$(LSHPACK_SRC_DIR)  -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(LSHPACK_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/lshpack/src $(LSHPACK_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -c $(wildcard $(LSHPACK_SRC_DIR)/lshpack.c) $(wildcard $(LSHPACK_SRC_DIR)/deps/**/*.c)
+	cd $(LSHPACK_SRC_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/liblshpack.a $(LSHPACK_SRC_DIR)/*.{o,bc}
 
 usockets:
 	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s  $(BUN_DEPS_OUT_DIR)/libusockets.a
@@ -1246,6 +1257,7 @@ jsc-build-mac-compile-debug:
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
@@ -1895,7 +1907,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd base64
 
 
 .PHONY: vendor-without-check

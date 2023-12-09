@@ -41,7 +41,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(id);
 
@@ -53,7 +53,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(+id);
 

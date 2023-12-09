@@ -4,6 +4,7 @@ import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
 import { realpathSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { bunEnv, bunExe } from "harness";
 
 const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
 
@@ -417,4 +418,20 @@ it("Socket has a prototype", () => {
   function Connection2() {}
   require("util").inherits(Connection, Socket);
   require("util").inherits(Connection2, require("tls").TLSSocket);
+});
+
+it("unref should exit when no more work pending", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-unref-fixture.js")],
+    env: bunEnv,
+  });
+  expect(await process.exited).toBe(0);
+});
+
+it("socket should keep process alive if unref is not called", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
+    env: bunEnv,
+  });
+  expect(await process.exited).toBe(1);
 });

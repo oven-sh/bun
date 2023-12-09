@@ -3142,7 +3142,6 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     }
 
     if (isIdentifierStart(cursor.c) or cursor.c == '\\') {
-        defer r.len = @as(i32, @intCast(cursor.i));
         while (iter.next(&cursor)) {
             if (cursor.c == '\\') {
 
@@ -3160,9 +3159,12 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
                     }
                 }
             } else if (!isIdentifierContinue(cursor.c)) {
+                r.len = @as(i32, @intCast(cursor.i));
                 return r;
             }
         }
+
+        r.len = @as(i32, @intCast(cursor.i));
     }
 
     // const offset = @intCast(usize, loc.start);

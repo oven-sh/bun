@@ -46,6 +46,15 @@ for (let [gcTick, label] of [
         expect(exitCode2).toBe(1);
         gcTick();
       });
+
+      it("throws errors for invalid arguments", async () => {
+        expect(() => {
+          spawnSync({
+            cmd: ["echo", "hi"],
+            cwd: "./this-should-not-exist",
+          });
+        }).toThrow("No such file or directory");
+      });
     });
 
     describe("spawn", () => {
@@ -472,6 +481,15 @@ for (let [gcTick, label] of [
           childProc.send(parentMessage);
           gcTick();
         });
+      });
+
+      it("throws errors for invalid arguments", async () => {
+        expect(() => {
+          spawnSync({
+            cmd: ["echo", "hi"],
+            cwd: "./this-should-not-exist",
+          });
+        }).toThrow("No such file or directory");
       });
     });
   });

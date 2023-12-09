@@ -1,12 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const HTTPClient = @import("root").bun.http;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -86,6 +84,7 @@ pub const Request = struct {
     pub const getArrayBuffer = RequestMixin.getArrayBuffer;
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
+    pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
 
     pub export fn Request__getUWSRequest(
         this: *Request,
@@ -186,17 +185,6 @@ pub const Request = struct {
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("}");
-    }
-
-    pub fn fromRequestContext(ctx: *RequestContext) !Request {
-        if (comptime Environment.isWindows) unreachable;
-        var req = Request{
-            .url = bun.String.create(ctx.full_url),
-            .body = try InitRequestBodyValue(.{ .Null = {} }),
-            .method = ctx.method,
-            .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
-        };
-        return req;
     }
 
     pub fn mimeType(this: *const Request) string {

@@ -306,6 +306,14 @@ interface ImportMeta {
    */
   readonly file: string;
   /**
+   * The environment variables of the process
+   *
+   * ```ts
+   * import.meta.env === process.env
+   * ```
+   */
+  readonly env: import("bun").Env;
+  /**
    * Resolve a module ID the same as if you imported it
    *
    * On failure, throws a `ResolveMessage`
@@ -744,6 +752,14 @@ interface Process {
   constrainedMemory(): number | undefined;
 
   send(data: any): void;
+
+  report: {
+    getReport(): Object;
+    /**
+     * @TODO This is not implemented yet
+     */
+    writeReport(fileName?: string): void;
+  };
 }
 
 interface MemoryUsageObject {

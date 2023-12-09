@@ -1691,7 +1691,7 @@ it("Buffer.swap16", () => {
   const buf = Buffer.from("123", "utf-8");
   try {
     buf.swap16();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
   }
@@ -1717,7 +1717,7 @@ it("Buffer.swap32", () => {
   const buf = Buffer.from("12345", "utf-8");
   try {
     buf.swap32();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
   }
@@ -1743,7 +1743,7 @@ it("Buffer.swap64", () => {
   const buf = Buffer.from("123456789", "utf-8");
   try {
     buf.swap64();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
   }

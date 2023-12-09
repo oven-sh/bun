@@ -5,6 +5,7 @@
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
+    macro(Glob) \
     macro(MD4) \
     macro(MD5) \
     macro(SHA1) \

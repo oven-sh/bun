@@ -47,6 +47,7 @@ await write(destination, text);
 const packageJSON = {
   name: process.env.PACKAGE_NAME || "bun-types",
   version: BUN_VERSION,
+  license: "MIT",
   description:
     "Type definitions for Bun, an incredibly fast JavaScript runtime",
   types: "types.d.ts",

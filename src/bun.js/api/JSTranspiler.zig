@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const http = @import("../../bun_dev_http_server.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
@@ -50,6 +49,7 @@ arena: @import("root").bun.ArenaAllocator,
 transpiler_options: TranspilerOptions,
 scan_pass_result: ScanPassResult,
 buffer_writer: ?JSPrinter.BufferWriter = null,
+log_level: logger.Log.Level = .err,
 
 const default_transform_options: Api.TransformOptions = brk: {
     var opts = std.mem.zeroes(Api.TransformOptions);

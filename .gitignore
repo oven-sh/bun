@@ -136,6 +136,7 @@ make-dev-stats.csv
 .uuid
 tsconfig.tsbuildinfo
 
+test/js/bun/glob/fixtures
 *.lib
 *.pdb
 CMakeFiles

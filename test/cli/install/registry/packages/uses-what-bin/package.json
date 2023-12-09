@@ -1,0 +1,70 @@
+{
+	"name": "uses-what-bin",
+	"versions": {
+		"1.0.0": {
+			"name": "uses-what-bin",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "what-bin"
+			},
+			"dependencies": {
+				"what-bin": "1.0.0"
+			},
+			"gitHead": "d589fe872eccdb7010113a2daaaff35427dd537d",
+			"_id": "uses-what-bin@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-87/Emb1Hh7HtsMMU1yXXhI/+/5opQFbnqtR0Yq/1rgr7jp4mzkMU8wQBiYtS8C45GJY6YfdIqq1Dci+0ivJB2g==",
+				"shasum": "3ac1d434a7facff343a0b33339ba4487b6e62bd3",
+				"tarball": "http://localhost:4873/uses-what-bin/-/uses-what-bin-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.5.0": {
+			"name": "uses-what-bin",
+			"version": "1.5.0",
+			"scripts": {
+				"install": "what-bin"
+			},
+			"dependencies": {
+				"what-bin": "1.5.0"
+			},
+			"gitHead": "d589fe872eccdb7010113a2daaaff35427dd537d",
+			"_id": "uses-what-bin@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-EI+uMDESinRewWTFhsyzibkzFV+j5LmLM7T1jEpb2X82TmzhSQRzCBTBURflt5dGvNEIY7l563P9Su01Tpe++g==",
+				"shasum": "78dea365c24435c0faa99dca78ed44c42273b84a",
+				"tarball": "http://localhost:4873/uses-what-bin/-/uses-what-bin-1.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-16T05:45:18.921Z",
+		"created": "2023-11-16T05:45:06.141Z",
+		"1.0.0": "2023-11-16T05:45:06.141Z",
+		"1.5.0": "2023-11-16T05:45:18.921Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"uses-what-bin-1.0.0.tgz": {
+			"shasum": "3ac1d434a7facff343a0b33339ba4487b6e62bd3",
+			"version": "1.0.0"
+		},
+		"uses-what-bin-1.5.0.tgz": {
+			"shasum": "78dea365c24435c0faa99dca78ed44c42273b84a",
+			"version": "1.5.0"
+		}
+	},
+	"_rev": "",
+	"_id": "uses-what-bin",
+	"readme": "ERROR: No README data found!"
+}

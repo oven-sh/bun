@@ -76,3 +76,10 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/ls-hpack"]
+path = src/deps/ls-hpack
+url = https://github.com/litespeedtech/ls-hpack.git
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false

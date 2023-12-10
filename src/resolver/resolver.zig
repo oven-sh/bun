@@ -359,6 +359,7 @@ pub const MatchResult = struct {
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     dir_info: ?*DirInfo = null,
     module_type: options.ModuleType = .unknown,
+    is_external: bool = false,
 
     pub const Union = union(enum) {
         not_found: void,
@@ -1213,6 +1214,7 @@ pub const Resolver = struct {
                                         .package_json = pkg,
                                         .jsx = r.opts.jsx,
                                         .module_type = _result.module_type,
+                                        .is_external = _result.is_external,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -1379,6 +1381,7 @@ pub const Resolver = struct {
                     result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
                     result.jsx = r.opts.jsx;
                     result.module_type = res.module_type;
+                    result.is_external = res.is_external;
 
                     if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                         return .{ .success = result };
@@ -1404,6 +1407,7 @@ pub const Resolver = struct {
                                             result.package_json = remapped.package_json;
                                             result.diff_case = remapped.diff_case;
                                             result.module_type = remapped.module_type;
+                                            result.is_external = remapped.is_external;
 
                                             result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                             return .{ .success = result };
@@ -2901,12 +2905,27 @@ pub const Resolver = struct {
             //     "imports": {
             //       "#fs": "node:fs"
             //     }
-            if (JSC.HardcodedModule.Aliases.get(esm_resolution.path, r.opts.target)) |builtin| {
-                return .{
-                    .success = .{
-                        .path_pair = .{ .primary = bun.fs.Path.init(builtin.path) },
-                    },
-                };
+            //
+            if (r.opts.mark_builtins_as_external) {
+                // Handle it for bunlding
+                if (r.isExternalPattern(esm_resolution.path)) {
+                    return .{
+                        .success = .{
+                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .is_external = true,
+                        },
+                    };
+                }
+            } else if (r.opts.target.isBun()) {
+                // Handle it for the runtime
+                if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
+                    return .{
+                        .success = .{
+                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .is_external = true,
+                        },
+                    };
+                }
             }
 
             return r.loadNodeModules(

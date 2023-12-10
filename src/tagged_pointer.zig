@@ -123,11 +123,11 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         if (std.meta.trait.isIndexable(@TypeOf(Types))) TagTypeEnumWithTypeMap(Types) else TagTypeStructWithTypeMap(Types);
 
     const TagType: type = result.tag_type;
-    const type_map: TypeMap(Types) = result.ty_map;
 
     return struct {
         pub const Tag = TagType;
         pub const TagInt = TagSize;
+        pub const type_map: TypeMap(Types) = result.ty_map;
         repr: TaggedPointer,
 
         pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };

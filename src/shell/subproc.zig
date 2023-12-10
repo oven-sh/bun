@@ -339,6 +339,7 @@ pub const ShellSubprocess = struct {
                 .allocator = allocator,
                 .buffer = &out.internal_buffer,
             };
+            out.fifo.auto_sizer = &out.auto_sizer.?;
         }
 
         pub fn closeFifoSignalCmd(this: *BufferedOutput) void {

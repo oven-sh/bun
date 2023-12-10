@@ -1623,6 +1623,13 @@ pub const AST = struct {
 
         pub const Tag = enum(u8) { simple, compound };
 
+        pub fn atomsLen(this: *const Atom) u32 {
+            return switch (this.*) {
+                .simple => 1,
+                .compound => @intCast(this.compound.atoms.len),
+            };
+        }
+
         pub fn new_simple(atom: SimpleAtom) Atom {
             return .{ .simple = atom };
         }
@@ -1666,6 +1673,13 @@ pub const AST = struct {
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
                 .asterisk, .double_asterisk => true,
+                else => false,
+            };
+        }
+
+        pub fn mightNeedIO(this: SimpleAtom) bool {
+            return switch (this) {
+                .asterisk, .double_asterisk, .cmd_subst => true,
                 else => false,
             };
         }

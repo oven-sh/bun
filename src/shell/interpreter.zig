@@ -166,9 +166,7 @@ pub const Interpreter = struct {
     /// touch WHY.json
     /// echo $FOO # prints `foo.json bar.json WHY.json`
     /// ```
-    ///
-    /// This means that computing the expansion for assigning a var does not
-    /// need to be non-blocking since there will be no-IO (glob expansion)
+    /// FIXME: support cmd substitution (reequires IO)
     fn assignVar(this: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) void {
         // All the extra allocations needed to calculate the final resultant value are done in a temp arena,
         // then the final result is copied into the interpreter's arena.
@@ -206,6 +204,357 @@ const ExpansionOpts = struct {
     single: bool = false,
 };
 
+/// If a word contains command substitution or glob expansion syntax then it
+/// needs to do IO, so we have to keep track of the state for that.
+pub const Expansion = struct {
+    base: State,
+    node: *const ast.Atom,
+    parent: ParentPtr,
+
+    word_idx: u32,
+    current_out: std.ArrayList(u8),
+    state: enum {
+        normal,
+        braces,
+        glob,
+        done,
+        err,
+    },
+    child_state: union(enum) {
+        idle,
+        cmd_subst: struct {
+            cmd: *Cmd,
+        },
+        // TODO
+        glob: struct {},
+    },
+    out: Result,
+    out_idx: u32,
+
+    const ParentPtr = StatePtrUnion(.{
+        Cmd,
+        // FIXME support assigns here too
+    });
+
+    const ChildPtr = StatePtrUnion(.{
+        Cmd,
+    });
+
+    const Result = union(enum) {
+        array_of_slice: *std.ArrayList([:0]const u8),
+        array_of_ptr: *std.ArrayList(?[*:0]const u8),
+    };
+
+    pub fn init(
+        interpreter: *Interpreter,
+        expansion: *Expansion,
+        node: *const ast.Atom,
+        parent: ParentPtr,
+        out_result: Result,
+    ) void {
+        // var expansion = interpreter.allocator.create(Expansion) catch bun.outOfMemory();
+        expansion.node = node;
+        expansion.base = .{ .kind = .expansion, .interpreter = interpreter };
+        expansion.parent = parent;
+
+        expansion.word_idx = 0;
+        expansion.state = .normal;
+        expansion.child_state = .idle;
+        expansion.out = out_result;
+        expansion.out_idx = 0;
+    }
+
+    pub fn start(this: *Expansion) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.child_state == .idle);
+            std.debug.assert(this.word_idx == 0);
+        }
+
+        this.state = .normal;
+        this.current_out = std.ArrayList(u8).init(this.base.interpreter.allocator);
+        this.next();
+    }
+
+    pub fn next(this: *Expansion) void {
+        while (!(this.state == .done or this.state == .err)) {
+            switch (this.state) {
+                .normal => {
+                    // initialize
+                    if (this.word_idx == 0) {
+                        var has_unknown = false;
+                        // + 1 for sentinel
+                        const string_size = this.expansionSizeHint(this.node, &has_unknown);
+                        this.current_out.ensureUnusedCapacity(string_size + 1) catch bun.outOfMemory();
+                    }
+
+                    while (this.word_idx < this.node.atomsLen()) {
+                        const is_cmd_subst = this.expandVarAndCmdSubst(this.word_idx);
+                        // yield execution
+                        if (is_cmd_subst) return;
+                    }
+
+                    if (this.word_idx >= this.node.atomsLen()) {
+                        // NOTE brace expansion + cmd subst has weird behaviour we don't support yet, ex:
+                        // echo $(echo a b c){1,2,3}
+                        // >> a b c1 a b c2 a b c3
+                        if (this.node.has_brace_expansion()) {
+                            this.state = .braces;
+                            continue;
+                        }
+
+                        if (this.node.has_glob_expansion()) {
+                            this.state = .glob;
+                            continue;
+                        }
+                        this.current_out.append(0) catch bun.outOfMemory();
+                        this.pushResult(&this.current_out);
+                        this.state = .done;
+                        continue;
+                    }
+
+                    // Shouldn't fall through to here
+                    std.debug.assert(this.word_idx >= this.node.atomsLen());
+                    return;
+                },
+                .braces => {
+                    var arena = Arena.init(this.base.interpreter.allocator);
+                    defer arena.deinit();
+                    var arena_allocator = arena.allocator();
+                    const brace_str = this.current_out.items[0..];
+                    // FIXME some of these errors aren't alloc errors for example lexer parser errors
+                    var lexer_output = Braces.Lexer.tokenize(arena_allocator, brace_str) catch |e| OOM(e);
+                    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |e| OOM(e);
+
+                    var expanded_strings = brk: {
+                        const stack_max = comptime 16;
+                        comptime {
+                            std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+                        }
+                        var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, this.base.interpreter.allocator);
+                        var expanded_strings = maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
+                        break :brk expanded_strings;
+                    };
+
+                    for (0..expansion_count) |i| {
+                        expanded_strings[i] = std.ArrayList(u8).init(this.base.interpreter.allocator);
+                    }
+
+                    Braces.expand(
+                        arena_allocator,
+                        lexer_output.tokens.items[0..],
+                        expanded_strings,
+                        lexer_output.contains_nested,
+                    ) catch bun.outOfMemory();
+
+                    this.outEnsureUnusedCapacity(expansion_count);
+
+                    // Add sentinel values
+                    for (0..expansion_count) |i| {
+                        expanded_strings[i].append(0) catch bun.outOfMemory();
+                        this.pushResult(&expanded_strings[i]);
+                    }
+
+                    if (this.node.has_glob_expansion()) {
+                        @panic("Support glob expansion after brace expansion");
+                    }
+
+                    this.state = .done;
+                },
+                .glob => {
+                    @panic("TODO");
+                },
+                .done, .err => unreachable,
+            }
+        }
+
+        if (this.state == .done) {
+            this.parent.childDone(this, 0);
+        }
+
+        // FIXME handle error state? technically expansion can never fail, I think
+    }
+
+    pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
+        switch (this.node.*) {
+            .simple => |*simp| {
+                const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out);
+                if (is_cmd_subst) {
+                    var io: IO = .{};
+                    io.stdout = .pipe;
+                    var cmd = Cmd.init(this.base.interpreter, &simp.cmd_subst.cmd, Cmd.ParentPtr.init(this), io);
+                    this.child_state = .{
+                        .cmd_subst = .{
+                            .cmd = cmd,
+                        },
+                    };
+                    cmd.start();
+                    return true;
+                } else {
+                    this.word_idx += 1;
+                }
+            },
+            .compound => |cmp| {
+                for (cmp.atoms[start_word_idx..]) |*simple_atom| {
+                    const is_cmd_subst = this.expandSimpleNoIO(simple_atom, &this.current_out);
+                    if (is_cmd_subst) {
+                        var io: IO = .{};
+                        io.stdout = .pipe;
+                        var cmd = Cmd.init(this.base.interpreter, &simple_atom.cmd_subst.cmd, Cmd.ParentPtr.init(this), io);
+                        this.child_state = .{
+                            .cmd_subst = .{
+                                .cmd = cmd,
+                            },
+                        };
+                        cmd.start();
+                        return true;
+                    } else {
+                        this.word_idx += 1;
+                        this.child_state = .idle;
+                    }
+                }
+            },
+        }
+
+        return false;
+    }
+
+    fn childDone(this: *Expansion, child: ChildPtr, exit_code: u8) void {
+        _ = exit_code;
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.state != .done and this.state != .err);
+            std.debug.assert(this.child_state != .idle);
+        }
+
+        if (child.ptr.is(Cmd)) {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.child_state == .cmd_subst);
+            }
+
+            var stdout = this.child_state.cmd_subst.cmd.buffered_closed.stdout.?.state.closed.slice();
+            this.current_out.appendSlice(stdout) catch bun.outOfMemory();
+            // FIXME check if output is empty, trim output, also I think it needs to be split into muliple words?
+
+            this.word_idx += 1;
+            this.child_state = .idle;
+            child.deinit();
+            this.next();
+            return;
+        }
+
+        unreachable;
+    }
+
+    pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8)) bool {
+        switch (atom.*) {
+            .Text => |txt| {
+                str_list.appendSlice(txt) catch bun.outOfMemory();
+            },
+            .Var => |label| {
+                str_list.appendSlice(this.expandVar(label)) catch bun.outOfMemory();
+            },
+            .asterisk => {
+                str_list.append('*') catch bun.outOfMemory();
+            },
+            .double_asterisk => {
+                str_list.appendSlice("**") catch bun.outOfMemory();
+            },
+            .brace_begin => {
+                str_list.append('{') catch bun.outOfMemory();
+            },
+            .brace_end => {
+                str_list.append('}') catch bun.outOfMemory();
+            },
+            .comma => {
+                str_list.append(',') catch bun.outOfMemory();
+            },
+            .cmd_subst => {
+                // if the command substution is comprised of solely shell variable assignments then it should do nothing
+                if (atom.cmd_subst.* == .assigns) return false;
+                return true;
+            },
+        }
+        return false;
+    }
+
+    pub fn appendSlice(this: *Expansion, buf: *std.ArrayList(u8), slice: []const u8) void {
+        _ = this;
+        buf.appendSlice(slice) catch bun.outOfMemory();
+    }
+
+    pub fn pushResult(this: *Expansion, buf: *std.ArrayList(u8)) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(buf.items.len > 0 and buf.items[buf.items.len - 1] == 0);
+        }
+
+        if (this.out == .array_of_slice) {
+            this.out.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
+            return;
+        }
+
+        this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
+    }
+
+    fn expandVar(this: *const Expansion, label: []const u8) [:0]const u8 {
+        const value = this.base.interpreter.shell_env.get(label) orelse brk: {
+            break :brk this.base.interpreter.export_env.get(label) orelse return "";
+        };
+        return value;
+    }
+
+    fn currentWord(this: *Expansion) *const ast.SimpleAtom {
+        return switch (this.node) {
+            .simple => &this.node.simple,
+            .compound => &this.node.compound.atoms[this.word_idx],
+        };
+    }
+
+    /// Returns the size of the atom when expanded.
+    /// If the calculation cannot be computed trivially (cmd substitution, brace expansion), this value is not accurate and `has_unknown` is set to true
+    fn expansionSizeHint(this: *const Expansion, atom: *const ast.Atom, has_unknown: *bool) usize {
+        return switch (@as(ast.Atom.Tag, atom.*)) {
+            .simple => this.expansionSizeHintSimple(&atom.simple, has_unknown),
+            .compound => {
+                if (atom.compound.brace_expansion_hint) {
+                    has_unknown.* = true;
+                }
+
+                var out: usize = 0;
+                for (atom.compound.atoms) |*simple| {
+                    out += this.expansionSizeHintSimple(simple, has_unknown);
+                }
+                return out;
+            },
+        };
+    }
+
+    fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
+        return switch (simple.*) {
+            .Text => |txt| txt.len,
+            .Var => |label| this.expandVar(label).len,
+            .brace_begin, .brace_end, .comma, .asterisk => 1,
+            .double_asterisk => 2,
+            .cmd_subst => |subst| {
+                if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
+                    return 0;
+                }
+                has_cmd_subst.* = true;
+                return 0;
+            },
+        };
+    }
+
+    fn outEnsureUnusedCapacity(this: *Expansion, additional: usize) void {
+        switch (this.out) {
+            .array_of_ptr => {
+                this.out.array_of_ptr.ensureUnusedCapacity(additional) catch bun.outOfMemory();
+            },
+            .array_of_slice => {
+                this.out.array_of_slice.ensureUnusedCapacity(additional) catch bun.outOfMemory();
+            },
+        }
+    }
+};
+
 /// This meant to be given an arena allocator, so it does not need to worry about deinitialization.
 /// This needs to be refactored if we want to mimic behaviour closer to bash.
 /// In the shell lexer we strip escaping tokens (single/double quotes, backslashes) because it makes operating on tokens easier.
@@ -213,7 +562,7 @@ const ExpansionOpts = struct {
 pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
     const Out = if (!opts.for_spawn) [:0]const u8 else [*:0]const u8;
 
-    const Expansion = switch (opts.single) {
+    const ExpansionResult = switch (opts.single) {
         true => struct {
             value: ?Out = null,
             pub fn append(this: *@This(), slice: [:0]const u8) !void {
@@ -255,11 +604,11 @@ pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
     return struct {
         interp: *Interpreter,
         arena: Allocator,
-        out: Expansion,
+        out: ExpansionResult,
 
         const This = @This();
 
-        fn init(interp: *Interpreter, arena: Allocator, expand_out: if (!opts.single) *Expansion.Arr else void) @This() {
+        fn init(interp: *Interpreter, arena: Allocator, expand_out: if (!opts.single) *ExpansionResult.Arr else void) @This() {
             if (comptime opts.single) return .{
                 .interp = interp,
                 .arena = arena,
@@ -517,16 +866,18 @@ const StateKind = enum(u8) {
     cmd,
     cond,
     pipeline,
+    expansion,
 
-    pub fn toStruct(comptime this: StateKind) type {
-        return switch (this) {
-            .script => Script,
-            .stmt => Stmt,
-            .cmd => Cmd,
-            .cond => Cond,
-            .pipeline => Pipeline,
-        };
-    }
+    // pub fn toStruct(comptime this: StateKind) type {
+    //     return switch (this) {
+    //         .script => Script,
+    //         .stmt => Stmt,
+    //         .cmd => Cmd,
+    //         .cond => Cond,
+    //         .pipeline => Pipeline,
+    //         .expansion
+    //     };
+    // }
 };
 
 const IO = struct {
@@ -625,8 +976,8 @@ pub const Script = struct {
 const AssignChild = struct {
     const ParentPtr = StatePtrUnion(.{
         Stmt,
-        // Cond,
-        // Pipeline,
+        Cond,
+        Pipeline,
     });
 
     pub inline fn deinit(this: AssignChild) void {
@@ -637,21 +988,22 @@ const AssignChild = struct {
         _ = this;
     }
 
-    pub fn execStmt(
+    pub fn exec(
         interpreter: *Interpreter,
-        parent: anytype,
+        parent: ParentPtr,
         assigns: []const ast.Assign,
+        assign_ctx: AssignCtx,
     ) void {
         for (assigns) |*assign| {
-            interpreter.assignVar(assign, .shell);
+            interpreter.assignVar(assign, assign_ctx);
         }
         var assign_child: AssignChild = .{};
-        ParentPtr.init(parent).childDone(&assign_child, 0);
+        parent.childDone(&assign_child, 0);
     }
 
-    pub fn execNoCallParent(interpreter: *Interpreter, assigns: []const ast.Assign) void {
+    pub fn execNoCallParent(interpreter: *Interpreter, assigns: []const ast.Assign, assign_ctx: AssignCtx) void {
         for (assigns) |*assign| {
-            interpreter.assignVar(assign, .shell);
+            interpreter.assignVar(assign, assign_ctx);
         }
     }
 };
@@ -717,7 +1069,7 @@ pub const Stmt = struct {
                 pipeline.start();
             },
             .assign => |assigns| {
-                AssignChild.execStmt(this.base.interpreter, this, assigns);
+                AssignChild.exec(this.base.interpreter, AssignChild.ParentPtr.init(this), assigns, .shell);
             },
         }
     }
@@ -739,7 +1091,7 @@ pub const Stmt = struct {
                 this.currently_executing = ChildPtr.init(cond);
             },
             .assign => |assigns| {
-                AssignChild.execStmt(this.base.interpreter, this, assigns);
+                AssignChild.exec(this.base.interpreter, AssignChild.ParentPtr.init(this), assigns, .shell);
             },
             else => @panic("TODO"),
         }
@@ -768,6 +1120,7 @@ pub const Cond = struct {
         Cmd,
         Pipeline,
         Cond,
+        AssignChild,
     });
 
     const ParentPtr = StatePtrUnion(.{
@@ -805,8 +1158,8 @@ pub const Cond = struct {
 
         this.currently_executing = this.makeChild(true);
         if (this.currently_executing == null) {
-            this.left = 0;
             this.currently_executing = this.makeChild(false);
+            this.left = 0;
         }
         var child = this.currently_executing.?.as(Cmd);
         child.start();
@@ -894,6 +1247,7 @@ pub const Pipeline = struct {
 
     const ChildPtr = StatePtrUnion(.{
         Cmd,
+        AssignChild,
     });
 
     const CmdOrResult = union(enum) {
@@ -1067,26 +1421,86 @@ pub const Pipeline = struct {
 pub const Cmd = struct {
     base: State,
     node: *const ast.Cmd,
-    cmd: ?*Subprocess,
     parent: ParentPtr,
+
+    spawn_arena: Arena,
+    args: std.ArrayList(?[*:0]const u8),
+
+    /// Expansion state
+    expansion: Expansion,
+    name_and_args_idx: u32,
+
+    cmd: ?*Subprocess,
     exit_code: ?u8,
     io: IO,
     buffered_closed: BufferedIoClosed = .{},
 
     const BufferedIoClosed = struct {
-        stdin: ?bool = null,
-        stdout: ?bool = null,
-        stderr: ?bool = null,
+        stdin: ?BufferedIoState = null,
+        stdout: ?BufferedIoState = null,
+        stderr: ?BufferedIoState = null,
 
-        fn allClosed(this: BufferedIoClosed) bool {
-            return (this.stdin orelse true) and
-                (this.stdout orelse true) and
-                (this.stderr orelse true);
+        const BufferedIoState = struct {
+            state: union(enum) {
+                open,
+                closed: bun.ByteList,
+            } = .open,
+            owned: bool = false,
+
+            pub fn deinit(this: *BufferedIoState, jsc_vm_allocator: Allocator) void {
+                if (this.state == .closed and this.owned) {
+                    var list = bun.ByteList.listManaged(this.state.closed, jsc_vm_allocator);
+                    list.deinit();
+                    this.state.closed = .{};
+                }
+            }
+
+            pub fn closed(this: *BufferedIoState) bool {
+                return this.state == .closed;
+            }
+        };
+
+        fn deinit(this: *BufferedIoClosed, jsc_vm_allocator: Allocator) void {
+            if (this.stdin) |*io| {
+                io.deinit(jsc_vm_allocator);
+            }
+
+            if (this.stdout) |*io| {
+                io.deinit(jsc_vm_allocator);
+            }
+
+            if (this.stderr) |*io| {
+                io.deinit(jsc_vm_allocator);
+            }
         }
 
-        fn close(this: *BufferedIoClosed, comptime io: enum { stdout, stderr, stdin }) void {
-            if (@field(this, @tagName(io)) != null) {
-                @field(this, @tagName(io)) = true;
+        fn allClosed(this: *BufferedIoClosed) bool {
+            return (if (this.stdin) |*stdin| stdin.closed() else true) and
+                (if (this.stdout) |*stdout| stdout.closed() else true) and
+                (if (this.stderr) |*stderr| stderr.closed() else true);
+        }
+
+        fn close(this: *BufferedIoClosed, io: union(enum) { stdout: *Subprocess.Readable, stderr: *Subprocess.Readable, stdin }) void {
+            switch (io) {
+                .stdout => {
+                    if (this.stdout) |*stdout| {
+                        var readable = io.stdout;
+                        stdout.state = .{ .closed = readable.pipe.buffer.internal_buffer };
+                        io.stdout.pipe.buffer.internal_buffer = .{};
+                    }
+                },
+                .stderr => {
+                    if (this.stderr) |*stderr| {
+                        var readable = io.stderr;
+                        stderr.state = .{ .closed = readable.pipe.buffer.internal_buffer };
+                        io.stderr.pipe.buffer.internal_buffer = .{};
+                    }
+                },
+                .stdin => {
+                    if (this.stdin) |*stdin| {
+                        stdin.state = .{ .closed = .{} };
+                    }
+                },
             }
         }
 
@@ -1096,9 +1510,9 @@ pub const Cmd = struct {
 
         fn fromStdio(io: *const [3]Subprocess.Stdio) BufferedIoClosed {
             return .{
-                .stdin = if (io[bun.STDIN_FD].isPiped()) false else null,
-                .stdout = if (io[bun.STDOUT_FD].isPiped()) false else null,
-                .stderr = if (io[bun.STDERR_FD].isPiped()) false else null,
+                .stdin = if (io[bun.STDIN_FD].isPiped()) .{ .owned = io[bun.STDIN_FD] == .pipe } else null,
+                .stdout = if (io[bun.STDOUT_FD].isPiped()) .{ .owned = io[bun.STDOUT_FD] == .pipe } else null,
+                .stderr = if (io[bun.STDERR_FD].isPiped()) .{ .owned = io[bun.STDERR_FD] == .pipe } else null,
             };
         }
     };
@@ -1107,18 +1521,14 @@ pub const Cmd = struct {
         Stmt,
         Cond,
         Pipeline,
+        Expansion,
         // TODO
         // .subst = void,
     });
 
-    pub fn start(this: *Cmd) void {
-        log("cmd start {x}", .{@intFromPtr(this)});
-        this.initSubproc() catch |err| {
-            // FIXME this is bad
-            std.debug.print("THIS THE ERROR: {any}\n", .{err});
-            bun.outOfMemory();
-        };
-    }
+    const ChildPtr = StatePtrUnion(.{
+        Expansion,
+    });
 
     pub fn isSubproc(this: *Cmd) bool {
         _ = this;
@@ -1134,10 +1544,64 @@ pub const Cmd = struct {
         cmd.node = node;
         cmd.cmd = null;
         cmd.parent = parent;
+
+        cmd.spawn_arena = Arena.init(interpreter.allocator);
+        cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory();
+
         cmd.exit_code = null;
         cmd.io = io;
         cmd.buffered_closed = .{};
+
+        Expansion.init(
+            interpreter,
+            &cmd.expansion,
+            &node.name_and_args[0],
+            Expansion.ParentPtr.init(cmd),
+            .{
+                .array_of_ptr = &cmd.args,
+            },
+        );
+        cmd.name_and_args_idx = 0;
+
         return cmd;
+    }
+
+    pub fn start(this: *Cmd) void {
+        log("cmd start {x}", .{@intFromPtr(this)});
+        this.expansion.start();
+    }
+
+    pub fn run(this: *Cmd) void {
+        this.initSubproc() catch |err| {
+            // FIXME this is bad
+            std.debug.print("THIS THE ERROR: {any}\n", .{err});
+            bun.outOfMemory();
+        };
+    }
+
+    pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: u8) void {
+        _ = exit_code;
+        if (child.ptr.is(Expansion)) {
+            this.name_and_args_idx += 1;
+            if (this.name_and_args_idx >= this.node.name_and_args.len) {
+                this.run();
+                return;
+            }
+
+            // FIXME deinit expansion
+            Expansion.init(
+                this.base.interpreter,
+                &this.expansion,
+                &this.node.name_and_args[this.name_and_args_idx],
+                Expansion.ParentPtr.init(this),
+                .{
+                    .array_of_ptr = &this.args,
+                },
+            );
+            this.expansion.start();
+            return;
+        }
+        unreachable;
     }
 
     fn initSubproc(this: *Cmd) !void {
@@ -1170,28 +1634,15 @@ pub const Cmd = struct {
         spawn_args.cmd_parent = this;
 
         const args = args: {
-            // TODO optimization: allocate into one buffer of chars and create argv from slicing into that
-            // TODO optimization: have args list on the stack and fallback to array
-            var args = try std.ArrayList(?[*:0]const u8).initCapacity(arena_allocator, this.node.name_and_args.len);
-            var expander = ExpansionCtx(.{ .for_spawn = true }).init(
-                this.base.interpreter,
-                arena_allocator,
-                &args,
-            );
+            try this.args.append(null);
 
-            for (this.node.name_and_args, 0..) |*arg_atom, i| {
-                _ = i;
-                try expander.evalNoBraceExpansion(arg_atom);
-            }
-            try args.append(null);
-
-            for (args.items) |maybe_arg| {
+            for (this.args.items) |maybe_arg| {
                 if (maybe_arg) |arg| {
                     log("ARG: {s}\n", .{arg});
                 }
             }
 
-            const first_arg = args.items[0] orelse {
+            const first_arg = this.args.items[0] orelse {
                 this.base.interpreter.global.throwInvalidArguments("No command specified", .{});
                 return ShellError.Process;
             };
@@ -1209,9 +1660,9 @@ pub const Cmd = struct {
                 this.base.interpreter.global.throw("out of memory", .{});
                 return ShellError.Process;
             };
-            args.items[0] = duped;
+            this.args.items[0] = duped;
 
-            break :args args;
+            break :args this.args;
         };
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
 
@@ -1286,7 +1737,15 @@ pub const Cmd = struct {
         const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
         subproc.ref();
         this.cmd = subproc;
-        this.cmd.?.stdout.pipe.buffer.watch();
+
+        // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {
+        //     this.cmd.?.stdout.pipe.buffer.watch();
+        // }
+    }
+
+    pub fn expectStdoutSlice(this: *Cmd) []const u8 {
+        if (this.cmd.?.stdout.pipe != .buffer) @panic("FIXME support stream stdout");
+        return this.cmd.?.stdout.pipe.buffer.internal_buffer.slice();
     }
 
     pub fn hasFinished(this: *Cmd) bool {
@@ -1297,7 +1756,8 @@ pub const Cmd = struct {
         log("cmd exit code={d} ({x})", .{ exit_code, @intFromPtr(this) });
         this.exit_code = exit_code;
 
-        if (this.hasFinished()) {
+        const has_finished = this.hasFinished();
+        if (has_finished) {
             this.parent.childDone(this, exit_code);
         }
         // } else {
@@ -1340,6 +1800,7 @@ pub const Cmd = struct {
             this.cmd = null;
         }
 
+        this.buffered_closed.deinit(this.base.interpreter.global.bunVM().allocator);
         this.base.interpreter.allocator.destroy(this);
     }
 
@@ -1357,16 +1818,16 @@ pub const Cmd = struct {
         log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
         assert(this.cmd != null, "bufferedOutputCloseStdout called while cmd is null");
         var subproc = this.cmd.?;
+        this.buffered_closed.close(.{ .stdout = &subproc.stdout });
         subproc.closeIO(.stdout);
-        this.buffered_closed.close(.stdout);
     }
 
     pub fn bufferedOutputCloseStderr(this: *Cmd) void {
         log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
         assert(this.cmd != null, "bufferedOutputCloseStderr called while cmd is null");
         var subproc = this.cmd.?;
+        this.buffered_closed.close(.{ .stderr = &subproc.stderr });
         subproc.closeIO(.stderr);
-        this.buffered_closed.close(.stderr);
     }
 };
 
@@ -1515,4 +1976,8 @@ const CmdEnvIter = struct {
             .value = .{ .val = entry.value_ptr.* },
         };
     }
+};
+
+const lol = struct {
+    const pipeline_t = struct {};
 };

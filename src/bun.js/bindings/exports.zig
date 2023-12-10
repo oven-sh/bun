@@ -996,7 +996,7 @@ pub const ZigConsoleClient = struct {
             var opts = vals[1];
             if (opts.isObject()) {
                 if (opts.get(global, "depth")) |depth_prop| {
-                    if (depth_prop.isNumber() or depth_prop.isBigInt())
+                    if (depth_prop.isInt32() or depth_prop.isNumber() or depth_prop.isBigInt())
                         print_options.max_depth = depth_prop.toU16()
                     else if (depth_prop.isNull())
                         print_options.max_depth = std.math.maxInt(u16);
@@ -2222,6 +2222,16 @@ pub const ZigConsoleClient = struct {
                 },
                 .Array => {
                     const len = @as(u32, @truncate(value.getLength(this.globalThis)));
+
+                    // TODO: DerivedArray does not get passed along in JSType, and it's not clear why.
+                    // if (jsType == .DerivedArray) {
+                    //     var printable = value.className(this.globalThis);
+
+                    //     if (!printable.isEmpty()) {
+                    //         writer.print(comptime Output.prettyFmt("{}<r><d>(<r><yellow><r>{d}<r><d>)<r> ", enable_ansi_colors), .{ printable, len });
+                    //     }
+                    // }
+
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -2237,14 +2247,13 @@ pub const ZigConsoleClient = struct {
 
                         this.addForNewLine(2);
 
-                        var ref = value.asObjectRef();
-
                         var prev_quote_strings = this.quote_strings;
                         this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
+                        var empty_start: ?u32 = null;
+                        first: {
+                            const element = value.getDirectIndex(this.globalThis, 0);
 
-                        {
-                            const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, 0, null));
                             const tag = Tag.getAdvanced(element, this.globalThis, .{ .hide_global = true });
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
@@ -2259,6 +2268,11 @@ pub const ZigConsoleClient = struct {
                                 writer.writeAll("[ ");
                             }
 
+                            if (element.isEmpty()) {
+                                empty_start = 0;
+                                break :first;
+                            }
+
                             this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
                             if (tag.cell.isStringLike()) {
@@ -2269,7 +2283,36 @@ pub const ZigConsoleClient = struct {
                         }
 
                         var i: u32 = 1;
+
                         while (i < len) : (i += 1) {
+                            const element = value.getDirectIndex(this.globalThis, i);
+                            if (element.isEmpty()) {
+                                if (empty_start == null) {
+                                    empty_start = i;
+                                }
+                                continue;
+                            }
+
+                            if (empty_start) |empty| {
+                                const empty_count = i - empty;
+                                if (empty_count == 1) {
+                                    if (i > 1) {
+                                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                                        if (this.ordered_properties or this.goodTimeForANewLine()) {
+                                            writer.writeAll("\n");
+                                            this.writeIndent(Writer, writer_) catch unreachable;
+                                        } else {
+                                            writer.writeAll(" ");
+                                        }
+                                    }
+
+                                    writer.print(comptime Output.prettyFmt("<r><d>empty item<r>", enable_ansi_colors), .{});
+                                } else {
+                                    writer.print(comptime Output.prettyFmt("<r><d>{d} x empty items<r>", enable_ansi_colors), .{empty_count});
+                                }
+                                empty_start = null;
+                            }
+
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             if (this.ordered_properties or this.goodTimeForANewLine()) {
                                 writer.writeAll("\n");
@@ -2278,7 +2321,6 @@ pub const ZigConsoleClient = struct {
                                 writer.writeAll(" ");
                             }
 
-                            const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
                             const tag = Tag.getAdvanced(element, this.globalThis, .{ .hide_global = true });
 
                             this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
@@ -2287,6 +2329,27 @@ pub const ZigConsoleClient = struct {
                                 if (comptime enable_ansi_colors) {
                                     writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                 }
+                            }
+                        }
+
+                        if (empty_start) |empty| {
+                            if (empty > 0) {
+                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                                if (this.ordered_properties or this.goodTimeForANewLine()) {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                } else {
+                                    writer.writeAll(" ");
+                                }
+                            }
+
+                            empty_start = null;
+
+                            const empty_count = len - empty;
+                            if (empty_count == 1) {
+                                writer.print(comptime Output.prettyFmt("<r><d>empty item<r>", enable_ansi_colors), .{});
+                            } else {
+                                writer.print(comptime Output.prettyFmt("<r><d>{d} x empty items<r>", enable_ansi_colors), .{empty_count});
                             }
                         }
                     }

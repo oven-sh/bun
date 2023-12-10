@@ -1,1 +1,1 @@
-console.log(<div key={"123"} {...props} />);
+console.log(<div {...props} key={"123"} />);

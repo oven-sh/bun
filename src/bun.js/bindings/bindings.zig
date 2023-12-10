@@ -3415,6 +3415,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.JSObject.getIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
+    pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return JSC__JSValue__getDirectIndex(this, globalThis, i);
+    }
+
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
@@ -4728,6 +4733,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asBoolean(this: JSValue) bool {
+        if (comptime bun.Environment.allow_assert) {
+            if (!this.isBoolean()) {
+                Output.panic("Expected boolean but found {s}", .{@tagName(this.jsTypeLoose())});
+            }
+        }
         return FFI.JSVALUE_TO_BOOL(.{ .asJSValue = this });
     }
 
@@ -4735,7 +4745,16 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(this.isNumber());
         }
-        return @as(i64, @intFromFloat(@max(@min(this.asDouble(), std.math.maxInt(i52)), std.math.minInt(i52))));
+        const double = this.asDouble();
+        if (std.math.isPositiveInf(double)) {
+            return std.math.maxInt(i52);
+        } else if (std.math.isNegativeInf(double)) {
+            return std.math.minInt(i52);
+        } else if (std.math.isNan(double)) {
+            return 0;
+        }
+
+        return @as(i64, @intFromFloat(@max(@min(double, std.math.maxInt(i52)), std.math.minInt(i52))));
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -4744,7 +4763,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         if (this.isNumber()) {
-            return @as(i32, @truncate(this.asInt52()));
+            return @as(i32, @intCast(@min(@max(this.asInt52(), std.math.minInt(i32)), std.math.maxInt(i32))));
         }
 
         if (comptime bun.Environment.allow_assert) {

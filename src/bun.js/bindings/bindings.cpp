@@ -4610,7 +4610,6 @@ restart:
             auto* prop = entry.key();
 
             if (prop == vm.propertyNames->constructor
-                || prop == vm.propertyNames->length
                 || prop == vm.propertyNames->underscoreProto
                 || prop == vm.propertyNames->toStringTagSymbol)
                 return true;
@@ -4698,8 +4697,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->length
-                        || property == vm.propertyNames->underscoreProto
+                    if (property == vm.propertyNames->underscoreProto
                         || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }

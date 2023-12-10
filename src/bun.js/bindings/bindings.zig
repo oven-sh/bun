@@ -4728,6 +4728,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asBoolean(this: JSValue) bool {
+        if (comptime bun.Environment.allow_assert) {
+            if (!this.isBoolean()) {
+                Output.panic("Expected boolean but found {s}", .{@tagName(this.jsTypeLoose())});
+            }
+        }
         return FFI.JSVALUE_TO_BOOL(.{ .asJSValue = this });
     }
 

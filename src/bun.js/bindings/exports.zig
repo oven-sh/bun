@@ -2166,30 +2166,6 @@ pub const ZigConsoleClient = struct {
                         return;
                     }
 
-                    // if (value.isCell()) {
-                    //     var number_name = ZigString.Empty;
-                    //     value.getClassName(this.globalThis, &number_name);
-
-                    //     var number_value = ZigString.Empty;
-                    //     value.toZigString(&number_value, this.globalThis);
-
-                    //     if (!strings.eqlComptime(number_name.slice(), "Number")) {
-                    //         this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
-                    //         writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
-                    //             number_name,
-                    //             number_value,
-                    //         });
-                    //         return;
-                    //     }
-
-                    //     this.addForNewLine(number_name.len + number_value.len + 4);
-                    //     writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
-                    //         number_name,
-                    //         number_value,
-                    //     });
-                    //     return;
-                    // }
-
                     const num = value.coerce(f64, this.globalThis);
 
                     if (std.math.isPositiveInf(num)) {

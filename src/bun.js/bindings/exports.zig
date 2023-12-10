@@ -2130,6 +2130,12 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Integer => {
+                    if (value.isSymbol()) {
+                        this.addForNewLine("NaN".len);
+                        writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
+                        return;
+                    }
+
                     const int = value.coerce(i64, this.globalThis);
                     if (int < std.math.maxInt(u32)) {
                         var i = int;
@@ -2154,6 +2160,12 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
+                    if (value.isSymbol()) {
+                        this.addForNewLine("NaN".len);
+                        writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
+                        return;
+                    }
+
                     if (value.isCell()) {
                         var number_name = ZigString.Empty;
                         value.getClassName(this.globalThis, &number_name);

@@ -1858,6 +1858,14 @@ pub const Blob = struct {
             pub fn onReady(this: *ReadFile) void {
                 bloblog("ReadFile.onReady", .{});
                 this.task = .{ .callback = &doReadLoopTask };
+                // On macOS, we use one-shot mode, so:
+                // - we don't need to unregister
+                // - we don't need to delete from kqueue
+                if (comptime Environment.isMac) {
+                    // unless pending IO has been scheduled in-between.
+                    this.close_after_io = this.io_request.scheduled;
+                }
+
                 JSC.WorkPool.schedule(&this.task);
             }
 
@@ -1866,6 +1874,13 @@ pub const Blob = struct {
                 this.errno = AsyncIO.asError(err.errno);
                 this.system_error = err.toSystemError();
                 this.task = .{ .callback = &doReadLoopTask };
+                // On macOS, we use one-shot mode, so:
+                // - we don't need to unregister
+                // - we don't need to delete from kqueue
+                if (comptime Environment.isMac) {
+                    // unless pending IO has been scheduled in-between.
+                    this.close_after_io = this.io_request.scheduled;
+                }
                 JSC.WorkPool.schedule(&this.task);
             }
 
@@ -1885,6 +1900,7 @@ pub const Blob = struct {
             }
 
             pub fn waitForReadable(this: *ReadFile) void {
+                bloblog("ReadFile.waitForReadable", .{});
                 this.close_after_io = true;
                 @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestReadable, .SeqCst);
                 if (!this.io_request.scheduled)
@@ -2134,6 +2150,7 @@ pub const Blob = struct {
 
             fn doReadLoopTask(task: *JSC.WorkPoolTask) void {
                 var this: *ReadFile = @fieldParentPtr(ReadFile, "task", task);
+
                 this.update();
             }
 
@@ -2512,6 +2529,10 @@ pub const Blob = struct {
 
             fn doWriteLoopTask(task: *JSC.WorkPoolTask) void {
                 var this: *WriteFile = @fieldParentPtr(WriteFile, "task", task);
+                // On macOS, we use one-shot mode, so we don't need to unregister.
+                if (comptime Environment.isMac) {
+                    this.close_after_io = false;
+                }
                 this.doWriteLoop();
             }
 

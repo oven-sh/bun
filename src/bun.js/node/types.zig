@@ -615,11 +615,7 @@ pub const Encoding = enum(u8) {
 
     /// Caller must verify the value is a string
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
-        if (bun.String.tryFromJS(value, global)) |str| {
-            return str.inMapCaseInsensitive(map);
-        }
-
-        return null;
+        return map.fromJSCaseInsensitive(global, value);
     }
 
     /// Caller must verify the value is a string

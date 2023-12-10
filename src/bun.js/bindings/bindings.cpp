@@ -2117,6 +2117,12 @@ JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* 
 {
     return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
+JSC__JSValue JSC__JSValue__getDirectIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
+    uint32_t arg3)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(jsValue).getObject();
+    return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
+}
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1,
     const ZigString* arg2)
 {
@@ -4610,7 +4616,6 @@ restart:
             auto* prop = entry.key();
 
             if (prop == vm.propertyNames->constructor
-                || prop == vm.propertyNames->length
                 || prop == vm.propertyNames->underscoreProto
                 || prop == vm.propertyNames->toStringTagSymbol)
                 return true;
@@ -4698,8 +4703,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->length
-                        || property == vm.propertyNames->underscoreProto
+                    if (property == vm.propertyNames->underscoreProto
                         || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }

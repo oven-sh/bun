@@ -195,6 +195,9 @@ pub const WebWorker = struct {
     }
 
     fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance: JSC.JSValue) void {
+        // Prevent recursion
+        vm.onUnhandledRejection = &JSC.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+
         var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
         defer array.deinit();
 
@@ -226,6 +229,11 @@ pub const WebWorker = struct {
         };
         JSC.markBinding(@src());
         WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.create(array.toOwnedSliceLeaky()), error_instance);
+        if (vm.worker) |worker_| {
+            worker.requested_terminate = true;
+            worker.parent_poll_ref.unrefConcurrently(worker.parent);
+            worker_.exitAndDeinit();
+        }
     }
 
     fn setStatus(this: *WebWorker, status: Status) void {

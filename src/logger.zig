@@ -679,6 +679,19 @@ pub const Log = struct {
             .{ "warn", Level.warn },
             .{ "error", Level.err },
         });
+
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) !?Level {
+            if (value == .zero or value == .undefined) {
+                return null;
+            }
+
+            if (!value.isString()) {
+                globalThis.throwInvalidArguments("Expected logLevel to be a string", .{});
+                return error.JSError;
+            }
+
+            return Map.fromJS(globalThis, value);
+        }
     };
 
     pub fn init(allocator: std.mem.Allocator) Log {

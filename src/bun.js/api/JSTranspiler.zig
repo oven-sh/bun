@@ -513,20 +513,20 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "autoImportJSX")) |flag| {
-        transpiler.runtime.auto_import_jsx = flag.toBoolean();
+    if (object.getOptional(globalThis, "autoImportJSX", bool) catch return transpiler) |flag| {
+        transpiler.runtime.auto_import_jsx = flag;
     }
 
-    if (object.get(globalThis, "allowBunRuntime")) |flag| {
-        transpiler.runtime.allow_runtime = flag.toBoolean();
+    if (object.getOptional(globalThis, "allowBunRuntime", bool) catch return transpiler) |flag| {
+        transpiler.runtime.allow_runtime = flag;
     }
 
-    if (object.get(globalThis, "jsxOptimizationInline")) |flag| {
-        transpiler.runtime.jsx_optimization_inline = flag.toBoolean();
+    if (object.getOptional(globalThis, "jsxOptimizationInline", bool) catch return transpiler) |flag| {
+        transpiler.runtime.jsx_optimization_inline = flag;
     }
 
-    if (object.get(globalThis, "jsxOptimizationHoist")) |flag| {
-        transpiler.runtime.jsx_optimization_hoist = flag.toBoolean();
+    if (object.getOptional(globalThis, "jsxOptimizationHoist", bool) catch return transpiler) |flag| {
+        transpiler.runtime.jsx_optimization_hoist = flag;
 
         if (!transpiler.runtime.jsx_optimization_inline and transpiler.runtime.jsx_optimization_hoist) {
             JSC.throwInvalidArguments("jsxOptimizationHoist requires jsxOptimizationInline", .{}, globalObject, exception);
@@ -534,16 +534,16 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "inline")) |flag| {
-        transpiler.runtime.inlining = flag.toBoolean();
+    if (object.getOptional(globalThis, "inline", bool) catch return transpiler) |flag| {
+        transpiler.runtime.inlining = flag;
     }
 
-    if (object.get(globalThis, "minifyWhitespace")) |flag| {
-        transpiler.minify_whitespace = flag.toBoolean();
+    if (object.getOptional(globalThis, "minifyWhitespace", bool) catch return transpiler) |flag| {
+        transpiler.minify_whitespace = flag;
     }
 
-    if (object.get(globalThis, "deadCodeElimination")) |flag| {
-        transpiler.dead_code_elimination = flag.toBoolean();
+    if (object.getOptional(globalThis, "deadCodeElimination", bool) catch return transpiler) |flag| {
+        transpiler.dead_code_elimination = flag;
     }
 
     if (object.getTruthy(globalThis, "minify")) |hot| {
@@ -575,8 +575,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 transpiler.transform.source_map = Api.SourceMapMode.inline_into_file;
             }
         } else {
-            var sourcemap = flag.toSlice(globalThis, allocator);
-            if (options.SourceMapOption.Map.get(sourcemap.slice())) |source| {
+            if (options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
                 JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"external\", or \"none\"", .{}, globalObject, exception);
@@ -586,13 +585,13 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     var tree_shaking: ?bool = null;
-    if (object.get(globalThis, "treeShaking")) |treeShaking| {
-        tree_shaking = treeShaking.toBoolean();
+    if (object.getOptional(globalThis, "treeShaking", bool) catch return transpiler) |treeShaking| {
+        tree_shaking = treeShaking;
     }
 
     var trim_unused_imports: ?bool = null;
-    if (object.get(globalThis, "trimUnusedImports")) |trimUnusedImports| {
-        trim_unused_imports = trimUnusedImports.toBoolean();
+    if (object.getOptional(globalThis, "trimUnusedImports", bool) catch return transpiler) |trimUnusedImports| {
+        trim_unused_imports = trimUnusedImports;
     }
 
     if (object.getTruthy(globalThis, "exports")) |exports| {
@@ -723,11 +722,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.replace_exports = replacements;
     }
 
-    if (object.get(globalThis, "logLevel")) |logLevel| {
-        const logLevelString = logLevel.toBunString(globalThis);
-        defer logLevelString.deref();
-        const key = logLevelString.toOwnedSlice(allocator) catch bun.outOfMemory();
-        if (logger.Log.Level.Map.get(key)) |level| {
+    if (object.getTruthy(globalThis, "logLevel")) |logLevel| {
+        if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {
             JSC.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{}, globalObject, exception);

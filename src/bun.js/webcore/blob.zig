@@ -1737,9 +1737,6 @@ pub const Blob = struct {
                     is_allowed_to_close_fd: bool,
                 ) bool {
                     if (this.close_after_io) {
-                        this.io_lock.lock();
-                        defer this.io_lock.unlock();
-
                         this.state.store(ClosingState.closing, .SeqCst);
 
                         @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
@@ -1785,7 +1782,6 @@ pub const Blob = struct {
             io_request: bun.io.Request = .{ .callback = &onRequestReadable },
             could_block: bool = false,
             close_after_io: bool = false,
-            io_lock: bun.Lock = bun.Lock.init(),
             state: std.atomic.Atomic(ClosingState) = std.atomic.Atomic(ClosingState).init(.running),
 
             pub const Read = struct {
@@ -2020,9 +2016,6 @@ pub const Blob = struct {
                 this.size = @truncate(this.buffer.items.len);
 
                 {
-                    this.io_lock.lock();
-                    defer this.io_lock.unlock();
-
                     if (this.doClose(this.isAllowedToClose())) {
                         bloblog("ReadFile.onFinish() = deferred", .{});
                         // we have to wait for the close to finish
@@ -2188,8 +2181,8 @@ pub const Blob = struct {
                         }
 
                         if (!continue_reading) {
-                            // Stop reading, we errored or need to wait for it to become readable.
-                            return;
+                            // Stop reading, we errored
+                            break;
                         }
 
                         // If it's not a regular file, it might be something
@@ -2239,6 +2232,10 @@ pub const Blob = struct {
                     break;
                 }
 
+                if (this.system_error != null) {
+                    this.buffer.clearAndFree(bun.default_allocator);
+                }
+
                 // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
                 if (this.buffer.items.len + 16_000 < this.buffer.capacity) {
                     this.buffer.shrinkAndFree(bun.default_allocator, this.buffer.items.len);
@@ -2259,7 +2256,6 @@ pub const Blob = struct {
             io_task: ?*WriteFileTask = null,
             io_poll: bun.io.Poll = .{},
             io_request: bun.io.Request = .{ .callback = &onRequestWritable },
-            io_lock: bun.Lock = bun.Lock.init(),
             state: std.atomic.Atomic(ClosingState) = std.atomic.Atomic(ClosingState).init(.running),
 
             onCompleteCtx: *anyopaque = undefined,

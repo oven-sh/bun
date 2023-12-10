@@ -29,6 +29,7 @@ pub const Jest = @import("./bun.js/test/jest.zig");
 pub const Expect = @import("./bun.js/test/expect.zig");
 pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
+    pub const Glob = @import("./bun.js/api/glob.zig");
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
@@ -45,6 +46,7 @@ pub const API = struct {
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
+    pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
@@ -56,7 +58,17 @@ pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/node_fs_binding.zig");
     pub usingnamespace @import("./bun.js/node/node_os.zig");
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
+    pub const Util = struct {
+        pub const parseArgs = @import("./bun.js/node/util/parse_args.zig").parseArgs;
+    };
 };
+
+comptime {
+    if (!is_bindgen) {
+        @export(Node.Util.parseArgs, .{ .name = "Bun__NodeUtil__jsParseArgs" });
+    }
+}
+
 pub const Maybe = Node.Maybe;
 pub const jsNumber = @This().JSValue.jsNumber;
 pub const jsBoolean = @This().JSValue.jsBoolean;
@@ -85,6 +97,12 @@ pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
 ///
-pub const Codegen = @import("generated/ZigGeneratedClasses.zig");
+pub const Codegen = struct {
+    pub const GeneratedClasses = @import("ZigGeneratedClasses");
+    pub usingnamespace GeneratedClasses;
+    pub usingnamespace @import("./bun.js/bindings/codegen.zig");
+};
 
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;
+
+pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;

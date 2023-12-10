@@ -63,7 +63,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
             return false;
 
         // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? Bun::toWTFString(*namespaceStr) : String();
+        auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
 
         auto* group = this->onLoad.group(namespaceString);
         if (group == nullptr) {
@@ -71,7 +71,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
         }
 
         auto& filters = *group;
-        auto pathString = Bun::toWTFString(*path);
+        auto pathString = path->toWTFString(BunString::ZeroCopy);
 
         for (auto& filter : filters) {
             Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
@@ -85,14 +85,14 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
             return false;
 
         // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? Bun::toWTFString(*namespaceStr) : String();
+        auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
 
         auto* group = this->onResolve.group(namespaceString);
         if (group == nullptr) {
             return false;
         }
 
-        auto pathString = Bun::toWTFString(*path);
+        auto pathString = path->toWTFString(BunString::ZeroCopy);
         auto& filters = *group;
 
         for (auto& filter : filters) {
@@ -294,8 +294,8 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Bun::toWTFString(*namespaceString) : WTF::String();
-    WTF::String pathStr = path ? Bun::toWTFString(*path) : WTF::String();
+    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (UNLIKELY(!function))
@@ -330,12 +330,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
 
 extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, const BunString* importer, void* context, uint8_t kindId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Bun::toWTFString(*namespaceString) : WTF::String("file"_s);
+    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String("file"_s);
     if (namespaceStringStr.length() == 0) {
         namespaceStringStr = WTF::String("file"_s);
     }
-    WTF::String pathStr = path ? Bun::toWTFString(*path) : WTF::String();
-    WTF::String importerStr = importer ? Bun::toWTFString(*importer) : WTF::String();
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
+    WTF::String importerStr = importer ? importer->toWTFString(BunString::ZeroCopy) : WTF::String();
     auto& vm = globalObject->vm();
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);

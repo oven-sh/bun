@@ -105,8 +105,9 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     auto privateName = builtinNames->dataPrivateName();
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
 
+    // TODO: this is an assertion failure
     // Recreate this because the property visibility needs to be set correctly
-    object->putDirectCustomAccessor(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
     return true;
 }
 
@@ -134,7 +135,26 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             hasTZ = true;
             continue;
         }
-        object->putDirectCustomAccessor(vm, Identifier::fromString(vm, name), JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
+        ASSERT(len > 0);
+
+        Identifier identifier = Identifier::fromString(vm, name);
+
+        // CustomGetterSetter doesn't support indexed properties yet.
+        // This causes strange issues when the environment variable name is an integer.
+        if (UNLIKELY(chars[0] >= '0' && chars[0] <= '9')) {
+            if (auto index = parseIndex(identifier)) {
+                ZigString valueString = { nullptr, 0 };
+                ZigString nameStr = toZigString(name);
+                JSValue value = jsUndefined();
+                if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
+                    value = jsString(vm, Zig::toStringCopy(valueString));
+                }
+                object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
+                continue;
+            }
+        }
+
+        object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

@@ -56,6 +56,7 @@ pub const BunObject = struct {
     pub const SHA512 = Crypto.SHA512.getter;
     pub const SHA512_256 = Crypto.SHA512_256.getter;
     pub const TOML = Bun.getTOMLObject;
+    pub const Glob = Bun.getGlobConstructor;
     pub const Transpiler = Bun.getTranspilerConstructor;
     pub const argv = Bun.getArgv;
     pub const assetPrefix = Bun.getAssetPrefix;
@@ -69,6 +70,7 @@ pub const BunObject = struct {
     pub const stdin = Bun.getStdin;
     pub const stdout = Bun.getStdout;
     pub const unsafe = Bun.getUnsafe;
+    pub const semver = Bun.getSemver;
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -101,6 +103,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
         @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
@@ -114,6 +117,7 @@ pub const BunObject = struct {
         @export(BunObject.stdin, .{ .name = getterName("stdin") });
         @export(BunObject.stdout, .{ .name = getterName("stdout") });
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
+        @export(BunObject.semver, .{ .name = getterName("semver") });
         // --- Getters --
 
         // -- Callbacks --
@@ -157,7 +161,7 @@ const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
@@ -179,7 +183,6 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -233,7 +236,9 @@ const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
+const glob = @import("../../glob.zig");
 const Async = bun.Async;
+const SemverObject = @import("../../install/semver.zig").SemverObject;
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -2964,6 +2969,20 @@ pub fn getTOMLObject(
     return TOMLObject.create(globalThis);
 }
 
+pub fn getGlobConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.Glob.getConstructor(globalThis);
+}
+
+pub fn getSemver(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return SemverObject.create(globalThis);
+}
+
 pub fn getUnsafe(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
@@ -4642,9 +4661,40 @@ pub const JSZlib = struct {
 
 pub usingnamespace @import("./bun/subprocess.zig");
 
+const InternalTestingAPIs = struct {
+    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throwNotEnoughArguments("code", 1, 0);
+        }
+
+        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+        defer code.deinit();
+        var buffer = MutableString.initEmpty(bun.default_allocator);
+        defer buffer.deinit();
+        var writer = buffer.bufferedWriter();
+        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
+        formatter.limited = false;
+        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        writer.flush() catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        var str = bun.String.create(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalThis);
+    }
+};
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Crypto.JSPasswordObject.JSPasswordObject__create;
         BunObject.exportAll();
+        @export(InternalTestingAPIs.BunInternalFunction__syntaxHighlighter, .{ .name = "BunInternalFunction__syntaxHighlighter" });
     }
 }

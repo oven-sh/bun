@@ -103,11 +103,15 @@ while (<IN>) {
         } elsif (length($att)) {
             my $get = $val;
             my $put = "0";
+            my $type = "PropertyAttribute::Property";
+            if ($att =~ m/Builtin/) {
+                $type = "PropertyAttribute::BuiltinAccessor";
+            }
             if (!($att =~ m/ReadOnly/)) {
                 $put = "set" . jsc_ucfirst($val);
             }
             $hasSetter = "true";
-            push(@values, { "type" => "PropertyAttribute::Property", "get" => $get, "put" => $put });
+            push(@values, { "type" => $type, "get" => $get, "put" => $put });
         } else {
             push(@values, { "type" => "Lexer", "value" => $val });
         }
@@ -476,6 +480,10 @@ sub output() {
                 $firstValue = $values[$i]{"function"};
                 $secondValue = $values[$i]{"params"};
                 $intrinsic = $values[$i]{"intrinsic"};
+            } elsif ($values[$i]{"type"} eq "PropertyAttribute::BuiltinAccessor") {
+                $typeTag = "BuiltinAccessor";
+                $firstValue = $values[$i]{"get"};
+                $secondValue = $values[$i]{"put"};
             } elsif ($values[$i]{"type"} eq "PropertyAttribute::Property") {
                 $typeTag = "GetterSetter";
                 $firstValue = $values[$i]{"get"};

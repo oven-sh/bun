@@ -103,8 +103,13 @@ function cp(src, dest, options) {
 // This is currently stubbed for Next.js support.
 class Dir {
   #entries: Dirent[];
-  constructor(e: Dirent[]) {
+  #path: string;
+  constructor(e: Dirent[], path: string) {
     this.#entries = e;
+    this.#path = path;
+  }
+  get path() {
+    return this.#path;
   }
   readSync() {
     return this.#entries.shift() ?? null;
@@ -127,7 +132,7 @@ class Dir {
 }
 async function opendir(dir: string) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  return new Dir(entries);
+  return new Dir(entries, dir);
 }
 
 export default {

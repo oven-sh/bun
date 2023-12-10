@@ -10,6 +10,7 @@ const WebCore = JSC.WebCore;
 const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
+const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
@@ -20,7 +21,7 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+
 const uws = @import("root").bun.uws;
 const Async = bun.Async;
 
@@ -82,13 +83,9 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
     };
 }
 
-pub fn IOTask(comptime Context: type) type {
-    return WorkTask(Context, true);
-}
-
-pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
+pub fn WorkTask(comptime Context: type) type {
     return struct {
-        const TaskType = if (async_io) NetworkThread.Task else WorkPoolTask;
+        const TaskType = WorkPoolTask;
 
         const This = @This();
         ctx: *Context,
@@ -139,12 +136,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
             var vm = this.event_loop.virtual_machine;
             this.ref.ref(vm);
             this.async_task_tracker.didSchedule(this.globalThis);
-            if (comptime async_io) {
-                NetworkThread.init() catch return;
-                NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
-            } else {
-                WorkPool.schedule(&this.task);
-            }
+            WorkPool.schedule(&this.task);
         }
 
         pub fn onFinish(this: *This) void {
@@ -316,6 +308,7 @@ const Write = JSC.Node.Async.write;
 const Truncate = JSC.Node.Async.truncate;
 const FTruncate = JSC.Node.Async.ftruncate;
 const Readdir = JSC.Node.Async.readdir;
+const ReaddirRecursive = JSC.Node.Async.readdir_recursive;
 const Readv = JSC.Node.Async.readv;
 const Writev = JSC.Node.Async.writev;
 const Close = JSC.Node.Async.close;
@@ -347,6 +340,7 @@ const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
+    AsyncGlobWalkTask,
     AsyncTransformTask,
     ReadFileTask,
     CopyFilePromiseTask,
@@ -373,6 +367,7 @@ pub const Task = TaggedPointerUnion(.{
     Truncate,
     FTruncate,
     Readdir,
+    ReaddirRecursive,
     Close,
     Rm,
     Rmdir,
@@ -641,6 +636,7 @@ pub const EventLoop = struct {
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
         JSC.markBinding(@src());
+
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
         this.drainDeferredTasks();
     }
@@ -687,6 +683,11 @@ pub const EventLoop = struct {
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
+                },
+                @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
+                    var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
+                    globWalkTask.*.runFromJS();
+                    globWalkTask.deinit();
                 },
                 @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                     var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
@@ -811,6 +812,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Readdir))) => {
                     var any: *Readdir = task.get(Readdir).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ReaddirRecursive))) => {
+                    var any: *ReaddirRecursive = task.get(ReaddirRecursive).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Close))) => {
@@ -1179,6 +1184,22 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
+        var worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
+        switch (promise.status(this.virtual_machine.jsc)) {
+            JSC.JSPromise.Status.Pending => {
+                while (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    this.tick();
+
+                    if (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                        this.autoTick();
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
     // TODO: this implementation is terrible
     // we should not be checking the millitimestamp every time
     pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
@@ -1269,6 +1290,11 @@ pub const EventLoop = struct {
     }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            if (this.virtual_machine.has_terminated) {
+                @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
+            }
+        }
 
         this.concurrent_tasks.push(task);
         this.wakeup();

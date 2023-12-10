@@ -2,6 +2,7 @@
 import path from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
 import { writeIfNotChanged } from "./helpers";
+import { camelCase, pascalCase } from "change-case";
 
 const files = process.argv.slice(2);
 const outBase = files.pop();
@@ -111,13 +112,13 @@ function DOMJITFunctionDeclaration(jsClassName, fnName, symName, { args, returns
     symName,
   )}(void* ptr, JSC::JSGlobalObject * lexicalGlobalObject${formattedArgs});
 
-  static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnName)}Wrapper, 
-  ${jsClassName}::info(), 
+  static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnName)}Wrapper,
+  ${jsClassName}::info(),
   ${
     pure
       ? "JSC::DOMJIT::Effect::forPure()"
       : "JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top())"
-  }, 
+  },
   ${returns === "JSString" ? "JSC::SpecString" : DOMJITType("JSValue")}${domJITArgs});
 `.trim();
 }
@@ -174,6 +175,7 @@ function propRow(
   prop: Field,
   isWrapped = true,
   defaultPropertyAttributes,
+  supportsObjectCreate = false,
 ) {
   var {
     defaultValue,
@@ -188,6 +190,7 @@ function propRow(
     enumerable = true,
     configurable = false,
     value,
+    builtin,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
 
   var extraPropertyAttributes = "";
@@ -228,7 +231,14 @@ function propRow(
     }
   }
 
-  if (fn !== undefined) {
+  if (builtin !== undefined) {
+    if (typeof builtin !== "string") throw new Error('"builtin" should be string');
+    return `
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, ${builtin}, ${
+      length || 0
+    } } }
+`.trim();
+  } else if (fn !== undefined) {
     if (DOMJIT) {
       // { "getElementById"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTestDOMJITPrototypeFunction_getElementById, &DOMJITSignatureForTestDOMJITGetElementById } },
       return `
@@ -242,15 +252,19 @@ function propRow(
 `.trim();
   } else if (getter && setter) {
     return `
-    
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor ${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
+
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (defaultValue) {
-  } else if (getter) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor ${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
+  } else if (getter && !supportsObjectCreate) {
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
+`.trim();
+  } else if (getter && supportsObjectCreate) {
+    setter = getter.replace("Get", "Set");
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor ${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, &${getter}, &${setter} } }
 `.trim();
   } else if (setter) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor ${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
   `.trim();
   }
 
@@ -272,10 +286,20 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   }
 
   for (const name in props) {
-    if ("internal" in props[name] || "value" in props[name]) continue;
+    if ("privateSymbol" in props[name] || "internal" in props[name] || "value" in props[name]) continue;
     if (name.startsWith("@@")) continue;
 
-    rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
+    rows.push(
+      propRow(
+        symbolName,
+        typeName,
+        name,
+        props[name],
+        wrapped,
+        defaultPropertyAttributes,
+        obj.supportsObjectCreate || false,
+      ),
+    );
   }
 
   if (rows.length === 0) {
@@ -300,6 +324,21 @@ function generatePrototype(typeName, obj) {
       this->putDirect(vm, ${toIdentifier(name)}, jsString(vm, String(${JSON.stringify(
         value,
       )}_s)), PropertyAttribute::ReadOnly | 0);`;
+    }
+
+    if (protoFields[name].privateSymbol !== undefined) {
+      const privateSymbol = protoFields[name].privateSymbol;
+      const fn = protoFields[name].fn;
+      if (!fn) throw Error(`(field: ${name}) private field needs 'fn' key `);
+
+      specialSymbols += `
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${privateSymbol}PrivateName(), JSFunction::create(vm, globalObject, ${
+        protoFields[name].length || 0
+      }, String("${fn}"_s), ${protoSymbolName(
+        typeName,
+        fn,
+      )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+      continue;
     }
 
     if (!name.startsWith("@@")) {
@@ -344,7 +383,7 @@ ${
 ${"finalize" in obj ? `extern "C" void ${classSymbolName(typeName, "finalize")}(void*);` : ""}
 ${obj.call ? `extern "C" JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` : ""}
 
-${renderDecls(protoSymbolName, typeName, protoFields)}
+${renderDecls(protoSymbolName, typeName, protoFields, obj.supportsObjectCreate || false)}
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${proto}, ${proto}::Base);
 
 ${generateHashTable(
@@ -385,14 +424,14 @@ function generatePrototypeHeader(typename) {
   class ${proto} final : public JSC::JSNonFinalObject {
     public:
         using Base = JSC::JSNonFinalObject;
-    
+
         static ${proto}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
         {
             ${proto}* ptr = new (NotNull, JSC::allocateCell<${proto}>(vm)) ${proto}(vm, globalObject, structure);
             ptr->finishCreation(vm, globalObject);
             return ptr;
         }
-    
+
         DECLARE_INFO;
         template<typename CellType, JSC::SubspaceAccess>
         static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -404,13 +443,13 @@ function generatePrototypeHeader(typename) {
         {
             return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         }
-    
+
     private:
         ${proto}(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
             : Base(vm, structure)
         {
         }
-    
+
         void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
     };`;
 }
@@ -425,10 +464,10 @@ function generateConstructorHeader(typeName) {
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, ${prototypeName(
     typeName,
   )}* prototype);
-    
+
         static constexpr unsigned StructureFlags = Base::StructureFlags;
         static constexpr bool needsDestruction = false;
-    
+
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
             return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
@@ -449,12 +488,12 @@ function generateConstructorHeader(typeName) {
                   typeName,
                 )}Constructor = std::forward<decltype(space)>(space); });
         }
-    
+
 
         void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(
           typeName,
         )}* prototype);
-    
+
         // Must be defined for each specialization class.
         static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 
@@ -463,7 +502,7 @@ function generateConstructorHeader(typeName) {
         ${name}(JSC::VM& vm, JSC::Structure* structure);
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype);
     };
-    
+
     `;
 }
 
@@ -476,7 +515,7 @@ function generateConstructorImpl(typeName, obj: ClassDefinition) {
   const hashTableIdentifier = hashTable.length ? `${name}TableValues` : "";
   return `
 ${obj.estimatedSize ? `extern "C" size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` : ""}
-${renderStaticDecls(classSymbolName, typeName, fields)}
+${renderStaticDecls(classSymbolName, typeName, fields, obj.supportsObjectCreate || false)}
 ${hashTable}
 
 void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
@@ -556,7 +595,7 @@ ${
     : ""
 }
 
-      
+
       `;
 }
 
@@ -581,7 +620,128 @@ function renderCachedFieldsHeader(typeName, klass, proto, values) {
   return rows.join("\n");
 }
 
-function renderDecls(symbolName, typeName, proto) {
+function renderCallbacksHeader(typeName, callbacks: Record<string, string>) {
+  const rows: string[] = [];
+  for (const name in callbacks) {
+    rows.push(`mutable WriteBarrier<JSObject> m_callback_${name};`);
+  }
+
+  return rows.join("\n");
+}
+
+function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
+  const rows: string[] = [];
+  if (Object.keys(callbacks).length === 0) return "";
+  for (const name in callbacks) {
+    rows.push(
+      `
+  extern "C" EncodedJSValue ${symbolName(typeName, "_callback_get_" + name)}(JSC::EncodedJSValue encodedThisValue) {
+    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    return JSValue::encode(thisObject->m_callback_${name}.get());
+  }
+
+  extern "C" void ${symbolName(
+    typeName,
+    "_callback_set_" + name,
+  )}(JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedCallback) {
+    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    JSValue callback = JSValue::decode(encodedCallback);
+#if ASSERT_ENABLED
+    if (!callback.isEmpty()) {
+      ASSERT(callback.isObject());
+      ASSERT(callback.isCallable());
+    }
+#endif
+    if (callback.isEmpty()) {
+        thisObject->m_callback_${name}.clear();
+    } else {
+        thisObject->m_callback_${name}.set(thisObject->vm(), thisObject, callback.getObject());
+    }
+  }
+      `,
+    );
+  }
+
+  rows.push(`
+  extern "C" void ${symbolName(typeName, "_setAllCallbacks")}(JSC::EncodedJSValue encodedThisValue, ${Object.keys(
+    callbacks,
+  )
+    .map((_, i) => `JSC::EncodedJSValue encodedCallback${i}`)
+    .join(", ")}) {
+    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${Object.keys(callbacks)
+      .map(
+        (name, i) => `
+      JSValue callback${i} = JSValue::decode(encodedCallback${i});
+      if (!callback${i}.isEmpty()) {
+        thisObject->m_callback_${name}.set(thisObject->vm(), thisObject, callback${i}.getObject());
+      }
+      `,
+      )
+      .join("\n")}
+  }
+
+`);
+
+  return rows.join("\n");
+}
+
+function renderCallbacksZig(typeName, callbacks: Record<string, string>) {
+  if (Object.keys(callbacks).length === 0) return "";
+
+  var out =
+    "\n" +
+    `pub const Callbacks = struct {
+      instance: JSC.JSValue,` +
+    "\n";
+
+  for (const name in callbacks) {
+    const get = symbolName(typeName, "_callback_get_" + name);
+    const set = symbolName(typeName, "_callback_set_" + name);
+    out += `
+      extern fn ${get}(JSC.JSValue) JSC.JSValue;
+      extern fn ${set}(JSC.JSValue, JSC.JSValue) void;
+      pub const ${pascalCase(name)}Callback = JSC.Codegen.CallbackWrapper(${get}, ${set});
+      pub fn ${camelCase(
+        name,
+      )}(cb: @This(), thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, args: []const JSC.JSValue) ?JSC.JSValue {
+        return ${pascalCase(name)}Callback.call(.{.instance = cb.instance}, thisValue, globalObject, args);
+      }
+    `;
+  }
+
+  out = out.trim();
+
+  out += `
+  extern fn ${symbolName(typeName, "_setAllCallbacks")}(JSC.JSValue, ${Object.keys(callbacks)
+    .map((a, i) => `callback${i}: JSC.JSValue`)
+    .join(", ")}) void;
+
+  pub inline fn set(this: @This(), values: struct {
+    ${Object.keys(callbacks)
+      .map((name, i) => `${camelCase(name)}: JSC.JSValue = .zero,`)
+      .join("\n")}
+  }) void {
+    ${symbolName(typeName, "_setAllCallbacks")}(this.instance, ${Object.keys(callbacks)
+    .map((name, i) => `values.${camelCase(name)}`)
+    .join(", ")},);
+  }
+  `;
+
+  out += "\n};\n";
+
+  out += `
+  
+  pub fn callbacks(_: *const ${typeName}, instance: JSC.JSValue) Callbacks {
+    return .{.instance = instance };
+  }
+  
+`;
+
+  return "\n" + out;
+}
+
+function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) {
   const rows = [];
 
   for (const name in proto) {
@@ -598,6 +758,10 @@ function renderDecls(symbolName, typeName, proto) {
     `.trim(),
         "\n",
       );
+
+      if (supportsObjectCreate && !("setter" in proto[name])) {
+        rows.push("\n" + `static JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);` + "\n");
+      }
     }
 
     if ("setter" in proto[name] || ("accessor" in proto[name] && proto[name].setter)) {
@@ -606,7 +770,7 @@ function renderDecls(symbolName, typeName, proto) {
           !!proto[name].this ? " JSC::EncodedJSValue thisValue, " : ""
         } JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);`,
         `
-      JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);
+      static JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);
       `.trim(),
         "\n",
       );
@@ -647,7 +811,7 @@ function renderDecls(symbolName, typeName, proto) {
   return rows.join("\n");
 }
 
-function renderStaticDecls(symbolName, typeName, fields) {
+function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = false) {
   const rows = [];
 
   for (const name in fields) {
@@ -688,13 +852,13 @@ function writeBarrier(symbolName, typeName, name, cacheName) {
       auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
       thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
   }
-  
+
   extern "C" EncodedJSValue ${symbolName(typeName, name)}GetCachedValue(JSC::EncodedJSValue thisValue)
   {
     auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
     return JSValue::encode(thisObject->${cacheName}.get());
   }
-  
+
   `;
 }
 function renderFieldsImpl(
@@ -705,6 +869,8 @@ function renderFieldsImpl(
   cachedValues: string[],
 ) {
   const rows: string[] = [];
+
+  const supportsObjectCreate = obj.supportsObjectCreate || false;
 
   if (obj.construct) {
     rows.push(`
@@ -719,8 +885,8 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
-}    
-    
+}
+
 `);
   }
 
@@ -728,51 +894,109 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     if ("cache" in proto[name] || proto[name]?.internal) {
       const cacheName = typeof proto[name].cache === "string" ? `m_${proto[name].cache}` : `m_${name}`;
       if ("cache" in proto[name]) {
-        rows.push(`
+        if (!supportsObjectCreate) {
+          rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(
-          typeName,
-          name,
-        )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+            typeName,
+            name,
+          )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    
+
     if (JSValue cachedValue = thisObject->${cacheName}.get())
         return JSValue::encode(cachedValue);
-    
+
     JSC::JSValue result = JSC::JSValue::decode(
         ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
-          proto[name].this!! ? " thisValue, " : ""
-        } globalObject)
+            proto[name].this!! ? " encodedThisValue, " : ""
+          } globalObject)
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }`);
+        } else {
+          rows.push(`
+          JSC_DEFINE_CUSTOM_GETTER(${symbolName(
+            typeName,
+            name,
+          )}GetterWrap, (JSGlobalObject * globalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
+          {
+              auto& vm = globalObject->vm();
+              auto throwScope = DECLARE_THROW_SCOPE(vm);
+              ${className(typeName)}* thisObject = jsDynamicCast<${className(
+            typeName,
+          )}*>(JSValue::decode(encodedThisValue));
+              if (UNLIKELY(!thisObject)) {
+                  return JSValue::encode(jsUndefined());
+              }
+
+              JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+              
+              if (JSValue cachedValue = thisObject->${cacheName}.get())
+                  return JSValue::encode(cachedValue);
+              
+              JSC::JSValue result = JSC::JSValue::decode(
+                  ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
+            proto[name].this!! ? " thisValue, " : ""
+          } globalObject)
+              );
+              RETURN_IF_EXCEPTION(throwScope, {});
+              thisObject->${cacheName}.set(vm, thisObject, result);
+              RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+          }`);
+        }
       }
       rows.push(writeBarrier(symbolName, typeName, name, cacheName));
     } else if ("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) {
-      rows.push(`
+      if (!supportsObjectCreate) {
+        rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(
-        typeName,
-        name,
-      )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+          typeName,
+          name,
+        )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
-        !!proto[name].this ? " thisValue, " : ""
-      } globalObject);
+          !!proto[name].this ? " encodedThisValue, " : ""
+        } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
         `);
+      } else {
+        rows.push(`
+      JSC_DEFINE_CUSTOM_GETTER(${symbolName(
+        typeName,
+        name,
+      )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
+      {
+          auto& vm = lexicalGlobalObject->vm();
+          Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+          auto throwScope = DECLARE_THROW_SCOPE(vm);
+          ${className(typeName)}* thisObject = jsDynamicCast<${className(
+          typeName,
+        )}*>(JSValue::decode(encodedThisValue));
+          if (UNLIKELY(!thisObject)) {
+              return JSValue::encode(jsUndefined());
+          }
+          JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+          JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
+          !!proto[name].this ? " encodedThisValue, " : ""
+        } globalObject);
+          RETURN_IF_EXCEPTION(throwScope, {});
+          RELEASE_AND_RETURN(throwScope, result);
+      }
+              `);
+      }
     }
 
     if ("setter" in proto[name] || ("accessor" in proto[name] && proto[name].setter)) {
@@ -781,19 +1005,40 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
 JSC_DEFINE_CUSTOM_SETTER(${symbolName(
           typeName,
           name,
-        )}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+        )}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     auto result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
-          !!proto[name].this ? " thisValue, " : ""
+          !!proto[name].this ? " encodedThisValue, " : ""
         } lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
 }
 `,
+      );
+    } else if (supportsObjectCreate) {
+      rows.push(
+        `
+  JSC_DEFINE_CUSTOM_SETTER(${symbolName(
+    typeName,
+    name,
+  )}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+  {
+      auto& vm = lexicalGlobalObject->vm();
+      auto throwScope = DECLARE_THROW_SCOPE(vm);
+      JSValue thisValue = JSValue::decode(encodedThisValue);
+      if (!thisValue.isObject()) {
+        return false;
+      }
+
+      JSObject *thisObject = asObject(thisValue);
+      thisObject->putDirect(vm, attributeName, JSValue::decode(encodedValue), 0);
+      return true;
+  }
+  `,
       );
     }
 
@@ -818,7 +1063,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
         #ifdef BUN_DEBUG
           /** View the file name of the JS file that called this function
-           * from a debugger */ 
+           * from a debugger */
           SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
           const char* fileName = sourceOrigin.string().utf8().data();
           static const char* lastFileName = nullptr;
@@ -844,12 +1089,13 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
-  var { klass, proto, JSType = "ObjectType", values = [] } = obj;
+  var { klass, proto, JSType = "ObjectType", values = [], callbacks = {} } = obj;
   const name = className(typeName);
 
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
+    Object.keys(callbacks).length ||
     obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
       ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
@@ -862,7 +1108,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     weakInit = `m_weakThis = JSC::Weak<${name}>(this, getOwner());`;
     weakOwner = `
     JSC::Weak<${name}> m_weakThis;
-   
+
 
     static bool hasPendingActivity(void* ctx);
 
@@ -881,7 +1127,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           }
           void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
       };
-  
+
       static JSC::WeakHandleOwner* getOwner()
       {
           static NeverDestroyed<Owner> m_owner;
@@ -900,7 +1146,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     public:
         using Base = JSC::JSDestructibleObject;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
-    
+
         DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
         {
@@ -917,42 +1163,42 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
                   typeName,
                 )} = std::forward<decltype(space)>(space); });
         }
-    
+
         static void destroy(JSC::JSCell*);
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
             return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags), info());
         }
-    
+
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
         ${
           obj.noConstructor
             ? ""
             : `static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)`
         };
-    
+
         ~${name}();
-    
+
         void* wrapped() const { return m_ctx; }
-    
+
         void detach()
         {
             m_ctx = nullptr;
         }
-    
+
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
         static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
-    
+
         void* m_ctx { nullptr };
 
-            
+
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
         }
-    
+
         void finishCreation(JSC::VM&);
 
         ${Object.entries(obj.custom ?? {})
@@ -975,6 +1221,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${DECLARE_VISIT_CHILDREN}
 
         ${renderCachedFieldsHeader(typeName, klass, proto, values)}
+        ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
     };
     ${suffix}
   `;
@@ -989,13 +1236,18 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     estimatedSize,
     hasPendingActivity = false,
     getInternalProperties = false,
+    callbacks = {},
   } = obj;
   const name = className(typeName);
 
-  const DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
+  let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
     .filter(([name, { cache = false, internal = false }]) => (cache || internal) === true)
-    .map(([name]) => `    visitor.append(thisObject->m_${name});`)
+    .map(([name]) => `visitor.append(thisObject->m_${name});`)
     .join("\n");
+
+  for (const name in callbacks) {
+    DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.append(thisObject->m_callback_${name});`;
+  }
 
   const values = (obj.values || [])
     .map(val => {
@@ -1045,6 +1297,8 @@ void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
 
+${renderCallbacksCppImpl(typeName, callbacks)}
+
 
 
         `.trim();
@@ -1074,14 +1328,14 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
       "getInternalProperties",
     )}(void* ptr, JSC::JSGlobalObject *globalObject, EncodedJSValue thisValue);
 
-    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis) 
+    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis)
     {
       return JSValue::decode(${symbolName(
         typeName,
         "getInternalProperties",
       )}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
     }
-    
+
     `;
   }
 
@@ -1110,7 +1364,7 @@ void ${name}::destroy(JSCell* cell)
 {
     static_cast<${name}*>(cell)->${name}::~${name}();
 }
-  
+
 const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
 
 void ${name}::finishCreation(VM& vm)
@@ -1136,7 +1390,7 @@ extern "C" void* ${typeName}__fromJS(JSC::EncodedJSValue value) {
 
   if (!object)
       return nullptr;
-      
+
   return object->wrapped();
 }
 
@@ -1144,7 +1398,7 @@ extern "C" bool ${typeName}__dangerouslySetPtr(JSC::EncodedJSValue value, void* 
   ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(JSValue::decode(value));
   if (!object)
       return false;
-  
+
   object->m_ctx = ptr;
   return true;
 }
@@ -1197,7 +1451,7 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
 ${DEFINE_VISIT_CHILDREN}
 
 
- 
+
     `.trim();
 
   return output;
@@ -1234,6 +1488,7 @@ function generateZig(
     hasPendingActivity = false,
     structuredClone = false,
     getInternalProperties = false,
+    callbacks = {},
   } = {} as ClassDefinition,
 ) {
   const exports = new Map<string, string>();
@@ -1284,12 +1539,12 @@ function generateZig(
         `extern fn ${protoSymbolName(typeName, name)}SetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
         extern fn ${protoSymbolName(typeName, name)}GetCachedValue(JSC.JSValue) JSC.JSValue;
-        
+
         /// \`${typeName}.${name}\` setter
         /// This value will be visited by the garbage collector.
         pub fn ${name}SetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
           JSC.markBinding(@src());
-          ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value); 
+          ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value);
         }
 
         /// \`${typeName}.${name}\` getter
@@ -1299,12 +1554,17 @@ function generateZig(
           const result = ${protoSymbolName(typeName, name)}GetCachedValue(thisValue);
           if (result == .zero)
             return null;
-          
+
           return result;
         }
 `.trim() + "\n",
     )
     .join("\n");
+
+  var renderedCallbacks = "";
+  if (Object.keys(callbacks).length) {
+    renderedCallbacks = renderCallbacksZig(typeName, callbacks);
+  }
 
   function typeCheck() {
     var output = "";
@@ -1402,14 +1662,14 @@ function generateZig(
       if (fn) {
         if (DOMJIT) {
           output += `
-          if (@TypeOf(${typeName}.${DOMJITName(fn)}) != ${ZigDOMJITFunctionType(typeName, DOMJIT)}) 
+          if (@TypeOf(${typeName}.${DOMJITName(fn)}) != ${ZigDOMJITFunctionType(typeName, DOMJIT)})
             @compileLog(
               "Expected ${typeName}.${DOMJITName(fn)} to be a DOMJIT function"
             );`;
         }
 
         output += `
-          if (@TypeOf(${typeName}.${fn}) != CallbackType) 
+          if (@TypeOf(${typeName}.${fn}) != CallbackType)
             @compileLog(
               "Expected ${typeName}.${fn} to be a callback but received " ++ @typeName(@TypeOf(${typeName}.${fn}))
             );`;
@@ -1424,7 +1684,7 @@ function generateZig(
 
       if (getter) {
         output += `
-          if (@TypeOf(${typeName}.${getter}) != StaticGetterType) 
+          if (@TypeOf(${typeName}.${getter}) != StaticGetterType)
             @compileLog(
               "Expected ${typeName}.${getter} to be a static getter"
             );
@@ -1433,7 +1693,7 @@ function generateZig(
 
       if (setter) {
         output += `
-          if (@TypeOf(${typeName}.${setter}) != StaticSetterType) 
+          if (@TypeOf(${typeName}.${setter}) != StaticSetterType)
             @compileLog(
               "Expected ${typeName}.${setter} to be a static setter"
             );`;
@@ -1441,7 +1701,7 @@ function generateZig(
 
       if (fn) {
         output += `
-          if (@TypeOf(${typeName}.${fn}) != StaticCallbackType) 
+          if (@TypeOf(${typeName}.${fn}) != StaticCallbackType)
             @compileLog(
               "Expected ${typeName}.${fn} to be a static callback"
             );`;
@@ -1450,7 +1710,7 @@ function generateZig(
 
     if (!!call) {
       output += `
-      if (@TypeOf(${typeName}.call) != StaticCallbackType) 
+      if (@TypeOf(${typeName}.call) != StaticCallbackType)
       @compileLog(
         "Expected ${typeName}.call to be a static callback"
       );`;
@@ -1521,6 +1781,8 @@ pub const ${className(typeName)} = struct {
 
     extern fn ${typeName}__dangerouslySetPtr(JSC.JSValue, ?*${typeName}) bool;
 
+    ${renderedCallbacks}
+
     comptime {
         ${typeCheck()}
         if (!JSC.is_bindgen) {
@@ -1532,7 +1794,7 @@ ${[...exports]
     }
 };
 
-  
+
 `;
 }
 
@@ -1569,8 +1831,8 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noCo
                        )}::createConstructor(init.vm, init.global, init.prototype));`
                  }
               });
-      
-  
+
+
       `.trim();
 }
 
@@ -1646,19 +1908,19 @@ function initLazyClasses(initLaterFunctions) {
 ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
     ${initLaterFunctions.map(a => a.trim()).join("\n    ")}
 }
-    
+
 `.trim();
 }
 
 function visitLazyClasses(classes) {
   return `
-  
+
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
       ${classes.map(a => `thisObject->m_${className(a.name)}.visit(visitor);`).join("\n      ")}
 }
-      
+
   `.trim();
 }
 
@@ -1677,7 +1939,7 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///        - Add it to generated_classes_list.zig
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
-///  
+///
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const Classes = JSC.GeneratedClassesList;
@@ -1759,7 +2021,7 @@ function writeCppSerializers() {
     `;
   }
 
-  output += `  
+  output += `
   std::optional<StructuredCloneableSerialize> StructuredCloneableSerialize::fromJS(JSC::JSValue value)
   {
     ${structuredClonable.map(fromJSForEachClass).join("\n").trim()}

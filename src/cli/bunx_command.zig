@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-
+const Command = @import("../cli.zig").Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 pub const BunxCommand = struct {
@@ -23,11 +23,27 @@ pub const BunxCommand = struct {
 
         var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
         if (input[0] == '@') {
-            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
-                const index = slashIndex + 1;
+            // @org/some -> @org/create-some
+            // @org/some@v -> @org/create-some@v
+            if (strings.indexOfChar(input, '/')) |slash_i| {
+                const index = slash_i + 1;
                 @memcpy(new_str[0..index], input[0..index]);
                 @memcpy(new_str[index .. index + prefixLength], "create-");
                 @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org@v -> @org/create@v
+            else if (strings.indexOfChar(input[1..], '@')) |at_i| {
+                const index = at_i + 1;
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "/create");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org -> @org/create
+            else {
+                @memcpy(new_str[0..input.len], input);
+                @memcpy(new_str[input.len..], "/create");
                 return new_str;
             }
         }
@@ -142,21 +158,7 @@ pub const BunxCommand = struct {
     }
 
     fn exit_with_usage() noreturn {
-        Output.prettyErrorln(
-            \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
-            \\
-            \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
-            \\
-            \\example<d>:<r>
-            \\
-            \\  <cyan>bunx bun-repl<r>
-            \\  <cyan>bunx prettier foo.js<r>
-            \\
-            \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
-            \\
-            \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
-            \\
-        , .{});
+        Command.Tag.printHelp(.BunxCommand, false);
         Global.exit(1);
     }
 

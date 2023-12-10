@@ -8,10 +8,15 @@ export const bunEnv: any = {
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
   CI: "1",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
 
 export function bunExe() {
   return process.execPath;
+}
+
+export function withoutMimalloc(input: string) {
+  return input.replaceAll(/^mimalloc warning:.*$/gm, "");
 }
 
 export function nodeExe(): string | null {
@@ -154,4 +159,25 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };
+}
+
+/**
+ * Ignore mimalloc warnings in development
+ */
+export function ignoreMimallocWarning({
+  beforeAll,
+  afterAll,
+}: Pick<typeof import("bun:test"), "beforeAll"> & Pick<typeof import("bun:test"), "afterAll">) {
+  const origResponseText = Response.prototype.text;
+  beforeAll(() => {
+    // @ts-expect-error
+    Response.prototype.text = async function () {
+      return withoutMimalloc(await origResponseText.call(this));
+    };
+  });
+
+  afterAll(() => {
+    // @ts-expect-error
+    Response.prototype.text = origResponseText;
+  });
 }

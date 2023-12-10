@@ -113,8 +113,8 @@ pub const DataURL = struct {
         return parsed;
     }
 
-    pub fn decodeMimeType(d: DataURL) bun.HTTP.MimeType {
-        return bun.HTTP.MimeType.init(d.mime_type, null, null);
+    pub fn decodeMimeType(d: DataURL) bun.http.MimeType {
+        return bun.http.MimeType.init(d.mime_type, null, null);
     }
 
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {

@@ -36,7 +36,7 @@ global_dns_data: ?*JSC.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
-mime_types: ?bun.HTTP.MimeType.Map = null,
+mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
@@ -74,9 +74,9 @@ pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     return &this.hot_map.?;
 }
 
-pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.HTTP.MimeType {
+pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.http.MimeType {
     if (this.mime_types == null) {
-        this.mime_types = bun.HTTP.MimeType.createHashTable(
+        this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
         ) catch @panic("Out of memory");
     }

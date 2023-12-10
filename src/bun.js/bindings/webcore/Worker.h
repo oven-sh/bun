@@ -132,7 +132,7 @@ private:
     Deque<RefPtr<Event>> m_pendingEvents;
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
-    bool m_wasTerminated { false };
+    std::atomic<bool> m_wasTerminated { false };
     bool m_didStartWorkerGlobalScope { false };
     bool m_isOnline { false };
     bool m_isClosing { false };

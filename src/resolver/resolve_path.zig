@@ -25,11 +25,11 @@ const IsSeparatorFunc = fn (char: u8) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
 
 inline fn @"is .."(slice: []const u8) bool {
-    return slice.len >= 2 and @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readIntNative(u16, "..");
+    return slice.len >= 2 and @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "..", .little);
 }
 
 inline fn isDotSlash(slice: []const u8) bool {
-    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readIntNative(u16, "./");
+    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
 }
 
 inline fn @"is ../"(slice: []const u8) bool {
@@ -436,16 +436,16 @@ pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: P
 pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
     switch (comptime platform.resolve()) {
         .loose => {
-            const separator = lastIndexOfSeparatorLoose(str);
-            return str[0 .. separator + 1];
+            const separator = lastIndexOfSeparatorLoose(str) orelse return "";
+            return str[0..separator];
         },
         .posix => {
-            const separator = lastIndexOfSeparatorPosix(str);
-            return str[0 .. separator + 1];
+            const separator = lastIndexOfSeparatorPosix(str) orelse return "";
+            return str[0..separator];
         },
         .windows => {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
-            return str[0 .. separator + 1];
+            return str[0..separator];
         },
         else => unreachable,
     }

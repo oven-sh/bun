@@ -2,7 +2,7 @@
 name: Use EdgeDB with Bun
 ---
 
-EdgeDB is a graph-relational database powered by Postgres under the hood. It provides a declarative schema language, migrations system, and object-oriented query language, in addition to supporting raw SQL queries. It solves the object-relational mapping problem at the database layer, eliminating the for an ORM library in your application code.
+EdgeDB is a graph-relational database powered by Postgres under the hood. It provides a declarative schema language, migrations system, and object-oriented query language, in addition to supporting raw SQL queries. It solves the object-relational mapping problem at the database layer, eliminating the need for an ORM library in your application code.
 
 ---
 
@@ -109,7 +109,7 @@ Applied m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq (00001.edgeql)
 
 ---
 
-With out schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
+With our schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
 
 ```sh
 $ bun add edgedb

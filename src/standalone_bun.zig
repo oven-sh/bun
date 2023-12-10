@@ -50,7 +50,7 @@ pub const StandaloneModuleGraph = struct {
                 blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
                 blob_.allocator = bun.default_allocator;
 
-                if (bun.HTTP.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
+                if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
                     blob_.content_type = mime.value;
                     blob_.content_type_was_set = true;
@@ -446,9 +446,9 @@ pub const StandaloneModuleGraph = struct {
         bun.C.moveFileZWithHandle(
             fd,
             std.fs.cwd().fd,
-            &(try std.os.toPosixPath(temp_location)),
+            bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
             root_dir.dir.fd,
-            &(try std.os.toPosixPath(std.fs.path.basename(outfile))),
+            bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
@@ -562,27 +562,32 @@ pub const StandaloneModuleGraph = struct {
         // heuristic: `bun build --compile` won't be supported if the name is "bun" or "bunx".
         // this is a cheap way to avoid the extra overhead of opening the executable
         // and also just makes sense.
-        if (bun.argv().len > 0) {
-            const argv0_len = bun.len(bun.argv()[0]);
-            if (argv0_len == 3) {
-                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun")) {
-                    return null;
-                }
+        const argv = bun.argv();
+        if (argv.len > 0) {
+            const argv0_len = bun.len(argv[0]);
+            if (argv0_len > 0) {
+                const argv0 = argv[0][0..argv0_len];
 
-                if (comptime Environment.isDebug) {
-                    if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun-debug")) {
+                if (argv0_len == 3) {
+                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun")) {
                         return null;
                     }
                 }
-            }
 
-            if (argv0_len == 4) {
-                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bunx")) {
-                    return null;
+                if (comptime Environment.isDebug) {
+                    if (bun.strings.eqlComptime(argv0, "bun-debug")) {
+                        return null;
+                    }
+                }
+
+                if (argv0_len == 4) {
+                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx")) {
+                        return null;
+                    }
                 }
 
                 if (comptime Environment.isDebug) {
-                    if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun-debugx")) {
+                    if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
                         return null;
                     }
                 }

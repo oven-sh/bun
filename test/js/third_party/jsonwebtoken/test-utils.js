@@ -33,6 +33,28 @@ function expect(value) {
     },
   };
 }
+
+function expectError(actual, expected) {
+  if (!actual && !expected) {
+    return;
+  }
+  if (actual && !expected) {
+    throw new Error(`Expected no error, but got ${actual}`);
+  }
+  if (!actual && expected) {
+    throw new Error(`Expected error ${expected}, but got no error`);
+  }
+  if (actual.message !== expected.message) {
+    throw new Error(`Expected ${actual.message} to equal ${expected.message}`);
+  }
+  if (actual.name !== expected.name) {
+    throw new Error(`Expected ${actual.name} to equal ${expected.name}`);
+  }
+  if (actual.code !== expected.code) {
+    throw new Error(`Expected ${actual.code} to equal ${expected.code}`);
+  }
+}
+
 /**
  * Correctly report errors that occur in an asynchronous callback
  * @param {function(err): void} done The mocha callback
@@ -64,19 +86,24 @@ function base64UrlEncode(str) {
  * @param {function(err, token):void} callback
  */
 function verifyJWTHelper(jwtString, secretOrPrivateKey, options, callback) {
-  let error;
-  let syncVerified;
-  try {
-    syncVerified = jwt.verify(jwtString, secretOrPrivateKey, options);
-  } catch (err) {
-    error = err;
-  }
   jwt.verify(jwtString, secretOrPrivateKey, options, (err, asyncVerifiedToken) => {
-    if (error) {
+    let error;
+    let syncVerified;
+    try {
+      syncVerified = jwt.verify(jwtString, secretOrPrivateKey, options);
+    } catch (err) {
+      error = err;
+    }
+    try {
+      expectError(error, err);
+      if (error) {
+        callback(err);
+      } else {
+        expect(syncVerified).toStrictEqual(asyncVerifiedToken);
+        callback(null, syncVerified);
+      }
+    } catch (err) {
       callback(err);
-    } else {
-      expect(syncVerified).toStrictEqual(asyncVerifiedToken);
-      callback(null, syncVerified);
     }
   });
 }
@@ -89,19 +116,24 @@ function verifyJWTHelper(jwtString, secretOrPrivateKey, options, callback) {
  * @param {function(err, token):void} callback
  */
 function signJWTHelper(payload, secretOrPrivateKey, options, callback) {
-  let error;
-  let syncSigned;
-  try {
-    syncSigned = jwt.sign(payload, secretOrPrivateKey, options);
-  } catch (err) {
-    error = err;
-  }
   jwt.sign(payload, secretOrPrivateKey, options, (err, asyncSigned) => {
-    if (error) {
+    let error;
+    let syncSigned;
+    try {
+      syncSigned = jwt.sign(payload, secretOrPrivateKey, options);
+    } catch (err) {
+      error = err;
+    }
+    try {
+      expectError(error, err);
+      if (error) {
+        callback(err);
+      } else {
+        expect(syncSigned).toEqual(asyncSigned);
+        callback(null, syncSigned);
+      }
+    } catch (err) {
       callback(err);
-    } else {
-      expect(syncSigned).toEqual(asyncSigned);
-      callback(null, syncSigned);
     }
   });
 }

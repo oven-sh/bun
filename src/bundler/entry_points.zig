@@ -286,37 +286,65 @@ pub const MacroEntryPoint = struct {
         macro_id: i32,
         macro_label_: string,
     ) !void {
-        const dir_to_use: string = import_path.dirWithTrailingSlash();
+        const dir_to_use: string = if (import_path.dir.len == 0) "" else import_path.dirWithTrailingSlash();
         bun.copy(u8, &entry.code_buffer, macro_label_);
         const macro_label = entry.code_buffer[0..macro_label_.len];
 
-        const code = try std.fmt.bufPrint(
-            entry.code_buffer[macro_label.len..],
-            \\//Auto-generated file
-            \\var Macros;
-            \\try {{
-            \\  Macros = await import('{s}{s}');
-            \\}} catch (err) {{
-            \\   console.error("Error importing macro");
-            \\   throw err;
-            \\}}
-            \\if (!('{s}' in Macros)) {{
-            \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
-            \\}}
-            \\
-            \\Bun.registerMacro({d}, Macros['{s}']);
-        ,
-            .{
-                dir_to_use,
-                import_path.filename,
-                function_name,
-                function_name,
-                dir_to_use,
-                import_path.filename,
-                macro_id,
-                function_name,
-            },
-        );
+        const code = brk: {
+            if (strings.eqlComptime(import_path.base, "bun")) {
+                break :brk try std.fmt.bufPrint(
+                    entry.code_buffer[macro_label.len..],
+                    \\//Auto-generated file
+                    \\var Macros;
+                    \\try {{
+                    \\  Macros = globalThis.Bun;
+                    \\}} catch (err) {{
+                    \\   console.error("Error importing macro");
+                    \\   throw err;
+                    \\}}
+                    \\const macro = Macros['{s}'];
+                    \\if (!macro) {{
+                    \\  throw new Error("Macro '{s}' not found in 'bun'");
+                    \\}}
+                    \\
+                    \\Bun.registerMacro({d}, macro);
+                ,
+                    .{
+                        function_name,
+                        function_name,
+                        macro_id,
+                    },
+                );
+            }
+
+            break :brk try std.fmt.bufPrint(
+                entry.code_buffer[macro_label.len..],
+                \\//Auto-generated file
+                \\var Macros;
+                \\try {{
+                \\  Macros = await import('{s}{s}');
+                \\}} catch (err) {{
+                \\   console.error("Error importing macro");
+                \\   throw err;
+                \\}}
+                \\if (!('{s}' in Macros)) {{
+                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\}}
+                \\
+                \\Bun.registerMacro({d}, Macros['{s}']);
+            ,
+                .{
+                    dir_to_use,
+                    import_path.filename,
+                    function_name,
+                    function_name,
+                    dir_to_use,
+                    import_path.filename,
+                    macro_id,
+                    function_name,
+                },
+            );
+        };
 
         entry.source = logger.Source.initPathString(macro_label, code);
         entry.source.path.text = macro_label;

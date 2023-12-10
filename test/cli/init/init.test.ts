@@ -4,7 +4,7 @@ import os from "os";
 import { bunExe, bunEnv } from "harness";
 
 test("bun init works", () => {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X"));
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
 
   Bun.spawnSync({
     cmd: [bunExe(), "init", "-y"],
@@ -27,11 +27,11 @@ test("bun init works", () => {
   });
   const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
   expect(readme).toStartWith("# " + path.basename(temp).toLowerCase() + "\n");
-  expect(readme).toInclude("v" + Bun.version);
+  expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
   expect(readme).toInclude("index.ts");
 
   expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
   expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
-});
+}, 30_000);

@@ -37,3 +37,20 @@ describe("zlib.gunzip", () => {
     });
   });
 });
+
+describe("zlib.brotli*", () => {
+  it("returns stub", () => {
+    for (const method of [
+      "BrotliCompress",
+      "BrotliDecompress",
+      "brotliCompress",
+      "brotliCompressSync",
+      "brotliDecompress",
+      "brotliDecompressSync",
+      "createBrotliCompress",
+      "createBrotliDecompress",
+    ]) {
+      expect(() => zlib[method]()).toThrow(new Error(`zlib.${method} is not implemented`));
+    }
+  });
+});

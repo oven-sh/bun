@@ -101,29 +101,8 @@ pub const URL = struct {
         return "localhost";
     }
 
-    pub const HostFormatter = struct {
-        host: string,
-        port: ?u16 = null,
-        is_https: bool = false,
-
-        pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (strings.indexOfChar(formatter.host, ':') != null) {
-                try writer.writeAll(formatter.host);
-                return;
-            }
-
-            try writer.writeAll(formatter.host);
-
-            const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
-                (!formatter.is_https and formatter.port == 80);
-            if (!is_port_optional) {
-                try writer.print(":{d}", .{formatter.port.?});
-                return;
-            }
-        }
-    };
-    pub fn displayHost(this: *const URL) HostFormatter {
-        return HostFormatter{
+    pub fn displayHost(this: *const URL) strings.HostFormatter {
+        return strings.HostFormatter{
             .host = if (this.host.len > 0) this.host else this.displayHostname(),
             .port = if (this.port.len > 0) this.getPort() else null,
             .is_https = this.isHTTPS(),
@@ -334,7 +313,7 @@ pub const URL = struct {
             url.pathname = "/";
         }
 
-        while (url.pathname.len > 1 and @as(u16, @bitCast(url.pathname[0..2].*)) == comptime std.mem.readIntNative(u16, "//")) {
+        while (url.pathname.len > 1 and @as(u16, @bitCast(url.pathname[0..2].*)) == comptime std.mem.readInt(u16, "//", .little)) {
             url.pathname = url.pathname[1..];
         }
 
@@ -401,7 +380,7 @@ pub const URL = struct {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
-                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
+                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
                     return i + 1;
                 },
                 // if we reach a slash or "?", there's no password
@@ -994,7 +973,7 @@ pub const FormData = struct {
     pub fn toJS(globalThis: *JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !JSC.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = JSC.ZigString.fromUTF8(input);
+                var str = JSC.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
                 return JSC.DOMFormData.createFromURLQuery(globalThis, &str);
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
@@ -1098,13 +1077,13 @@ pub const FormData = struct {
                         if (filename_str.len > 0) {
                             const extension = std.fs.path.extension(filename_str);
                             if (extension.len > 0) {
-                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                if (bun.http.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
                                     break :brk mime.value;
                                 }
                             }
                         }
 
-                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                        if (bun.http.MimeType.sniff(value_str)) |mime| {
                             break :brk mime.value;
                         }
 
@@ -1125,7 +1104,16 @@ pub const FormData = struct {
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = JSC.ZigString.initUTF8(value_str);
+                    var value = JSC.ZigString.initUTF8(
+                        // > Each part whose `Content-Disposition` header does not
+                        // > contain a `filename` parameter must be parsed into an
+                        // > entry whose value is the UTF-8 decoded without BOM
+                        // > content of the part. This is done regardless of the
+                        // > presence or the value of a `Content-Type` header and
+                        // > regardless of the presence or the value of a
+                        // > `charset` parameter.
+                        strings.withoutUTF8BOM(value_str),
+                    );
                     wrap.form.append(&key, &value);
                 }
             }

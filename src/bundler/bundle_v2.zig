@@ -1609,6 +1609,7 @@ pub const BundleV2 = struct {
                 .external = config.external.keys(),
                 .main_fields = &.{},
                 .extension_order = &.{},
+                .env_files = &.{},
             },
             completion.env,
         );
@@ -1963,6 +1964,9 @@ pub const BundleV2 = struct {
             };
 
             if (resolve_result.is_external) {
+                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+                    import_record.path = resolve_result.path_pair.primary;
+                }
                 continue;
             }
 

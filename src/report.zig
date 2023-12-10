@@ -13,7 +13,7 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("root").bun.HTTP.AsyncHTTP;
+const HTTP = @import("root").bun.http.AsyncHTTP;
 const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
@@ -312,7 +312,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     if (error_return_trace) |trace| {
         std.debug.dumpStackTrace(trace.*);
     }
-
+    Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
 }
 
@@ -608,9 +608,6 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 }
             }
 
-            Global.exit(1);
-        },
-        error.MissingValue => {
             Global.exit(1);
         },
         else => {},

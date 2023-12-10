@@ -15,6 +15,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -24,6 +25,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -112,7 +114,7 @@ jobs:
         run: |
           brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
-          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
+          # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
@@ -185,8 +187,8 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
-          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
@@ -239,7 +241,11 @@ jobs:
             artifact: bun-obj-darwin-aarch64
             runner: macos-arm64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{github.sha}}
+          clean: true
       - name: Checkout submodules
         run: git submodule update --init --recursive --depth=1 --progress --force
 
@@ -389,7 +395,11 @@ jobs:
           cd ${{matrix.tag}}
           chmod +x bun
           pwd >> $GITHUB_PATH
-          ./bun --version
+      - id: bun-version-check
+        name: Bun version check
+        run: |
+          # If this hangs, it means something is seriously wrong with the build
+          bun --version
       - id: install
         name: Install dependencies
         run: |

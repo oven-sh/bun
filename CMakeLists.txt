@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.9")
-set(WEBKIT_TAG 7cd84abfa787e4b96b27c3ef1e28a4eb1aa49aa1)
+set(Bun_VERSION "1.0.16")
+set(WEBKIT_TAG 0aa1f6dfc9b48be1e89b8f709fd44e3c88feaf33)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -24,11 +24,12 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
-    set(ZIG_OPTIMIZE "Debug")
+    set(DEFAULT_ZIG_OPTIMIZE "Debug")
     set(bun "bun-debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
-    set(ZIG_OPTIMIZE "ReleaseFast")
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+
     if(WIN32)
         # lld-link will strip it for you, so we can build directly to bun.exe
         set(bun "bun")
@@ -144,6 +145,7 @@ else()
     if(NOT CMAKE_C_COMPILER)
         set(CMAKE_C_COMPILER "clang-cl")
     endif()
+
     if(NOT CMAKE_CXX_COMPILER)
         set(CMAKE_CXX_COMPILER "clang-cl")
     endif()
@@ -170,9 +172,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 project(Bun VERSION "${Bun_VERSION}")
 
-#if(MSVC)
-#  message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
-#endif()
+# if(MSVC)
+# message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
+# endif()
 
 # More effort to prevent using the wrong C++ compiler
 if(UNIX)
@@ -196,6 +198,7 @@ if(NOT WIN32)
     set(SCRIPT_EXTENSION "sh")
 else()
     set(SCRIPT_EXTENSION "ps1")
+
     # pwsh is the new powershell, powershell is the old one.
     find_program(SHELL NAMES pwsh powershell)
 endif()
@@ -213,8 +216,15 @@ if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
 endif()
 
 set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+set(DEFAULT_USE_DEBUG_JSC, OFF)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(DEFAULT_USE_DEBUG_JSC ON)
+endif()
+
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+
     if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
@@ -232,14 +242,20 @@ option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
+option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
-option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
+option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
+option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
-if (NOT CANARY)
+if(NOT CANARY)
     set(CANARY 0)
+endif()
+
+if(NOT ZIG_OPTIMIZE)
+    set(ZIG_OPTIMIZE ${DEFAULT_ZIG_OPTIMIZE})
 endif()
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
@@ -304,8 +320,26 @@ function(validate_zig validator_result_var item)
     endif()
 endfunction()
 
-find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
-message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
+if (WIN32 OR ZIG_COMPILER)
+    if(ZIG_COMPILER STREQUAL "system")
+        message(STATUS "Using system Zig compiler")
+        unset(ZIG_COMPILER_)
+    endif()
+    find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+    set(ZIG_COMPILER "${ZIG_COMPILER_}")
+    message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    execute_process(
+        COMMAND "${SHELL}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
+    )
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+        message(FATAL_ERROR "Auto-installation of Zig failed. Please pass -DZIG_COMPILER=system or a path to the Zig")
+    endif()
+    set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+    message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+endif()
 
 # Bun
 if(NOT WIN32)
@@ -330,6 +364,7 @@ endif()
 # CCache
 find_program(CCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
+
 if(CCACHE_PROGRAM)
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
@@ -356,6 +391,7 @@ if(NOT WEBKIT_DIR)
     set(ASSERT_ENABLED "0")
 
     if(USE_DEBUG_JSC)
+        add_compile_definitions("BUN_DEBUG=1")
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
     elseif(NOT DEBUG AND NOT WIN32)
@@ -398,34 +434,22 @@ if(NOT WEBKIT_DIR)
 elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
-    # Setting WEBKIT_DIR means you either have a path to the WebKit repo, or you have a path to packaged webkit
-    # Non-packaged webkit has CMakeLists.txt
-    if(EXISTS "${WEBKIT_DIR}/CMakeLists.txt")
-        # Since we may be doing a Debug build of Bun but with a Release build of JSC, we can't
-        # include their CMakeLists directly here, but rather we need to run `cmake` as a dependency
-        # of our build. It'll still have decent caching which is what really matters.
+    # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
+    if(USE_DEBUG_JSC AND EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
+        # You may need to run:
+        # make jsc-compile-debug jsc-copy-headers
+        include_directories(
+            "${WEBKIT_DIR}/"
+            "${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders"
+            "${WEBKIT_DIR}/bmalloc/Headers"
+            "${WEBKIT_DIR}/WTF/Headers"
+        )
+        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
-        # cmake WEBKIT_DIR -B WEBKIT_DIR/WebKitBuild/WEBKIT_BUILD_TYPE
-        # -DPORT=JSCOnly
-        # -DENABLE_STATIC_JSC=ON
-        # -DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON
-        # -DCMAKE_BUILD_TYPE=Debug
-        # -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON
-        # -DUSE_THIN_ARCHIVES=OFF
-        # -DENABLE_FTL_JIT=ON
-        # -DCMAKE_C_COMPILER=(which clang-16)
-        # -DDCMAKE_CXX_COMPILER=(which clang++-16)
-        # -DDUSE_BUN_JSC_ADDITIONS=1
-        # -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld"
-        # -DCMAKE_AR=$(which llvm-ar)
-        # -DCMAKE_RANLIB=$(which llvm-ranlib)
-        # -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON
-        # -G Ninja
-        # -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
-        # -DPTHREAD_JIT_PERMISSIONS_API=1
-        # -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
-        # -DENABLE_REMOTE_INSPECTOR=ON
-        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
+        if(USE_DEBUG_JSC)
+            add_compile_definitions("BUN_DEBUG=1")
+            set(ASSERT_ENABLED "1")
+        endif()
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
             if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
@@ -546,6 +570,7 @@ set(BUN_OBJECT_LUT_SOURCES
 )
 set(BUN_OBJECT_LUT_OUTPUTS "")
 set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+
 if(NOT BUN_LINK_ONLY)
     macro(GENERATE_HASH_LUT _input _output _display_name)
         if(NOT NO_CODEGEN)
@@ -558,6 +583,7 @@ if(NOT BUN_LINK_ONLY)
                 COMMENT "Generating ${_display_name}"
             )
         endif()
+
         list(APPEND BUN_OBJECT_LUT_OUTPUTS "${_output}")
 
         # list(APPEND Bun_HEADERS ${_output})
@@ -755,6 +781,7 @@ if(CANARY GREATER 0)
 else()
     set(Bun_VERSION_WITH_TAG "${Bun_VERSION}")
 endif()
+
 if(WIN32)
     set(BUN_ICO_PATH "${BUN_SRC}/bun.ico")
     configure_file("${BUN_SRC}/windows-app-info.rc" "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
@@ -779,6 +806,7 @@ set_target_properties(${bun} PROPERTIES
 )
 
 add_compile_definitions(
+
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
@@ -795,12 +823,13 @@ add_compile_definitions(
     "NOMINMAX"
     "IS_BUILD"
     "BUILDING_JSCONLY__"
-    "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 
 if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
+else()
+    add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
 include_directories(
@@ -822,7 +851,7 @@ include_directories(
 
 # -- BUN_CPP_ONLY Target
 if(NOT BUN_CPP_ARCHIVE)
-    if (BUN_CPP_ONLY)
+    if(BUN_CPP_ONLY)
         if(NOT WIN32)
             string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
             string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
@@ -858,14 +887,23 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -g3 -O1 -gdwarf-4)
+        target_compile_options(${bun} PUBLIC -g3 -O1 -gdwarf-4
+            -Werror=return-type
+            -Werror=return-stack-address
+            -Werror=implicit-function-declaration
+        )
     else()
         target_compile_options(${bun} PUBLIC -O1)
     endif()
+
     add_compile_definitions("BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm)
+        target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm -g1
+            -Werror=return-type
+            -Werror=return-stack-address
+            -Werror=implicit-function-declaration
+        )
     else()
         target_compile_options(${bun} PUBLIC /O2 -flto=full)
         target_link_options(${bun} PUBLIC /LTCG)
@@ -882,7 +920,7 @@ if(NOT CPU_TARGET STREQUAL "native")
     # on arm, this argument will not be passed.
     target_compile_options(${bun} PUBLIC "-march=${CPU_TARGET}")
 else()
-    if (APPLE AND ARCH STREQUAL "aarch64")
+    if(APPLE AND ARCH STREQUAL "aarch64")
         # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
         target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
     endif()
@@ -903,7 +941,7 @@ if(WIN32)
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:4194304,2097152")
 else()
-    target_compile_options(${bun} PUBLIC 
+    target_compile_options(${bun} PUBLIC
         -fPIC
         -mtune=${CPU_TARGET}
         -fconstexpr-steps=1271242
@@ -1008,7 +1046,7 @@ if(APPLE)
 endif()
 
 # --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
     # add_custom_command(
     # TARGET ${bun}
     # POST_BUILD
@@ -1089,11 +1127,21 @@ if(USE_CUSTOM_MIMALLOC)
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc.lib")
     elseif(APPLE)
-        # https://github.com/microsoft/mimalloc/issues/512
-        # Linking mimalloc via object file on macOS x64 can cause heap corruption
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            message(STATUS "Using debug mimalloc")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+        else()
+            # https://github.com/microsoft/mimalloc/issues/512
+            # Linking mimalloc via object file on macOS x64 can cause heap corruption
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+        endif()
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            message(STATUS "Using debug mimalloc")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+        else()
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        endif()
     endif()
 else()
     find_package(mimalloc REQUIRED)
@@ -1193,6 +1241,18 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
+if(USE_CUSTOM_LSHPACK)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lshpack.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblshpack.a")
+    endif()
+else()
+    find_package(lshpack REQUIRED)
+    target_link_libraries(${bun} PRIVATE lshpack)
+endif()
+
+
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
@@ -1217,9 +1277,11 @@ endif()
 if(BUN_LINK_ONLY)
     message(STATUS "NOTE: BUN_LINK_ONLY is ON, this build config will only link the Bun executable")
 endif()
+
 if(BUN_CPP_ONLY)
     message(STATUS "NOTE: BUN_CPP_ONLY is ON, this build will only work with 'compile-cpp-only.${SCRIPT_EXTENSION}'")
 endif()
+
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
 endif()

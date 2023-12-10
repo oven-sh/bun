@@ -176,6 +176,28 @@ logLevel = "debug"
         expect(stdout.toString()).toBe("Hello, world!\n");
         expect(exitCode).toBe(0);
       });
+
+      it("should not passthrough script arguments to pre- or post- scripts", async () => {
+        await writeFile(
+          join(run_dir, "package.json"),
+          JSON.stringify({
+            scripts: {
+              premyscript: "echo pre",
+              myscript: "echo main",
+              postmyscript: "echo post",
+            },
+          }),
+        );
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "run", "--silent", "myscript", "-a", "-b", "-c"].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("pre\n" + "main -a -b -c\n" + "post\n");
+        expect(exitCode).toBe(0);
+      });
     });
   });
 }

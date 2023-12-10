@@ -161,5 +161,11 @@ console.log(hole([1, 2, 3], 2));
   console.log(overriddenArray);
 }
 
+// ensure length property is shown
+{
+  console.log({ a: 42, length: 0 });
+  console.log({ [1]: 42, length: 1 });
+}
+
 // TODO: handle DerivedArray
 // It appears to not be set and I don't know why.

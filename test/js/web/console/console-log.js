@@ -1,3 +1,4 @@
+console.log({ a: "" });
 console.log("Hello World!");
 console.log(0);
 console.log(-0);

@@ -1692,6 +1692,53 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
+                pub fn space(self: *@This()) void {
+                    self.estimated_line_length.* += 1;
+                    self.ctx.writeAll(" ") catch {
+                        self.failed = true;
+                    };
+                }
+
+                pub fn pretty(self: *@This(), comptime fmt: string, comptime enable_ansi_color: bool, args: anytype) void {
+                    const length_ignoring_formatted_values = comptime brk: {
+                        const fmt_str = Output.prettyFmt(fmt, false);
+                        var length: usize = 0;
+                        var i: usize = 0;
+                        while (i < fmt_str.len) : (i += 1) {
+                            switch (fmt_str[i]) {
+                                '{' => {
+                                    i += 1;
+                                    if (i >= fmt_str.len)
+                                        break;
+                                    if (fmt_str[i] == '{') {
+                                        @compileError("Format string too complicated for pretty() right now");
+                                    }
+
+                                    while (i < fmt_str.len) : (i += 1) {
+                                        if (fmt_str[i] == '}') {
+                                            break;
+                                        }
+                                    }
+                                    if (i >= fmt_str.len)
+                                        break;
+                                },
+                                128...255 => {
+                                    @compileError("Format string too complicated for pretty() right now");
+                                },
+                                else => {},
+                            }
+                            length += 1;
+                        }
+
+                        break :brk length;
+                    };
+
+                    self.estimated_line_length.* += length_ignoring_formatted_values;
+                    self.ctx.print(comptime Output.prettyFmt(fmt, enable_ansi_color), args) catch {
+                        self.failed = true;
+                    };
+                }
+
                 pub fn writeLatin1(self: *@This(), buf: []const u8) void {
                     var remain = buf;
                     while (remain.len > 0) {
@@ -1889,8 +1936,7 @@ pub const ZigConsoleClient = struct {
                             this.writeIndent(Writer, writer_) catch {};
                             this.resetLine();
                         } else {
-                            this.estimated_line_length += 1;
-                            writer.writeAll(" ");
+                            writer.space();
                         }
                     }
 
@@ -2266,6 +2312,7 @@ pub const ZigConsoleClient = struct {
                                 this.addForNewLine(1);
                             } else {
                                 writer.writeAll("[ ");
+                                this.addForNewLine(2);
                             }
 
                             if (element.isEmpty()) {
@@ -2299,16 +2346,18 @@ pub const ZigConsoleClient = struct {
                                     if (i > 1) {
                                         this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                                         if (this.ordered_properties or this.goodTimeForANewLine()) {
+                                            was_good_time = true;
                                             writer.writeAll("\n");
                                             this.writeIndent(Writer, writer_) catch unreachable;
                                         } else {
-                                            writer.writeAll(" ");
+                                            writer.space();
                                         }
                                     }
 
-                                    writer.print(comptime Output.prettyFmt("<r><d>empty item<r>", enable_ansi_colors), .{});
+                                    writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
                                 } else {
-                                    writer.print(comptime Output.prettyFmt("<r><d>{d} x empty items<r>", enable_ansi_colors), .{empty_count});
+                                    this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
+                                    writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
                                 }
                                 empty_start = null;
                             }
@@ -2316,9 +2365,10 @@ pub const ZigConsoleClient = struct {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             if (this.ordered_properties or this.goodTimeForANewLine()) {
                                 writer.writeAll("\n");
+                                was_good_time = true;
                                 this.writeIndent(Writer, writer_) catch unreachable;
                             } else {
-                                writer.writeAll(" ");
+                                writer.space();
                             }
 
                             const tag = Tag.getAdvanced(element, this.globalThis, .{ .hide_global = true });
@@ -2337,9 +2387,10 @@ pub const ZigConsoleClient = struct {
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                                 if (this.ordered_properties or this.goodTimeForANewLine()) {
                                     writer.writeAll("\n");
+                                    was_good_time = true;
                                     this.writeIndent(Writer, writer_) catch unreachable;
                                 } else {
-                                    writer.writeAll(" ");
+                                    writer.space();
                                 }
                             }
 
@@ -2347,9 +2398,10 @@ pub const ZigConsoleClient = struct {
 
                             const empty_count = len - empty;
                             if (empty_count == 1) {
-                                writer.print(comptime Output.prettyFmt("<r><d>empty item<r>", enable_ansi_colors), .{});
+                                writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
                             } else {
-                                writer.print(comptime Output.prettyFmt("<r><d>{d} x empty items<r>", enable_ansi_colors), .{empty_count});
+                                this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
+                                writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
                             }
                         }
                     }
@@ -2811,7 +2863,7 @@ pub const ZigConsoleClient = struct {
 
                                     if (tag.cell.isHidden()) continue;
 
-                                    if (needs_space) writer.writeAll(" ");
+                                    if (needs_space) writer.space();
                                     needs_space = false;
 
                                     writer.print(
@@ -2847,7 +2899,7 @@ pub const ZigConsoleClient = struct {
                                         writer.writeAll("\n");
                                         this.writeIndent(Writer, writer_) catch unreachable;
                                     } else if (props_iter.i + 1 < count_without_children) {
-                                        writer.writeAll(" ");
+                                        writer.space();
                                     }
                                 }
                             }
@@ -3134,7 +3186,7 @@ pub const ZigConsoleClient = struct {
             leftover = leftover[0..@min(leftover.len, max)];
             for (leftover) |el| {
                 this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
-                writer.writeAll(" ");
+                writer.space();
 
                 writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});
             }

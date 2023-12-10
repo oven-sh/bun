@@ -232,9 +232,7 @@ pub const WebWorker = struct {
         if (vm.worker) |worker_| {
             worker.requested_terminate = true;
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
-
-            if (worker.status.load(.Monotonic) != .running)
-                worker_.exitAndDeinit();
+            worker_.exitAndDeinit();
         }
     }
 

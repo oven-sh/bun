@@ -167,6 +167,8 @@ pub const Result = struct {
 
     is_external: bool = false,
 
+    is_external_and_rewrite_import_path: bool = false,
+
     is_standalone_module: bool = false,
 
     // This is true when the package was loaded from within the node_modules directory.
@@ -1215,6 +1217,7 @@ pub const Resolver = struct {
                                         .jsx = r.opts.jsx,
                                         .module_type = _result.module_type,
                                         .is_external = _result.is_external,
+                                        .is_external_and_rewrite_import_path = _result.is_external,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -1382,6 +1385,9 @@ pub const Resolver = struct {
                     result.jsx = r.opts.jsx;
                     result.module_type = res.module_type;
                     result.is_external = res.is_external;
+                    // Potentially rewrite the import path if it's external that
+                    // was remapped to a different path
+                    result.is_external_and_rewrite_import_path = result.is_external;
 
                     if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                         return .{ .success = result };
@@ -1408,6 +1414,10 @@ pub const Resolver = struct {
                                             result.diff_case = remapped.diff_case;
                                             result.module_type = remapped.module_type;
                                             result.is_external = remapped.is_external;
+
+                                            // Potentially rewrite the import path if it's external that
+                                            // was remapped to a different path
+                                            result.is_external_and_rewrite_import_path = result.is_external;
 
                                             result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                             return .{ .success = result };
@@ -2906,18 +2916,7 @@ pub const Resolver = struct {
             //       "#fs": "node:fs"
             //     }
             //
-            if (r.opts.mark_builtins_as_external) {
-                // Handle it for bunlding
-                if (r.isExternalPattern(esm_resolution.path)) {
-                    return .{
-                        .success = .{
-                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
-                            .is_external = true,
-                        },
-                    };
-                }
-            } else if (r.opts.target.isBun()) {
-                // Handle it for the runtime
+            if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
                 if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
                     return .{
                         .success = .{

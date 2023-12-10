@@ -1964,7 +1964,7 @@ pub const BundleV2 = struct {
             };
 
             if (resolve_result.is_external) {
-                if (!strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
                     import_record.path = resolve_result.path_pair.primary;
                 }
                 continue;

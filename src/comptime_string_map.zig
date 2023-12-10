@@ -179,7 +179,6 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return getWithEql(str, @import("root").bun.String.eqlComptime);
         }
 
-
         /// Caller must ensure that the input is a string.
         pub fn fromJSCaseInsensitive(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
             if (comptime @import("root").bun.Environment.allow_assert) {

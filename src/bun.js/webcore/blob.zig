@@ -637,29 +637,67 @@ pub const Blob = struct {
         }
     };
 
+    const Retry = enum { @"continue", fail, no };
+    // we choose not to inline this so that the path buffer is not on the stack unless necessary.
+    noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string: [:0]const u8, err_path: []const u8) Retry {
+        if (err.getErrno() == .NOENT and this.mkdirp_if_not_exists) {
+            if (std.fs.path.dirname(path_string)) |dirname| {
+                var node_fs: JSC.Node.NodeFS = .{};
+                switch (node_fs.mkdirRecursive(
+                    JSC.Node.Arguments.Mkdir{
+                        .path = .{ .string = bun.PathString.init(dirname) },
+                        .recursive = true,
+                        .return_empty_string = true,
+                    },
+                    .sync,
+                )) {
+                    .result => {
+                        this.mkdirp_if_not_exists = false;
+                        return .@"continue";
+                    },
+                    .err => |err2| {
+                        if (comptime @hasField(@TypeOf(this.*), "errno")) {
+                            this.errno = AsyncIO.asError(err2.errno);
+                        }
+                        this.system_error = err.withPath(err_path).toSystemError();
+                        if (comptime @hasField(@TypeOf(this.*), "opened_fd")) {
+                            this.opened_fd = null_fd;
+                        }
+                        return .fail;
+                    },
+                }
+            }
+        }
+
+        return .no;
+    }
+
     const WriteFileWaitFromLockedValueTask = struct {
         file_blob: Blob,
         globalThis: *JSGlobalObject,
-        promise: *JSPromise,
+        promise: JSC.JSPromise.Strong,
+        mkdirp_if_not_exists: bool = false,
 
         pub fn thenWrap(this: *anyopaque, value: *Body.Value) void {
             then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value);
         }
 
         pub fn then(this: *WriteFileWaitFromLockedValueTask, value: *Body.Value) void {
-            var promise = this.promise;
+            var promise = this.promise.get();
             var globalThis = this.globalThis;
             var file_blob = this.file_blob;
             switch (value.*) {
                 .Error => |err| {
                     file_blob.detach();
                     _ = value.use();
+                    this.promise.strong.deinit();
                     bun.default_allocator.destroy(this);
                     promise.reject(globalThis, err);
                 },
                 .Used => {
                     file_blob.detach();
                     _ = value.use();
+                    this.promise.strong.deinit();
                     bun.default_allocator.destroy(this);
                     promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
                 },
@@ -671,7 +709,7 @@ pub const Blob = struct {
                 => {
                     var blob = value.use();
                     // TODO: this should be one promise not two!
-                    const new_promise = writeFileWithSourceDestination(globalThis, &blob, &file_blob);
+                    const new_promise = writeFileWithSourceDestination(globalThis, &blob, &file_blob, this.mkdirp_if_not_exists);
                     if (new_promise.asAnyPromise()) |_promise| {
                         switch (_promise.status(globalThis.vm())) {
                             .Pending => {
@@ -690,6 +728,7 @@ pub const Blob = struct {
                     }
 
                     file_blob.detach();
+                    this.promise.strong.deinit();
                     bun.default_allocator.destroy(this);
                 },
                 .Locked => {
@@ -704,6 +743,7 @@ pub const Blob = struct {
         ctx: JSC.C.JSContextRef,
         source_blob: *Blob,
         destination_blob: *Blob,
+        mkdirp_if_not_exists: bool,
     ) JSC.JSValue {
         const destination_type = std.meta.activeTag(destination_blob.store.?.data);
 
@@ -728,6 +768,7 @@ pub const Blob = struct {
                 *WriteFilePromise,
                 write_file_promise,
                 WriteFilePromise.run,
+                mkdirp_if_not_exists,
             ) catch unreachable;
             var task = Store.WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch unreachable;
             // Defer promise creation until we're just about to schedule the task
@@ -748,6 +789,7 @@ pub const Blob = struct {
                 destination_blob.offset,
                 destination_blob.size,
                 ctx.ptr(),
+                mkdirp_if_not_exists,
             ) catch unreachable;
             file_copier.schedule();
             return file_copier.promise.value();
@@ -780,7 +822,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         var exception_ = [1]JSC.JSValueRef{null};
@@ -825,6 +867,35 @@ pub const Blob = struct {
         defer if (input_store) |st| st.deref();
 
         var needs_async = false;
+
+        var mkdirp_if_not_exists: ?bool = null;
+
+        if (args.nextEat()) |options_object| {
+            if (options_object.isObject()) {
+                if (options_object.getTruthy(globalThis, "createPath")) |create_directory| {
+                    if (!create_directory.isBoolean()) {
+                        globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
+                        return .zero;
+                    }
+                    mkdirp_if_not_exists = create_directory.toBoolean();
+                }
+            } else if (!options_object.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArgumentType("write", "options", "object");
+                return .zero;
+            }
+        }
+
+        if (mkdirp_if_not_exists) |mkdir| {
+            if (mkdir and
+                path_or_blob == .blob and
+                path_or_blob.blob.store != null and
+                path_or_blob.blob.store.?.data == .file and
+                path_or_blob.blob.store.?.data.file.pathlike == .fd)
+            {
+                globalThis.throwInvalidArguments("Cannot create a directory for a file descriptor", .{});
+                return .zero;
+            }
+        }
 
         // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
         // This is a heuristic, but it's a good one.
@@ -945,17 +1016,16 @@ pub const Blob = struct {
                     },
                     .Locked => {
                         var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        var promise = JSC.JSPromise.create(globalThis);
                         task.* = WriteFileWaitFromLockedValueTask{
                             .globalThis = globalThis,
                             .file_blob = destination_blob,
-                            .promise = promise,
+                            .promise = JSC.JSPromise.Strong.init(globalThis),
+                            .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
                         };
 
                         response.body.value.Locked.task = task;
                         response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
-
-                        return promise.asValue(globalThis);
+                        return task.promise.value();
                     },
                 }
             }
@@ -980,17 +1050,17 @@ pub const Blob = struct {
                     },
                     .Locked => {
                         var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        var promise = JSC.JSPromise.create(globalThis);
                         task.* = WriteFileWaitFromLockedValueTask{
                             .globalThis = globalThis,
                             .file_blob = destination_blob,
-                            .promise = promise,
+                            .promise = JSC.JSPromise.Strong.init(globalThis),
+                            .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
                         };
 
                         request.body.value.Locked.task = task;
                         request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
-                        return promise.asValue(globalThis);
+                        return task.promise.value();
                     },
                 }
             }
@@ -1025,7 +1095,7 @@ pub const Blob = struct {
             }
         }
 
-        return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob);
+        return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, mkdirp_if_not_exists orelse true);
     }
 
     const write_permissions = 0o664;
@@ -1050,6 +1120,11 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
+                    if (err.getErrno() == .NOENT) {
+                        needs_async.* = true;
+                        return .zero;
+                    }
+
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
@@ -1128,6 +1203,11 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
+                    if (err.getErrno() == .NOENT) {
+                        needs_async.* = true;
+                        return .zero;
+                    }
+
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
@@ -1569,16 +1649,26 @@ pub const Blob = struct {
                         this.file_blob.store.?.data.file.pathlike.path;
 
                     var path = path_string.sliceZ(&buf);
+                    while (true) {
+                        this.opened_fd = switch (bun.sys.open(path, open_flags_, JSC.Node.default_permission)) {
+                            .result => |fd| fd,
+                            .err => |err| {
+                                if (comptime @hasField(This, "mkdirp_if_not_exists")) {
+                                    switch (mkdirIfNotExists(this, err, path, path_string.slice())) {
+                                        .@"continue" => continue,
+                                        .fail => return null_fd,
+                                        .no => {},
+                                    }
+                                }
 
-                    this.opened_fd = switch (bun.sys.open(path, open_flags_, JSC.Node.default_permission)) {
-                        .result => |fd| fd,
-                        .err => |err| {
-                            this.errno = AsyncIO.asError(err.errno);
-                            this.system_error = err.withPath(path_string.slice()).toSystemError();
-                            this.opened_fd = null_fd;
-                            return null_fd;
-                        },
-                    };
+                                this.errno = AsyncIO.asError(err.errno);
+                                this.system_error = err.withPath(path_string.slice()).toSystemError();
+                                this.opened_fd = null_fd;
+                                return null_fd;
+                            },
+                        };
+                        break;
+                    }
 
                     return this.opened_fd;
                 }
@@ -1659,8 +1749,9 @@ pub const Blob = struct {
                     }
 
                     if (is_allowed_to_close_fd and this.opened_fd > 2 and this.opened_fd != null_fd) {
+                        const fd = this.opened_fd;
                         this.opened_fd = null_fd;
-                        _ = bun.sys.close(this.opened_fd);
+                        _ = bun.sys.close(fd);
                     }
 
                     return false;
@@ -2160,6 +2251,7 @@ pub const Blob = struct {
 
             could_block: bool = false,
             close_after_io: bool = false,
+            mkdirp_if_not_exists: bool = false,
 
             pub const ResultType = SystemError.Maybe(SizeType);
             pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
@@ -2217,6 +2309,7 @@ pub const Blob = struct {
                 bytes_blob: Blob,
                 onWriteFileContext: *anyopaque,
                 onCompleteCallback: OnWriteFileCallback,
+                mkdirp_if_not_exists: bool,
             ) !*WriteFile {
                 var read_file = try allocator.create(WriteFile);
                 read_file.* = WriteFile{
@@ -2225,6 +2318,7 @@ pub const Blob = struct {
                     .onCompleteCtx = onWriteFileContext,
                     .onCompleteCallback = onCompleteCallback,
                     .task = .{ .callback = &doWriteLoopTask },
+                    .mkdirp_if_not_exists = mkdirp_if_not_exists,
                 };
                 file_blob.store.?.ref();
                 bytes_blob.store.?.ref();
@@ -2238,6 +2332,7 @@ pub const Blob = struct {
                 comptime Context: type,
                 context: Context,
                 comptime callback: fn (ctx: Context, bytes: ResultType) void,
+                mkdirp_if_not_exists: bool,
             ) !*WriteFile {
                 const Handler = struct {
                     pub fn run(ptr: *anyopaque, bytes: ResultType) void {
@@ -2251,6 +2346,7 @@ pub const Blob = struct {
                     bytes_blob,
                     @as(*anyopaque, @ptrCast(context)),
                     Handler.run,
+                    mkdirp_if_not_exists,
                 );
             }
 
@@ -2502,6 +2598,8 @@ pub const Blob = struct {
 
             globalThis: *JSGlobalObject,
 
+            mkdirp_if_not_exists: bool = false,
+
             pub const ResultType = anyerror!SizeType;
 
             pub const Callback = *const fn (ctx: *anyopaque, len: ResultType) void;
@@ -2515,6 +2613,7 @@ pub const Blob = struct {
                 off: SizeType,
                 max_len: SizeType,
                 globalThis: *JSC.JSGlobalObject,
+                mkdirp_if_not_exists: bool,
             ) !*CopyFilePromiseTask {
                 var read_file = try allocator.create(CopyFile);
                 read_file.* = CopyFile{
@@ -2525,6 +2624,7 @@ pub const Blob = struct {
                     .globalThis = globalThis,
                     .destination_file_store = store.data.file,
                     .source_file_store = source_store.data.file,
+                    .mkdirp_if_not_exists = mkdirp_if_not_exists,
                 };
                 store.ref();
                 source_store.ref();
@@ -2630,22 +2730,38 @@ pub const Blob = struct {
                 }
 
                 if (which == .both or which == .destination) {
-                    this.destination_fd = switch (bun.sys.open(
-                        this.destination_file_store.pathlike.path.sliceZAssume(),
-                        open_destination_flags,
-                        JSC.Node.default_permission,
-                    )) {
-                        .result => |result| result,
-                        .err => |errno| {
-                            if (which == .both) {
-                                _ = bun.sys.close(this.source_fd);
-                                this.source_fd = 0;
-                            }
+                    while (true) {
+                        const dest = this.destination_file_store.pathlike.path.sliceZAssume();
+                        this.destination_fd = switch (bun.sys.open(
+                            dest,
+                            open_destination_flags,
+                            JSC.Node.default_permission,
+                        )) {
+                            .result => |result| result,
+                            .err => |errno| {
+                                switch (mkdirIfNotExists(this, errno, dest, dest)) {
+                                    .@"continue" => continue,
+                                    .fail => {
+                                        if (which == .both) {
+                                            _ = bun.sys.close(this.source_fd);
+                                            this.source_fd = 0;
+                                        }
+                                        return AsyncIO.asError(errno.errno);
+                                    },
+                                    .no => {},
+                                }
 
-                            this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
-                            return AsyncIO.asError(errno.errno);
-                        },
-                    };
+                                if (which == .both) {
+                                    _ = bun.sys.close(this.source_fd);
+                                    this.source_fd = 0;
+                                }
+
+                                this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
+                                return AsyncIO.asError(errno.errno);
+                            },
+                        };
+                        break;
+                    }
                 }
             }
 
@@ -2793,17 +2909,26 @@ pub const Blob = struct {
                 var source_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-                switch (bun.sys.clonefile(
-                    this.source_file_store.pathlike.path.sliceZ(&source_buf),
-                    this.destination_file_store.pathlike.path.sliceZ(
+                while (true) {
+                    const dest = this.destination_file_store.pathlike.path.sliceZ(
                         &dest_buf,
-                    ),
-                )) {
-                    .err => |errno| {
-                        this.system_error = errno.toSystemError();
-                        return AsyncIO.asError(errno.errno);
-                    },
-                    .result => {},
+                    );
+                    switch (bun.sys.clonefile(
+                        this.source_file_store.pathlike.path.sliceZ(&source_buf),
+                        dest,
+                    )) {
+                        .err => |errno| {
+                            switch (mkdirIfNotExists(this, errno, dest, this.destination_file_store.pathlike.path.slice())) {
+                                .@"continue" => continue,
+                                .fail => {},
+                                .no => {},
+                            }
+                            this.system_error = errno.toSystemError();
+                            return AsyncIO.asError(errno.errno);
+                        },
+                        .result => {},
+                    }
+                    break;
                 }
             }
 

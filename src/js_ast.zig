@@ -293,7 +293,7 @@ pub const LocRef = struct {
 
 pub const Flags = struct {
     pub const JSXElement = enum {
-        is_key_before_rest,
+        is_key_after_spread,
         has_any_dynamic,
         can_be_inlined,
         can_be_hoisted,

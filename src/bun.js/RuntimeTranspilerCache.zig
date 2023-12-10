@@ -1,5 +1,5 @@
 // ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
-const expected_version = 1;
+const expected_version = 2;
 
 const bun = @import("root").bun;
 const std = @import("std");

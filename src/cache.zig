@@ -248,6 +248,7 @@ pub const JavaScript = struct {
         source: *const logger.Source,
     ) anyerror!?js_ast.Result {
         var temp_log = logger.Log.init(allocator);
+        temp_log.level = log.level;
         var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch {
             temp_log.appendToMaybeRecycled(log, source) catch {};
             return null;

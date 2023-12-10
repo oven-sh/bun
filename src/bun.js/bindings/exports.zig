@@ -2284,7 +2284,9 @@ pub const ZigConsoleClient = struct {
                         return;
                     }
 
-                    var was_good_time = this.always_newline_scope;
+                    var was_good_time = this.always_newline_scope or
+                        // heuristic: more than 10, probably should have a newline before it
+                        len > 10;
                     {
                         this.indent += 1;
                         this.depth += 1;

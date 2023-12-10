@@ -2120,8 +2120,8 @@ JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* 
 JSC__JSValue JSC__JSValue__getDirectIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
     uint32_t arg3)
 {
-    JSC::JSArray* array = jsCast<JSC::JSArray*>(JSC::JSValue::decode(jsValue));
-    return JSC::JSValue::encode(array->getDirectIndex(arg1, arg3));
+    JSC::JSObject* object = JSC::JSValue::decode(jsValue).getObject();
+    return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1,
     const ZigString* arg2)

@@ -79,6 +79,12 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
     },
   },
 }
+{
+  "1": [Object ...],
+}
+{
+  "1": [Object ...],
+}
 SetIterator { 
   1,
   "123",
@@ -124,3 +130,18 @@ NestedClass {
 myCustomName {
   [Symbol(Symbol.toStringTag)]: "myCustomName",
 }
+{
+  "0": 1,
+  "1": 2,
+  "2": 3,
+  "3": 4,
+  length: 4,
+}
+[ 1, 2, 3 ]
+[ empty item, 2, empty item ]
+[ 1, 2, empty item ]
+[ 1, 2, 3 ]
+[ 2 x empty items, 3 ]
+[ 1, 2, empty item, 4, 38 x empty items ]
+[ 1, empty item, 4, 39 x empty items ]
+[ 42 x empty items ]

@@ -42,7 +42,6 @@ pub const BunObject = struct {
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     pub const @"$" = Bun.shell;
-    pub const dummyShell = Bun.dummyShell;
     pub const shellParse = Bun.shellParse;
     pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
@@ -160,7 +159,6 @@ pub const BunObject = struct {
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.@"$", .{ .name = callbackName("$") });
-        @export(BunObject.dummyShell, .{ .name = callbackName("dummyShell") });
         @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
         @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         // -- Callbacks --

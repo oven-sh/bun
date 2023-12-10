@@ -26,6 +26,13 @@ const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;
 
+pub fn OOM(e: anyerror) noreturn {
+    if (comptime bun.Environment.allow_assert) {
+        if (e != error.OutOfMemory) @panic("Ruh roh");
+    }
+    @panic("Out of memory");
+}
+
 const log = bun.Output.scoped(.SHELL, false);
 
 pub fn assert(cond: bool, comptime msg: []const u8) void {
@@ -61,6 +68,7 @@ pub const Interpreter = struct {
     export_env: std.StringArrayHashMap([:0]const u8),
 
     /// JS objects used as input for the shell script
+    /// This should be allocated using the arena
     jsobjs: []JSValue,
 
     const ShellErrorKind = error{
@@ -141,45 +149,61 @@ pub const Interpreter = struct {
     }
 
     fn deinit(this: *Interpreter) void {
-        this.arena.deinit();
-        this.allocator.destroy(this);
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
         }
+        this.arena.deinit();
+        this.allocator.destroy(this);
     }
 
-    fn assignVar(this: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) anyerror!void {
-        const brace_expansion = assign.value.has_brace_expansion();
-        const value = brk: {
-            var arena_alloc = this.arena.allocator();
-            var args = std.ArrayList(?[*:0]const u8).initCapacity(arena_alloc, 1);
-            var expander = ExpansionCtx(.{ .for_spawn = false }).init(
-                this,
-                arena_alloc,
-                &args,
-            );
-            try expander.evalNoBraceExpansion(&assign.value);
-            const value = args.items[0];
-            if (brace_expansion) {
-                @panic("TODO");
-                // // For some reason bash only sets the last value
-                // break :brk value.many.items[value.many.items.len - 1];
-            }
-            break :brk value;
-        };
+    /// For some reason, bash does not allow braces to be expanded in
+    /// assignments. It does allow glob expansion, but only AFTER the
+    /// variable has expanded:
+    ///
+    /// ```bash
+    /// FOO=*.json
+    /// echo $FOO # prints something like `foo.json bar.json`
+    /// touch WHY.json
+    /// echo $FOO # prints `foo.json bar.json WHY.json`
+    /// ```
+    ///
+    /// This means that computing the expansion for assigning a var does not
+    /// need to be non-blocking since there will be no-IO (glob expansion)
+    fn assignVar(this: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) void {
+        // All the extra allocations needed to calculate the final resultant value are done in a temp arena,
+        // then the final result is copied into the interpreter's arena.
+        var arena = Arena.init(this.allocator);
+        defer arena.deinit();
+        var arena_alloc = arena.allocator();
 
-        switch (assign_ctx) {
-            .cmd => try this.cmd_local_env.put(assign.label, value),
-            .shell => try this.shell_env.put(assign.label, value),
-            .exported => try this.export_env.put(assign.label, value),
-        }
+        var expander = ExpansionCtx(.{ .for_spawn = false, .single = true }).init(
+            this,
+            arena_alloc,
+            {},
+        );
+
+        // This will do variable expansion, but not brace expansion or glob expansion
+        expander.evalNoBraceExpansion(&assign.value) catch |e| OOM(e);
+
+        const value = this.arena.allocator().dupeZ(u8, expander.out.value.?) catch |e| OOM(e);
+
+        (switch (assign_ctx) {
+            .cmd => this.cmd_local_env.put(assign.label, value),
+            .shell => this.shell_env.put(assign.label, value),
+            .exported => this.export_env.put(assign.label, value),
+        }) catch |e| OOM(e);
     }
 };
 
-const AssignCtx = enum { cmd, shell, exported };
+const AssignCtx = enum {
+    cmd,
+    shell,
+    exported,
+};
 
 const ExpansionOpts = struct {
     for_spawn: bool = true,
+    single: bool = false,
 };
 
 /// This meant to be given an arena allocator, so it does not need to worry about deinitialization.
@@ -187,17 +211,45 @@ const ExpansionOpts = struct {
 /// In the shell lexer we strip escaping tokens (single/double quotes, backslashes) because it makes operating on tokens easier.
 /// However, this is not what bash does.
 pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
-    const Arr = if (!opts.for_spawn) std.ArrayList([:0]const u8) else std.ArrayList(?[*:0]const u8);
-    const Expansion = struct {
-        arr: *Arr,
+    const Out = if (!opts.for_spawn) [:0]const u8 else [*:0]const u8;
 
-        pub fn append(this: @This(), slice: [:0]const u8) !void {
-            if (comptime opts.for_spawn) {
-                try this.arr.append(slice.ptr);
-            } else {
-                try this.arr.append(slice);
+    const Expansion = switch (opts.single) {
+        true => struct {
+            value: ?Out = null,
+            pub fn append(this: *@This(), slice: [:0]const u8) !void {
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(this.value == null);
+                }
+                this.value = slice;
             }
-        }
+
+            pub fn appendAssumeCapacity(this: *@This(), slice: [:0]const u8) !void {
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(this.value == null);
+                }
+                this.value = slice;
+            }
+        },
+        false => struct {
+            const Arr = if (!opts.for_spawn) std.ArrayList(Out) else std.ArrayList(?Out);
+            arr: *Arr,
+
+            pub fn append(this: *@This(), slice: [:0]const u8) !void {
+                if (comptime opts.for_spawn) {
+                    try this.arr.append(slice.ptr);
+                } else {
+                    try this.arr.append(slice);
+                }
+            }
+
+            pub fn appendAssumeCapacity(this: *@This(), slice: [:0]const u8) !void {
+                if (comptime opts.for_spawn) {
+                    try this.arr.appendAssumeCapacity(slice.ptr);
+                } else {
+                    try this.arr.appendAssumeCapacity(slice);
+                }
+            }
+        },
     };
 
     return struct {
@@ -205,12 +257,58 @@ pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
         arena: Allocator,
         out: Expansion,
 
-        fn init(interp: *Interpreter, arena: Allocator, expand_out: *Arr) @This() {
+        const This = @This();
+
+        fn init(interp: *Interpreter, arena: Allocator, expand_out: if (!opts.single) *Expansion.Arr else void) @This() {
+            if (comptime opts.single) return .{
+                .interp = interp,
+                .arena = arena,
+                .out = .{},
+            };
+
             return .{
                 .interp = interp,
                 .arena = arena,
                 .out = .{ .arr = expand_out },
             };
+        }
+
+        fn evalWithBraceExpansion(this: *@This(), word: *const ast.Atom) !void {
+            if (bun.Environment.allow_assert) {
+                std.debug.assert(word.* == .compound and word.compound.brace_expansion_hint);
+            }
+
+            const brace_str = try this.evalNoBraceExpansion(word);
+            var lexer_output = try Braces.Lexer.tokenize(this.arena, brace_str);
+            const expansion_count = try Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
+
+            var expanded_strings = brk: {
+                const stack_max = comptime 16;
+                comptime {
+                    std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+                }
+                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, this.arena);
+                var expanded_strings = try maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count);
+                break :brk expanded_strings;
+            };
+
+            for (0..expansion_count) |i| {
+                expanded_strings[i] = std.ArrayList(u8).init(this.arena);
+            }
+
+            try Braces.expand(
+                this.arena,
+                lexer_output.tokens.items[0..],
+                expanded_strings,
+                lexer_output.contains_nested,
+            );
+
+            try this.out.arr.ensureUnusedCapacity(expansion_count);
+            // Add sentinel values
+            for (0..expansion_count) |i| {
+                try expanded_strings[i].append(0);
+                this.out.appendAssumeCapacity(expanded_strings[i].items[0 .. expanded_strings[i].items.len - 1 :0]);
+            }
         }
 
         fn evalNoBraceExpansion(this: *@This(), word: *const ast.Atom) !void {
@@ -521,6 +619,43 @@ pub const Script = struct {
     }
 };
 
+/// In pipelines and conditional expressions, assigns (e.g. `FOO=bar BAR=baz &&
+/// echo hi` or `FOO=bar BAR=baz | echo hi`) have no effect on the environment
+/// of the shell, so we can skip them.
+const AssignChild = struct {
+    const ParentPtr = StatePtrUnion(.{
+        Stmt,
+        // Cond,
+        // Pipeline,
+    });
+
+    pub inline fn deinit(this: AssignChild) void {
+        _ = this;
+    }
+
+    pub inline fn start(this: AssignChild) void {
+        _ = this;
+    }
+
+    pub fn execStmt(
+        interpreter: *Interpreter,
+        parent: anytype,
+        assigns: []const ast.Assign,
+    ) void {
+        for (assigns) |*assign| {
+            interpreter.assignVar(assign, .shell);
+        }
+        var assign_child: AssignChild = .{};
+        ParentPtr.init(parent).childDone(&assign_child, 0);
+    }
+
+    pub fn execNoCallParent(interpreter: *Interpreter, assigns: []const ast.Assign) void {
+        for (assigns) |*assign| {
+            interpreter.assignVar(assign, .shell);
+        }
+    }
+};
+
 pub const Stmt = struct {
     base: State,
     node: *const ast.Stmt,
@@ -534,6 +669,7 @@ pub const Stmt = struct {
         Cond,
         Pipeline,
         Cmd,
+        AssignChild,
     });
 
     pub fn init(
@@ -580,12 +716,14 @@ pub const Stmt = struct {
                 this.currently_executing = ChildPtr.init(pipeline);
                 pipeline.start();
             },
-            else => @panic("Not possible"),
+            .assign => |assigns| {
+                AssignChild.execStmt(this.base.interpreter, this, assigns);
+            },
         }
     }
 
     pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: u8) void {
-        log("child done Stmt {x} child={x} exit={d}", .{ @intFromPtr(this), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
+        log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
         this.last_exit_code = exit_code;
         const next_idx = this.idx + 1;
         child.deinit();
@@ -599,6 +737,9 @@ pub const Stmt = struct {
                 const cond = Cond.init(this.base.interpreter, next_child.cond, Cond.ParentPtr.init(this), this.io);
                 cond.start();
                 this.currently_executing = ChildPtr.init(cond);
+            },
+            .assign => |assigns| {
+                AssignChild.execStmt(this.base.interpreter, this, assigns);
             },
             else => @panic("TODO"),
         }
@@ -623,7 +764,11 @@ pub const Cond = struct {
     io: IO,
     currently_executing: ?ChildPtr = null,
 
-    const ChildPtr = StatePtrUnion(.{ Cmd, Pipeline, Cond });
+    const ChildPtr = StatePtrUnion(.{
+        Cmd,
+        Pipeline,
+        Cond,
+    });
 
     const ParentPtr = StatePtrUnion(.{
         Stmt,
@@ -659,11 +804,16 @@ pub const Cond = struct {
         }
 
         this.currently_executing = this.makeChild(true);
+        if (this.currently_executing == null) {
+            this.left = 0;
+            this.currently_executing = this.makeChild(false);
+        }
         var child = this.currently_executing.?.as(Cmd);
         child.start();
     }
 
-    fn makeChild(this: *Cond, left: bool) ChildPtr {
+    /// Returns null if child is assignments
+    fn makeChild(this: *Cond, left: bool) ?ChildPtr {
         const node = if (left) &this.node.left else &this.node.right;
         switch (node.*) {
             .cmd => {
@@ -674,7 +824,11 @@ pub const Cond = struct {
                 const cond = Cond.init(this.base.interpreter, node.cond, Cond.ParentPtr.init(this), this.io);
                 return ChildPtr.init(cond);
             },
-            .assign, .pipeline => @panic("TODO"),
+            .pipeline => {
+                const pipeline = Pipeline.init(this.base.interpreter, node.pipeline, Pipeline.ParentPtr.init(this), this.io);
+                return ChildPtr.init(pipeline);
+            },
+            .assign => return null,
         }
     }
 
@@ -695,7 +849,13 @@ pub const Cond = struct {
             }
 
             this.currently_executing = this.makeChild(false);
-            this.currently_executing.?.as(Cmd).start();
+            if (this.currently_executing == null) {
+                this.right = 0;
+                this.parent.childDone(this, 0);
+                return;
+            } else {
+                this.currently_executing.?.as(Cmd).start();
+            }
             return;
         }
 
@@ -954,6 +1114,7 @@ pub const Cmd = struct {
     pub fn start(this: *Cmd) void {
         log("cmd start {x}", .{@intFromPtr(this)});
         this.initSubproc() catch |err| {
+            // FIXME this is bad
             std.debug.print("THIS THE ERROR: {any}\n", .{err});
             bun.outOfMemory();
         };
@@ -981,11 +1142,29 @@ pub const Cmd = struct {
 
     fn initSubproc(this: *Cmd) !void {
         log("cmd init subproc ({x})", .{@intFromPtr(this)});
+        this.base.interpreter.cmd_local_env.clearRetainingCapacity();
+
         var arena = bun.ArenaAllocator.init(this.base.interpreter.allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
 
+        for (this.node.assigns) |*assign| {
+            this.base.interpreter.assignVar(assign, .cmd);
+        }
+
         var spawn_args = Subprocess.SpawnArgs.default(&arena, this.base.interpreter.global.bunVM(), false);
+
+        // Fill the env from the export end and cmd local env
+        {
+            var env_iter = this.base.interpreter.export_env.iterator();
+            if (!spawn_args.fillEnv(&env_iter, false)) {
+                return ShellError.GlobalThisThrown;
+            }
+            env_iter = this.base.interpreter.cmd_local_env.iterator();
+            if (!spawn_args.fillEnv(&env_iter, false)) {
+                return ShellError.GlobalThisThrown;
+            }
+        }
 
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
         spawn_args.cmd_parent = this;
@@ -1253,6 +1432,10 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             return @intFromEnum(this.ptr.tag());
         }
 
+        fn tagName(this: @This()) []const u8 {
+            return Ptr.typeNameFromTag(this.tagInt()).?;
+        }
+
         pub fn init(_ptr: anytype) @This() {
             return .{ .ptr = Ptr.init(_ptr) };
         }
@@ -1283,3 +1466,53 @@ fn closefd(fd: bun.FileDescriptor) void {
         // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
     }
 }
+
+const CmdEnvIter = struct {
+    env: *const std.StringArrayHashMap([:0]const u8),
+    iter: std.StringArrayHashMap([:0]const u8).Iterator,
+
+    const Entry = struct {
+        key: Key,
+        value: Value,
+    };
+
+    const Value = struct {
+        val: [:0]const u8,
+
+        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll(self.val);
+        }
+    };
+
+    const Key = struct {
+        val: []const u8,
+
+        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll(self.val);
+        }
+
+        pub fn eqlComptime(this: Key, comptime str: []const u8) bool {
+            return bun.strings.eqlComptime(this.val, str);
+        }
+    };
+
+    pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
+        var iter = env.iterator();
+        return .{
+            .env = env,
+            .iter = iter,
+        };
+    }
+
+    pub fn len(self: *const CmdEnvIter) usize {
+        return self.env.unmanaged.entries.len;
+    }
+
+    pub fn next(self: *CmdEnvIter) !?Entry {
+        const entry = self.iter.next() orelse return null;
+        return .{
+            .key = .{ .val = entry.key_ptr.* },
+            .value = .{ .val = entry.value_ptr.* },
+        };
+    }
+};

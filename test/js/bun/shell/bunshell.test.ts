@@ -237,6 +237,17 @@ describe("bunshell", () => {
       procEnv = JSON.parse(str2);
       expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
     });
+
+    test("syntax edgecase", () => {
+      const buffer = new Uint8Array(8192);
+      const shellProc = $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${process.argv0} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
+
+      const str = stringifyBuffer(buffer);
+
+      const procEnv = JSON.parse(str);
+
+      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+    });
   });
 
   describe("cd & pwd", () => {

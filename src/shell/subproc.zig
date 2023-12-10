@@ -872,41 +872,29 @@ pub const ShellSubprocess = struct {
         /// - `next() bool`
         pub fn fillEnv(
             this: *SpawnArgs,
-            globalThis: *JSGlobalObject,
-            object_iter: anytype,
+            env_iter: *std.StringArrayHashMap([:0]const u8).Iterator,
             comptime disable_path_lookup_for_arv0: bool,
         ) bool {
             var allocator = this.arena.allocator();
             this.override_env = true;
-            this.env_array.ensureTotalCapacityPrecise(allocator, object_iter.len()) catch {
-                globalThis.throw("out of memory", .{});
-                return false;
-            };
+            this.env_array.ensureTotalCapacityPrecise(allocator, env_iter.len) catch bun.outOfMemory();
 
             if (disable_path_lookup_for_arv0) {
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                 this.PATH = "";
             }
 
-            while (object_iter.next() catch {
-                globalThis.throwOutOfMemory();
-                return false;
-            }) |entry| {
-                var value = entry.value;
+            while (env_iter.next()) |entry| {
+                var key = entry.key_ptr.*;
+                var value = entry.value_ptr.*;
 
-                var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ entry.key, value }) catch {
-                    globalThis.throw("out of memory", .{});
-                    return false;
-                };
+                var line = std.fmt.allocPrintZ(allocator, "{s}={s}", .{ key, value }) catch bun.outOfMemory();
 
-                if (entry.key.eqlComptime("PATH")) {
+                if (bun.strings.eqlComptime(key, "PATH")) {
                     this.PATH = bun.asByteSlice(line["PATH=".len..]);
                 }
 
-                this.env_array.append(allocator, line) catch {
-                    globalThis.throw("out of memory", .{});
-                    return false;
-                };
+                this.env_array.append(allocator, line) catch bun.outOfMemory();
             }
 
             return true;

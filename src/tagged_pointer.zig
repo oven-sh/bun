@@ -53,6 +53,7 @@ pub fn TypeMap(comptime Types: anytype) type {
     return [Types.len]struct {
         value: TagSize,
         ty: type,
+        name: []const u8,
     };
 }
 
@@ -65,11 +66,12 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     var decls = [_]std.builtin.Type.Declaration{};
 
     inline for (Types, 0..) |field, i| {
+        const name = comptime typeBaseName(@typeName(field));
         enumFields[i] = .{
-            .name = comptime typeBaseName(@typeName(field)),
+            .name = name,
             .value = 1024 - i,
         };
-        typeMap[i] = .{ .value = 1024 - i, .ty = field };
+        typeMap[i] = .{ .value = 1024 - i, .ty = field, .name = name };
     }
 
     return .{
@@ -95,11 +97,12 @@ pub fn TagTypeStructWithTypeMap(comptime Types: anytype) struct {
     var typeMap: TypeMap(Types) = undefined;
 
     inline for (Fields, 0..) |field, i| {
+        const name = comptime typeBaseName(@typeName(field.default_value.?));
         enumFields[i] = .{
-            .name = comptime typeBaseName(@typeName(field.default_value.?)),
+            .name = name,
             .value = 1024 - i,
         };
-        typeMap[i] = .{ .value = 1024 - i, .ty = field.default_value.? };
+        typeMap[i] = .{ .value = 1024 - i, .ty = field.default_value.?, .name = name };
     }
 
     return .{
@@ -134,6 +137,13 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
                 if (entry.value == the_tag) return entry.ty;
             }
             @compileError("Unknown tag: " ++ the_tag);
+        }
+
+        pub fn typeNameFromTag(the_tag: TagInt) ?[]const u8 {
+            inline for (type_map) |entry| {
+                if (entry.value == the_tag) return entry.name;
+            }
+            return null;
         }
 
         const This = @This();

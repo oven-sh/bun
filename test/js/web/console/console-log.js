@@ -144,5 +144,22 @@ console.log(hole([1, 2, 3], 2));
   console.log(overriddenArray);
 }
 
+{
+  // huge holey array
+  const overriddenArray = new Array(1024);
+  console.log(overriddenArray);
+}
+
+{
+  // array too large to have an inline storage capacity
+  const overriddenArray = new Array(1024);
+  for (let i = 0; i < overriddenArray.length; i++) {
+    overriddenArray[i] = "i" + i;
+  }
+  delete overriddenArray[1];
+  delete overriddenArray[876];
+  console.log(overriddenArray);
+}
+
 // TODO: handle DerivedArray
 // It appears to not be set and I don't know why.

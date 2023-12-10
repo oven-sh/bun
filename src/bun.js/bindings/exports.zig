@@ -996,9 +996,9 @@ pub const ZigConsoleClient = struct {
             var opts = vals[1];
             if (opts.isObject()) {
                 if (opts.get(global, "depth")) |depth_prop| {
-                    if (depth_prop.isNumber())
-                        print_options.max_depth = depth_prop.toU16();
-                    if (depth_prop.isNull() or depth_prop.toInt64() == std.math.maxInt(i64))
+                    if (depth_prop.isNumber() or depth_prop.isBigInt())
+                        print_options.max_depth = depth_prop.toU16()
+                    else if (depth_prop.isNull())
                         print_options.max_depth = std.math.maxInt(u16);
                 }
                 if (opts.get(global, "colors")) |colors_prop| {
@@ -2084,7 +2084,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Integer => {
-                    const int = value.toInt64();
+                    const int = value.coerce(i64, this.globalThis);
                     if (int < std.math.maxInt(u32)) {
                         var i = int;
                         const is_negative = i < 0;

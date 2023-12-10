@@ -3459,6 +3459,9 @@ pub const JSValue = enum(JSValueReprInt) {
 
                 return this.coerceToDouble(globalThis);
             },
+            i64 => {
+                return this.coerceToInt64(globalThis);
+            },
             i32 => {
                 if (this.isInt32()) {
                     return this.asInt32();

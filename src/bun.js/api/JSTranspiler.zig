@@ -113,6 +113,7 @@ pub const TransformTask = struct {
             .loader = loader,
             .replace_exports = transpiler.transpiler_options.runtime.replace_exports,
         };
+        transform_task.log.level = transpiler.transpiler_options.log.level;
         transform_task.bundler = transpiler.bundler;
         transform_task.bundler.linker.resolver = &transform_task.bundler.resolver;
 
@@ -318,7 +319,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         .transform = default_transform_options,
         .log = logger.Log.init(allocator),
     };
-    transpiler.log.level = .warn;
 
     if (!object.isObject()) {
         JSC.throwInvalidArguments("Expected an object", .{}, globalObject, exception);
@@ -723,6 +723,18 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.replace_exports = replacements;
     }
 
+    if (object.get(globalThis, "logLevel")) |logLevel| {
+        const logLevelString = logLevel.toBunString(globalThis);
+        defer logLevelString.deref();
+        const key = logLevelString.toOwnedSlice(allocator) catch bun.outOfMemory();
+        if (logger.Log.Level.Map.get(key)) |level| {
+            transpiler.log.level = level;
+        } else {
+            JSC.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{}, globalObject, exception);
+            return transpiler;
+        }
+    }
+
     transpiler.tree_shaking = tree_shaking orelse false;
     transpiler.trim_unused_imports = trim_unused_imports orelse transpiler.tree_shaking;
 
@@ -1125,6 +1137,7 @@ pub fn transformSync(
     this.bundler.setAllocator(arena.allocator());
     this.bundler.macro_context = null;
     var log = logger.Log.init(arena.backingAllocator());
+    log.level = this.transpiler_options.log.level;
     this.bundler.setLog(&log);
 
     defer {

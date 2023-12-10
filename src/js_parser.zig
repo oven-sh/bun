@@ -115,15 +115,13 @@ const JSXImport = enum {
         jsxs: ?LocRef = null,
         Fragment: ?LocRef = null,
         createElement: ?LocRef = null,
-        factory_name: []const u8 = "React.createElement",
-        fragment_name: []const u8 = "Fragment",
 
         pub fn get(this: *const Symbols, name: []const u8) ?Ref {
             if (strings.eqlComptime(name, "jsx")) return if (this.jsx) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxDEV")) return if (this.jsxDEV) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxs")) return if (this.jsxs) |jsxs| jsxs.ref.? else null;
-            if (strings.eql(name, this.fragment_name)) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
-            if (strings.eql(name, this.factory_name)) return if (this.createElement) |createElement| createElement.ref.? else null;
+            if (strings.eqlComptime(name, "Fragment")) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
+            if (strings.eqlComptime(name, "createElement")) return if (this.createElement) |createElement| createElement.ref.? else null;
             return null;
         }
 
@@ -157,11 +155,14 @@ const JSXImport = enum {
             }
 
             if (this.Fragment != null) {
-                buf[i] = this.fragment_name;
+                buf[i] = "Fragment";
                 i += 1;
             }
 
             return buf[0..i];
+        }
+        pub fn sourceImportNames(this: *const Symbols) []const string {
+            return if (this.createElement != null) &[_]string{"createElement"} else &[_]string{};
         }
     };
 };
@@ -4019,6 +4020,19 @@ pub const Parser = struct {
                     false,
                 ) catch unreachable;
             }
+
+            const source_import_names = p.jsx_imports.sourceImportNames();
+            if (source_import_names.len > 0) {
+                p.generateImportStmt(
+                    p.options.jsx.package_name,
+                    source_import_names,
+                    &before,
+                    &p.jsx_imports,
+                    null,
+                    "",
+                    false,
+                ) catch unreachable;
+            }
         }
 
         var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
@@ -6363,14 +6377,6 @@ fn NewParser_(
             //  "Foo.Bar.createElement" becomes:
             //      import { Bar } from 'foo';
             //      Usages become Bar.createElement
-
-            if (p.options.jsx.runtime == .classic) {
-                if (p.options.jsx.fragment.len > 0)
-                    p.jsx_imports.fragment_name = p.options.jsx.fragment[if (p.options.jsx.fragment.len > 1) 1 else 0];
-            }
-
-            if (p.options.jsx.factory.len > 0)
-                p.jsx_imports.factory_name = p.options.jsx.factory[if (p.options.jsx.factory.len > 1) 1 else 0];
 
             switch (comptime jsx_transform_type) {
                 .react => {
@@ -14735,7 +14741,7 @@ fn NewParser_(
 
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
-                var spread_prop_i: i32 = -1;
+                var first_spread_prop_i: i32 = -1;
                 var i: i32 = 0;
                 parse_attributes: while (true) {
                     switch (p.lexer.token) {
@@ -14785,7 +14791,7 @@ fn NewParser_(
                                     try p.lexer.next();
                                     can_be_inlined = false;
 
-                                    spread_prop_i = i;
+                                    if (first_spread_prop_i == -1) first_spread_prop_i = i;
                                     spread_loc = p.lexer.loc();
                                     try props.append(G.Property{ .value = try p.parseExpr(.comma), .kind = .spread });
                                 },
@@ -14850,13 +14856,13 @@ fn NewParser_(
                     }
                 }
 
-                const is_key_before_rest = key_prop_i > -1 and spread_prop_i > key_prop_i;
-                flags.setPresent(.is_key_before_rest, is_key_before_rest);
-                if (is_key_before_rest and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
-                    try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
+                const is_key_after_spread = key_prop_i > -1 and first_spread_prop_i > -1 and key_prop_i > first_spread_prop_i;
+                flags.setPresent(.is_key_after_spread, is_key_after_spread);
+                properties = G.Property.List.fromList(props);
+                if (is_key_after_spread and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
+                    try p.log.addWarning(p.source, spread_loc, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
                 }
-                properties = G.Property.List.fromList(props);
             }
 
             // People sometimes try to use the output of "JSON.stringify()" as a JSX
@@ -15520,7 +15526,8 @@ fn NewParser_(
                                 }
                             }
 
-                            const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                            const runtime = if (p.options.jsx.runtime == .automatic) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                            const is_key_after_spread = e_.flags.contains(.is_key_after_spread);
                             var children_count = e_.children.len;
 
                             const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and
@@ -15542,280 +15549,279 @@ fn NewParser_(
 
                             // TODO: maybe we should split these into two different AST Nodes
                             // That would reduce the amount of allocations a little
-                            switch (runtime) {
-                                .classic => {
-                                    // Arguments to createElement()
-                                    const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
-                                    // There are at least two args:
-                                    // - name of the tag
-                                    // - props
-                                    var i: usize = 2;
+                            if (runtime == .classic or is_key_after_spread) {
+                                // Arguments to createElement()
+                                const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
+                                // There are at least two args:
+                                // - name of the tag
+                                // - props
+                                var i: usize = 2;
+                                args[0] = tag;
+
+                                const num_props = e_.properties.len;
+                                if (num_props > 0) {
+                                    var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
+                                    bun.copy(G.Property, props, e_.properties.slice());
+                                    args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
+                                } else {
+                                    args[1] = p.newExpr(E.Null{}, expr.loc);
+                                }
+
+                                const children_elements = e_.children.slice()[0..children_count];
+                                for (children_elements) |child| {
+                                    args[i] = p.visitExpr(child);
+                                    i += @as(usize, @intCast(@intFromBool(args[i].data != .e_missing)));
+                                }
+
+                                const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
+
+                                // Call createElement()
+                                return p.newExpr(E.Call{
+                                    .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
+                                    .args = ExprNodeList.init(args[0..i]),
+                                    // Enable tree shaking
+                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .close_paren_loc = e_.close_tag_loc,
+                                }, expr.loc);
+                            }
+                            // function jsxDEV(type, config, maybeKey, source, self) {
+                            else if (runtime == .automatic) {
+                                // --- These must be done in all cases --
+                                const allocator = p.allocator;
+                                var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
+
+                                const maybe_key_value: ?ExprNodeIndex =
+                                    if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
+
+                                // arguments needs to be like
+                                // {
+                                //    ...props,
+                                //    children: [el1, el2]
+                                // }
+
+                                {
+                                    var last_child: u32 = 0;
+                                    var children = e_.children.slice()[0..children_count];
+                                    for (children) |child| {
+                                        e_.children.ptr[last_child] = p.visitExpr(child);
+                                        // if tree-shaking removes the element, we must also remove it here.
+                                        last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr[last_child].data != .e_missing)));
+                                    }
+                                    e_.children.len = last_child;
+                                }
+
+                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+
+                                // Optimization: if the only non-child prop is a spread object
+                                // we can just pass the object as the first argument
+                                // this goes as deep as there are spreads
+                                // <div {{...{...{...{...foo}}}}} />
+                                // ->
+                                // <div {{...foo}} />
+                                // jsx("div", {...foo})
+                                while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
+                                    props = props.items[0].value.?.data.e_object.properties.list();
+                                }
+
+                                // Typescript defines static jsx as children.len > 1 or single spread
+                                // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
+                                const is_static_jsx = e_.children.len > 1 or (e_.children.len == 1 and e_.children.ptr[0].data == .e_spread);
+
+                                if (is_static_jsx) {
+                                    props.append(allocator, G.Property{
+                                        .key = children_key,
+                                        .value = p.newExpr(E.Array{
+                                            .items = e_.children,
+                                            .is_single_line = e_.children.len < 2,
+                                        }, e_.close_tag_loc),
+                                    }) catch bun.outOfMemory();
+                                } else if (e_.children.len == 1) {
+                                    props.append(allocator, G.Property{
+                                        .key = children_key,
+                                        .value = e_.children.ptr[0],
+                                    }) catch bun.outOfMemory();
+                                }
+                                // --- These must be done in all cases --
+
+                                // Trivial elements can be inlined, removing the call to createElement or jsx()
+                                if (p.options.features.jsx_optimization_inline and e_.flags.contains(.can_be_inlined)) {
+                                    // The output object should look like this:
+                                    // https://babeljs.io/repl/#?browsers=defaults%2C%20not%20ie%2011%2C%20not%20ie_mob%2011&build=&builtIns=false&corejs=false&spec=false&loose=false&code_lz=FAMwrgdgxgLglgewgAgLIE8DCCC2AHJAUwhgAoBvAIwEMAvAXwEplzhl3kAnQmMTlADwAxBAmQA-AIwAmAMxsOAFgCsANgEB6EQnEBuYPWBA&debug=false&forceAllTransforms=false&shippedProposals=true&circleciRepo=&evaluate=false&fileSize=true&timeTravel=false&sourceType=module&lineWrap=true&presets=react%2Ctypescript&prettier=true&targets=&version=7.18.4&externalPlugins=%40babel%2Fplugin-transform-flow-strip-types%407.16.7%2C%40babel%2Fplugin-transform-react-inline-elements%407.16.7&assumptions=%7B%22arrayLikeIsIterable%22%3Atrue%2C%22constantReexports%22%3Atrue%2C%22constantSuper%22%3Atrue%2C%22enumerableModuleMeta%22%3Atrue%2C%22ignoreFunctionLength%22%3Atrue%2C%22ignoreToPrimitiveHint%22%3Atrue%2C%22mutableTemplateObject%22%3Atrue%2C%22iterableIsArray%22%3Atrue%2C%22noClassCalls%22%3Atrue%2C%22noNewArrows%22%3Atrue%2C%22noDocumentAll%22%3Atrue%2C%22objectRestNoSymbols%22%3Atrue%2C%22privateFieldsAsProperties%22%3Atrue%2C%22pureGetters%22%3Atrue%2C%22setComputedProperties%22%3Atrue%2C%22setClassMethods%22%3Atrue%2C%22setSpreadProperties%22%3Atrue%2C%22setPublicClassFields%22%3Atrue%2C%22skipForOfIteratorClosing%22%3Atrue%2C%22superIsCallableConstructor%22%3Atrue%7D
+                                    // return {
+                                    //     $$typeof: REACT_ELEMENT_TYPE,
+                                    //     type: type,
+                                    //     key: void 0 === key ? null : "" + key,
+                                    //     ref: null,
+                                    //     props: props,
+                                    //     _owner: null
+                                    // };
+                                    //
+                                    const key = if (maybe_key_value) |key_value| brk: {
+                                        // key: void 0 === key ? null : "" + key,
+                                        break :brk switch (key_value.data) {
+                                            .e_string => break :brk key_value,
+                                            .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
+                                            else => p.newExpr(E.If{
+                                                .test_ = p.newExpr(E.Binary{
+                                                    .left = p.newExpr(E.Undefined{}, key_value.loc),
+                                                    .op = Op.Code.bin_strict_eq,
+                                                    .right = key_value,
+                                                }, key_value.loc),
+                                                .yes = p.newExpr(E.Null{}, key_value.loc),
+                                                .no = p.newExpr(
+                                                    E.Binary{
+                                                        .op = Op.Code.bin_add,
+                                                        .left = p.newExpr(&E.String.empty, key_value.loc),
+                                                        .right = key_value,
+                                                    },
+                                                    key_value.loc,
+                                                ),
+                                            }, key_value.loc),
+                                        };
+                                    } else p.newExpr(E.Null{}, expr.loc);
+                                    var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
+
+                                    const props_object = p.newExpr(
+                                        E.Object{
+                                            .properties = G.Property.List.fromList(props),
+                                            .close_brace_loc = e_.close_tag_loc,
+                                        },
+                                        expr.loc,
+                                    );
+                                    const props_expression = brk: {
+                                        // we must check for default props
+                                        if (tag.data != .e_string) {
+                                            // We assume defaultProps is supposed to _not_ have side effects
+                                            // We do not support "key" or "ref" in defaultProps.
+                                            const defaultProps = p.newExpr(
+                                                E.Dot{
+                                                    .name = "defaultProps",
+                                                    .name_loc = tag.loc,
+                                                    .target = tag,
+                                                    .can_be_removed_if_unused = true,
+                                                    .call_can_be_unwrapped_if_unused = true,
+                                                },
+                                                tag.loc,
+                                            );
+                                            // props: MyComponent.defaultProps || {}
+                                            if (props.items.len == 0) {
+                                                break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
+                                            } else {
+                                                var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                call_args[0..2].* = .{
+                                                    props_object,
+                                                    defaultProps,
+                                                };
+                                                // __merge(props, MyComponent.defaultProps)
+                                                // originally, we always inlined here
+                                                // see https://twitter.com/jarredsumner/status/1534084541236686848
+                                                // but, that breaks for defaultProps
+                                                // we assume that most components do not have defaultProps
+                                                // so __merge quickly checks if it needs to merge any props
+                                                // and if not, it passes along the props object
+                                                // this skips an extra allocation
+                                                break :brk p.callRuntime(tag.loc, "__merge", call_args);
+                                            }
+                                        }
+
+                                        break :brk props_object;
+                                    };
+
+                                    jsx_element[0..6].* =
+                                        [_]G.Property{
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
+                                            .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
+                                            .value = tag,
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.key, .loc = key.loc },
+                                            .value = key,
+                                        },
+                                        // this is a de-opt
+                                        // any usage of ref should make it impossible for this code to be reached
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.ref, .loc = expr.loc },
+                                            .value = p.newExpr(E.Null{}, expr.loc),
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.props, .loc = expr.loc },
+                                            .value = props_expression,
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data._owner, .loc = key.loc },
+                                            .value = p.newExpr(
+                                                E.Null{},
+                                                expr.loc,
+                                            ),
+                                        },
+                                    };
+
+                                    const output = p.newExpr(
+                                        E.Object{
+                                            .properties = G.Property.List.init(jsx_element),
+                                            .close_brace_loc = e_.close_tag_loc,
+                                        },
+                                        expr.loc,
+                                    );
+
+                                    return output;
+                                } else {
+                                    // -- The typical jsx automatic transform happens here --
+
+                                    // Either:
+                                    // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                                    // jsx(type, arguments, key)
+                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
                                     args[0] = tag;
 
-                                    const num_props = e_.properties.len;
-                                    if (num_props > 0) {
-                                        var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
-                                        bun.copy(G.Property, props, e_.properties.slice());
-                                        args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
-                                    } else {
-                                        args[1] = p.newExpr(E.Null{}, expr.loc);
+                                    args[1] = p.newExpr(E.Object{
+                                        .properties = G.Property.List.fromList(props),
+                                    }, expr.loc);
+
+                                    if (maybe_key_value) |key| {
+                                        args[2] = key;
+                                    } else if (p.options.jsx.development) {
+                                        // if (maybeKey !== undefined)
+                                        args[2] = Expr{
+                                            .loc = expr.loc,
+                                            .data = .{
+                                                .e_undefined = E.Undefined{},
+                                            },
+                                        };
                                     }
 
-                                    const children_elements = e_.children.slice()[0..children_count];
-                                    for (children_elements) |child| {
-                                        args[i] = p.visitExpr(child);
-                                        i += @as(usize, @intCast(@intFromBool(args[i].data != .e_missing)));
+                                    if (p.options.jsx.development) {
+                                        // is the return type of the first child an array?
+                                        // It's dynamic
+                                        // Else, it's static
+                                        args[3] = Expr{
+                                            .loc = expr.loc,
+                                            .data = .{
+                                                .e_boolean = .{
+                                                    .value = is_static_jsx,
+                                                },
+                                            },
+                                        };
+
+                                        args[4] = p.newExpr(E.Undefined{}, expr.loc);
+                                        args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                                     }
 
-                                    const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
-
-                                    // Call createElement()
                                     return p.newExpr(E.Call{
-                                        .target = target,
-                                        .args = ExprNodeList.init(args[0..i]),
+                                        .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
+                                        .args = ExprNodeList.init(args),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                        .was_jsx_element = true,
                                         .close_paren_loc = e_.close_tag_loc,
                                     }, expr.loc);
-                                },
-                                // function jsxDEV(type, config, maybeKey, source, self) {
-                                .automatic => {
-                                    // --- These must be done in all cases --
-                                    const allocator = p.allocator;
-                                    var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
-
-                                    const maybe_key_value: ?ExprNodeIndex =
-                                        if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
-
-                                    // arguments needs to be like
-                                    // {
-                                    //    ...props,
-                                    //    children: [el1, el2]
-                                    // }
-
-                                    {
-                                        var last_child: u32 = 0;
-                                        var children = e_.children.slice()[0..children_count];
-                                        for (children) |child| {
-                                            e_.children.ptr[last_child] = p.visitExpr(child);
-                                            // if tree-shaking removes the element, we must also remove it here.
-                                            last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr[last_child].data != .e_missing)));
-                                        }
-                                        e_.children.len = last_child;
-                                    }
-
-                                    const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-
-                                    // Optimization: if the only non-child prop is a spread object
-                                    // we can just pass the object as the first argument
-                                    // this goes as deep as there are spreads
-                                    // <div {{...{...{...{...foo}}}}} />
-                                    // ->
-                                    // <div {{...foo}} />
-                                    // jsx("div", {...foo})
-                                    while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
-                                        props = props.items[0].value.?.data.e_object.properties.list();
-                                    }
-
-                                    // Typescript defines static jsx as children.len > 1 or single spread
-                                    // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
-                                    const is_static_jsx = e_.children.len > 1 or (e_.children.len == 1 and e_.children.ptr[0].data == .e_spread);
-
-                                    if (is_static_jsx) {
-                                        props.append(allocator, G.Property{
-                                            .key = children_key,
-                                            .value = p.newExpr(E.Array{
-                                                .items = e_.children,
-                                                .is_single_line = e_.children.len < 2,
-                                            }, e_.close_tag_loc),
-                                        }) catch bun.outOfMemory();
-                                    } else if (e_.children.len == 1) {
-                                        props.append(allocator, G.Property{
-                                            .key = children_key,
-                                            .value = e_.children.ptr[0],
-                                        }) catch bun.outOfMemory();
-                                    }
-                                    // --- These must be done in all cases --
-
-                                    // Trivial elements can be inlined, removing the call to createElement or jsx()
-                                    if (p.options.features.jsx_optimization_inline and e_.flags.contains(.can_be_inlined)) {
-                                        // The output object should look like this:
-                                        // https://babeljs.io/repl/#?browsers=defaults%2C%20not%20ie%2011%2C%20not%20ie_mob%2011&build=&builtIns=false&corejs=false&spec=false&loose=false&code_lz=FAMwrgdgxgLglgewgAgLIE8DCCC2AHJAUwhgAoBvAIwEMAvAXwEplzhl3kAnQmMTlADwAxBAmQA-AIwAmAMxsOAFgCsANgEB6EQnEBuYPWBA&debug=false&forceAllTransforms=false&shippedProposals=true&circleciRepo=&evaluate=false&fileSize=true&timeTravel=false&sourceType=module&lineWrap=true&presets=react%2Ctypescript&prettier=true&targets=&version=7.18.4&externalPlugins=%40babel%2Fplugin-transform-flow-strip-types%407.16.7%2C%40babel%2Fplugin-transform-react-inline-elements%407.16.7&assumptions=%7B%22arrayLikeIsIterable%22%3Atrue%2C%22constantReexports%22%3Atrue%2C%22constantSuper%22%3Atrue%2C%22enumerableModuleMeta%22%3Atrue%2C%22ignoreFunctionLength%22%3Atrue%2C%22ignoreToPrimitiveHint%22%3Atrue%2C%22mutableTemplateObject%22%3Atrue%2C%22iterableIsArray%22%3Atrue%2C%22noClassCalls%22%3Atrue%2C%22noNewArrows%22%3Atrue%2C%22noDocumentAll%22%3Atrue%2C%22objectRestNoSymbols%22%3Atrue%2C%22privateFieldsAsProperties%22%3Atrue%2C%22pureGetters%22%3Atrue%2C%22setComputedProperties%22%3Atrue%2C%22setClassMethods%22%3Atrue%2C%22setSpreadProperties%22%3Atrue%2C%22setPublicClassFields%22%3Atrue%2C%22skipForOfIteratorClosing%22%3Atrue%2C%22superIsCallableConstructor%22%3Atrue%7D
-                                        // return {
-                                        //     $$typeof: REACT_ELEMENT_TYPE,
-                                        //     type: type,
-                                        //     key: void 0 === key ? null : "" + key,
-                                        //     ref: null,
-                                        //     props: props,
-                                        //     _owner: null
-                                        // };
-                                        //
-                                        const key = if (maybe_key_value) |key_value| brk: {
-                                            // key: void 0 === key ? null : "" + key,
-                                            break :brk switch (key_value.data) {
-                                                .e_string => break :brk key_value,
-                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
-                                                else => p.newExpr(E.If{
-                                                    .test_ = p.newExpr(E.Binary{
-                                                        .left = p.newExpr(E.Undefined{}, key_value.loc),
-                                                        .op = Op.Code.bin_strict_eq,
-                                                        .right = key_value,
-                                                    }, key_value.loc),
-                                                    .yes = p.newExpr(E.Null{}, key_value.loc),
-                                                    .no = p.newExpr(
-                                                        E.Binary{
-                                                            .op = Op.Code.bin_add,
-                                                            .left = p.newExpr(&E.String.empty, key_value.loc),
-                                                            .right = key_value,
-                                                        },
-                                                        key_value.loc,
-                                                    ),
-                                                }, key_value.loc),
-                                            };
-                                        } else p.newExpr(E.Null{}, expr.loc);
-                                        var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
-
-                                        const props_object = p.newExpr(
-                                            E.Object{
-                                                .properties = G.Property.List.fromList(props),
-                                                .close_brace_loc = e_.close_tag_loc,
-                                            },
-                                            expr.loc,
-                                        );
-                                        const props_expression = brk: {
-                                            // we must check for default props
-                                            if (tag.data != .e_string) {
-                                                // We assume defaultProps is supposed to _not_ have side effects
-                                                // We do not support "key" or "ref" in defaultProps.
-                                                const defaultProps = p.newExpr(
-                                                    E.Dot{
-                                                        .name = "defaultProps",
-                                                        .name_loc = tag.loc,
-                                                        .target = tag,
-                                                        .can_be_removed_if_unused = true,
-                                                        .call_can_be_unwrapped_if_unused = true,
-                                                    },
-                                                    tag.loc,
-                                                );
-                                                // props: MyComponent.defaultProps || {}
-                                                if (props.items.len == 0) {
-                                                    break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
-                                                } else {
-                                                    var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                    call_args[0..2].* = .{
-                                                        props_object,
-                                                        defaultProps,
-                                                    };
-                                                    // __merge(props, MyComponent.defaultProps)
-                                                    // originally, we always inlined here
-                                                    // see https://twitter.com/jarredsumner/status/1534084541236686848
-                                                    // but, that breaks for defaultProps
-                                                    // we assume that most components do not have defaultProps
-                                                    // so __merge quickly checks if it needs to merge any props
-                                                    // and if not, it passes along the props object
-                                                    // this skips an extra allocation
-                                                    break :brk p.callRuntime(tag.loc, "__merge", call_args);
-                                                }
-                                            }
-
-                                            break :brk props_object;
-                                        };
-
-                                        jsx_element[0..6].* =
-                                            [_]G.Property{
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                                .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
-                                                .value = tag,
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.key, .loc = key.loc },
-                                                .value = key,
-                                            },
-                                            // this is a de-opt
-                                            // any usage of ref should make it impossible for this code to be reached
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.ref, .loc = expr.loc },
-                                                .value = p.newExpr(E.Null{}, expr.loc),
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.props, .loc = expr.loc },
-                                                .value = props_expression,
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data._owner, .loc = key.loc },
-                                                .value = p.newExpr(
-                                                    E.Null{},
-                                                    expr.loc,
-                                                ),
-                                            },
-                                        };
-
-                                        const output = p.newExpr(
-                                            E.Object{
-                                                .properties = G.Property.List.init(jsx_element),
-                                                .close_brace_loc = e_.close_tag_loc,
-                                            },
-                                            expr.loc,
-                                        );
-
-                                        return output;
-                                    } else {
-                                        // -- The typical jsx automatic transform happens here --
-
-                                        // Either:
-                                        // jsxDEV(type, arguments, key, isStaticChildren, source, self)
-                                        // jsx(type, arguments, key)
-                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
-                                        args[0] = tag;
-
-                                        args[1] = p.newExpr(E.Object{
-                                            .properties = G.Property.List.fromList(props),
-                                        }, expr.loc);
-
-                                        if (maybe_key_value) |key| {
-                                            args[2] = key;
-                                        } else if (p.options.jsx.development) {
-                                            // if (maybeKey !== undefined)
-                                            args[2] = Expr{
-                                                .loc = expr.loc,
-                                                .data = .{
-                                                    .e_undefined = E.Undefined{},
-                                                },
-                                            };
-                                        }
-
-                                        if (p.options.jsx.development) {
-                                            // is the return type of the first child an array?
-                                            // It's dynamic
-                                            // Else, it's static
-                                            args[3] = Expr{
-                                                .loc = expr.loc,
-                                                .data = .{
-                                                    .e_boolean = .{
-                                                        .value = is_static_jsx,
-                                                    },
-                                                },
-                                            };
-
-                                            args[4] = p.newExpr(E.Undefined{}, expr.loc);
-                                            args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
-                                        }
-
-                                        return p.newExpr(E.Call{
-                                            .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
-                                            .args = ExprNodeList.init(args),
-                                            // Enable tree shaking
-                                            .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                                            .was_jsx_element = true,
-                                            .close_paren_loc = e_.close_tag_loc,
-                                        }, expr.loc);
-                                    }
-                                },
-                                else => unreachable,
+                                }
+                            } else {
+                                unreachable;
                             }
                         },
                         else => unreachable,
@@ -17396,11 +17402,7 @@ fn NewParser_(
                 inline else => |field| {
                     const ref: Ref = brk: {
                         if (p.jsx_imports.getWithTag(kind) == null) {
-                            const symbol_name = switch (kind) {
-                                .createElement => p.jsx_imports.factory_name,
-                                .Fragment => p.jsx_imports.fragment_name,
-                                else => @tagName(field),
-                            };
+                            const symbol_name = @tagName(field);
 
                             const loc_ref = LocRef{
                                 .loc = loc,

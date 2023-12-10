@@ -1130,6 +1130,11 @@ declare module "bun" {
      * it in some cases. Do your own benchmarks!
      */
     inline?: boolean;
+
+    /**
+     * @default "warn"
+     */
+    logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
   }
 
   /**

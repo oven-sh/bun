@@ -2362,7 +2362,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 
 comptime {
     // TODO: report this compiler crash:
-    // _ = uvfdcast(@as(FileDescriptor, 0));
+    _ = uvfdcast(@as(FileDescriptor, 0));
 }
 
 /// Converts a native file descriptor into a `bun.FileDescriptor`

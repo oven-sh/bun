@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = @import("root").bun.JSC;
-const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
+const AsyncHTTP = @import("root").bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -62,6 +62,7 @@ pub const Run = struct {
             .vm = try VirtualMachine.initWithModuleGraph(.{
                 .allocator = arena.allocator(),
                 .log = ctx.log,
+                .args = ctx.args,
                 .graph = graph_ptr,
             }),
             .arena = arena,
@@ -102,6 +103,8 @@ pub const Run = struct {
             },
             .unspecified => {},
         }
+
+        b.options.env.behavior = .load_all_without_inlining;
 
         b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {
@@ -191,6 +194,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.env.behavior = .load_all_without_inlining;
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {

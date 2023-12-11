@@ -77,6 +77,9 @@ Build-Dependency `
 Build-Dependency `
   -Script "libuv" `
   -Outputs @("libuv.lib")
+Build-Dependency `
+  -Script "lshpack" `
+  -Outputs @("lshpack.lib")
 
 if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"

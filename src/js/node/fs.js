@@ -1199,10 +1199,13 @@ function cpSync(src, dest, options) {
 }
 
 function cp(src, dest, options, callback) {
-  if (typeof options === "function") {
+  if ($isCallable(options)) {
     callback = options;
     options = undefined;
   }
+
+  ensureCallback(callback);
+
   promises.cp(src, dest, options).then(() => callback(), callback);
 }
 

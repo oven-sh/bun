@@ -70,6 +70,137 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  export interface GlobScanOptions {
+    /**
+     * The root directory to start matching from. Defaults to `process.cwd()`
+     */
+    cwd?: string;
+
+    /**
+     * Allow patterns to match entries that begin with a period (`.`).
+     *
+     * @default false
+     */
+    dot?: boolean;
+
+    /**
+     * Return the absolute path for entries.
+     *
+     * @default false
+     */
+    absolute?: boolean;
+
+    /**
+     * Indicates whether to traverse descendants of symbolic link directories.
+     *
+     * @default false
+     */
+    followSymlinks?: boolean;
+
+    /**
+     * Throw an error when symbolic link is broken
+     *
+     * @default false
+     */
+    throwErrorOnBrokenSymlink?: boolean;
+
+    /**
+     * Return only files.
+     *
+     * @default true
+     */
+    onlyFiles?: boolean;
+  }
+
+  /**
+   * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
+   *
+   * The supported pattern syntax for is:
+   *
+   * - `?`
+   *     Matches any single character.
+   * - `*`
+   *     Matches zero or more characters, except for path separators ('/' or '\').
+   * - `**`
+   *     Matches zero or more characters, including path separators.
+   *     Must match a complete path segment, i.e. followed by a path separator or
+   *     at the end of the pattern.
+   * - `[ab]`
+   *     Matches one of the characters contained in the brackets.
+   *     Character ranges (e.g. "[a-z]") are also supported.
+   *     Use "[!ab]" or "[^ab]" to match any character *except* those contained
+   *     in the brackets.
+   * - `{a,b}`
+   *     Match one of the patterns contained in the braces.
+   *     Any of the wildcards listed above can be used in the sub patterns.
+   *     Braces may be nested up to 10 levels deep.
+   * - `!`
+   *     Negates the result when at the start of the pattern.
+   *     Multiple "!" characters negate the pattern multiple times.
+   * - `\`
+   *     Used to escape any of the special characters above.
+   *
+   * @example
+   * ```js
+   * const glob = new Glob("*.{ts,tsx}");
+   * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+   * ```
+   */
+  export class Glob {
+    constructor(pattern: string);
+
+    /**
+     * Scan for files that match this glob pattern. Returns an async iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for await (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scan(
+      optionsOrCwd?: string | GlobScanOptions,
+    ): AsyncIterableIterator<string>;
+
+    /**
+     * Scan for files that match this glob pattern. Returns an iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = Array.from(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scanSync(optionsOrCwd?: string | GlobScanOptions): IterableIterator<string>;
+
+    /**
+     * Match the glob against a string
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * expect(glob.match('foo.ts')).toBeTrue();
+     * ```
+     */
+    match(str: string): boolean;
+  }
+
   interface TOML {
     /**
      * Parse a TOML string into a JavaScript object.
@@ -153,7 +284,7 @@ declare module "bun" {
    *
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
-   * If `destination` exists, it must be a regular file or symlink to a file.
+   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
    *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
@@ -164,8 +295,14 @@ declare module "bun" {
     destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
     options?: {
-      /** If writing to a PathLike, set the permissions of the file. */
-      mode?: number;
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
     },
   ): Promise<number>;
 
@@ -180,7 +317,20 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(destination: BunFile, input: Response): Promise<number>;
+  export function write(
+    destination: BunFile,
+    input: Response,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    *
@@ -197,6 +347,16 @@ declare module "bun" {
   export function write(
     destinationPath: PathLike,
     input: Response,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
   ): Promise<number>;
 
   /**
@@ -219,7 +379,20 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(destination: BunFile, input: BunFile): Promise<number>;
+  export function write(
+    destination: BunFile,
+    input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    *
@@ -244,6 +417,16 @@ declare module "bun" {
   export function write(
     destinationPath: PathLike,
     input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
   ): Promise<number>;
 
   export interface SystemError extends Error {
@@ -947,6 +1130,11 @@ declare module "bun" {
      * it in some cases. Do your own benchmarks!
      */
     inline?: boolean;
+
+    /**
+     * @default "warn"
+     */
+    logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
   }
 
   /**

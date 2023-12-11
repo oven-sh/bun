@@ -1,13 +1,11 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
-const FetchRedirect = HTTPClient.FetchRedirect;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const http = @import("root").bun.http;
+const FetchRedirect = http.FetchRedirect;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -301,56 +299,6 @@ pub const Response = struct {
         this.url.deref();
 
         allocator.destroy(this);
-    }
-
-    pub fn mimeType(response: *const Response, request_ctx_: ?*const RequestContext) string {
-        if (comptime Environment.isWindows) unreachable;
-        return mimeTypeWithDefault(response, MimeType.other, request_ctx_);
-    }
-
-    pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
-        if (comptime Environment.isWindows) unreachable;
-
-        if (response.header(.ContentType)) |content_type| {
-            return content_type;
-        }
-
-        if (request_ctx_) |request_ctx| {
-            if (request_ctx.url.extname.len > 0) {
-                return MimeType.byExtension(request_ctx.url.extname).value;
-            }
-        }
-
-        switch (response.body.value) {
-            .Blob => |blob| {
-                if (blob.content_type.len > 0) {
-                    return blob.content_type;
-                }
-
-                // auto-detect HTML if unspecified
-                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
-                    return MimeType.html.value;
-                }
-
-                return default.value;
-            },
-            .WTFStringImpl => |str| {
-                if (bun.String.init(str).hasPrefixComptime("<!DOCTYPE html>")) {
-                    return MimeType.html.value;
-                }
-
-                return default.value;
-            },
-            .InternalBlob => {
-                // auto-detect HTML if unspecified
-                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
-                    return MimeType.html.value;
-                }
-
-                return response.body.value.InternalBlob.contentType();
-            },
-            .Null, .Used, .Locked, .Empty, .Error => return default.value,
-        }
     }
 
     pub fn getContentType(
@@ -767,9 +715,9 @@ pub const Fetch = struct {
     pub const FetchTasklet = struct {
         const log = Output.scoped(.FetchTasklet, false);
 
-        http: ?*HTTPClient.AsyncHTTP = null,
-        result: HTTPClient.HTTPClientResult = .{},
-        metadata: ?HTTPClient.HTTPResponseMetadata = null,
+        http: ?*http.AsyncHTTP = null,
+        result: http.HTTPClientResult = .{},
+        metadata: ?http.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
@@ -790,15 +738,15 @@ pub const Fetch = struct {
         /// when Content-Length is provided this represents the whole size of the request
         /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
         /// If is not chunked encoded and Content-Length is not provided this will be unknown
-        body_size: HTTPClient.HTTPClientResult.BodySize = .unknown,
+        body_size: http.HTTPClientResult.BodySize = .unknown,
 
         /// This is url + proxy memory buffer and is owned by FetchTasklet
         /// We always clone url and proxy (if informed)
         url_proxy_buffer: []const u8 = "",
 
         signal: ?*JSC.WebCore.AbortSignal = null,
-        signals: HTTPClient.Signals = .{},
-        signal_store: HTTPClient.Signals.Store = .{},
+        signals: http.Signals = .{},
+        signal_store: http.Signals.Store = .{},
         has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
@@ -817,7 +765,7 @@ pub const Fetch = struct {
 
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
-            Sendfile: HTTPClient.Sendfile,
+            Sendfile: http.Sendfile,
 
             pub fn store(this: *HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
                 return switch (this.*) {
@@ -899,7 +847,7 @@ pub const Fetch = struct {
             var reporter = this.memory_reporter;
             const allocator = reporter.allocator();
 
-            if (this.http) |http| allocator.destroy(http);
+            if (this.http) |http_| allocator.destroy(http_);
             allocator.destroy(this);
             // reporter.assert();
             bun.default_allocator.destroy(reporter);
@@ -926,22 +874,25 @@ pub const Fetch = struct {
                 err.ensureStillAlive();
                 // if we are streaming update with error
                 if (this.readable_stream_ref.get()) |readable| {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = err },
-                        },
-                        bun.default_allocator,
-                    );
+                    if (readable.ptr == .Bytes) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{ .JSValue = err },
+                            },
+                            bun.default_allocator,
+                        );
+                    }
                 }
                 // if we are buffering resolve the promise
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
                         const body = response.body;
-                        if (body.value.Locked.promise) |promise_| {
-                            const promise = promise_.asAnyPromise().?;
-                            promise.reject(globalThis, err);
+                        if (body.value == .Locked) {
+                            if (body.value.Locked.promise) |promise_| {
+                                const promise = promise_.asAnyPromise().?;
+                                promise.reject(globalThis, err);
+                            }
                         }
-
                         response.body.value.toErrorInstance(err, globalThis);
                     }
                 }
@@ -1147,6 +1098,7 @@ pub const Fetch = struct {
                 }
             }
             const success = this.result.isSuccess();
+
             const result = switch (success) {
                 true => this.onResolve(),
                 false => this.onReject(),
@@ -1201,7 +1153,7 @@ pub const Fetch = struct {
             globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
         }
 
-        pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo) bool {
+        pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
             if (this.check_server_identity.get()) |check_server_identity| {
                 check_server_identity.ensureStillAlive();
                 if (certificate_info.cert.len > 0) {
@@ -1229,7 +1181,7 @@ pub const Fetch = struct {
 
                             // we need to abort the request
                             if (this.http != null) {
-                                HTTPClient.http_thread.scheduleShutdown(this.http.?);
+                                http.http_thread.scheduleShutdown(this.http.?);
                             }
                             this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                             return false;
@@ -1241,16 +1193,29 @@ pub const Fetch = struct {
             this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
             return false;
         }
+
+        pub fn getAbortError(this: *FetchTasklet) ?JSValue {
+            // If this thread already received a signal we should abort
+            if (this.abort_reason != .zero) {
+                return this.abort_reason;
+            }
+            if (this.signal) |signal| {
+                if (signal.aborted()) {
+                    this.abort_reason = signal.abortReason();
+                    if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
+                        return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                    }
+                    this.abort_reason.protect();
+                    return this.abort_reason;
+                }
+            }
+            return null;
+        }
         pub fn onReject(this: *FetchTasklet) JSValue {
             log("onReject", .{});
 
-            if (this.signal) |signal| {
-                this.signal = null;
-                signal.detach(this);
-            }
-
-            if (!this.abort_reason.isEmptyOrUndefinedOrNull()) {
-                return this.abort_reason;
+            if (this.getAbortError()) |err| {
+                return err;
             }
 
             if (this.result.isTimeout()) {
@@ -1268,8 +1233,8 @@ pub const Fetch = struct {
             // some times we don't have metadata so we also check http.url
             if (this.metadata) |metadata| {
                 path = bun.String.create(metadata.url);
-            } else if (this.http) |http| {
-                path = bun.String.create(http.url.href);
+            } else if (this.http) |http_| {
+                path = bun.String.create(http_.url.href);
             } else {
                 path = bun.String.empty;
             }
@@ -1363,8 +1328,8 @@ pub const Fetch = struct {
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
             const this = bun.cast(*FetchTasklet, ctx);
-            if (this.http) |http| {
-                http.enableBodyStreaming();
+            if (this.http) |http_| {
+                http_.enableBodyStreaming();
             }
             if (this.signal_store.aborted.load(.Monotonic)) {
                 return JSC.WebCore.DrainResult{
@@ -1410,6 +1375,9 @@ pub const Fetch = struct {
         }
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
+            if (this.getAbortError()) |err| {
+                return .{ .Error = err };
+            }
             if (this.is_waiting_body) {
                 const response = Body.Value{
                     .Locked = .{
@@ -1499,7 +1467,7 @@ pub const Fetch = struct {
                         .capacity = 0,
                     },
                 },
-                .http = try allocator.create(HTTPClient.AsyncHTTP),
+                .http = try allocator.create(http.AsyncHTTP),
                 .javascript_vm = jsc_vm,
                 .request_body = fetch_options.body,
                 .global_this = globalThis,
@@ -1540,7 +1508,7 @@ pub const Fetch = struct {
                 }
             }
 
-            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
+            fetch_tasklet.http.?.* = http.AsyncHTTP.init(
                 fetch_options.memory_reporter.allocator(),
                 fetch_options.method,
                 fetch_options.url,
@@ -1549,7 +1517,7 @@ pub const Fetch = struct {
                 &fetch_tasklet.response_buffer,
                 fetch_tasklet.request_body.slice(),
                 fetch_options.timeout,
-                HTTPClient.HTTPClientResult.Callback.New(
+                http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
                     FetchTasklet.callback,
                 ).init(
@@ -1596,7 +1564,7 @@ pub const Fetch = struct {
             this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
-                HTTPClient.http_thread.scheduleShutdown(this.http.?);
+                http.http_thread.scheduleShutdown(this.http.?);
             }
         }
 
@@ -1628,7 +1596,7 @@ pub const Fetch = struct {
             fetch_options: FetchOptions,
             promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
-            try HTTPClient.HTTPThread.init();
+            try http.HTTPThread.init();
             var node = try get(
                 allocator,
                 global,
@@ -1636,16 +1604,16 @@ pub const Fetch = struct {
                 fetch_options,
             );
 
-            var batch = NetworkThread.Batch{};
+            var batch = bun.ThreadPool.Batch{};
             node.http.?.schedule(allocator, &batch);
             node.poll_ref.ref(global.bunVM());
 
-            HTTPClient.http_thread.schedule(batch);
+            http.http_thread.schedule(batch);
 
             return node;
         }
 
-        pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
+        pub fn callback(task: *FetchTasklet, result: http.HTTPClientResult) void {
             task.mutex.lock();
             defer task.mutex.unlock();
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
@@ -1691,7 +1659,7 @@ pub const Fetch = struct {
         var blob = Blob.init(data, allocator, globalThis);
 
         var allocated = false;
-        const mime_type = bun.HTTP.MimeType.init(data_url.mime_type, allocator, &allocated);
+        const mime_type = bun.http.MimeType.init(data_url.mime_type, allocator, &allocated);
         blob.content_type = mime_type.value;
         if (allocated) {
             blob.content_type_allocated = true;
@@ -2285,7 +2253,7 @@ pub const Fetch = struct {
                     .result => |fd| fd,
                 };
 
-                if (proxy == null and bun.HTTP.Sendfile.isEligible(url)) {
+                if (proxy == null and bun.http.Sendfile.isEligible(url)) {
                     use_sendfile: {
                         const stat: bun.Stat = switch (bun.sys.fstat(opened_fd)) {
                             .result => |result| result,
@@ -2413,7 +2381,7 @@ pub const Fetch = struct {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
 pub const Headers = struct {
-    pub usingnamespace HTTPClient.Headers;
+    pub usingnamespace http.Headers;
     entries: Headers.Entries = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,

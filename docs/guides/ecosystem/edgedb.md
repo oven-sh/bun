@@ -109,7 +109,7 @@ Applied m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq (00001.edgeql)
 
 ---
 
-With out schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
+With our schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
 
 ```sh
 $ bun add edgedb

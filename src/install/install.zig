@@ -34,10 +34,10 @@ const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 const URL = @import("../url.zig").URL;
-const HTTP = bun.HTTP;
+const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HTTPChannel = HTTP.HTTPChannel;
-const NetworkThread = HTTP.NetworkThread;
+
 const HeaderBuilder = HTTP.HeaderBuilder;
 
 const Integrity = @import("./integrity.zig").Integrity;
@@ -2199,7 +2199,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var tmpbuf: ["18446744073709551615".len + 8]u8 = undefined;
+        var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, 999) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
@@ -2547,7 +2547,7 @@ pub const PackageManager = struct {
         };
 
         // TODO: make this fewer passes
-        std.sort.block(
+        std.sort.pdq(
             Semver.Version,
             installed_versions.items,
             @as([]const u8, tags_buf.items),
@@ -2793,10 +2793,6 @@ pub const PackageManager = struct {
     ) !?ResolvedPackageResult {
         name.assertDefined();
 
-        if (resolution < this.lockfile.packages.len) {
-            return .{ .package = this.lockfile.packages.get(resolution) };
-        }
-
         if (install_peer and behavior.isPeer()) {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
@@ -2873,6 +2869,10 @@ pub const PackageManager = struct {
                     },
                 }
             }
+        }
+
+        if (resolution < this.lockfile.packages.len) {
+            return .{ .package = this.lockfile.packages.get(resolution) };
         }
 
         switch (version.tag) {
@@ -6055,7 +6055,7 @@ pub const PackageManager = struct {
                 log,
                 lockfile_path_z,
             )) {
-                .ok => |lockfile| manager.lockfile = lockfile,
+                .ok => |load| manager.lockfile = load.lockfile,
                 else => try manager.lockfile.initEmpty(allocator),
             }
         } else {
@@ -6632,6 +6632,8 @@ pub const PackageManager = struct {
         }
 
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
+            Output.is_verbose = Output.isVerbose();
+
             comptime var params: []const ParamType = &switch (subcommand) {
                 .install => install_params,
                 .update => update_params,
@@ -6671,7 +6673,7 @@ pub const PackageManager = struct {
             // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
-            cli.verbose = args.flag("--verbose");
+            cli.verbose = args.flag("--verbose") or Output.is_verbose;
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.no_summary = args.flag("--no-summary");
 
@@ -8163,7 +8165,9 @@ pub const PackageManager = struct {
 
         var root = Lockfile.Package{};
         var needs_new_lockfile = load_lockfile_result != .ok or
-            (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+            (load_lockfile_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+
+        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_lockfile_result == .ok and load_lockfile_result.ok.was_migrated);
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -8211,7 +8215,7 @@ pub const PackageManager = struct {
             },
             .ok => {
                 differ: {
-                    root = load_lockfile_result.ok.rootPackage() orelse {
+                    root = load_lockfile_result.ok.lockfile.rootPackage() orelse {
                         needs_new_lockfile = true;
                         break :differ;
                     };

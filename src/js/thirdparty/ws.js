@@ -687,8 +687,9 @@ class BunWebSocketMocked extends EventEmitter {
     if (this.#onmessage) {
       this.removeListener("message", this.#onmessage);
     }
-    this.on("message", cb);
-    this.#onmessage = cb;
+    const l = data => cb({ data });
+    this.on("message", l);
+    this.#onmessage = l;
   }
 
   set onopen(cb) {

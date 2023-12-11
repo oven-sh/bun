@@ -316,15 +316,6 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async don
   done();
 });
 
-it("offset should work #4963", async () => {
-  const filename = tmpdir() + "/bun.test.offset.txt";
-  await Bun.write(filename, "contents");
-  const file = Bun.file(filename);
-  const slice = file.slice(2, file.size);
-  const contents = await slice.text();
-  expect(contents).toBe("ntents");
-});
-
 it("length should be limited by file size #5080", async () => {
   const filename = tmpdir() + "/bun.test.offset2.txt";
   await Bun.write(filename, "contents");
@@ -425,3 +416,45 @@ if (process.platform === "linux") {
     });
   });
 }
+
+describe("ENOENT", () => {
+  const creates = (...opts) => {
+    it("creates the directory", async () => {
+      const dir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/ENOENT`;
+      const file = join(dir, "file");
+      try {
+        await Bun.write(file, "contents", ...opts);
+        expect(fs.existsSync(file)).toBe(true);
+      } finally {
+        fs.rmSync(dir, { force: true });
+      }
+    });
+  };
+
+  describe("by default", () => creates());
+  describe("with { createPath: true }", () => {
+    creates({ createPath: true });
+  });
+
+  describe("with { createPath: false }", () => {
+    it("does not create the directory", async () => {
+      const dir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/ENOENT`;
+      const file = join(dir, "file");
+      try {
+        expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
+          "No such file or directory",
+        );
+        expect(fs.existsSync(file)).toBe(false);
+      } finally {
+        fs.rmSync(dir, { force: true });
+      }
+    });
+
+    it("throws when given a file descriptor", async () => {
+      const file = Bun.file(123);
+      expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+        "Cannot create a directory for a file descriptor",
+      );
+    });
+  });
+});

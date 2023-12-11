@@ -7,7 +7,8 @@ import { splitCookiesString } from 'set-cookie-parser';
 
 export const requestNodeResSymbol = Symbol('bun-polyfills.serve.nodeReq');
 export const requestRemoteIPSymbol = Symbol('bun-polyfills.serve.remoteIP');
-export const toWebRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse, bodySizeLimit?: number): Request => {
+export const requestUpgradedSymbol = Symbol('bun-polyfills.serve.upgraded');
+export const toWebRequest = (nodeReq: IncomingMessage, nodeRes?: ServerResponse, bodySizeLimit?: number, upgraded = false): Request => {
     const webReq = new Request('http://' + nodeReq.headers.host! + nodeReq.url, {
         duplex: 'half',
         method: nodeReq.method,
@@ -18,8 +19,9 @@ export const toWebRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse, 
         address: nodeReq.socket.remoteAddress, port: nodeReq.socket.remotePort, family: nodeReq.socket.remoteFamily,
     });
     Reflect.set(webReq, requestNodeResSymbol, nodeRes);
+    Reflect.set(webReq, requestUpgradedSymbol, upgraded);
     return webReq;
-}
+};
 
 export const sendWebResponse = (nodeRes: ServerResponse, webRes: Response): void => {
     const headers = Object.fromEntries(webRes.headers);
@@ -47,7 +49,7 @@ export const sendWebResponse = (nodeRes: ServerResponse, webRes: Response): void
         nodeRes.off('error', cancel);
         // If the reader has already been interrupted with an error earlier,
         // then it will appear here, it is useless, but it needs to be caught.
-        reader.cancel(error).catch(() => {});
+        reader.cancel(error).catch(() => { });
         if (error) nodeRes.destroy(error);
     };
     nodeRes.on('close', cancel);
@@ -66,7 +68,7 @@ export const sendWebResponse = (nodeRes: ServerResponse, webRes: Response): void
             cancel(error instanceof Error ? error : new Error(String(error)));
         }
     }
-}
+};
 
 class HTTPError extends Error {
     constructor(status: number, reason: string) {

@@ -284,7 +284,7 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        std.sort.block(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
 
         iter = map.valueIterator();
         var writer = Output.errorWriter();

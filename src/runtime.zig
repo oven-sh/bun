@@ -445,7 +445,7 @@ pub const Runtime = struct {
                     return std.mem.order(u8, a, b) == .lt;
                 }
             };
-            std.sort.block(string, &list, {}, Sorter.compare);
+            std.sort.pdq(string, &list, {}, Sorter.compare);
             break :brk list;
         };
 

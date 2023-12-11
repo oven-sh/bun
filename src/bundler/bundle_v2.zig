@@ -5878,7 +5878,7 @@ const LinkerContext = struct {
             // of hash calculation.
             if (chunk_meta.dynamic_imports.count() > 0) {
                 var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
-                std.sort.block(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
+                std.sort.pdq(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
 
                 var imports = chunk.cross_chunk_imports.listManaged(c.allocator);
                 defer chunk.cross_chunk_imports.update(imports);
@@ -6137,7 +6137,7 @@ const LinkerContext = struct {
                 }
             }
 
-            std.sort.block(StableRef, list.items, {}, StableRef.isLessThan);
+            std.sort.pdq(StableRef, list.items, {}, StableRef.isLessThan);
             break :brk list;
         };
         defer sorted_imports_from_other_chunks.deinit();
@@ -6209,7 +6209,7 @@ const LinkerContext = struct {
                     }
                 }
 
-                std.sort.block(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
+                std.sort.pdq(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
                 capacity += top_level_symbols.items.len;
                 top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
             }
@@ -8806,8 +8806,8 @@ const LinkerContext = struct {
                     return strings.order(a, b) == .lt;
                 }
             };
-            std.sort.block(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
-            std.sort.block(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+            std.sort.pdq(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+            std.sort.pdq(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
 
             inline for (.{
                 sorted_client_component_ids.items,
@@ -9440,7 +9440,7 @@ const LinkerContext = struct {
                 .ref = export_ref,
             };
         }
-        std.sort.block(StableRef, result.items, {}, StableRef.isLessThan);
+        std.sort.pdq(StableRef, result.items, {}, StableRef.isLessThan);
     }
 
     pub fn markFileReachableForCodeSplitting(
@@ -10759,7 +10759,7 @@ pub const Chunk = struct {
         /// equidistant to an entry point, then break the tie by sorting on the
         /// stable source index derived from the DFS over all entry points.
         pub fn sort(a: []Order) void {
-            std.sort.block(Order, a, Order{}, lessThan);
+            std.sort.pdq(Order, a, Order{}, lessThan);
         }
     };
 
@@ -11202,7 +11202,7 @@ pub const CrossChunkImport = struct {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);
             }
-            std.sort.block(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
+            std.sort.pdq(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
@@ -11210,7 +11210,7 @@ pub const CrossChunkImport = struct {
             }) catch unreachable;
         }
 
-        std.sort.block(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
+        std.sort.pdq(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
     }
 };
 

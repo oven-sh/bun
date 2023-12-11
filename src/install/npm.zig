@@ -571,7 +571,7 @@ pub const PackageManifest = struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.block(Data, &data, &trash, Sort.lessThan);
+            std.sort.pdq(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -1657,7 +1657,7 @@ pub const PackageManifest = struct {
                         .all_versions = semver_versions_,
                         .all_versioned_packages = versioned_packages_,
                     };
-                    std.sort.block(Int, indices, sorter, ExternVersionSorter.isLessThan);
+                    std.sort.pdq(Int, indices, sorter, ExternVersionSorter.isLessThan);
 
                     for (indices, versioned_packages_, semver_versions_) |i, *pkg, *version| {
                         pkg.* = cloned_packages[i];

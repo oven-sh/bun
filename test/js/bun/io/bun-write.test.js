@@ -452,9 +452,15 @@ describe("ENOENT", () => {
 
     it("throws when given a file descriptor", async () => {
       const file = Bun.file(123);
-      expect(async () => await Bun.write(file, "contents", { createPath: true })).rejects.toThrow(
-        "Cannot create a directory for a file descriptor",
-      );
+      if (process.env.BUN_POLYFILLS_TEST_RUNNER) {
+        expect(async () => await Bun.write(file, "contents", { createPath: true })).rejects.toThrow(
+          "Cannot create a directory for a file descriptor",
+        );
+      } else {
+        expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+          "Cannot create a directory for a file descriptor",
+        );
+      }
     });
   });
 });

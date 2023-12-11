@@ -500,7 +500,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             // swapRemove messes up the order
             // But, it only messes up the order if any elements in the list appear after the item being removed
             // So if we just sort the list by the biggest index first, that should be fine
-            std.sort.block(
+            std.sort.pdq(
                 WatchItemIndex,
                 evict_list[0..evict_list_i],
                 {},
@@ -646,7 +646,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         }
 
                         var all_events = watchevents[0..watch_event_id];
-                        std.sort.block(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+                        std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);

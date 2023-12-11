@@ -1376,7 +1376,7 @@ pub const Printer = struct {
                 }
             }
 
-            std.sort.block(
+            std.sort.pdq(
                 PackageID,
                 alphabetized_names,
                 Lockfile.Package.Alphabetizer{
@@ -4264,7 +4264,7 @@ pub const Package = extern struct {
             }
         }
 
-        std.sort.block(
+        std.sort.pdq(
             Dependency,
             package_dependencies[0..total_dependencies_count],
             lockfile.buffers.string_bytes.items,
@@ -5172,7 +5172,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
         string_builder.count(scripts_end);
     }
 
-    std.sort.block(
+    std.sort.pdq(
         PackageID,
         alphabetized_names,
         Lockfile.Package.Alphabetizer{

@@ -1721,6 +1721,7 @@ declare module "fs" {
       | {
           encoding: BufferEncoding | null;
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         }
       | BufferEncoding
       | undefined
@@ -1738,6 +1739,7 @@ declare module "fs" {
       | {
           encoding: "buffer";
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         }
       | "buffer",
     callback: (err: SystemError | null, files: Buffer[]) => void,
@@ -1752,6 +1754,7 @@ declare module "fs" {
     options:
       | (ObjectEncodingOptions & {
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         })
       | BufferEncoding
       | undefined
@@ -1775,6 +1778,7 @@ declare module "fs" {
     path: PathLike,
     options: ObjectEncodingOptions & {
       withFileTypes: true;
+      recursive?: boolean | undefined;
     },
     callback: (err: SystemError | null, files: Dirent[]) => void,
   ): void;
@@ -1790,6 +1794,7 @@ declare module "fs" {
   //       | {
   //           encoding: BufferEncoding | null;
   //           withFileTypes?: false | undefined;
+  //           recursive?: boolean | undefined;
   //         }
   //       | BufferEncoding
   //       | null
@@ -1806,6 +1811,7 @@ declare module "fs" {
   //       | {
   //           encoding: "buffer";
   //           withFileTypes?: false | undefined;
+  //           recursive?: boolean | undefined;
   //         }
   //   ): Promise<Buffer[]>;
   //   /**
@@ -1818,6 +1824,7 @@ declare module "fs" {
   //     options?:
   //       | (ObjectEncodingOptions & {
   //           withFileTypes?: false | undefined;
+  //           recursive?: boolean | undefined;
   //         })
   //       | BufferEncoding
   //       | null
@@ -1831,6 +1838,7 @@ declare module "fs" {
   //     path: PathLike,
   //     options: ObjectEncodingOptions & {
   //       withFileTypes: true;
+  //       recursive?: boolean | undefined;
   //     }
   //   ): Promise<Dirent[]>;
   // }
@@ -1853,6 +1861,7 @@ declare module "fs" {
       | {
           encoding: BufferEncoding | null;
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         }
       | BufferEncoding
       | null,
@@ -1868,6 +1877,7 @@ declare module "fs" {
       | {
           encoding: "buffer";
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         }
       | "buffer",
   ): Buffer[];
@@ -1881,6 +1891,7 @@ declare module "fs" {
     options?:
       | (ObjectEncodingOptions & {
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         })
       | BufferEncoding
       | null,
@@ -1894,6 +1905,7 @@ declare module "fs" {
     path: PathLike,
     options: ObjectEncodingOptions & {
       withFileTypes: true;
+      recursive?: boolean | undefined;
     },
   ): Dirent[];
   /**

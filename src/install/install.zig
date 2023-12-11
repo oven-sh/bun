@@ -2547,7 +2547,7 @@ pub const PackageManager = struct {
         };
 
         // TODO: make this fewer passes
-        std.sort.block(
+        std.sort.pdq(
             Semver.Version,
             installed_versions.items,
             @as([]const u8, tags_buf.items),

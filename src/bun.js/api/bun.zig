@@ -615,7 +615,8 @@ pub fn shell(
 ) callconv(.C) JSC.JSValue {
     const Interpreter = @import("../../shell/interpreter.zig").Interpreter;
 
-    var allocator = globalThis.bunVM().allocator;
+    // var allocator = globalThis.bunVM().allocator;
+    var allocator = getAllocator(globalThis);
     var arena = bun.ArenaAllocator.init(allocator);
 
     const arguments_ = callframe.arguments(1);

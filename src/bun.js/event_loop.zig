@@ -346,6 +346,7 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
+const ShellGlobTask = @import("../shell/interpreter.zig").ShellGlobTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -408,6 +409,7 @@ pub const Task = TaggedPointerUnion(.{
     // These need to be referenced like this so they both don't become `WaitPidResultTask`
     JSC.Subprocess.WaiterThread.WaitPidResultTask,
     bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
+    ShellGlobTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -692,6 +694,11 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                .ShellGlobTask => {
+                    var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
+                    shell_glob_task.runFromJS();
+                    shell_glob_task.deinit();
+                },
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();

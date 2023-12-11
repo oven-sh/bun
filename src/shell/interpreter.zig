@@ -19,12 +19,17 @@ const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Subprocess = bun.ShellSubprocess;
 const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
+pub const WorkPoolTask = @import("../work_pool.zig").Task;
+pub const WorkPool = @import("../work_pool.zig").WorkPool;
+const Maybe = @import("../bun.js/node/types.zig").Maybe;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
 const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;
+
+const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
@@ -226,7 +231,10 @@ pub const Expansion = struct {
             cmd: *Cmd,
         },
         // TODO
-        glob: struct {},
+        glob: struct {
+            initialized: bool = false,
+            walker: GlobWalker,
+        },
     },
     out: Result,
     out_idx: u32,
@@ -243,6 +251,32 @@ pub const Expansion = struct {
     const Result = union(enum) {
         array_of_slice: *std.ArrayList([:0]const u8),
         array_of_ptr: *std.ArrayList(?[*:0]const u8),
+
+        pub fn pushResultSlice(this: *Result, buf: [:0]const u8) void {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(buf.len > 0 and buf[buf.len] == 0);
+            }
+
+            if (this.* == .array_of_slice) {
+                this.array_of_slice.append(buf) catch bun.outOfMemory();
+                return;
+            }
+
+            this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
+        }
+
+        pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) void {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(buf.items.len > 0 and buf.items[buf.items.len - 1] == 0);
+            }
+
+            if (this.* == .array_of_slice) {
+                this.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
+                return;
+            }
+
+            this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
+        }
     };
 
     pub fn init(
@@ -355,13 +389,15 @@ pub const Expansion = struct {
                     }
 
                     if (this.node.has_glob_expansion()) {
-                        @panic("Support glob expansion after brace expansion");
+                        this.state = .glob;
+                    } else {
+                        this.state = .done;
                     }
-
-                    this.state = .done;
                 },
                 .glob => {
-                    @panic("TODO");
+                    this.transitionToGlobState();
+                    // yield
+                    return;
                 },
                 .done, .err => unreachable,
             }
@@ -372,6 +408,23 @@ pub const Expansion = struct {
         }
 
         // FIXME handle error state? technically expansion can never fail, I think
+    }
+
+    fn transitionToGlobState(this: *Expansion) void {
+        var arena = Arena.init(this.base.interpreter.allocator);
+        this.child_state = .{ .glob = .{ .walker = .{} } };
+        const pattern = this.current_out.items[0..];
+
+        switch (GlobWalker.init(&this.child_state.glob.walker, &arena, pattern, false, false, false, false, false) catch bun.outOfMemory()) {
+            .result => {},
+            .err => |e| {
+                std.debug.print("THE ERROR: {any}\n", .{e});
+                @panic("FIXME TODO HANDLE ERRORS!");
+            },
+        }
+
+        var task = ShellGlobTask.createOnJSThread(this.base.interpreter.allocator, &this.child_state.glob.walker, this);
+        task.schedule();
     }
 
     pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
@@ -444,6 +497,28 @@ pub const Expansion = struct {
         unreachable;
     }
 
+    fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.child_state == .glob);
+        }
+
+        if (task.err != null) {
+            @panic("FIXME Handle errors");
+        }
+
+        for (task.result.items) |sentinel_str| {
+            // The string is allocated in the glob walker arena and will be freed, so needs to be duped here
+            const duped = this.base.interpreter.allocator.dupeZ(u8, sentinel_str[0..sentinel_str.len]) catch bun.outOfMemory();
+            this.pushResultSlice(duped);
+        }
+
+        this.word_idx += 1;
+        this.child_state.glob.walker.deinit(true);
+        this.child_state = .idle;
+        this.state = .done;
+        this.next();
+    }
+
     pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8)) bool {
         switch (atom.*) {
             .Text => |txt| {
@@ -481,17 +556,32 @@ pub const Expansion = struct {
         buf.appendSlice(slice) catch bun.outOfMemory();
     }
 
+    pub fn pushResultSlice(this: *Expansion, buf: [:0]const u8) void {
+        this.out.pushResultSlice(buf);
+        // if (comptime bun.Environment.allow_assert) {
+        //     std.debug.assert(buf.len > 0 and buf[buf.len] == 0);
+        // }
+
+        // if (this.out == .array_of_slice) {
+        //     this.out.array_of_slice.append(buf) catch bun.outOfMemory();
+        //     return;
+        // }
+
+        // this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
+    }
+
     pub fn pushResult(this: *Expansion, buf: *std.ArrayList(u8)) void {
-        if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(buf.items.len > 0 and buf.items[buf.items.len - 1] == 0);
-        }
+        this.out.pushResult(buf);
+        // if (comptime bun.Environment.allow_assert) {
+        //     std.debug.assert(buf.items.len > 0 and buf.items[buf.items.len - 1] == 0);
+        // }
 
-        if (this.out == .array_of_slice) {
-            this.out.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
-            return;
-        }
+        // if (this.out == .array_of_slice) {
+        //     this.out.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
+        //     return;
+        // }
 
-        this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
+        // this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
     }
 
     fn expandVar(this: *const Expansion, label: []const u8) [:0]const u8 {
@@ -1447,6 +1537,7 @@ pub const Cmd = struct {
             } = .open,
             owned: bool = false,
 
+            /// BufferedInput/Output uses jsc vm allocator
             pub fn deinit(this: *BufferedIoState, jsc_vm_allocator: Allocator) void {
                 if (this.state == .closed and this.owned) {
                     var list = bun.ByteList.listManaged(this.state.closed, jsc_vm_allocator);
@@ -1978,6 +2069,104 @@ const CmdEnvIter = struct {
     }
 };
 
-const lol = struct {
-    const pipeline_t = struct {};
+pub const ShellGlobTask = struct {
+    const print = bun.Output.scoped(.ShellGlobTask, false);
+
+    task: WorkPoolTask = .{ .callback = &runFromThreadPool },
+
+    /// Not owned by this struct
+    expansion: *Expansion,
+    /// Not owned by this struct
+    walker: *GlobWalker,
+
+    result: std.ArrayList([:0]const u8),
+    allocator: Allocator,
+    event_loop: *JSC.EventLoop,
+    concurrent_task: JSC.ConcurrentTask = .{},
+    // This is a poll because we want it to enter the uSockets loop
+    ref: bun.Async.KeepAlive = .{},
+    err: ?Err = null,
+
+    const This = @This();
+
+    pub const Err = union(enum) {
+        syscall: Syscall.Error,
+        unknown: anyerror,
+
+        pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
+            return switch (this) {
+                .syscall => |err| err.toJSC(globalThis),
+                .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+            };
+        }
+    };
+
+    pub fn createOnJSThread(allocator: Allocator, walker: *GlobWalker, expansion: *Expansion) *This {
+        print("createOnJSThread", .{});
+        var this = allocator.create(This) catch bun.outOfMemory();
+        this.* = .{
+            .event_loop = JSC.VirtualMachine.get().event_loop,
+            .walker = walker,
+            .allocator = allocator,
+            .expansion = expansion,
+            .result = std.ArrayList([:0]const u8).init(allocator),
+        };
+        this.ref.ref(this.event_loop.virtual_machine);
+
+        return this;
+    }
+
+    pub fn runFromThreadPool(task: *WorkPoolTask) void {
+        print("runFromThreadPool", .{});
+        var this = @fieldParentPtr(This, "task", task);
+        switch (this.walkImpl()) {
+            .result => {},
+            .err => |e| {
+                this.err = .{ .syscall = e };
+            },
+        }
+        this.onFinish();
+    }
+
+    fn walkImpl(this: *This) Maybe(void) {
+        print("walkImpl", .{});
+
+        var iter = GlobWalker.Iterator{ .walker = this.walker };
+        defer iter.deinit();
+        switch (try iter.init()) {
+            .err => |err| return .{ .err = err },
+            else => {},
+        }
+
+        while (switch (iter.next() catch |e| OOM(e)) {
+            .err => |err| return .{ .err = err },
+            .result => |matched_path| matched_path,
+        }) |path| {
+            this.result.append(path) catch bun.outOfMemory();
+        }
+
+        return Maybe(void).success;
+    }
+
+    pub fn runFromJS(this: *This) void {
+        print("runFromJS", .{});
+        this.expansion.onGlobWalkDone(this);
+        this.ref.unref(this.event_loop.virtual_machine);
+    }
+
+    pub fn schedule(this: *This) void {
+        print("schedule", .{});
+        WorkPool.schedule(&this.task);
+    }
+
+    pub fn onFinish(this: *This) void {
+        print("onFinish", .{});
+        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+    }
+
+    pub fn deinit(this: *This) void {
+        print("deinit", .{});
+        this.result.deinit();
+        this.allocator.destroy(this);
+    }
 };

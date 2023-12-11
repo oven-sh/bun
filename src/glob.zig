@@ -932,7 +932,7 @@ pub fn GlobWalker_(
                 entry_name,
             };
             const name = try this.join(subdir_parts);
-            if (comptime sentinel) return name[0 .. name.len - 1 :0];
+            // if (comptime sentinel) return name[0 .. name.len - 1 :0];
             return name;
         }
 
@@ -954,15 +954,24 @@ pub fn GlobWalker_(
             try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
         }
 
-        inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) ![]u8 {
-            return if (!this.absolute)
-                // If relative paths enabled, stdlib join is preferred over
-                // ResolvePath.joinBuf because it doesn't try to normalize the path
-                // try std.fs.path.join(this.arena.allocator(), subdir_parts)
-                try stdJoin(this.arena.allocator(), subdir_parts)
-            else
-                // try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
-                try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
+        inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) !MatchedPath {
+            if (!this.absolute) {
+                return try stdJoin(this.arena.allocator(), subdir_parts);
+            }
+
+            const out = try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
+            if (comptime sentinel) return out[0 .. out.len - 1 :0];
+
+            return out;
+
+            // return if (!this.absolute)
+            //     // If relative paths enabled, stdlib join is preferred over
+            //     // ResolvePath.joinBuf because it doesn't try to normalize the path
+            //     // try std.fs.path.join(this.arena.allocator(), subdir_parts)
+            //     try stdJoin(this.arena.allocator(), subdir_parts)
+            // else
+            //     // try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+            //     try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {

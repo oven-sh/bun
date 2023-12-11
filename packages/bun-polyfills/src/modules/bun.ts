@@ -47,8 +47,8 @@ const require = createRequire(import.meta.url);
 export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satisfies typeof Bun.main;
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
-export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'fb2dfb233709584d13fddb6815a98cd6003dfaab' satisfies typeof Bun.revision;
+export const version = '1.0.16' satisfies typeof Bun.version;
+export const revision = 'e37a5795887e0b46c3b3a4adca725a9440b7b273' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -195,11 +195,24 @@ export const file = ((path: string | URL | Uint8Array | ArrayBufferLike | number
     return new FileBlob(path, options);
 }) satisfies typeof Bun.file;
 
-export const write = (async (
+export const write = ((
     dest: BunFileBlob | PathLike,
     input: string | Blob | TypedArray | ArrayBufferLike | BlobPart[] | Response | BunFileBlob,
     options?
 ): ReturnType<typeof Bun.write> => {
+    if (options?.createPath ?? true) {
+        let destPath: string | undefined;
+        if (isFileBlob(dest)) destPath = dest.name;
+        else if (typeof dest === 'string') destPath = dest;
+        else if (dest instanceof URL) destPath = fileURLToPathNode(dest);
+        else if (dest instanceof ArrayBuffer || dest instanceof SharedArrayBuffer) destPath = new TextDecoder().decode(dest);
+        else destPath = new TextDecoder().decode(dest.buffer);
+        if (!destPath && options?.createPath) throw new Error('Cannot create a directory for a file descriptor');
+        else if (destPath) {
+            const dir = path.dirname(destPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        }
+    }
     if (!isFileBlob(dest)) {
         if (typeof dest === 'string' || dest instanceof URL) dest = new FileBlob(fs.openSync(dest, 'w+'));
         else {
@@ -212,15 +225,17 @@ export const write = (async (
         const slice = Reflect.get(dest, '@@writeSlice') as number;
         input = input.slice(0, slice);
     }
-    const writer = dest.writer();
-    if (Array.isArray(input)) input = new Blob(input);
-    if (input instanceof Blob || input instanceof Response) return writer.write(await input.arrayBuffer());
-    // @ts-expect-error account for hono's Response monkeypatch
-    if (input.constructor.name === '_Response') return writer.write(await input.arrayBuffer());
-    if (input instanceof ArrayBuffer || input instanceof SharedArrayBuffer || ArrayBuffer.isView(input)) return writer.write(input);
-    if (typeof input === 'string') return writer.write(input);
-    // if all else fails, it seems Bun tries to convert to string and write that.
-    else return write(dest, String(input));
+    return (async () => {
+        const writer = (dest as BunFileBlob).writer();
+        if (Array.isArray(input)) input = new Blob(input);
+        if (input instanceof Blob || input instanceof Response) return writer.write(await input.arrayBuffer());
+        // @ts-expect-error account for hono's Response monkeypatch
+        if (input.constructor.name === '_Response') return writer.write(await input.arrayBuffer());
+        if (input instanceof ArrayBuffer || input instanceof SharedArrayBuffer || ArrayBuffer.isView(input)) return writer.write(input);
+        if (typeof input === 'string') return writer.write(input);
+        // if all else fails, it seems Bun tries to convert to string and write that.
+        else return write(dest, String(input));
+    })();
 }) satisfies typeof Bun.write;
 
 export const sha = SHA512_256.hash satisfies typeof Bun.sha;
@@ -238,10 +253,10 @@ export const deflateSync = zlib.deflateSync satisfies typeof Bun.deflateSync;
 export const gunzipSync = zlib.gunzipSync satisfies typeof Bun.gunzipSync;
 export const inflateSync = zlib.inflateSync satisfies typeof Bun.inflateSync;
 
-export const which = ((cmd: string, options) => {
+export const which = ((cmd: string, options = {}) => {
     const opts: npm_which.Options = { all: false, nothrow: true };
-    if (options?.PATH) opts.path = options.PATH;
-    if (options?.cwd) opts.path = opts.path ? `${options.cwd}:${opts.path}` : options.cwd;
+    options.cwd ??= process.cwd();
+    opts.path = `${options.cwd}:${options.PATH ?? process.env.PATH ?? '/'}`;
     return npm_which.sync(cmd, opts) as string | null;
 }) satisfies typeof Bun.which;
 

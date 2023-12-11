@@ -426,7 +426,7 @@ describe("ENOENT", () => {
         await Bun.write(file, "contents", ...opts);
         expect(fs.existsSync(file)).toBe(true);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { force: true, recursive: true });
       }
     });
   };
@@ -441,8 +441,8 @@ describe("ENOENT", () => {
       const dir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/ENOENT`;
       const file = join(dir, "file");
       try {
-        expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
-          "No such file or directory",
+        expect(async () => await Bun.write(file, "contents", { createPath: false })).rejects.toThrow(
+          process.env.BUN_POLYFILLS_TEST_RUNNER ? /^ENOENT:/ : "No such file or directory",
         );
         expect(fs.existsSync(file)).toBe(false);
       } finally {
@@ -452,7 +452,7 @@ describe("ENOENT", () => {
 
     it("throws when given a file descriptor", async () => {
       const file = Bun.file(123);
-      expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+      expect(async () => await Bun.write(file, "contents", { createPath: true })).rejects.toThrow(
         "Cannot create a directory for a file descriptor",
       );
     });

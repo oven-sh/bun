@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'b8dcf2caf869bd911a3cb5df77f58fdce20bc185' satisfies typeof Bun.revision;
+export const revision = 'fb2dfb233709584d13fddb6815a98cd6003dfaab' satisfies typeof Bun.revision;
 
 export const gc = (
     globalThis.gc
@@ -215,6 +215,8 @@ export const write = (async (
     const writer = dest.writer();
     if (Array.isArray(input)) input = new Blob(input);
     if (input instanceof Blob || input instanceof Response) return writer.write(await input.arrayBuffer());
+    // @ts-expect-error account for hono's Response monkeypatch
+    if (input.constructor.name === '_Response') return writer.write(await input.arrayBuffer());
     if (input instanceof ArrayBuffer || input instanceof SharedArrayBuffer || ArrayBuffer.isView(input)) return writer.write(input);
     if (typeof input === 'string') return writer.write(input);
     // if all else fails, it seems Bun tries to convert to string and write that.
@@ -354,6 +356,8 @@ export const spawn = ((...args) => {
         if (isArrayBufferView(stdinSrc)) stdinSrc = new Blob([stdinSrc]);
         if (stdinSrc instanceof Blob) void stdinSrc.stream().pipeTo(stdinWeb);
         else if (stdinSrc instanceof Response || stdinSrc instanceof Request) void stdinSrc.body!.pipeTo(stdinWeb);
+        // @ts-expect-error account for Hono's Response monkeypatch
+        else if (stdinSrc.constructor.name === '_Response') void stdinSrc.body!.pipeTo(stdinWeb);
         else if (typeof stdinSrc === 'number') void fs.createReadStream('', { fd: stdinSrc }).pipe(internalStdinStream);
         else void stdinSrc;
     });

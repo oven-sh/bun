@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 
 import { which } from "bun";
-import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 
 test("which", () => {
   writeFixture("/tmp/myscript.sh");
@@ -12,13 +12,13 @@ test("which", () => {
   try {
     mkdirSync("myscript.sh");
     chmodSync("myscript.sh", "755");
-  } catch (e) {}
+  } catch (e) { }
 
   // directories should not be returned
   expect(which("myscript.sh")).toBe(null);
 
   // "bun" is in our PATH
-  expect(which("bun")?.length > 0).toBe(true);
+  expect(which("bun")?.length! > 0).toBe(true);
 
   expect(
     // You can override PATH
@@ -49,17 +49,16 @@ test("which", () => {
 
   try {
     unlinkSync("myscript.sh");
-  } catch (e) {}
+  } catch (e) { }
 });
 
 function writeFixture(path: string) {
-  var fs = require("fs");
   try {
-    fs.unlinkSync(path);
-  } catch (e) {}
+    unlinkSync(path);
+  } catch (e) { }
 
   var script_name = path;
   var script_content = "echo Hello world!";
-  fs.writeFileSync(script_name, script_content);
-  fs.chmodSync(script_name, "755");
+  writeFileSync(script_name, script_content);
+  chmodSync(script_name, "755");
 }

@@ -15,7 +15,7 @@ test("spawn can write to stdin multiple chunks", async () => {
       const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
 
       const proc = spawn({
-        cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
+        cmd: [bunExe(), ...process.execArgv, import.meta.dir + "/stdin-repro.js"],
         stdout: "pipe",
         stdin: "pipe",
         stderr: Bun.file(tmperr),
@@ -53,7 +53,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
       try {
         unlinkSync(tmperr);
-      } catch (e) {}
+      } catch (e) { }
     })();
   }
 

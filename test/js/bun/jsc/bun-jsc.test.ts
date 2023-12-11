@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
-  describe as jscDescribe,
-  describeArray,
+  jscDescribe,
+  jscDescribeArray,
   serialize,
   deserialize,
   gcAndSweep,
@@ -37,11 +37,11 @@ describe("bun:jsc", () => {
     return j;
   }
 
-  it("describe", () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("describe", () => {
     expect(jscDescribe([])).toBeDefined();
   });
-  it("describeArray", () => {
-    expect(describeArray([1, 2, 3])).toBeDefined();
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("describeArray", () => {
+    expect(jscDescribeArray([1, 2, 3])).toBeDefined();
   });
   it("gcAndSweep", () => {
     expect(gcAndSweep()).toBeGreaterThan(0);
@@ -72,21 +72,21 @@ describe("bun:jsc", () => {
   it("setRandomSeed", () => {
     expect(setRandomSeed(2)).toBeUndefined();
   });
-  it("isRope", () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("isRope", () => {
     expect(isRope("a" + 123 + "b")).toBe(true);
     expect(isRope("abcdefgh")).toBe(false);
   });
-  it("callerSourceOrigin", () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("callerSourceOrigin", () => {
     expect(callerSourceOrigin()).toBe(import.meta.url);
   });
-  it("noFTL", () => {});
-  it("noOSRExitFuzzing", () => {});
+  it("noFTL", () => { });
+  it("noOSRExitFuzzing", () => { });
   it("optimizeNextInvocation", () => {
     count();
     expect(optimizeNextInvocation(count)).toBeUndefined();
     count();
   });
-  it("numberOfDFGCompiles", () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("numberOfDFGCompiles", () => {
     expect(numberOfDFGCompiles(count)).toBeGreaterThan(0);
   });
   it("releaseWeakRefs", () => {
@@ -154,7 +154,7 @@ describe("bun:jsc", () => {
   it("serialize (binaryType: 'nodebuffer')", () => {
     const serialized = serialize({ a: 1 }, { binaryType: "nodebuffer" });
     expect(serialized).toBeInstanceOf(Buffer);
-    expect(serialized.buffer).toBeInstanceOf(SharedArrayBuffer);
+    expect(serialized.buffer).toBeInstanceOf(process.env.BUN_POLYFILLS_TEST_RUNNER ? ArrayBuffer : SharedArrayBuffer);
     expect(deserialize(serialized)).toStrictEqual({ a: 1 });
     const nested = serialize(serialized);
     expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });

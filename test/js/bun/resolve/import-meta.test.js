@@ -4,13 +4,14 @@ import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
 import { join } from "node:path";
+// @ts-expect-error tsconfig warning
 import sync from "./require-json.json";
 
 const { path, dir } = import.meta;
 
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
-    cmd: [bunExe(), "run", join(import.meta.dir, "./main-test-script.js")],
+    cmd: [bunExe(), ...process.execArgv, join(import.meta.dir, "./main-test-script.js")],
     env: bunEnv,
     stderr: "inherit",
     stdout: "inherit",
@@ -34,7 +35,7 @@ it("Module.createRequire", () => {
   expect(Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)).toBe(import.meta.path);
 });
 
-it("require with a query string works on dynamically created content", () => {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)("require with a query string works on dynamically created content", () => {
   rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
     recursive: true,
     force: true,
@@ -44,7 +45,7 @@ it("require with a query string works on dynamically created content", () => {
     try {
       require("./bar.js?query=123.js");
     } catch (e) {
-      expect(e.name).toBe("ResolveMessage");
+      expect(e.name).toBe(process.env.BUN_POLYFILLS_TEST_RUNNER ? "Error" : "ResolveMessage");
     }
 
     mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
@@ -93,11 +94,11 @@ it("Module._cache", () => {
   expect(!!expected).toBe(true);
 });
 
-it("Module._resolveFilename()", () => {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)("Module._resolveFilename()", () => {
   expect(Module._resolveFilename).toBeUndefined();
 });
 
-it("Module.createRequire(file://url).resolve(file://url)", () => {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)("Module.createRequire(file://url).resolve(file://url)", () => {
   const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
 
   const createdRequire = Module.createRequire(import.meta.url);
@@ -114,7 +115,7 @@ it("import.meta.require.resolve", () => {
   expect(result).toBe(expected);
 });
 
-it("import.meta.require (javascript)", () => {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)("import.meta.require (javascript)", () => {
   expect(import.meta.require("./require-js.js").hello).toBe(sync.hello);
   const require = Module.createRequire(import.meta.path);
   expect(require("./require-js.js").hello).toBe(sync.hello);
@@ -124,7 +125,7 @@ it("import() require + TLA", async () => {
   expect((await import("./import-require-tla.js")).foo).toBe("bar");
 });
 
-it("import.meta.require (javascript, live bindings)", () => {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)("import.meta.require (javascript, live bindings)", () => {
   var Source = import.meta.require("./import.live.decl.js");
 
   // require transpiles to import.meta.require
@@ -157,14 +158,14 @@ it("import.meta.require (javascript, live bindings)", () => {
 });
 
 it("import.meta.dir", () => {
-  expect(dir.endsWith("/bun/test/js/bun/resolve")).toBe(true);
+  expect(dir.endsWith("/test/js/bun/resolve")).toBe(true);
 });
 
 it("import.meta.path", () => {
-  expect(path.endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
+  expect(path.endsWith("/test/js/bun/resolve/import-meta.test.js")).toBe(true);
 });
 
-it('require("bun") works', () => {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)('require("bun") works', () => {
   expect(require("bun")).toBe(Bun);
 });
 
@@ -191,7 +192,7 @@ it("require.resolve error code", () => {
 
 it("import non exist error code", async () => {
   try {
-    await import("node:missing");
+    await import("missing");
     throw 1;
   } catch (e) {
     expect(e.code).toBe("ERR_MODULE_NOT_FOUND");

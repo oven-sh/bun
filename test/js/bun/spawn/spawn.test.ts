@@ -1,7 +1,7 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
-import { rmSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync, readFileSync } from "node:fs";
 import path from "path";
 
 for (let [gcTick, label] of [
@@ -53,7 +53,7 @@ for (let [gcTick, label] of [
             cmd: ["echo", "hi"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow(process.env.BUN_POLYFILLS_TEST_RUNNER ? "spawnSync echo ENOENT" : "No such file or directory");
       });
     });
 
@@ -103,7 +103,7 @@ for (let [gcTick, label] of [
         });
         gcTick();
         await exited;
-        expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
+        expect(readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
         gcTick();
       });
 
@@ -132,7 +132,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("check exit code from onExit", async () => {
+      it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("check exit code from onExit", async () => {
         for (let i = 0; i < 1000; i++) {
           var exitCode1, exitCode2;
           await new Promise<void>(resolve => {
@@ -167,8 +167,8 @@ for (let [gcTick, label] of [
             });
           });
 
-          expect(exitCode1).toBe(0);
-          expect(exitCode2).toBe(1);
+          expect<number>(exitCode1).toBe(0);
+          expect<number>(exitCode2).toBe(1);
         }
       }, 60_000_0);
 
@@ -330,7 +330,8 @@ for (let [gcTick, label] of [
         await prom;
       });
 
-      it("stdin can be read and stdout can be written", async () => {
+      // skipped on polyfills because of https://github.com/nodejs/node/issues/21941
+      it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
           cmd: ["bash", import.meta.dir + "/bash-echo.sh"],
           stdout: "pipe",
@@ -451,10 +452,10 @@ for (let [gcTick, label] of [
         }
       });
 
-      describe("ipc", () => {
+      describe.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("ipc", () => {
         it("the subprocess should be defined and the child should send", done => {
           gcTick();
-          const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
+          const returned_subprocess = spawn([bunExe(), ...process.execArgv, path.join(__dirname, "bun-ipc-child.js")], {
             ipc: (message, subProcess) => {
               expect(subProcess).toBe(returned_subprocess);
               expect(message).toBe("hello");
@@ -469,7 +470,7 @@ for (let [gcTick, label] of [
           gcTick();
 
           const parentMessage = "I am your father";
-          const childProc = spawn([bunExe(), path.join(__dirname, "bun-ipc-child-respond.js")], {
+          const childProc = spawn([bunExe(), ...process.execArgv, path.join(__dirname, "bun-ipc-child-respond.js")], {
             ipc: (message, subProcess) => {
               expect(message).toBe(`pong:${parentMessage}`);
               subProcess.kill();
@@ -489,14 +490,14 @@ for (let [gcTick, label] of [
             cmd: ["echo", "hi"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow(process.env.BUN_POLYFILLS_TEST_RUNNER ? "spawnSync echo ENOENT" : "No such file or directory");
       });
     });
   });
 }
 
 if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
-  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", import.meta.path],
       env: {
@@ -529,7 +530,7 @@ describe("spawn unref and kill should not hang", () => {
 
     expect().pass();
   });
-  it("unref", async () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("unref", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
@@ -543,7 +544,7 @@ describe("spawn unref and kill should not hang", () => {
 
     expect().pass();
   });
-  it("kill and unref", async () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("kill and unref", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
@@ -558,7 +559,7 @@ describe("spawn unref and kill should not hang", () => {
 
     expect().pass();
   });
-  it("unref and kill", async () => {
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("unref and kill", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
@@ -576,7 +577,7 @@ describe("spawn unref and kill should not hang", () => {
 
   it("should not hang after unref", async () => {
     const proc = spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
+      cmd: [bunExe(), ...process.execArgv, path.join(import.meta.dir, "does-not-hang.js")],
     });
 
     await proc.exited;
@@ -624,7 +625,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
   expect().pass();
 }
 
-describe("should not hang", () => {
+describe.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("should not hang", () => {
   for (let sleep of ["0.001", "0"]) {
     describe("sleep " + sleep, () => {
       for (let order of [
@@ -653,7 +654,7 @@ describe("should not hang", () => {
   }
 });
 
-it("#3480", async () => {
+it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("#3480", async () => {
   try {
     var server = Bun.serve({
       port: 0,

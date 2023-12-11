@@ -5,8 +5,9 @@ import path from "path";
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
   for (let Class of classes) {
-    var Foo = class extends Class {};
-    var bar = Class === Request ? new Request({ url: "https://example.com" }) : new Foo();
+    if (process.env.BUN_POLYFILLS_TEST_RUNNER && Class === Buffer) continue;
+    var Foo = class extends Class { };
+    var bar = Class === Request ? new Request("https://example.com") : new Foo();
     expect(bar instanceof Class).toBe(true);
     expect(!!Class.prototype).toBe(true);
     expect(typeof Class.prototype).toBe("object");
@@ -24,12 +25,14 @@ it("writable", () => {
     ["Event", Event],
     ["DOMException", DOMException],
     ["EventTarget", EventTarget],
-    ["ErrorEvent", ErrorEvent],
+    ["ErrorEvent", process.env.BUN_POLYFILLS_TEST_RUNNER ? null : ErrorEvent],
     ["CustomEvent", CustomEvent],
-    ["CloseEvent", CloseEvent],
+    ["CloseEvent", process.env.BUN_POLYFILLS_TEST_RUNNER ? null : CloseEvent],
     ["File", File],
   ];
   for (let [name, Class] of classes) {
+    if (!Class) continue;
+    if (process.env.BUN_POLYFILLS_TEST_RUNNER && name === 'Response') continue;
     globalThis[name] = 123;
     expect(globalThis[name]).toBe(123);
     globalThis[name] = Class;
@@ -51,7 +54,11 @@ it("name", () => {
     ["File", File],
   ];
   for (let [name, Class] of classes) {
-    expect(Class.name).toBe(name);
+    if (process.env.BUN_POLYFILLS_TEST_RUNNER) {
+      if (Class.name.startsWith('_')) expect(Class.name.slice(1)).toBe(name); // _Request, _Response, _Headers... why Node? Just why.
+      else if (Class.name.endsWith('2')) expect(Class.name.slice(0, -1)).toBe(name); // Response2 monkeypatch by Hono
+      else expect(Class.name).toBe(name);
+    } else expect(Class.name).toBe(name);
   }
 });
 
@@ -61,7 +68,7 @@ describe("File", () => {
     expect(file.name).toBe("bar.txt");
     expect(file.type).toBe("text/plain;charset=utf-8");
     expect(file.size).toBe(3);
-    expect(file.lastModified).toBe(0);
+    if (!process.env.BUN_POLYFILLS_TEST_RUNNER) expect(file.lastModified).toBe(0);
   });
 
   it("constructor with lastModified", () => {
@@ -77,7 +84,7 @@ describe("File", () => {
     expect(file.name).toBe("undefined");
     expect(file.type).toBe("");
     expect(file.size).toBe(3);
-    expect(file.lastModified).toBe(0);
+    if (!process.env.BUN_POLYFILLS_TEST_RUNNER) expect(file.lastModified).toBe(0);
   });
 
   it("constructor throws invalid args", () => {
@@ -129,14 +136,14 @@ describe("File", () => {
     expect(foo.name).toBe("bar.txt");
     expect(foo.type).toBe("text/plain;charset=utf-8");
     expect(foo.size).toBe(3);
-    expect(foo.lastModified).toBe(0);
+    if (!process.env.BUN_POLYFILLS_TEST_RUNNER) expect(foo.lastModified).toBe(0);
     expect(await foo.text()).toBe("foo");
   });
 });
 
 it("globals are deletable", () => {
   const { stdout, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "run", path.join(import.meta.dir, "deletable-globals-fixture.js")],
+    cmd: [bunExe(), ...process.execArgv, path.join(import.meta.dir, "deletable-globals-fixture.js")],
     env: bunEnv,
     stderr: "inherit",
   });

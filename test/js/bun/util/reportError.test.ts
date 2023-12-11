@@ -5,7 +5,7 @@ import { bunEnv, bunExe } from "harness";
 test.skipIf(Bun.version.endsWith("debug"))("reportError", () => {
   const cwd = import.meta.dir;
   const { stderr } = spawnSync({
-    cmd: [bunExe(), new URL("./reportError.ts", import.meta.url).pathname],
+    cmd: [bunExe(), ...process.execArgv, new URL("./reportError.ts", import.meta.url).pathname],
     cwd,
     env: bunEnv,
   });

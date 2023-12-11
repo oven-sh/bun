@@ -1,4 +1,4 @@
-import { listen, connect, TCPSocketListener, SocketHandler } from "bun";
+import { listen, connect, type TCPSocketListener, type SocketHandler } from "bun";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount } from "harness";
 
@@ -29,8 +29,8 @@ it("remoteAddress works", async () => {
           setTimeout(() => server.stop(true), 0);
         }
       },
-      close() {},
-      data() {},
+      close() { },
+      data() { },
     },
     port: 0,
     hostname: "127.0.0.1",
@@ -49,8 +49,8 @@ it("remoteAddress works", async () => {
           ws.end();
         }
       },
-      data() {},
-      close() {},
+      data() { },
+      close() { },
     },
     hostname: server.hostname,
     port: server.port,
@@ -64,9 +64,9 @@ it("should not allow invalid tls option", () => {
       // @ts-ignore
       const server = Bun.listen({
         socket: {
-          open(ws) {},
-          close() {},
-          data() {},
+          open(ws) { },
+          close() { },
+          data() { },
         },
         port: 0,
         hostname: "localhost",
@@ -83,9 +83,9 @@ it("should allow using false, null or undefined tls option", () => {
       // @ts-ignore
       const server = Bun.listen({
         socket: {
-          open(ws) {},
-          close() {},
-          data() {},
+          open(ws) { },
+          close() { },
+          data() { },
         },
         port: 0,
         hostname: "localhost",
@@ -230,13 +230,13 @@ describe("tcp socket binaryType", () => {
           data(socket, buffer) {
             expect(
               buffer instanceof
-                (type === "arraybuffer"
-                  ? ArrayBuffer
-                  : type === "uint8array"
+              (type === "arraybuffer"
+                ? ArrayBuffer
+                : type === "uint8array"
                   ? Uint8Array
                   : type === "buffer"
-                  ? Buffer
-                  : Error),
+                    ? Buffer
+                    : Error),
             ).toBe(true);
             const msg = `${socket.data.isServer ? "server:" : "client:"} Hello World! ${socket.data.counter++}`;
             socket.data.sendQueue.push(msg);

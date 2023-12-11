@@ -49,7 +49,6 @@ Despite the name, it isn't an array and supports none of the array methods and o
 
 ```ts
 const buf = new ArrayBuffer(8);
-
 buf.byteLength; // => 8
 
 const slice = buf.slice(0, 4); // returns new ArrayBuffer

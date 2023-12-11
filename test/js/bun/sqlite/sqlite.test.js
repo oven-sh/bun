@@ -15,17 +15,19 @@ it("Database.open", () => {
     expect(error.message).toBe(
       process.env.BUN_POLYFILLS_TEST_RUNNER
         ? "Cannot open database because the directory does not exist"
-        : "unable to open database file"
+        : "unable to open database file",
     );
   }
 
   // in a file which doesn't exist
-  if (!process.env.BUN_POLYFILLS_TEST_RUNNER) try { // not sure why this is supposed to error, better-sqlite3 has no issue with it?
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
-    throw new Error("Expected an error to be thrown");
-  } catch (error) {
-    expect(error.message).toBe("unable to open database file");
-  }
+  if (!process.env.BUN_POLYFILLS_TEST_RUNNER)
+    try {
+      // not sure why this is supposed to error, better-sqlite3 has no issue with it?
+      Database.open(`/tmp/database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
+      throw new Error("Expected an error to be thrown");
+    } catch (error) {
+      expect(error.message).toBe("unable to open database file");
+    }
 
   // in a file which doesn't exist
   try {
@@ -36,12 +38,14 @@ it("Database.open", () => {
   }
 
   // in a file which doesn't exist
-  if (!process.env.BUN_POLYFILLS_TEST_RUNNER) try { // not sure why this is supposed to error, better-sqlite3 has no issue with it? (x2)
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, { readwrite: true });
-    throw new Error("Expected an error to be thrown");
-  } catch (error) {
-    expect(error.message).toBe("unable to open database file");
-  }
+  if (!process.env.BUN_POLYFILLS_TEST_RUNNER)
+    try {
+      // not sure why this is supposed to error, better-sqlite3 has no issue with it? (x2)
+      Database.open(`/tmp/database-${Math.random()}.sqlite`, { readwrite: true });
+      throw new Error("Expected an error to be thrown");
+    } catch (error) {
+      expect(error.message).toBe("unable to open database file");
+    }
 
   // create works
   {
@@ -140,8 +144,8 @@ it("int52", () => {
 it("typechecks", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-  db.exec('INSERT INTO test (name) VALUES (\'Hello\')');
-  db.exec('INSERT INTO test (name) VALUES (\'World\')');
+  db.exec("INSERT INTO test (name) VALUES ('Hello')");
+  db.exec("INSERT INTO test (name) VALUES ('World')");
 
   const q = db.prepare("SELECT * FROM test WHERE (name = ?)");
 
@@ -173,8 +177,8 @@ it("typechecks", () => {
 
   expectfail(Symbol("oh hai"));
   expectfail(new Date());
-  expectfail(class Foo { });
-  expectfail(() => class Foo { });
+  expectfail(class Foo {});
+  expectfail(() => class Foo {});
   expectfail(new RangeError("what"));
   expectfail(new Map());
   expectfail(new Map([["foo", "bar"]]));
@@ -221,8 +225,8 @@ it("db.query supports TypedArray", () => {
 it("supports serialize/deserialize", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-  db.exec('INSERT INTO test (name) VALUES (\'Hello\')');
-  db.exec('INSERT INTO test (name) VALUES (\'World\')');
+  db.exec("INSERT INTO test (name) VALUES ('Hello')");
+  db.exec("INSERT INTO test (name) VALUES ('World')");
 
   const input = db.serialize();
   const db2 = new Database(input);
@@ -286,8 +290,8 @@ it("db.query()", () => {
   var q = db.query("SELECT * FROM test WHERE name = ?");
   expect(q.get("Hello") === null).toBe(true);
 
-  db.exec('INSERT INTO test (name) VALUES (\'Hello\')');
-  db.exec('INSERT INTO test (name) VALUES (\'World\')');
+  db.exec("INSERT INTO test (name) VALUES ('Hello')");
+  db.exec("INSERT INTO test (name) VALUES ('World')");
 
   var rows = db.query("SELECT * FROM test WHERE name = ?").all(["Hello"]);
 
@@ -342,9 +346,7 @@ it("db.query()", () => {
     db.query("SELECT * FROM test where (name = ? OR name = ?)").all("Hello");
   } catch (e) {
     expect(e.message).toBe(
-      process.env.BUN_POLYFILLS_TEST_RUNNER
-        ? "Too few parameter values were provided"
-        : "Expected 2 values, got 1"
+      process.env.BUN_POLYFILLS_TEST_RUNNER ? "Too few parameter values were provided" : "Expected 2 values, got 1",
     );
   }
 
@@ -410,9 +412,7 @@ it("db.transaction()", () => {
     throw new Error("Should have thrown");
   } catch (exception) {
     expect(exception.message).toBe(
-      process.env.BUN_POLYFILLS_TEST_RUNNER
-        ? "UNIQUE constraint failed: cats.name"
-        : "constraint failed"
+      process.env.BUN_POLYFILLS_TEST_RUNNER ? "UNIQUE constraint failed: cats.name" : "constraint failed",
     );
   }
 
@@ -563,8 +563,8 @@ describe("Database.run", () => {
     var q = db.query("SELECT * FROM test WHERE name = ?");
     expect(q.get("Hello") === null).toBe(true);
 
-    db.exec('INSERT INTO test (name) VALUES (\'Hello\')');
-    db.exec('INSERT INTO test (name) VALUES (\'World\')');
+    db.exec("INSERT INTO test (name) VALUES ('Hello')");
+    db.exec("INSERT INTO test (name) VALUES ('World')");
 
     try {
       db.run(" ");

@@ -53,7 +53,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
       try {
         unlinkSync(tmperr);
-      } catch (e) { }
+      } catch (e) {}
     })();
   }
 

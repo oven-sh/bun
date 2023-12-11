@@ -593,7 +593,7 @@ function ffiRunner(fast) {
         const bigint = typeof min === "bigint";
         const inc = bigint
           ? //
-          (max - min) / 32768n
+            (max - min) / 32768n
           : Math.ceil((max - min) / 32768);
         it(type, () => {
           expect(bigint ? BigInt(fn(min)) : fn(min)).toBe(min);
@@ -652,7 +652,7 @@ if (ok) {
     ffiRunner(true);
   });
 } else {
-  it.skip("run ffi", () => { });
+  it.skip("run ffi", () => {});
 }
 
 it("dlopen throws an error instead of returning it", () => {
@@ -680,8 +680,8 @@ const lib_path =
   platform() === "darwin"
     ? "/usr/lib/libSystem.B.dylib"
     : existsSync("/lib/x86_64-linux-gnu/libc.so.6")
-      ? "/lib/x86_64-linux-gnu/libc.so.6"
-      : null;
+    ? "/lib/x86_64-linux-gnu/libc.so.6"
+    : null;
 const test = lib_path ? it : it.skip;
 test("can open more than 63 symbols", () => {
   const lib = dlopen(lib_path, {

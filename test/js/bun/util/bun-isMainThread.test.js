@@ -4,7 +4,8 @@ import { bunEnv, bunExe } from "harness";
 test("Bun.isMainThread", () => {
   expect(Bun.isMainThread).toBeTrue();
 
-  if (!process.env.BUN_POLYFILLS_TEST_RUNNER) { // can be removed once node has web Worker support
+  if (!process.env.BUN_POLYFILLS_TEST_RUNNER) {
+    // can be removed once node has web Worker support
     const { stdout, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), ...process.execArgv, import.meta.resolveSync("./main-worker-file.js")],
       stderr: "inherit",

@@ -60,38 +60,41 @@ it("Module.createRequire does not use file url as the referrer (err message chec
   } catch (e) {
     expect(e.name).not.toBe("UnreachableError");
     expect(e.message).not.toInclude("file:///");
-    expect(e.message).toInclude('whaaat');
+    expect(e.message).toInclude("whaaat");
     expect(e.message).toInclude(import.meta.path);
   }
 });
 
-it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)("require with a query string works on dynamically created content", () => {
-  rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
-    recursive: true,
-    force: true,
-  });
-  try {
-    const require = Module.createRequire("/tmp/bun-test-import-meta-dynamic-dir/foo.js");
-    try {
-      require("./bar.js?query=123.js");
-    } catch (e) {
-      expect(e.name).toBe(process.env.BUN_POLYFILLS_TEST_RUNNER ? "Error" : "ResolveMessage");
-    }
-
-    mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
-
-    writeFileSync("/tmp/bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
-
-    expect(require("./bar.js?query=123.js").default).toBe("hello");
-  } catch (e) {
-    throw e;
-  } finally {
+it.skipIf(process.env.BUN_POLYFILLS_TEST_RUNNER)(
+  "require with a query string works on dynamically created content",
+  () => {
     rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
       recursive: true,
       force: true,
     });
-  }
-});
+    try {
+      const require = Module.createRequire("/tmp/bun-test-import-meta-dynamic-dir/foo.js");
+      try {
+        require("./bar.js?query=123.js");
+      } catch (e) {
+        expect(e.name).toBe(process.env.BUN_POLYFILLS_TEST_RUNNER ? "Error" : "ResolveMessage");
+      }
+
+      mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
+
+      writeFileSync("/tmp/bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
+
+      expect(require("./bar.js?query=123.js").default).toBe("hello");
+    } catch (e) {
+      throw e;
+    } finally {
+      rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+        recursive: true,
+        force: true,
+      });
+    }
+  },
+);
 
 it("import.meta.require (json)", () => {
   expect(import.meta.require("./require-json.json").hello).toBe(sync.hello);

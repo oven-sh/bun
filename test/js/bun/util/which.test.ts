@@ -49,7 +49,7 @@ test("which", () => {
     try {
       mkdirSync("myscript.sh");
       chmodSync("myscript.sh", "755");
-    } catch (e) { }
+    } catch (e) {}
 
     // directories should not be returned
     expect(which("myscript.sh")).toBe(null);
@@ -78,7 +78,7 @@ test("which", () => {
 function writeFixture(path: string) {
   try {
     unlinkSync(path);
-  } catch (e) { }
+  } catch (e) {}
 
   var script_name = path;
   var script_content = "echo Hello world!";

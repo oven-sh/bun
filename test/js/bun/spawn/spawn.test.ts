@@ -132,45 +132,49 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("check exit code from onExit", async () => {
-        for (let i = 0; i < 1000; i++) {
-          var exitCode1, exitCode2;
-          await new Promise<void>(resolve => {
-            var counter = 0;
-            spawn({
-              cmd: ["ls"],
-              stdin: "ignore",
-              stdout: "ignore",
-              stderr: "ignore",
-              onExit(subprocess, code) {
-                exitCode1 = code;
-                counter++;
-                if (counter === 2) {
-                  resolve();
-                }
-              },
+      it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)(
+        "check exit code from onExit",
+        async () => {
+          for (let i = 0; i < 1000; i++) {
+            var exitCode1, exitCode2;
+            await new Promise<void>(resolve => {
+              var counter = 0;
+              spawn({
+                cmd: ["ls"],
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "ignore",
+                onExit(subprocess, code) {
+                  exitCode1 = code;
+                  counter++;
+                  if (counter === 2) {
+                    resolve();
+                  }
+                },
+              });
+
+              spawn({
+                cmd: ["false"],
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "ignore",
+                onExit(subprocess, code) {
+                  exitCode2 = code;
+                  counter++;
+
+                  if (counter === 2) {
+                    resolve();
+                  }
+                },
+              });
             });
 
-            spawn({
-              cmd: ["false"],
-              stdin: "ignore",
-              stdout: "ignore",
-              stderr: "ignore",
-              onExit(subprocess, code) {
-                exitCode2 = code;
-                counter++;
-
-                if (counter === 2) {
-                  resolve();
-                }
-              },
-            });
-          });
-
-          expect<number>(exitCode1).toBe(0);
-          expect<number>(exitCode2).toBe(1);
-        }
-      }, 60_000_0);
+            expect<number>(exitCode1).toBe(0);
+            expect<number>(exitCode2).toBe(1);
+          }
+        },
+        60_000_0,
+      );
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {
@@ -497,22 +501,26 @@ for (let [gcTick, label] of [
 }
 
 if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
-  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
-    const result = spawnSync({
-      cmd: [bunExe(), "test", import.meta.path],
-      env: {
-        ...bunEnv,
-        // Both flags are necessary to force this condition
-        "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
-      },
-    });
-    if (result.exitCode !== 0) {
-      console.error(result.stderr.toString());
-      console.log(result.stdout.toString());
-    }
-    expect(result.exitCode).toBe(0);
-  }, 60_000);
+  it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)(
+    "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
+    async () => {
+      const result = spawnSync({
+        cmd: [bunExe(), "test", import.meta.path],
+        env: {
+          ...bunEnv,
+          // Both flags are necessary to force this condition
+          "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
+          "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        },
+      });
+      if (result.exitCode !== 0) {
+        console.error(result.stderr.toString());
+        console.log(result.stdout.toString());
+      }
+      expect(result.exitCode).toBe(0);
+    },
+    60_000,
+  );
 }
 
 describe("spawn unref and kill should not hang", () => {

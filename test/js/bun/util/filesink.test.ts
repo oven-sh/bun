@@ -45,7 +45,7 @@ describe("FileSink", () => {
     const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
     try {
       require("fs").unlinkSync(path);
-    } catch (e) { }
+    } catch (e) {}
     return path;
   }
 
@@ -56,7 +56,7 @@ describe("FileSink", () => {
     const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
     try {
       require("fs").unlinkSync(path);
-    } catch (e) { }
+    } catch (e) {}
     mkfifo(path, 0o666);
     activeFIFO = (async function (stream: ReadableStream<Uint8Array>) {
       var chunks: Uint8Array[] = [];

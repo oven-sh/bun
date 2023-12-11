@@ -6,7 +6,7 @@ it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
   for (let Class of classes) {
     if (process.env.BUN_POLYFILLS_TEST_RUNNER && Class === Buffer) continue;
-    var Foo = class extends Class { };
+    var Foo = class extends Class {};
     var bar = Class === Request ? new Request("https://example.com") : new Foo();
     expect(bar instanceof Class).toBe(true);
     expect(!!Class.prototype).toBe(true);
@@ -32,7 +32,7 @@ it("writable", () => {
   ];
   for (let [name, Class] of classes) {
     if (!Class) continue;
-    if (process.env.BUN_POLYFILLS_TEST_RUNNER && name === 'Response') continue;
+    if (process.env.BUN_POLYFILLS_TEST_RUNNER && name === "Response") continue;
     globalThis[name] = 123;
     expect(globalThis[name]).toBe(123);
     globalThis[name] = Class;
@@ -55,8 +55,9 @@ it("name", () => {
   ];
   for (let [name, Class] of classes) {
     if (process.env.BUN_POLYFILLS_TEST_RUNNER) {
-      if (Class.name.startsWith('_')) expect(Class.name.slice(1)).toBe(name); // _Request, _Response, _Headers... why Node? Just why.
-      else if (Class.name.endsWith('2')) expect(Class.name.slice(0, -1)).toBe(name); // Response2 monkeypatch by Hono
+      if (Class.name.startsWith("_"))
+        expect(Class.name.slice(1)).toBe(name); // _Request, _Response, _Headers... why Node? Just why.
+      else if (Class.name.endsWith("2")) expect(Class.name.slice(0, -1)).toBe(name); // Response2 monkeypatch by Hono
       else expect(Class.name).toBe(name);
     } else expect(Class.name).toBe(name);
   }

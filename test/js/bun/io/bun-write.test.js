@@ -31,19 +31,19 @@ describe("large file", () => {
     it(`write ${filename} ${content.length} (text)`, async () => {
       try {
         unlinkSync(filename);
-      } catch (e) { }
+      } catch (e) {}
       await Bun.write(filename, content);
       expect(await Bun.file(filename).text()).toBe(content);
 
       try {
         unlinkSync(filename);
-      } catch (e) { }
+      } catch (e) {}
     });
 
     it(`write ${filename}.bytes ${content.length} (bytes)`, async () => {
       try {
         unlinkSync(filename + ".bytes");
-      } catch (e) { }
+      } catch (e) {}
       var bytes = new TextEncoder().encode(content);
       const written = await Bun.write(filename + ".bytes", bytes);
       expect(written).toBe(bytes.byteLength);
@@ -51,20 +51,20 @@ describe("large file", () => {
 
       try {
         unlinkSync(filename + ".bytes");
-      } catch (e) { }
+      } catch (e) {}
     });
 
     it(`write ${filename}.blob ${content.length} (Blob)`, async () => {
       try {
         unlinkSync(filename + ".blob");
-      } catch (e) { }
+      } catch (e) {}
       var bytes = new Blob([content]);
       await Bun.write(filename + ".blob", bytes);
       expect(await Bun.file(filename + ".blob").text()).toBe(content);
 
       try {
         unlinkSync(filename + ".blob");
-      } catch (e) { }
+      } catch (e) {}
     });
   }
 });
@@ -110,7 +110,7 @@ it("Bun.write('out.txt', 'string')", async () => {
     if (erase) {
       try {
         fs.unlinkSync(path.join("/tmp", "out.txt"));
-      } catch (e) { }
+      } catch (e) {}
     }
     await gcTick();
     expect(await Bun.write("/tmp/out.txt", "string")).toBe("string".length);
@@ -127,11 +127,11 @@ it("Bun.write('out.txt', 'string')", async () => {
 it("Bun.file -> Bun.file", async () => {
   try {
     fs.unlinkSync(path.join("/tmp", "fetch.js.in"));
-  } catch (e) { }
+  } catch (e) {}
   await gcTick();
   try {
     fs.unlinkSync(path.join("/tmp", "fetch.js.out"));
-  } catch (e) { }
+  } catch (e) {}
   await gcTick();
   const file = path.join(import.meta.dir, "fetch.js.txt");
   await gcTick();
@@ -245,7 +245,7 @@ it("Bun.file -> Response", async () => {
   // ensure the file doesn't already exist
   try {
     fs.unlinkSync("/tmp/fetch.js.out");
-  } catch { }
+  } catch {}
   await gcTick();
   const file = path.join(import.meta.dir, "fetch.js.txt");
   await gcTick();

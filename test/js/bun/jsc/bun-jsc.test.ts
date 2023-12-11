@@ -79,8 +79,8 @@ describe("bun:jsc", () => {
   it.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("callerSourceOrigin", () => {
     expect(callerSourceOrigin()).toBe(import.meta.url);
   });
-  it("noFTL", () => { });
-  it("noOSRExitFuzzing", () => { });
+  it("noFTL", () => {});
+  it("noOSRExitFuzzing", () => {});
   it("optimizeNextInvocation", () => {
     count();
     expect(optimizeNextInvocation(count)).toBeUndefined();

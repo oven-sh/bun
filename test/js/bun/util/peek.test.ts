@@ -16,7 +16,7 @@ test.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("peek", () => {
   expect(value).toBe(42);
 
   // if we peek a pending promise, it returns the promise again
-  const pending = new Promise(() => { });
+  const pending = new Promise(() => {});
   expect(peek(pending)).toBe(pending);
 
   // If we peek a rejected promise, it:
@@ -26,17 +26,17 @@ test.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("peek", () => {
   const peeked = peek(rejected);
   expect(peeked instanceof Error).toBe(true);
   expect((peeked as Error).message).toBe("Succesfully tested promise rejection");
-  rejected.catch(() => { });
+  rejected.catch(() => {});
 });
 
 test("peek.status", () => {
   const promise = Promise.resolve(true);
   expect(peek.status(promise)).toBe("fulfilled");
 
-  const pending = new Promise(() => { });
+  const pending = new Promise(() => {});
   expect(peek.status(pending)).toBe("pending");
 
   const rejected = Promise.reject(new Error("oh nooo"));
   expect(peek.status(rejected)).toBe("rejected");
-  rejected.catch(() => { });
+  rejected.catch(() => {});
 });

@@ -154,7 +154,7 @@ pub fn Maybe(comptime ResultType: type) type {
         pub inline fn getErrno(this: @This()) os.E {
             return switch (this) {
                 .result => os.E.SUCCESS,
-                .err => |err| @as(os.E, @enumFromInt(err.errno)),
+                .err => |err| @enumFromInt(err.errno),
             };
         }
 
@@ -164,7 +164,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @intFromEnum(err),
+                        .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
                     },
                 },
@@ -177,7 +177,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @intFromEnum(err),
+                        .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
                         .fd = @intCast(bun.toFD(fd)),
                     },
@@ -194,7 +194,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @intFromEnum(err),
+                        .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
                     },
@@ -644,13 +644,13 @@ pub const Encoding = enum(u8) {
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(size)]u8 = undefined;
-                var encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
+                const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
                 return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalThis);
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
-                var out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
+                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
                 const result = JSC.ZigString.init(out).toValueGC(globalThis);
                 return result;
             },
@@ -674,19 +674,19 @@ pub const Encoding = enum(u8) {
         switch (encoding) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size)]u8 = undefined;
-                var base64 = base64_buf[0..std.base64.standard.Encoder.calcSize(size)];
+                const base64 = base64_buf[0..std.base64.standard.Encoder.calcSize(size)];
                 const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(base64, input)).toValueGC(globalThis);
                 return result;
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size)]u8 = undefined;
-                var encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
+                const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
                 return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalThis);
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
-                var out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
+                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
                 const result = JSC.ZigString.init(out).toValueGC(globalThis);
                 return result;
             },
@@ -783,7 +783,7 @@ pub const PathLike = union(Tag) {
     }
 
     pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
-        var sliced = this.slice();
+        const sliced = this.slice();
 
         if (sliced.len == 0) return "";
 
@@ -800,7 +800,7 @@ pub const PathLike = union(Tag) {
     }
 
     pub inline fn sliceZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             const data = this.slice();
             if (!std.fs.path.isAbsolute(data)) {
                 return sliceZWithForceCopy(this, buf, false);
@@ -1014,7 +1014,7 @@ pub const VectorArrayBuffer = struct {
                 return null;
             };
 
-            var buf = array_buffer.byteSlice();
+            const buf = array_buffer.byteSlice();
             bufferlist.append(bun.platformIOVecCreate(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
             i += 1;
         }
@@ -1033,7 +1033,7 @@ pub const ArgumentsSlice = struct {
 
     pub fn unprotect(this: *ArgumentsSlice) void {
         var iter = this.protected.iterator(.{});
-        var ctx = this.vm.global;
+        const ctx = this.vm.global;
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
@@ -1641,7 +1641,7 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         pub fn initWithAllocator(allocator: std.mem.Allocator, stat: bun.Stat) *This {
-            var this = allocator.create(This) catch unreachable;
+            const this = allocator.create(This) catch unreachable;
             this.* = init(stat);
             return this;
         }
@@ -1655,15 +1655,15 @@ pub fn StatType(comptime Big: bool) type {
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
             var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
 
-            var this = globalThis.allocator().create(This) catch {
+            const this = globalThis.allocator().create(This) catch {
                 globalThis.throwOutOfMemory();
                 return null;
             };
 
-            var atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
-            var mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
-            var ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
-            var birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
+            const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
+            const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
+            const ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
+            const birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
             this.* = .{
                 .dev = if (args.len > 0 and args[0].isNumber()) @intCast(args[0].toInt32()) else 0,
                 .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
@@ -1928,7 +1928,7 @@ pub const Path = struct {
             return JSC.toInvalidArguments("path is required", .{}, globalThis);
         }
         var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
-        var allocator = stack_fallback.get();
+        const allocator = stack_fallback.get();
 
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
         var path = arguments[0].toSlice(globalThis, allocator);
@@ -1937,7 +1937,7 @@ pub const Path = struct {
         var extname_ = if (args_len > 1) arguments[1].toSlice(globalThis, allocator) else JSC.ZigString.Slice.empty;
         defer extname_.deinit();
 
-        var base_slice = path.slice();
+        const base_slice = path.slice();
         var out: []const u8 = base_slice;
 
         if (!isWindows) {
@@ -2040,7 +2040,7 @@ pub const Path = struct {
             return JSC.toInvalidArguments("path is required", .{}, globalThis);
         }
         var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
-        var allocator = stack_fallback.get();
+        const allocator = stack_fallback.get();
 
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
         var path = arguments[0].toSlice(globalThis, allocator);
@@ -2062,7 +2062,7 @@ pub const Path = struct {
             return JSC.toInvalidArguments("path is required", .{}, globalThis);
         }
         var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
-        var allocator = stack_fallback.get();
+        const allocator = stack_fallback.get();
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
 
         var path = arguments[0].toSlice(globalThis, allocator);
@@ -2200,7 +2200,7 @@ pub const Path = struct {
         std.debug.assert(zig_str.len > 0); // caller must check
         if (zig_str.is16Bit()) {
             var buf = [4]u16{ 0, 0, 0, 0 };
-            var u16_slice = zig_str.utf16Slice();
+            const u16_slice = zig_str.utf16Slice();
 
             buf[0] = u16_slice[0];
             if (u16_slice.len > 1)
@@ -2228,7 +2228,7 @@ pub const Path = struct {
         var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
         defer arena.deinit();
 
-        var arena_allocator = arena.allocator();
+        const arena_allocator = arena.allocator();
         var stack_fallback_allocator = std.heap.stackFallback(
             ((32 * @sizeOf(string)) + 1024),
             arena_allocator,
@@ -2280,7 +2280,7 @@ pub const Path = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var str_slice = zig_str.toSlice(heap_allocator);
         defer str_slice.deinit();
-        var str = str_slice.slice();
+        const str = str_slice.slice();
 
         const out = if (!isWindows)
             PathHandler.normalizeStringNode(str, &buf, .posix)
@@ -2309,11 +2309,11 @@ pub const Path = struct {
 
         const is_absolute = switch (win32) {
             true => std.fs.path.isAbsoluteWindows(path),
-            false =>  std.fs.path.isAbsolutePosix(path),
+            false => std.fs.path.isAbsolutePosix(path),
         };
 
-    // if its not absolute root must be empty
-    var root = JSC.ZigString.Empty;
+        // if its not absolute root must be empty
+        var root = JSC.ZigString.Empty;
         if (is_absolute) {
             std.debug.assert(path.len > 0);
             root = JSC.ZigString.init(
@@ -2408,10 +2408,10 @@ pub const Path = struct {
         var to_slice: JSC.ZigString.Slice = if (args_len > 1) arguments[1].toSlice(globalThis, heap_allocator) else JSC.ZigString.Slice.empty;
         defer to_slice.deinit();
 
-        var from = from_slice.slice();
-        var to = to_slice.slice();
+        const from = from_slice.slice();
+        const to = to_slice.slice();
 
-        var out = if (!isWindows)
+        const out = if (!isWindows)
             PathHandler.relativePlatform(from, to, .posix, true)
         else
             PathHandler.relativePlatform(from, to, .windows, true);
@@ -2435,7 +2435,7 @@ pub const Path = struct {
         defer allocator.free(parts);
 
         var arena = bun.ArenaAllocator.init(heap_allocator);
-        var arena_allocator = arena.allocator();
+        const arena_allocator = arena.allocator();
         defer arena.deinit();
 
         var i: u16 = 0;
@@ -2512,7 +2512,7 @@ pub const Process = struct {
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var out = std.fs.selfExePath(&buf) catch {
+        const out = std.fs.selfExePath(&buf) catch {
             // if for any reason we are unable to get the executable path, we just return argv[0]
             return getArgv0(globalObject);
         };
@@ -2522,7 +2522,7 @@ pub const Process = struct {
 
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         const allocator = globalObject.allocator();
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         var args = allocator.alloc(
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
@@ -2553,7 +2553,7 @@ pub const Process = struct {
     }
 
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
 
         // Allocate up to 32 strings in stack
         var stack_fallback_allocator = std.heap.stackFallback(
@@ -2562,7 +2562,7 @@ pub const Process = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
-        var args = allocator.alloc(
+        const args = allocator.alloc(
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name

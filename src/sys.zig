@@ -594,15 +594,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
         if (comptime Environment.allow_assert)
             log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 
-        return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
-            else => |err| .{
-                .err = .{
-                    .errno = @intFromEnum(err),
-                    .syscall = .open,
-                },
-            },
-        };
+        return Maybe(bun.FileDescriptor).errnoSys(rc, .open) orelse .{ .result = @intCast(rc) };
     }
 
     if (comptime Environment.isWindows) {
@@ -619,7 +611,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
             else => |err| {
                 return Maybe(std.os.fd_t){
                     .err = .{
-                        .errno = @intFromEnum(err),
+                        .errno = @truncate(@intFromEnum(err)),
                         .syscall = .open,
                     },
                 };
@@ -1633,7 +1625,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        var target: *windows.HANDLE = undefined;
+        const target: *windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,

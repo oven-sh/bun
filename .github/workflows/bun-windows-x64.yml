@@ -311,10 +311,10 @@ jobs:
         run: |
           $Dist = mkdir -Force "${{ env.tag }}"
           cp -r build\bun.exe "$Dist\bun.exe"
-          Compress-Archive $Dist ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
+          Compress-Archive $Dist ${{ env.tag }}.zip
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{ env.tag }}
+          name: ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: ${{ env.tag }}.zip
       - name: Release
         id: release
@@ -332,7 +332,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: "Canary (${{github.sha}})"
           tag: "canary"
-          artifacts: "${{env.tag}}.zip"
+          artifacts: "${{env.tag}}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip"
       - uses: sarisia/actions-status-discord@v1
         if: failure() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
         with:

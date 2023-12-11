@@ -1,17 +1,16 @@
 #!/usr/bin/env pwsh
 param(
   # TODO: change this to 'latest' when Bun for Windows is stable.
-  [string]$Version = "canary"
+  [string]$Version = "canary",
+  [string]$Target = "auto"
 );
 
-$ErrorActionPreference = "Stop"
-
-# filter out 32 bit and arm
-if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
-  Write-Output "Install Failed:"
-  Write-Output "Bun for Windows is only available for 64-bit Windows.`n"
-  exit 1
+# require windows 11
+if ([System.Environment]::OSVersion.Version -lt [Version]::new(10, 0, 0, 0)) {
+  Write-Warning "Bun has not been tested on operating systems older than Windows 10.`n"
 }
+
+$ErrorActionPreference = "Stop"
 
 # if a semver is given, we need to adjust it to this format: bun-v0.0.0
 if ($Version -match "^\d+\.\d+\.\d+$") {
@@ -20,7 +19,7 @@ if ($Version -match "^\d+\.\d+\.\d+$") {
 elseif ($Version -match "^v\d+\.\d+\.\d+$") {
   $Version = "bun-$Version"
 }
-# todo: remove this when Bun for Windows is stable
+# TODO: remove this when Bun for Windows is stable
 elseif ($Version -eq "latest") {
   $Version = "canary"
 }
@@ -28,9 +27,21 @@ elseif ($Version -eq "latest") {
 $BunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "${Home}\.bun" }
 $BunBin = mkdir -Force "${BunRoot}\bin"
 
-$Target = "bun-windows-x64"
+if ($Target -eq "auto") {
+  $Target = "x64"
+  if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+    Write-Output "Install Failed:"
+    Write-Output "Bun for Windows is only available for 64-bit Windows.`n"
+    exit 1
+  }
+  # Non-AVX2 uses "-baseline" build
+  if (!(Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' -Name 'Kernel32' -Namespace 'Win32' -PassThru)::IsProcessorFeaturePresent(40))  {
+    $Target = "x64-baseline"
+  }
+}
+
 $BaseURL = "https://github.com/oven-sh/bun/releases"
-$URL = "$BaseURL/$(if ($Version -eq "latest") { "latest/download" } else { "download/$Version" })/$Target.zip"
+$URL = "$BaseURL/$(if ($Version -eq "latest") { "latest/download" } else { "download/$Version" })/bun-windows-$Target.zip"
 
 $ZipPath = "${BunBin}\$Target.zip"
 
@@ -76,7 +87,19 @@ Remove-Item $ZipPath -Force
 $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
 if ($LASTEXITCODE -ne 0) {
   Write-Output "Install Failed - could not verify bun.exe"
-  Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
+
+  if ($LASTEXITCODE -eq "-1073741795") {
+    Write-Output "Bun crashed with code $LASTEXITCODEE (Illegal Instruction)."
+    if ($Target -eq "x64-baseline") {
+      Write-Output "Your CPU model is too old to use the baseline build, sorry."
+    } else {
+      Write-Output "AVX2 detection failed, please re-run this install script with '-Target x64-baseline''"
+    }
+  } else {
+    Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
+  }
+
+  rm -Force "${BunBin}\bun.exe"
   exit 1
 }
 $DisplayVersion = if ($BunRevision -like "*-canary.*") {
@@ -90,7 +113,7 @@ try {
   New-Item -ItemType SymbolicLink -Path "${BunBin}\bunx.exe" -Target "${BunBin}\bun.exe" -Force
 }
 catch {
-  Write-Warning "Could not symlink"
+  # Write-Warning "Could not create symbolic link"
 }
 
 $C_RESET = [char]27 + "[0m"

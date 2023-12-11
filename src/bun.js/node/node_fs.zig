@@ -4549,6 +4549,7 @@ pub const NodeFS = struct {
                 Dirent => {
                     entries.append(.{
                         .name = bun.String.create(utf8_name),
+                        .path = bun.String.create(utf8_name),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4668,6 +4669,7 @@ pub const NodeFS = struct {
                 Dirent => {
                     entries.append(.{
                         .name = bun.String.create(name_to_copy),
+                        .path = bun.String.create(name_to_copy),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4797,6 +4799,7 @@ pub const NodeFS = struct {
                     Dirent => {
                         entries.append(.{
                             .name = bun.String.create(name_to_copy),
+                            .path = bun.String.create(name_to_copy),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

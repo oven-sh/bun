@@ -176,6 +176,11 @@ declare module "fs" {
      * @since v0.0.67
      */
     name: string;
+    /**
+     * The base path that this `fs.Dirent` object refers to.
+     * @since v1.0.17
+     */
+    path: string;
   }
 
   /**

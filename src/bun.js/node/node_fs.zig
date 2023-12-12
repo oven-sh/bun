@@ -4216,7 +4216,9 @@ pub const NodeFS = struct {
                 break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
             }
         };
-        return this.mkdirRecursiveOSPath(path, args.mode, true);
+        return switch (args.always_return_none) {
+            inline else => |always_return_none| this.mkdirRecursiveOSPath(path, args.mode, !always_return_none),
+        };
     }
 
     pub fn _isSep(char: std.meta.Child(bun.OSPathSlice)) bool {
@@ -4248,7 +4250,7 @@ pub const NodeFS = struct {
                 }
             },
             .result => {
-                if (args.always_return_none or !return_path) {
+                if (!return_path) {
                     return .{ .result = .{ .none = {} } };
                 }
                 return .{
@@ -4344,8 +4346,8 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        if (args.return_empty_string or !return_path) {
-            return Option{ .result = bun.String.empty };
+        if (!return_path) {
+            return .{ .result = .{ .none = {} } };
         }
         return .{
             .result = .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) },

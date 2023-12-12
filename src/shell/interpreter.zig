@@ -2171,7 +2171,7 @@ pub const Cmd = struct {
             switch (this.state) {
                 .expansion => {
                     if (this.state.expansion.idx >= this.node.name_and_args.len) {
-                        this.transitionToExecState();
+                        this.transitionToExecStateAndYield();
                         // yield execution to subproc
                         return;
                     }
@@ -2208,7 +2208,7 @@ pub const Cmd = struct {
         @panic("FIXME TODO handle error Cmd");
     }
 
-    fn transitionToExecState(this: *Cmd) void {
+    fn transitionToExecStateAndYield(this: *Cmd) void {
         this.state = .exec;
         this.initSubproc() catch |err| {
             // FIXME this might throw errors other than allocations so this is bad need to handle this properly

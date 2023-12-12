@@ -59,7 +59,7 @@ pub const Source = struct {
 
     pub fn init(
         stream: StreamType,
-        err: StreamType,
+        err_stream: StreamType,
     ) Source {
         if (comptime Environment.isDebug) {
             if (comptime use_mimalloc) {
@@ -73,15 +73,15 @@ pub const Source = struct {
 
         return Source{
             .stream = stream,
-            .error_stream = err,
+            .error_stream = err_stream,
             .buffered_stream = if (Environment.isNative)
                 BufferedStream{ .unbuffered_writer = stream.writer() }
             else
                 stream,
             .buffered_error_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = err.writer() }
+                BufferedStream{ .unbuffered_writer = err_stream.writer() }
             else
-                err,
+                err_stream,
         };
     }
 
@@ -625,11 +625,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     return comptime new_fmt[0..new_fmt_i];
 }
 
-pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
-    if (comptime l == .Warn) {
-        if (level == .Error) return;
-    }
-
+pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
     if (if (comptime l == .stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
         printer(comptime prettyFmt(fmt, true), args);
     } else {
@@ -667,30 +663,19 @@ pub noinline fn printErrorln(comptime fmt: string, args: anytype) void {
 }
 
 pub noinline fn prettyError(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printError, .Error);
+    prettyWithPrinter(fmt, args, printError, .stderr);
 }
 
 /// Print to stderr with ansi color codes automatically stripped out if the
 /// terminal doesn't support them. Text is buffered
 pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printErrorln, .Error);
+    prettyWithPrinter(fmt, args, printErrorln, .stderr);
 }
 
-pub const Level = enum(u8) {
-    Warn,
-    Error,
+pub const Destination = enum(u8) {
+    stderr,
     stdout,
 };
-
-pub var level = if (Environment.isDebug) Level.Warn else Level.Error;
-
-pub noinline fn prettyWarn(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printError, .Warn);
-}
-
-pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printErrorln, .Warn);
-}
 
 pub noinline fn printError(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
@@ -731,7 +716,84 @@ pub const DebugTimer = struct {
                 _opts,
                 writer_,
             ) catch unreachable;
-            writer_.writeAll("ms") catch unreachable;
+            writer_.writeAll("ms") catch {};
         }
     }
 };
+
+/// Print a blue note message
+pub inline fn note(comptime fmt: []const u8, args: anytype) void {
+    prettyErrorln("<blue>note<r><d>:<r> " ++ fmt, args);
+}
+
+/// Print a yellow warning message
+pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
+    prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
+}
+
+/// Print a red error message. The first argument takes an `error_name` value, which can be either
+/// be a Zig error, or a string or enum. The error name is converted to a string and displayed
+/// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
+pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+    const display_name, const is_comptime_name = display_name: {
+        const T = @TypeOf(error_name);
+        const info = @typeInfo(T);
+
+        // Zig string literals are of type *const [n:0]u8
+        // we assume that no one will pass this type from not using a string literal.
+        if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
+            const child_info = @typeInfo(info.Pointer.child);
+            if (child_info == .Array and child_info.Array.child == u8) {
+                if (child_info.Array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
+                break :display_name .{ error_name, true };
+            }
+        }
+
+        // other zig strings we shall treat as dynamic
+        if (comptime std.meta.trait.isZigString(T)) {
+            break :display_name .{ error_name, false };
+        }
+
+        // error unions
+        if (info == .ErrorSet) {
+            if (info.ErrorSet) |errors| {
+
+                // TODO: convert zig errors to errno for better searchability?
+                if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
+
+                break :display_name .{ @errorName(error_name), false };
+            } else {
+                @compileLog("Output.err was given an empty error set");
+            }
+        }
+
+        // enum literals
+        if (info == .EnumLiteral) {
+            const tag = @tagName(info);
+            comptime std.debug.assert(tag.len > 0); // how?
+            if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
+            break :display_name .{ tag, true };
+        }
+
+        // enums
+        if (info == .Enum) {
+            const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
+            break :display_name .{ @tagName(errno), false };
+        }
+
+        @compileLog(error_name);
+        @compileError("err() was given unsupported type: " ++ @typeName(T) ++ " (." ++ @tagName(info) ++ ")");
+    };
+
+    // if the name is known at compile time, we can do better and use it at compile time
+    if (comptime is_comptime_name) {
+        prettyErrorln("<red>" ++ display_name ++ "<r><d>:<r> " ++ fmt, args);
+    } else {
+        prettyErrorln("<red>{s}<r><d>:<r> " ++ fmt, .{display_name} ++ args);
+    }
+}
+
+/// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
+pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
+    prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
+}

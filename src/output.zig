@@ -731,6 +731,12 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
+/// Print a yellow warning message, only in debug mode
+pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
+    if (Environment.isDebug)
+        prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
+}
+
 /// Print a red error message. The first argument takes an `error_name` value, which can be either
 /// be a Zig error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
@@ -763,7 +769,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
 
                 break :display_name .{ @errorName(error_name), false };
             } else {
-                @compileLog("Output.err was given an empty error set");
+                @compileError("Output.err was given an empty error set");
             }
         }
 
@@ -781,7 +787,6 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
             break :display_name .{ @tagName(errno), false };
         }
 
-        @compileLog(error_name);
         @compileError("err() was given unsupported type: " ++ @typeName(T) ++ " (." ++ @tagName(info) ++ ")");
     };
 

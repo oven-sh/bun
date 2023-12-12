@@ -1704,7 +1704,10 @@ pub const Blob = struct {
                                     if (err.errno == @intFromEnum(bun.C.E.NOENT)) {
                                         switch (mkdirIfNotExists(this, err, path, path_string.slice())) {
                                             .@"continue" => continue,
-                                            .fail => return invalid_fd,
+                                            .fail => {
+                                                this.opened_fd = invalid_fd;
+                                                break;
+                                            },
                                             .no => {},
                                         }
                                     }
@@ -1713,7 +1716,7 @@ pub const Blob = struct {
                                 this.errno = bun.errnoToZigErr(err.errno);
                                 this.system_error = err.withPath(path_string.slice()).toSystemError();
                                 this.opened_fd = invalid_fd;
-                                return invalid_fd;
+                                break;
                             },
                         };
                         break;

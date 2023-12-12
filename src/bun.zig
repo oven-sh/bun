@@ -790,9 +790,7 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
         if (input.len > @as(usize, std.math.maxInt(u32))) {
-            Output.prettyWarnln("debug warn: call to bun.PlatformIOVec.init with len {d}, this will overflow on windows.", .{
-                input.len,
-            });
+            Output.debugWarn("call to bun.PlatformIOVec.init with length larger than u32, this will overflow on windows", .{});
         }
     }
     return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };

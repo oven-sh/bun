@@ -1792,13 +1792,13 @@ pub const CacheLevel = struct {
 const Waker = if (Environment.isPosix) bun.Async.Waker else *bun.uws.UVLoop;
 
 const Waiter = struct {
-    onWait: *const fn (this: *anyopaque) AsyncIO.Errno!usize,
+    onWait: *const fn (this: *anyopaque) anyerror!usize,
     onWake: *const fn (this: *anyopaque) void,
     ctx: *anyopaque,
 
     pub fn init(
         ctx: anytype,
-        comptime onWait: *const fn (this: @TypeOf(ctx)) AsyncIO.Errno!usize,
+        comptime onWait: *const fn (this: @TypeOf(ctx)) anyerror!usize,
         comptime onWake: *const fn (this: @TypeOf(ctx)) void,
     ) Waiter {
         return Waiter{
@@ -1808,7 +1808,7 @@ const Waiter = struct {
         };
     }
 
-    pub fn wait(this: *Waiter) AsyncIO.Errno!usize {
+    pub fn wait(this: *Waiter) !usize {
         return this.onWait(this.ctx);
     }
 
@@ -1818,7 +1818,7 @@ const Waiter = struct {
 
     pub fn fromUWSLoop(loop: *uws.Loop) Waiter {
         const Handlers = struct {
-            fn onWait(uws_loop: *uws.Loop) AsyncIO.Errno!usize {
+            fn onWait(uws_loop: *uws.Loop) !usize {
                 uws_loop.run();
                 return 0;
             }

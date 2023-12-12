@@ -255,8 +255,15 @@ pub const BunxCommand = struct {
             ctx,
             &this_bundler,
             null,
-            &ORIGINAL_PATH,
             true,
+        );
+
+        try Run.configurePathForRun(
+            ctx,
+            root_dir_info,
+            &this_bundler,
+            &ORIGINAL_PATH,
+            root_dir_info.abs_path,
             force_using_bun,
         );
 

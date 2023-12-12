@@ -1,0 +1,41 @@
+{
+	"name": "lifecycle-postinstall",
+	"versions": {
+		"1.0.0": {
+			"name": "lifecycle-postinstall",
+			"version": "1.0.0",
+			"scripts": {
+				"postinstall": "bun postinstall.js"
+			},
+			"_id": "lifecycle-postinstall@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-+frsFSxvy+pkm5fjAsAHptt2NiMMMnU07dan43rZO1yCqxy8vU0X8wNTOYlgkViD7HCHT/bIpPhoki935Nc2pg==",
+				"shasum": "55ced1b67348b1373697dbaea4aa25b3fbbd8794",
+				"tarball": "http://localhost:4873/lifecycle-postinstall/-/lifecycle-postinstall-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-11T00:45:48.209Z",
+		"created": "2023-11-11T00:45:48.209Z",
+		"1.0.0": "2023-11-11T00:45:48.209Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"lifecycle-postinstall-1.0.0.tgz": {
+			"shasum": "55ced1b67348b1373697dbaea4aa25b3fbbd8794",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "lifecycle-postinstall",
+	"readme": "ERROR: No README data found!"
+}

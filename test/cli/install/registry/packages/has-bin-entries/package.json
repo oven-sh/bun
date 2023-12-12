@@ -48,17 +48,42 @@
 				"tarball": "http://localhost:4873/has-bin-entries/-/has-bin-entries-2.0.0.tgz"
 			},
 			"contributors": []
+		},
+		"1.5.0": {
+			"name": "has-bin-entries",
+			"version": "1.5.0",
+			"bin": {
+				"has-bin-entries": "bin.js",
+				"has-bin-entries-with-exit-code": "bin-with-exit-code.js",
+				"has-bin-entries-with-require": "bin-with-require.js",
+				"has-bin-entries-with-relative-require": "bin-with-relative-require.js",
+				"has-bin-entries-get-pwd": "bin-get-pwd.js"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"gitHead": "e0a78fdc023bcc2f4d739c6ba9d5c026a1b586ae",
+			"_id": "has-bin-entries@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-J5M3LZLqJT6wpMDfCEF/Jv/JOLr0BdDggkNp33d/TpNSEGyXolETM6LOERM8eGJIfCV+JwdVkkxdy1kA5HDUJg==",
+				"shasum": "bed673adef0afa8887fa43b3c9b9ab7822718e55",
+				"tarball": "http://localhost:4873/has-bin-entries/-/has-bin-entries-1.5.0.tgz"
+			},
+			"contributors": []
 		}
 	},
 	"time": {
-		"modified": "2023-11-01T22:05:09.035Z",
+		"modified": "2023-11-15T01:31:41.560Z",
 		"created": "2023-11-01T22:05:08.739Z",
 		"1.0.0": "2023-11-01T22:05:08.739Z",
-		"2.0.0": "2023-11-01T22:05:09.035Z"
+		"2.0.0": "2023-11-01T22:05:09.035Z",
+		"1.5.0": "2023-11-15T01:31:41.560Z"
 	},
 	"users": {},
 	"dist-tags": {
-		"latest": "2.0.0"
+		"latest": "1.5.0"
 	},
 	"_uplinks": {},
 	"_distfiles": {},
@@ -70,6 +95,10 @@
 		"has-bin-entries-2.0.0.tgz": {
 			"shasum": "55474ba0b4b5836147508385db02ab0a7ff3098c",
 			"version": "2.0.0"
+		},
+		"has-bin-entries-1.5.0.tgz": {
+			"shasum": "bed673adef0afa8887fa43b3c9b9ab7822718e55",
+			"version": "1.5.0"
 		}
 	},
 	"_rev": "6-f0548770ac2daf43",

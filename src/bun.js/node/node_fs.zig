@@ -3398,17 +3398,17 @@ pub const Arguments = struct {
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                recursive = arg.asBoolean();
+                recursive = arg.toBoolean();
             }
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                errorOnExist = arg.asBoolean();
+                errorOnExist = arg.toBoolean();
             }
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                force = arg.asBoolean();
+                force = arg.toBoolean();
             }
 
             if (arguments.next()) |arg| {

@@ -18,6 +18,7 @@ const Defines = @import("./defines.zig");
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
 const Npm = @import("./install/npm.zig");
+const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
@@ -392,6 +393,13 @@ pub const Bunfig = struct {
                     if (_bun.get("frozenLockfile")) |frozen_lockfile| {
                         if (frozen_lockfile.asBool()) |value| {
                             install.frozen_lockfile = value;
+                        }
+                    }
+
+                    if (_bun.get("concurrentScripts")) |jobs| {
+                        if (jobs.data == .e_number) {
+                            install.concurrent_scripts = jobs.data.e_number.toU32();
+                            if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
                         }
                     }
 

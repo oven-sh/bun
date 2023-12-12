@@ -62,6 +62,9 @@ dev = true
 # Install peerDependencies (default: true)
 peer = true
 
+# Max number of concurrent lifecycle scripts (default: (cpu count or GOMAXPROCS) x2)
+concurrentScripts = 16
+
 # When using `bun install -g`, install packages here
 globalDir = "~/.bun/install/global"
 

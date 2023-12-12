@@ -8,9 +8,9 @@ function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
     cmd: [bunExe(), ...args],
     cwd,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "ignore",
-    stderr: "inherit",
+    stderr: "ignore",
     env: bunEnv,
   });
   if (exec.exitCode !== 0) {
@@ -23,9 +23,9 @@ function installExpectFail(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
     cmd: [bunExe(), ...args],
     cwd,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "ignore",
-    stderr: "inherit",
+    stderr: "ignore",
     env: bunEnv,
   });
   if (exec.exitCode === 0) {

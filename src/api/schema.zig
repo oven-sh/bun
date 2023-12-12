@@ -2895,6 +2895,9 @@ pub const Api = struct {
         /// exact
         exact: ?bool = null,
 
+        /// concurrent_scripts
+        concurrent_scripts: ?u32 = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2963,6 +2966,9 @@ pub const Api = struct {
                     },
                     20 => {
                         this.exact = try reader.readValue(bool);
+                    },
+                    21 => {
+                        this.concurrent_scripts = try reader.readValue(u32);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3052,6 +3058,10 @@ pub const Api = struct {
             if (this.exact) |exact| {
                 try writer.writeFieldID(20);
                 try writer.writeInt(@as(u8, @intFromBool(exact)));
+            }
+            if (this.concurrent_scripts) |concurrent_scripts| {
+                try writer.writeFieldID(21);
+                try writer.writeInt(concurrent_scripts);
             }
             try writer.endMessage();
         }

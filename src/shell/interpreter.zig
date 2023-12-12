@@ -1,3 +1,11 @@
+//! The interpreter for the shell language
+//!
+//! Normally, the implementation would be a very simple tree-walk of the AST,
+//! but it needs to be non-blocking, and Zig does not have coroutines yet, so
+//! this implementation is half tree-walk half one big state machine. The state
+//! machine part manually keeps track of execution state (which coroutines would
+//! do for us), but makes the code very confusing because control flow is less obvious.
+//!
 const bun = @import("root").bun;
 const std = @import("std");
 const builtin = @import("builtin");
@@ -408,6 +416,7 @@ pub const Expansion = struct {
 
         if (this.state == .done) {
             this.parent.childDone(this, 0);
+            return;
         }
 
         // FIXME handle error state? technically expansion can never fail, I think
@@ -1018,6 +1027,7 @@ pub const Script = struct {
     idx: usize,
     currently_executing: ?ChildPtr,
     io: IO,
+    state: union(enum) {},
 
     pub const ChildPtr = struct {
         val: *Stmt,
@@ -1110,6 +1120,12 @@ pub const Stmt = struct {
     last_exit_code: ?u8,
     currently_executing: ?ChildPtr,
     io: IO,
+    // state: union(enum) {
+    //     idle,
+    //     wait_child,
+    //     child_done,
+    //     done,
+    // },
 
     const ChildPtr = StatePtrUnion(.{
         Cond,
@@ -1134,6 +1150,10 @@ pub const Stmt = struct {
         script.io = io;
         return script;
     }
+
+    // pub fn next(this: *Stmt) void {
+    //     _ = this;
+    // }
 
     pub fn start(this: *Stmt) !void {
         if (bun.Environment.allow_assert) {
@@ -1998,14 +2018,20 @@ pub const Cmd = struct {
     /// This allocated by the above arena
     args: std.ArrayList(?[*:0]const u8),
 
-    /// Expansion state
-    expansion: Expansion,
-    name_and_args_idx: u32 = 0,
-
     exec: Exec = .none,
     exit_code: ?u8 = null,
     io: IO,
     freed: bool = false,
+
+    state: union(enum) {
+        expansion: struct {
+            idx: u32 = 0,
+            expansion: Expansion,
+        },
+        exec,
+        done,
+        err: Syscall.Error,
+    },
 
     pub const Exec = union(enum) {
         none,
@@ -2132,28 +2158,58 @@ pub const Cmd = struct {
 
             .exit_code = null,
             .io = io,
-            .expansion = undefined,
-            .name_and_args_idx = 0,
+            .state = .{
+                .expansion = .{ .idx = 0, .expansion = undefined },
+            },
         };
 
-        Expansion.init(
-            interpreter,
-            &cmd.expansion,
-            &node.name_and_args[0],
-            Expansion.ParentPtr.init(cmd),
-            .{
-                .array_of_ptr = &cmd.args,
-            },
-        );
         return cmd;
     }
 
-    pub fn start(this: *Cmd) void {
-        log("cmd start {x}", .{@intFromPtr(this)});
-        this.expansion.start();
+    pub fn next(this: *Cmd) void {
+        while (!(this.state == .done or this.state == .err)) {
+            switch (this.state) {
+                .expansion => {
+                    if (this.state.expansion.idx >= this.node.name_and_args.len) {
+                        this.transitionToExecState();
+                        // yield execution to subproc
+                        return;
+                    }
+
+                    Expansion.init(
+                        this.base.interpreter,
+                        &this.state.expansion.expansion,
+                        &this.node.name_and_args[this.state.expansion.idx],
+                        Expansion.ParentPtr.init(this),
+                        .{
+                            .array_of_ptr = &this.args,
+                        },
+                    );
+
+                    this.state.expansion.idx += 1;
+
+                    this.state.expansion.expansion.start();
+                    // yield execution to expansion
+                    return;
+                },
+                .exec => {
+                    // yield execution to subproc/builtin
+                    return;
+                },
+                .done, .err => unreachable,
+            }
+        }
+
+        if (this.state == .done) {
+            this.parent.childDone(this, this.exit_code.?);
+            return;
+        }
+
+        @panic("FIXME TODO handle error Cmd");
     }
 
-    pub fn run(this: *Cmd) void {
+    fn transitionToExecState(this: *Cmd) void {
+        this.state = .exec;
         this.initSubproc() catch |err| {
             // FIXME this might throw errors other than allocations so this is bad need to handle this properly
             std.debug.print("THIS THE ERROR: {any}\n", .{err});
@@ -2161,26 +2217,15 @@ pub const Cmd = struct {
         };
     }
 
+    pub fn start(this: *Cmd) void {
+        log("cmd start {x}", .{@intFromPtr(this)});
+        return this.next();
+    }
+
     pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: u8) void {
         _ = exit_code;
         if (child.ptr.is(Expansion)) {
-            this.name_and_args_idx += 1;
-            if (this.name_and_args_idx >= this.node.name_and_args.len) {
-                this.run();
-                return;
-            }
-
-            // FIXME deinit expansion
-            Expansion.init(
-                this.base.interpreter,
-                &this.expansion,
-                &this.node.name_and_args[this.name_and_args_idx],
-                Expansion.ParentPtr.init(this),
-                .{
-                    .array_of_ptr = &this.args,
-                },
-            );
-            this.expansion.start();
+            this.next();
             return;
         }
         unreachable;
@@ -2391,7 +2436,10 @@ pub const Cmd = struct {
 
         const has_finished = this.hasFinished();
         if (has_finished) {
-            this.parent.childDone(this, exit_code);
+            this.state = .done;
+            this.next();
+            return;
+            // this.parent.childDone(this, exit_code);
         }
         // } else {
         //     this.cmd.?.stdout.pipe.buffer.readAll();

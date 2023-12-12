@@ -278,7 +278,21 @@ const NetworkTask = struct {
     //  1.0.0-pre.a.b > 1.0.0-pre.a
     //  before ordering said the left was smaller than the right
     //
-    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1697871350;
+    // const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1697871350;
+    //
+    // ----
+    // The third time this happened!
+    //
+    // pre-release sorting bug again! If part of the pre-release segment is a number, and the other pre-release part is a string,
+    // it would order them incorrectly by comparing them as strings.
+    //
+    // example:
+    //
+    // 1.0.0-alpha.22 < 1.0.0-alpha.1beta
+    // before: false
+    // after: true
+    //
+    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1702425477;
 
     pub fn forManifest(
         this: *NetworkTask,

@@ -2297,7 +2297,9 @@ pub const ShellGlobTask = struct {
     }
 };
 
-/// This is modified version of BufferedInput for file descriptors only. This is intended to be placed in a field of a struct
+/// This is modified version of BufferedInput for file descriptors only. This
+/// struct cleans itself up when it is done, so no need to call `.deinit()` on
+/// it.
 pub const BufferedWriter = struct {
     remain: []const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
@@ -2309,7 +2311,7 @@ pub const BufferedWriter = struct {
     const print = bun.Output.scoped(.BufferedWriter, false);
 
     const ParentPtr = struct {
-        const Types = .{Builtin.Export};
+        const Types = .{ Builtin.Export, Builtin.Echo };
         ptr: Repr,
         const Repr = TaggedPointerUnion(Types);
 
@@ -2320,8 +2322,15 @@ pub const BufferedWriter = struct {
             @panic("Uh oh");
         }
 
+        fn init(p: anytype) ParentPtr {
+            return .{
+                .ptr = Repr.init(p),
+            };
+        }
+
         fn onDone(this: ParentPtr, bw: *BufferedWriter, e: ?Syscall.Error) void {
             if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(bw, e);
+            if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(bw, e);
             unreachable;
         }
     };
@@ -2463,7 +2472,7 @@ pub const Builtin = struct {
     impl: union(Kind) {
         @"export": Export,
         cd,
-        echo,
+        echo: Echo,
         pwd,
         which,
         rm,
@@ -2583,8 +2592,8 @@ pub const Builtin = struct {
     pub inline fn callImpl(this: *Builtin, comptime Ret: type, comptime field: []const u8, args_: anytype) Ret {
         return switch (this.kind) {
             .@"export" => this.callImplWithType(Export, Ret, "export", field, args_),
+            .echo => this.callImplWithType(Echo, Ret, "echo", field, args_),
             .cd => @panic("FIXME TODO"),
-            .echo => @panic("FIXME TODO"),
             .pwd => @panic("FIXME TODO"),
             .which => @panic("FIXME TODO"),
             .rm => @panic("FIXME TODO"),
@@ -2713,6 +2722,19 @@ pub const Builtin = struct {
             .@"export" => {
                 cmd.exec.bltn.impl = .{
                     .@"export" = Export{ .bltn = &cmd.exec.bltn },
+                };
+            },
+            // .rm => {
+            //     cmd.exec.bltn.impl = .{
+            //         .rm = Rm{ .bltn = &cmd.exec.bltn },
+            //     };
+            // },
+            .echo => {
+                cmd.exec.bltn.impl = .{
+                    .echo = Echo{
+                        .bltn = &cmd.exec.bltn,
+                        .output = std.ArrayList(u8).init(arena.allocator()),
+                    },
                 };
             },
             else => @panic("FIXME TODO"),
@@ -2918,5 +2940,219 @@ pub const Builtin = struct {
         pub fn deinit(this: *Export) void {
             _ = this;
         }
+    };
+
+    pub const Echo = struct {
+        bltn: *Builtin,
+
+        /// Should be allocated with the arena from Builtin
+        output: std.ArrayList(u8),
+
+        io_write_state: ?BufferedWriter = null,
+
+        state: union(enum) {
+            idle,
+            waiting,
+            done,
+            err: Syscall.Error,
+        } = .idle,
+
+        pub fn start(this: *Echo) Maybe(void) {
+            const args = this.bltn.argsSlice();
+
+            const args_len = args.len;
+            for (args, 0..) |arg, i| {
+                const len = std.mem.len(arg);
+                this.output.appendSlice(arg[0..len]) catch bun.outOfMemory();
+                if (i < args_len - 1) {
+                    this.output.append(' ') catch bun.outOfMemory();
+                }
+            }
+
+            this.output.append('\n') catch bun.outOfMemory();
+
+            if (!this.bltn.stdout.needsIO()) {
+                switch (this.bltn.writeNoIO(.stdout, this.output.items[0..])) {
+                    .err => |e| {
+                        this.state.err = e;
+                        return Maybe(void).initErr(e);
+                    },
+                    .result => {},
+                }
+
+                this.state = .done;
+                this.bltn.done(0);
+                return Maybe(void).success;
+            }
+
+            this.io_write_state = BufferedWriter{
+                .fd = this.bltn.stdout.fd,
+                .remain = this.output.items[0..],
+                .parent = BufferedWriter.ParentPtr.init(this),
+            };
+            this.state = .waiting;
+            this.io_write_state.?.write();
+            return Maybe(void).success;
+        }
+
+        pub fn onBufferedWriterDone(this: *Echo, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.io_write_state != null and this.state == .waiting);
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.bltn.done(e.?.errno);
+                return;
+            }
+
+            this.state = .done;
+            this.bltn.done(0);
+        }
+
+        pub fn deinit(this: *Echo) void {
+            _ = this;
+        }
+    };
+
+    pub const Rm = struct {
+        bltn: *Builtin,
+
+        opts: Opts,
+
+        pub const Opts = struct {
+            /// `--no-preserve-root` / `--preserve-root`
+            ///
+            /// If set to false, then allow the recursive removal of the root directory.
+            /// Safety feature to prevent accidental deletion of the root directory.
+            preserve_root: bool = true,
+
+            /// `-f`, `--force`
+            ///
+            /// Ignore nonexistent files and arguments, never prompt.
+            force: bool = false,
+
+            /// Configures how the user should be prompted on removal of files.
+            prompt_behaviour: PromptBehaviour = .never,
+
+            /// `-r`, `-R`, `--recursive`
+            ///
+            /// Remove directories and their contents recursively.
+            recursive: bool = false,
+
+            /// `-v`, `--verbose`
+            ///
+            /// Explain what is being done (prints which files/dirs are being deleted).
+            verbose: bool = false,
+
+            /// `-d`, `--dir`
+            ///
+            /// Remove empty directories. This option permits you to remove a directory
+            /// without specifying `-r`/`-R`/`--recursive`, provided that the directory is
+            /// empty.
+            remove_empty_dirs: bool = false,
+
+            const PromptBehaviour = union(enum) {
+                /// `--interactive=never`
+                ///
+                /// Default
+                never,
+
+                /// `-I`, `--interactive=once`
+                ///
+                /// Once before removing more than three files, or when removing recursively.
+                once: struct {
+                    removed_count: u32 = 0,
+                },
+
+                /// `-i`, `--interactive=always`
+                ///
+                /// Prompt before every removal.
+                always,
+            };
+
+            pub fn parse(opts: *Opts, bltn: *Builtin, args: []const [*:0]const u8) !?usize {
+                for (args, 0..) |arg_raw, i| {
+                    const arg = arg_raw[0..std.mem.len(arg_raw)];
+
+                    const ret = try opts.parseFlag(bltn, arg);
+                    switch (ret) {
+                        0 => {},
+                        1 => {
+                            return i;
+                        },
+                        else => return null,
+                    }
+                }
+                return null;
+            }
+
+            fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) !u8 {
+                if (flag.len == 0) return 1;
+                if (flag[0] != '-') return 1;
+                if (flag.len > 2 and flag[1] == '-') {
+                    if (bun.strings.eqlComptime(flag, "--preserve-root")) {
+                        this.preserve_root = true;
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--no-preserve-root")) {
+                        this.preserve_root = false;
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--recursive")) {
+                        this.recursive = true;
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--verbose")) {
+                        this.verbose = true;
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--dir")) {
+                        this.remove_empty_dirs = true;
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--interactive=never")) {
+                        this.prompt_behaviour = .never;
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--interactive=once")) {
+                        this.prompt_behaviour = .{ .once = .{} };
+                        return 0;
+                    } else if (bun.strings.eqlComptime(flag, "--interactive=always")) {
+                        this.prompt_behaviour = .always;
+                        return 0;
+                    }
+
+                    try bltn.write_err(&bltn.stderr, .rm, "illegal option -- -\n", .{});
+                    return 1;
+                }
+
+                const small_flags = flag[1..];
+                for (small_flags) |char| {
+                    switch (char) {
+                        'f' => {
+                            this.force = true;
+                            this.prompt_behaviour = .never;
+                        },
+                        'r', 'R' => {
+                            this.recursive = true;
+                        },
+                        'v' => {
+                            this.verbose = true;
+                        },
+                        'd' => {
+                            this.remove_empty_dirs = true;
+                        },
+                        'i' => {
+                            this.prompt_behaviour = .{ .once = .{} };
+                        },
+                        'I' => {
+                            this.prompt_behaviour = .always;
+                        },
+                        else => {
+                            try bltn.write_err(&bltn.stderr, .rm, "illegal option -- {s}\n", .{flag[1..]});
+                            return 1;
+                        },
+                    }
+                }
+
+                return 0;
+            }
+        };
     };
 };

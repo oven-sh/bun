@@ -3020,7 +3020,7 @@ pub const VirtualMachine = struct {
 
     pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
         if (Environment.isWindows) {
-            Output.prettyWarnln("IPC is not supported on Windows", .{});
+            Output.warn("IPC is not supported on Windows", .{});
             return;
         }
         this.event_loop.ensureWaker();
@@ -3029,7 +3029,7 @@ pub const VirtualMachine = struct {
 
         const socket = uws.newSocketFromFd(context, @sizeOf(*IPCInstance), fd) orelse {
             uws.us_socket_context_free(0, context);
-            Output.prettyWarnln("Failed to initialize IPC connection to parent", .{});
+            Output.warn("Failed to initialize IPC connection to parent", .{});
             return;
         };
 

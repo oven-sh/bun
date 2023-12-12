@@ -1752,7 +1752,7 @@ pub const Command = struct {
                 // if we get here, the command was not parsed
                 // or the user just ran `bun` with no arguments
                 if (ctx.positionals.len > 0) {
-                    Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                    Output.warn("failed to parse command\n", .{});
                 }
                 Output.flush();
                 try HelpCommand.exec(allocator);

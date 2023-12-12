@@ -579,3 +579,6 @@ pub const E = std.os.E;
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }
+
+pub const getuid = std.os.linux.getuid;
+pub const getgid = std.os.linux.getgid;

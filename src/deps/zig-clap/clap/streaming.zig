@@ -101,7 +101,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     // if flag else arg
                     if (arg_info.kind == .long or arg_info.kind == .short) {
                         if (warn_on_unrecognized_flag) {
-                            Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
+                            Output.warn("unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
                             Output.flush();
                         }
 
@@ -110,7 +110,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     }
 
                     if (warn_on_unrecognized_flag) {
-                        Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized argument: {s}\n", .{name});
+                        Output.warn("unrecognized argument: {s}\n", .{name});
                         Output.flush();
                     }
                     return null;

@@ -11,7 +11,9 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
-pub var warn_on_unrecognized_flag = true;
+// Disabled because not all CLI arguments are parsed with Clap.
+pub var warn_on_unrecognized_flag = false;
+
 /// The result returned from StreamingClap.next
 pub fn Arg(comptime Id: type) type {
     return struct {

@@ -250,7 +250,7 @@ pub const FDImpl = packed struct {
             if (result) |err| {
                 if (err.errno == @intFromEnum(os.E.BADF)) {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
-                    bun.Output.debugWarn("close({}) = EBADF. This is an indication of a file descriptor UAF", .{});
+                    bun.Output.debugWarn("close({}) = EBADF. This is an indication of a file descriptor UAF", .{this});
                 } else {
                     log("close({}) = err {d}", .{ this, err.errno });
                 }

@@ -1192,6 +1192,31 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  it('logLevel: "error" throws', () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+      logLevel: "error",
+    });
+
+    expect(() => bun.transformSync("bad??!?!?!")).toThrow("Unexpected ?");
+  });
+
+  it("invalid logLevel throws", () => {
+    expect(
+      () =>
+        new Bun.Transpiler({
+          loader: "jsx",
+          define: {
+            "process.env.NODE_ENV": JSON.stringify("development"),
+          },
+          logLevel: "poop",
+        }),
+    ).toThrow();
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

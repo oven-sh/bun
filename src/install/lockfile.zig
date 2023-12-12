@@ -4503,9 +4503,7 @@ pub const Package = extern struct {
 
         man_dir: String = String{},
         integrity: Integrity = Integrity{},
-        _padding_integrity: [2]u8 = .{0} ** 2,
-
-        has_scripts: u8 = 0,
+        _padding_integrity: [3]u8 = .{0} ** 3,
 
         /// Does the `cpu` arch and `os` match the requirements listed in the package?
         /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc

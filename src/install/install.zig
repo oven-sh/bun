@@ -6077,7 +6077,7 @@ pub const PackageManager = struct {
             // .progress
             .uws_event_loop = uws.Loop.get(),
             .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
-            .max_concurrent_lifecycle_scripts = cli.concurrent_scripts,
+            .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -6660,7 +6660,7 @@ pub const PackageManager = struct {
 
         exact: bool = false,
 
-        concurrent_scripts: usize = Options.default_max_concurrent_lifecycle_scripts,
+        concurrent_scripts: ?usize = null,
 
         const Omit = struct {
             dev: bool = false,
@@ -6885,7 +6885,7 @@ pub const PackageManager = struct {
 
             if (args.option("--concurrent-scripts")) |concurrency| {
                 // var buf: []
-                cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch Options.default_max_concurrent_lifecycle_scripts;
+                cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch null;
             }
 
             // for (args.options("--omit")) |omit| {

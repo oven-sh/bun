@@ -808,7 +808,12 @@ pub const Version = extern struct {
                 const lhs_uint: ?u32 = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
                 const rhs_uint: ?u32 = std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null;
 
-                if (lhs_uint == null or rhs_uint == null) {
+                // a part that doesn't parse as an integer is greater than a part that does
+                // https://github.com/npm/node-semver/blob/816c7b2cbfcb1986958a290f941eddfd0441139e/internal/identifiers.js#L12
+                if (lhs_uint != null and rhs_uint == null) return .lt;
+                if (lhs_uint == null and rhs_uint != null) return .gt;
+
+                if (lhs_uint == null and rhs_uint == null) {
                     switch (strings.order(lhs_part.?, rhs_part.?)) {
                         .eq => {
                             // continue to the next part

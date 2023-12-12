@@ -230,8 +230,12 @@ pub const FDImpl = packed struct {
                         std.debug.assert(this.value.as_system != 0);
                         const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
                         if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
+                            const errno = switch (std.os.windows.kernel32.GetLastError()) {
+                                .INVALID_HANDLE => @intFromEnum(os.E.BADF),
+                                else => |i| i,
+                            };
                             break :result bun.sys.Error{
-                                .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                                .errno = errno,
                                 .syscall = .CloseHandle,
                                 .fd = this.encode(),
                             };
@@ -239,12 +243,16 @@ pub const FDImpl = packed struct {
                     },
                 }
             },
-            else => @compileError("FD.close() not implemented yet"),
+            else => @compileError("FD.close() not implemented for this platform"),
         };
 
         if (env.isDebug) {
             if (result) |err| {
-                log("close({}) = err {d}", .{ this, err.errno });
+                if (err.errno == @intFromEnum(os.E.BADF)) {
+                    bun.Output.warn("close({}) = EBADF. This is an indication of a file descriptor UAF <d>[this message only appears in debug mode]<r>");
+                } else {
+                    log("close({}) = err {d}", .{ this, err.errno });
+                }
             } else {
                 log("close({})", .{this});
             }

@@ -895,11 +895,11 @@ function OutgoingMessage(options) {
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
 Object.setPrototypeOf(OutgoingMessage, Writable);
 
+// Express "compress" package uses this
 OutgoingMessage.prototype._implicitHeader = function () {};
 
 OutgoingMessage.prototype.appendHeader = function (name, value) {
-  this[headersSymbol] = this[headersSymbol] ?? new Headers();
-  var headers = this[headersSymbol];
+  var headers = (this[headersSymbol] ??= new Headers());
   headers.append(name, value);
 };
 
@@ -941,14 +941,6 @@ OutgoingMessage.prototype.addTrailers = function (headers) {
   throw new Error("not implemented");
 };
 
-OutgoingMessage.prototype[kClearTimeout] = function () {
-  if (this[timeoutTimerSymbol]) {
-    clearTimeout(this[timeoutTimerSymbol]);
-    this.removeAllListeners("timeout");
-    this[timeoutTimerSymbol] = undefined;
-  }
-};
-
 function onTimeout() {
   this[timeoutTimerSymbol] = undefined;
   this[kAbortController]?.abort();
@@ -984,6 +976,7 @@ OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
 };
 
 Object.defineProperty(OutgoingMessage.prototype, "headers", {
+  // For compat with IncomingRequest
   get: function () {
     if (!this[headersSymbol]) return kEmptyObject;
     return this[headersSymbol].toJSON();
@@ -1106,6 +1099,7 @@ function ServerResponse(req, reply) {
 Object.setPrototypeOf((ServerResponse.prototype = {}), OutgoingMessage.prototype);
 Object.setPrototypeOf(ServerResponse, OutgoingMessage);
 
+// Express "compress" package uses this
 ServerResponse.prototype._implicitHeader = function () {
   // @ts-ignore
   this.writeHead(this.statusCode);

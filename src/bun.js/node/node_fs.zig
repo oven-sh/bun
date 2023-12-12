@@ -4233,8 +4233,6 @@ pub const NodeFS = struct {
         const Char = std.meta.Child(bun.OSPathSlice);
         const len = @as(u16, @truncate(path.len));
 
-        // log("mkdirRecursiveOSPath({s})", .{bun.strings.fmtOSPath(path)});
-
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
         switch (Syscall.mkdirOSPath(path, mode)) {

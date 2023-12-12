@@ -4678,10 +4678,7 @@ pub const FileReader = struct {
                         return result;
                     }
 
-                    const is_fifo = if (comptime Environment.isPosix)
-                        std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)
-                    else
-                        @panic("TODO on Windows");
+                    const is_fifo = bun.S.ISFIFO(readable_file.mode) or bun.S.ISCHR(readable_file.mode);
 
                     // for our purposes, ISCHR and ISFIFO are the same
                     if (is_fifo) {
@@ -4876,7 +4873,7 @@ pub fn NewReadyWatcher(
 
         pub fn watch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                return;
+                @panic("Do not call watch() on windows");
             }
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {

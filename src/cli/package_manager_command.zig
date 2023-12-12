@@ -49,7 +49,7 @@ pub const PackageManagerCommand = struct {
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
         @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
-        var lockfile = lockfile_buffer[0..lockfile_.len :0];
+        const lockfile = lockfile_buffer[0..lockfile_.len :0];
         var pm = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
@@ -107,12 +107,16 @@ pub const PackageManagerCommand = struct {
         args = args[1..];
 
         var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
-            // TODO: error messages here
-            // if (err == error.MissingPackageJSON) {
-            //     // TODO: error messages
-            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, PackageManager.Subcommand.pm, &_ctx);
-            // }
-
+            if (err == error.MissingPackageJSON) {
+                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                if (bun.getcwd(&cwd_buf)) |cwd| {
+                    Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
+                } else |_| {
+                    Output.errGeneric("No package.json was found", .{});
+                }
+                Output.note("Run \"bun init\" to initialize a project", .{});
+                Global.exit(1);
+            }
             return err;
         };
 
@@ -122,7 +126,7 @@ pub const PackageManagerCommand = struct {
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {
-            var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
+            const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {
                 Output.prettyln("\n", .{});
@@ -175,8 +179,8 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var fd = pm.getCacheDirectory();
-            var outpath = bun.getFdPath(fd.dir.fd, &dir) catch |err| {
+            const fd = pm.getCacheDirectory();
+            const outpath = bun.getFdPath(fd.dir.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
@@ -377,7 +381,7 @@ fn printNodeModulesFolderStructure(
     for (sorted_dependencies, 0..) |dependency_id, index| {
         const package_name = dependencies[dependency_id].name.slice(string_bytes);
 
-        var possible_path = try std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name });
+        const possible_path = try std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name });
         defer allocator.free(possible_path);
 
         if (index + 1 == sorted_dependencies.len) {

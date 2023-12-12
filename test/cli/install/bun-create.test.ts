@@ -1,5 +1,5 @@
-import { spawn } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
+import { spawn, spawnSync } from "bun";
+import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { mkdtemp, realpath, rm, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
@@ -12,6 +12,28 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
+});
+
+describe("should not crash", async () => {
+  const args = [
+    [bunExe(), "create", ""],
+    [bunExe(), "create", "--"],
+    [bunExe(), "create", "--", ""],
+    [bunExe(), "create", "--help"],
+  ];
+  for (let cmd of args) {
+    it(JSON.stringify(cmd.slice(1).join(" ")), () => {
+      const { exitCode } = spawnSync({
+        cmd,
+        cwd: x_dir,
+        stdout: "ignore",
+        stdin: "inherit",
+        stderr: "inherit",
+        env,
+      });
+      expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
+    });
+  }
 });
 
 it("should create selected template with @ prefix", async () => {

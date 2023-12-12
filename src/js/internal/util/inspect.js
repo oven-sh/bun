@@ -1,3 +1,6 @@
+// **TODO: delete this file**
+// It is too much JavaScript. We should just fix the native implementation.
+//
 // This code is an adaptation of the Node.js internal implementation, mostly
 // from the file lib/internal/util/inspect.js, which does not have the Joyent
 // copyright header. The maintainers of this package will not assert copyright

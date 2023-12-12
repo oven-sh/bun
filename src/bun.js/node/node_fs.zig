@@ -1868,6 +1868,7 @@ pub const Arguments = struct {
         /// A file mode. If a string is passed, it is parsed as an octal integer. If not specified
         /// @default
         mode: Mode = 0o777,
+        return_empty_string: bool = false,
 
         pub fn deinit(this: Mkdir) void {
             this.path.deinit();
@@ -3397,17 +3398,17 @@ pub const Arguments = struct {
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                recursive = arg.asBoolean();
+                recursive = arg.toBoolean();
             }
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                errorOnExist = arg.asBoolean();
+                errorOnExist = arg.toBoolean();
             }
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                force = arg.asBoolean();
+                force = arg.toBoolean();
             }
 
             if (arguments.next()) |arg| {
@@ -4190,6 +4191,9 @@ pub const NodeFS = struct {
                 }
             },
             .result => {
+                if (args.return_empty_string) {
+                    return Option{ .result = bun.String.empty };
+                }
                 return Option{
                     .result = if (args.path == .slice_with_underlying_string)
                         args.path.slice_with_underlying_string.underlying
@@ -4282,6 +4286,10 @@ pub const NodeFS = struct {
                 }
             },
             .result => {
+                if (args.return_empty_string) {
+                    return Option{ .result = bun.String.empty };
+                }
+
                 return Option{
                     .result = if (first_match != std.math.maxInt(u16))
                         bun.String.create(working_mem[0..first_match])

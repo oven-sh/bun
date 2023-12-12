@@ -396,7 +396,7 @@ describe("Server", () => {
     try {
       // should fail
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
-      expect(true).toBe(false);
+      expect.unreachable();
     } catch (err: any) {
       expect(err.code).toBe("ConnectionClosed");
     }

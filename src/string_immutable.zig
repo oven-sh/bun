@@ -4605,12 +4605,12 @@ const sort_desc = std.sort.desc(u8);
 
 pub fn sortAsc(in: []string) void {
     // TODO: experiment with simd to see if it's faster
-    std.sort.block([]const u8, in, {}, cmpStringsAsc);
+    std.sort.pdq([]const u8, in, {}, cmpStringsAsc);
 }
 
 pub fn sortDesc(in: []string) void {
     // TODO: experiment with simd to see if it's faster
-    std.sort.block([]const u8, in, {}, cmpStringsDesc);
+    std.sort.pdq([]const u8, in, {}, cmpStringsDesc);
 }
 
 pub const StringArrayByIndexSorter = struct {

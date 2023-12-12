@@ -1088,7 +1088,9 @@ pub const Printer = struct {
         writer: Writer,
     ) !void {
         var fs = &FileSystem.instance;
-        var options = PackageManager.Options{};
+        var options = PackageManager.Options{
+            .max_concurrent_lifecycle_scripts = 1,
+        };
 
         var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 

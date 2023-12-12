@@ -1880,7 +1880,6 @@ pub const PackageManager = struct {
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
     pending_lifecycle_script_tasks: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    max_concurrent_lifecycle_scripts: usize = Options.default_max_concurrent_lifecycle_scripts,
     finished_installing: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
     total_scripts: usize = 0,
@@ -1894,7 +1893,7 @@ pub const PackageManager = struct {
 
     lockfile: *Lockfile = undefined,
 
-    options: Options = .{},
+    options: Options,
     preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
 
     global_link_dir: ?std.fs.IterableDir = null,
@@ -5073,7 +5072,7 @@ pub const PackageManager = struct {
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
 
-        max_concurrent_lifecycle_scripts: usize = default_max_concurrent_lifecycle_scripts,
+        max_concurrent_lifecycle_scripts: usize,
 
         pub fn shouldPrintCommandName(this: *const Options) bool {
             return this.log_level != .silent and this.do.summary;
@@ -5089,8 +5088,6 @@ pub const PackageManager = struct {
             }
             return false;
         }
-
-        pub const default_max_concurrent_lifecycle_scripts = 5;
 
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
@@ -5589,7 +5586,7 @@ pub const PackageManager = struct {
         pub const script_no_emoji_ = "Running script";
         const script_no_emoji: string = script_no_emoji_ ++ "\n";
         const script_with_emoji: string = script_emoji ++ script_no_emoji_;
-        pub const script_emoji: string = "  🏗️  ";
+        pub const script_emoji: string = "  ⚙️  ";
 
         pub inline fn download() string {
             return if (Output.isEmojiEnabled()) download_with_emoji else download_no_emoji;
@@ -6004,9 +6001,6 @@ pub const PackageManager = struct {
         package_json_cwd = try bun.getFdPath(package_json_file.handle, &package_json_cwd_buf);
 
         var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
-        var options = Options{
-            .global = cli.global,
-        };
 
         var env: *DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
@@ -6020,6 +6014,19 @@ pub const PackageManager = struct {
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production);
 
+        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
+
+        if (env.map.get("GOMAXPROCS")) |max_procs| {
+            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
+                cpu_count = @min(cpu_count, cpu_count_);
+            } else |_| {}
+        }
+
+        var options = Options{
+            .global = cli.global,
+            .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
+        };
+
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
         }
@@ -6031,14 +6038,6 @@ pub const PackageManager = struct {
         if (PackageManager.verbose_install) {
             Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
             Output.flush();
-        }
-
-        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
-
-        if (env.map.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @min(cpu_count, cpu_count_);
-            } else |_| {}
         }
 
         var workspaces = std.StringArrayHashMap(Semver.Version).init(ctx.allocator);
@@ -6077,7 +6076,6 @@ pub const PackageManager = struct {
             // .progress
             .uws_event_loop = uws.Loop.get(),
             .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
-            .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -6151,7 +6149,9 @@ pub const PackageManager = struct {
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
-            .options = .{},
+            .options = .{
+                .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
+            },
             .network_task_fifo = NetworkQueue.init(),
             .allocator = allocator,
             .log = log,
@@ -7544,7 +7544,7 @@ pub const PackageManager = struct {
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.first().package_name;
-                while (RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.max_concurrent_lifecycle_scripts) {
+                while (RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
                     this.manager.uws_event_loop.tickWithTimeout(125);
                 }
 
@@ -7583,7 +7583,7 @@ pub const PackageManager = struct {
             const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
             return (deps.subsetOf(this.completed_trees) or
                 deps.eql(this.completed_trees)) and
-                RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.max_concurrent_lifecycle_scripts;
+                RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
         pub fn printTreeDeps(this: *PackageInstaller) void {

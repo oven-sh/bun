@@ -399,9 +399,7 @@ pub const Bunfig = struct {
                     if (_bun.get("concurrentScripts")) |jobs| {
                         if (jobs.data == .e_number) {
                             install.concurrent_scripts = jobs.data.e_number.toU32();
-                            if (install.concurrent_scripts.? == 0) {
-                                install.concurrent_scripts = PackageManager.Options.default_max_concurrent_lifecycle_scripts;
-                            }
+                            if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
                         }
                     }
 

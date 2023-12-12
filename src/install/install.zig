@@ -283,7 +283,7 @@ const NetworkTask = struct {
     // before: false
     // after: true
     //
-    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1702425477658;
+    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1702425477;
 
     pub fn forManifest(
         this: *NetworkTask,

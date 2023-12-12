@@ -1,0 +1,41 @@
+{
+	"name": "lifecycle-failing-postinstall",
+	"versions": {
+		"1.0.0": {
+			"name": "lifecycle-failing-postinstall",
+			"version": "1.0.0",
+			"scripts": {
+				"postinstall": "echo hello && exit 1"
+			},
+			"_id": "lifecycle-failing-postinstall@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-WtRQvphv6AbXMhnyhn4ZwY7cYQYO9jKlEe6FQVXbPRyYR3ZVQuxYl+NTBhXyM/d6Uk8AKwBb9C5VYQeXJlmVsg==",
+				"shasum": "6f5601fae5614765df8e69ae94941ee718238b7b",
+				"tarball": "http://localhost:4873/lifecycle-failing-postinstall/-/lifecycle-failing-postinstall-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T03:21:03.937Z",
+		"created": "2023-11-15T03:21:03.937Z",
+		"1.0.0": "2023-11-15T03:21:03.937Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"lifecycle-failing-postinstall-1.0.0.tgz": {
+			"shasum": "6f5601fae5614765df8e69ae94941ee718238b7b",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "lifecycle-failing-postinstall",
+	"readme": "ERROR: No README data found!"
+}

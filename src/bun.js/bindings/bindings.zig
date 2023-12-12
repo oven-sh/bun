@@ -4725,7 +4725,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn toBoolean(this: JSValue) bool {
-        if (isUndefinedOrNull(this)) {
+        if (isEmptyOrUndefinedOrNull(this)) {
             return false;
         }
 

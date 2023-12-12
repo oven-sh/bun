@@ -4548,8 +4548,8 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     entries.append(.{
-                        .name = bun.String.create(utf8_name),
-                        .path = bun.String.create(utf8_name),
+                        .name = bun.String.create(std.fs.path.basename(utf8_name)),
+                        .path = bun.String.create(std.fs.path.dirname(utf8_name) orelse utf8_name),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4668,8 +4668,8 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     entries.append(.{
-                        .name = bun.String.create(name_to_copy),
-                        .path = bun.String.create(name_to_copy),
+                        .name = bun.String.create(std.fs.path.basename(name_to_copy)),
+                        .path = bun.String.create(std.fs.path.dirname(name_to_copy) orelse name_to_copy),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4798,8 +4798,8 @@ pub const NodeFS = struct {
                 switch (comptime ExpectedType) {
                     Dirent => {
                         entries.append(.{
-                            .name = bun.String.create(name_to_copy),
-                            .path = bun.String.create(name_to_copy),
+                            .name = bun.String.create(std.fs.path.basename(name_to_copy)),
+                            .path = bun.String.create(std.fs.path.dirname(name_to_copy) orelse name_to_copy),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

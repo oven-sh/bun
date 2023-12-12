@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, appendFile } from "fs/promises";
 import { join, relative } from "path";
 import { tmpdir } from "os";
 import {
@@ -374,7 +374,7 @@ it("should add exact version with install.exact", async () => {
       version: "0.0.1",
     }),
   );
-  await writeFile(join(package_dir, "bunfig.toml"), "[install]\nexact = true\n");
+  await appendFile(join(package_dir, "bunfig.toml"), `exact = true\n`);
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "BaR"],
     cwd: package_dir,

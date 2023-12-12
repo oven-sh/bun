@@ -5717,7 +5717,7 @@ pub const PackageManager = struct {
                 //
                 // probably wont matter as if package.json isn't writable, it's likely that
                 // the underlying directory and node_modules isn't either.
-                const need_write = (subcommand == .install and cli.positionals.len > 1) or subcommand == .add;
+                const need_write = subcommand != .install or cli.positionals.len > 1;
 
                 while (true) {
                     const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);

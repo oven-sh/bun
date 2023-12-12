@@ -126,6 +126,7 @@ pub const FilePoll = struct {
     const FIFO = JSC.WebCore.FIFO;
     const Subprocess = JSC.Subprocess;
     const ShellSubprocess = bun.ShellSubprocess;
+    const ShellBufferedWriter = bun.ShellBufferedWriter;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
     const DNSResolver = JSC.DNS.DNSResolver;
@@ -144,6 +145,7 @@ pub const FilePoll = struct {
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
+        ShellBufferedWriter,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {

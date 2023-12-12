@@ -261,6 +261,7 @@ pub const fmt = struct {
 };
 
 pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
+pub const ShellBufferedWriter = @import("./shell/interpreter.zig").BufferedWriter;
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");

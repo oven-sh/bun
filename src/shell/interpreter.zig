@@ -48,6 +48,8 @@ pub fn assert(cond: bool, comptime msg: []const u8) void {
     }
 }
 
+const EnvMap = std.StringArrayHashMap([:0]const u8);
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
@@ -139,8 +141,9 @@ pub const Interpreter = struct {
     pub fn start(this: *Interpreter, globalThis: *JSGlobalObject) !JSValue {
         _ = globalThis;
         var root = try Script.init(this, this.script, .{});
+        const value = this.promise.value();
         try root.start();
-        return this.promise.value();
+        return value;
     }
 
     fn finish(this: *Interpreter, exit_code: u8) void {
@@ -478,12 +481,13 @@ pub const Expansion = struct {
             std.debug.assert(this.child_state != .idle);
         }
 
+        // Command substitution
         if (child.ptr.is(Cmd)) {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.child_state == .cmd_subst);
             }
 
-            var stdout = this.child_state.cmd_subst.cmd.buffered_closed.stdout.?.state.closed.slice();
+            var stdout = this.child_state.cmd_subst.cmd.stdoutSlice() orelse @panic("Should not happen");
             this.current_out.appendSlice(stdout) catch bun.outOfMemory();
             // FIXME check if output is empty, trim output, also I think it needs to be split into muliple words?
 
@@ -862,7 +866,7 @@ pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
                 },
                 .cmd_subst => |cmd| {
                     _ = cmd;
-                    @panic("TODO");
+                    @panic("Invalid here");
                     // switch (cmd.*) {
                     //     .assigns => {},
                     //     .cmd => |*the_cmd| {
@@ -924,7 +928,7 @@ pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
     };
 }
 
-pub const State = packed struct {
+pub const State = struct {
     kind: StateKind,
     interpreter: *Interpreter,
 };
@@ -1165,9 +1169,12 @@ pub const Stmt = struct {
     }
 
     pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: u8) void {
+        var data = child.ptr.repr.data;
         log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
         this.last_exit_code = exit_code;
         const next_idx = this.idx + 1;
+        var data2 = child.ptr.repr.data;
+        log("{d} {d}", .{ data, data2 });
         child.deinit();
         this.currently_executing = null;
         if (next_idx >= this.node.exprs.len)
@@ -1177,8 +1184,8 @@ pub const Stmt = struct {
         switch (next_child.*) {
             .cond => {
                 const cond = Cond.init(this.base.interpreter, next_child.cond, Cond.ParentPtr.init(this), this.io);
-                cond.start();
                 this.currently_executing = ChildPtr.init(cond);
+                cond.start();
             },
             .assign => |assigns| {
                 AssignChild.exec(this.base.interpreter, AssignChild.ParentPtr.init(this), assigns, .shell);
@@ -1508,22 +1515,506 @@ pub const Pipeline = struct {
     }
 };
 
+pub const Builtin = struct {
+    kind: Kind,
+    stdin: BuiltinIO,
+    stdout: BuiltinIO,
+    stderr: BuiltinIO,
+    exit_code: ?u8 = null,
+
+    arena: *bun.ArenaAllocator,
+    /// The following are allocated with the above arena
+    args: *std.ArrayList(?[*:0]const u8),
+    export_env: std.StringArrayHashMap([:0]const u8),
+    cmd_local_env: std.StringArrayHashMap([:0]const u8),
+
+    impl: union(Kind) {
+        @"export": Export,
+        cd,
+        echo,
+        pwd,
+        which,
+        rm,
+    },
+
+    const Kind = enum {
+        @"export",
+        cd,
+        echo,
+        pwd,
+        which,
+        rm,
+
+        pub fn parentType(this: Kind) type {
+            _ = this;
+        }
+
+        pub fn usageString(this: Kind) []const u8 {
+            return switch (this) {
+                .@"export" => "",
+                .cd => "",
+                .echo => "",
+                .pwd => "",
+                .which => "",
+                .rm => "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file",
+            };
+        }
+
+        pub fn asString(this: Kind) []const u8 {
+            return switch (this) {
+                .@"export" => "export",
+                .cd => "cd",
+                .echo => "echo",
+                .pwd => "pwd",
+                .which => "which",
+                .rm => "rm",
+            };
+        }
+
+        pub fn fromStr(str: []const u8) ?Builtin.Kind {
+            const tyinfo = @typeInfo(Builtin.Kind);
+            inline for (tyinfo.Enum.fields) |field| {
+                if (bun.strings.eqlComptime(str, field.name)) {
+                    return comptime std.meta.stringToEnum(Builtin.Kind, field.name).?;
+                }
+            }
+            return null;
+        }
+    };
+
+    /// in the case of array buffer we simply need to write to the pointer
+    /// in the case of blob, we write to the file descriptor
+    const BuiltinIO = union(enum) {
+        fd: bun.FileDescriptor,
+        buf: std.ArrayList(u8),
+        arraybuf: ArrayBuf,
+        ignore,
+
+        const ArrayBuf = struct {
+            buf: JSC.ArrayBuffer.Strong,
+            i: u32 = 0,
+        };
+
+        pub fn isClosed(this: *BuiltinIO) bool {
+            switch (this.*) {
+                .fd => {
+                    return this.fd != bun.invalid_fd;
+                },
+                .buf => {
+                    return true;
+                    // try this.buf.deinit(allocator);
+                },
+                else => return true,
+            }
+        }
+
+        pub fn deinit(this: *BuiltinIO) void {
+            switch (this.*) {
+                .buf => {
+                    this.buf.deinit();
+                },
+                else => {},
+            }
+        }
+
+        pub fn close(this: *BuiltinIO) void {
+            switch (this.*) {
+                .fd => {
+                    if (this.fd != bun.invalid_fd) {
+                        closefd(this.fd);
+                        this.fd = bun.invalid_fd;
+                    }
+                },
+                .buf => {},
+                else => {},
+            }
+        }
+
+        pub fn needsIO(this: *BuiltinIO) bool {
+            return switch (this.*) {
+                .fd => true,
+                else => false,
+            };
+        }
+    };
+
+    pub fn argsSlice(this: *Builtin) []const [*:0]const u8 {
+        const args_raw = this.args.items[1..];
+        const args_len = std.mem.indexOfScalar(?[*:0]const u8, args_raw, null) orelse @panic("bad");
+        if (args_len == 0)
+            return &[_][*:0]const u8{};
+
+        const args_ptr = args_raw.ptr;
+        return @as([*][*:0]const u8, @ptrCast(args_ptr))[0..args_len];
+    }
+
+    pub inline fn callImpl(this: *Builtin, comptime Ret: type, comptime field: []const u8, args_: anytype) Ret {
+        return switch (this.kind) {
+            .@"export" => this.callImplWithType(Export, Ret, "export", field, args_),
+            .cd => @panic("FIXME TODO"),
+            .echo => @panic("FIXME TODO"),
+            .pwd => @panic("FIXME TODO"),
+            .which => @panic("FIXME TODO"),
+            .rm => @panic("FIXME TODO"),
+        };
+    }
+
+    fn callImplWithType(this: *Builtin, comptime Impl: type, comptime Ret: type, comptime union_field: []const u8, comptime field: []const u8, args_: anytype) Ret {
+        var self = &@field(this.impl, union_field);
+        var args = brk: {
+            var args: std.meta.ArgsTuple(@TypeOf(@field(Impl, field))) = undefined;
+            args[0] = self;
+
+            var i: usize = 1;
+            inline for (args_) |a| {
+                args[i] = a;
+                i += 1;
+            }
+
+            break :brk args;
+        };
+        return @call(.auto, @field(Impl, field), args);
+    }
+
+    pub inline fn allocator(this: *Builtin) Allocator {
+        return this.parentCmd().base.interpreter.allocator;
+    }
+
+    pub fn init(
+        cmd: *Cmd,
+        interpreter: *Interpreter,
+        kind: Kind,
+        arena: *bun.ArenaAllocator,
+        node: *const ast.Cmd,
+        args: *std.ArrayList(?[*:0]const u8),
+        export_env: std.StringArrayHashMap([:0]const u8),
+        cmd_local_env: std.StringArrayHashMap([:0]const u8),
+        io_: *IO,
+        comptime in_cmd_subst: bool,
+    ) void {
+        var io = io_.*;
+
+        var stdin: Builtin.BuiltinIO = switch (io.stdin) {
+            .std => .{ .fd = bun.STDIN_FD },
+            .fd => |fd| .{ .fd = fd },
+            .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
+            .ignore => .ignore,
+        };
+        var stdout: Builtin.BuiltinIO = switch (io.stdout) {
+            .std => .{ .fd = bun.STDOUT_FD },
+            .fd => |fd| .{ .fd = fd },
+            .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
+            .ignore => .ignore,
+        };
+        var stderr: Builtin.BuiltinIO = switch (io.stderr) {
+            .std => .{ .fd = bun.STDERR_FD },
+            .fd => |fd| .{ .fd = fd },
+            .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
+            .ignore => .ignore,
+        };
+
+        if (node.redirect_file) |file| brk: {
+            if (comptime in_cmd_subst) {
+                if (node.redirect.stdin) {
+                    stdin = .ignore;
+                }
+
+                if (node.redirect.stdout) {
+                    stdout = .ignore;
+                }
+
+                if (node.redirect.stderr) {
+                    stdout = .ignore;
+                }
+
+                break :brk;
+            }
+
+            switch (file) {
+                .atom => {
+                    // FIXME TODO expand atom
+                    // if expands to multiple atoms, throw "ambiguous redirect" error
+                    @panic("FIXME TODO redirect builtin");
+                },
+                .jsbuf => {
+                    if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(interpreter.global)) |buf| {
+                        const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
+                            .array_buffer = buf,
+                            .held = JSC.Strong.create(buf.value, interpreter.global),
+                        }, .i = 0 } };
+
+                        if (node.redirect.stdin) {
+                            stdin = builtinio;
+                        }
+
+                        if (node.redirect.stdout) {
+                            stdout = builtinio;
+                        }
+
+                        if (node.redirect.stderr) {
+                            stderr = builtinio;
+                        }
+                    } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                        _ = blob;
+                        @panic("FIXME TODO HANDLE BLOB");
+                    } else {
+                        @panic("FIXME TODO Unhandled");
+                    }
+                },
+            }
+        }
+
+        cmd.exec = .{ .bltn = Builtin{
+            .kind = kind,
+            .stdin = stdin,
+            .stdout = stdout,
+            .stderr = stderr,
+            .exit_code = null,
+            .arena = arena,
+            .args = args,
+            .export_env = export_env,
+            .cmd_local_env = cmd_local_env,
+            .impl = undefined,
+        } };
+
+        switch (kind) {
+            .@"export" => {
+                cmd.exec.bltn.impl = .{
+                    .@"export" = Export{ .bltn = &cmd.exec.bltn },
+                };
+            },
+            else => @panic("FIXME TODO"),
+        }
+    }
+
+    pub inline fn parentCmd(this: *Builtin) *Cmd {
+        var union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
+        return @fieldParentPtr(Cmd, "exec", union_ptr);
+    }
+
+    pub fn done(this: *Builtin, exit_code: u8) void {
+        // if (comptime bun.Environment.allow_assert) {
+        //     std.debug.assert(this.exit_code != null);
+        // }
+        this.exit_code = exit_code;
+
+        var cmd = this.parentCmd();
+        log("cmd to free: ({x})", .{@intFromPtr(cmd)});
+        cmd.exit_code = this.exit_code.?;
+        cmd.parent.childDone(cmd, this.exit_code.?);
+    }
+
+    pub fn start(this: *Builtin) Maybe(void) {
+        switch (this.callImpl(Maybe(void), "start", .{})) {
+            .err => |e| return Maybe(void).initErr(e),
+            .result => {},
+        }
+
+        return Maybe(void).success;
+    }
+
+    pub fn deinit(this: *Builtin) void {
+        this.callImpl(void, "deinit", .{});
+
+        this.stdout.deinit();
+        this.stderr.deinit();
+        this.stdin.deinit();
+
+        // this.arena.deinit();
+    }
+
+    pub fn writeNonBlocking(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
+        if (comptime io_kind != .stdout or io_kind != .stdin) {
+            @compileError("Bad IO" ++ @tagName(io_kind));
+        }
+
+        var io: *BuiltinIO = &@field(this, @tagName(io_kind));
+        switch (io.*) {
+            .buf, .arraybuf => {
+                return this.writeNoIO(io_kind, buf);
+            },
+            .fd => {
+                return Syscall.write(io.fd, buf);
+            },
+        }
+    }
+
+    pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
+        if (comptime io_kind != .stdout and io_kind != .stdin) {
+            @compileError("Bad IO" ++ @tagName(io_kind));
+        }
+
+        var io: *BuiltinIO = &@field(this, @tagName(io_kind));
+
+        switch (io.*) {
+            .fd => @panic("writeNoIO can't write to a file descriptor"),
+            .buf => {
+                log("{s} write to buf {d}\n", .{ this.kind.asString(), buf.len });
+                io.buf.appendSlice(buf) catch bun.outOfMemory();
+                return Maybe(usize).initResult(buf.len);
+            },
+            .arraybuf => {
+                if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
+                    // TODO is it correct to return an error here? is this error the correct one to return?
+                    return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
+                }
+
+                const len = buf.len;
+                const write_len = if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len)
+                    io.arraybuf.buf.array_buffer.byte_len - io.arraybuf.i
+                else
+                    len;
+
+                var slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
+                @memcpy(slice, buf[0..write_len]);
+                io.arraybuf.i +|= @truncate(write_len);
+                log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
+                return Maybe(usize).initResult(write_len);
+            },
+            .ignore => return Maybe(usize).initResult(buf.len),
+        }
+    }
+
+    pub fn ioAllClosed(this: *Builtin) bool {
+        return this.stdin.isClosed() and this.stdout.isClosed() and this.stderr.isClosed();
+    }
+
+    pub const Export = struct {
+        bltn: *Builtin,
+        print_state: ?struct {
+            bufwriter: BufferedWriter,
+            err: ?Syscall.Error = null,
+
+            pub fn isDone(this: *@This()) bool {
+                return this.err != null or this.bufwriter.written >= this.bufwriter.remain.len;
+            }
+        } = null,
+
+        const Entry = struct {
+            key: []const u8,
+            value: [:0]const u8,
+
+            pub fn compare(context: void, this: @This(), other: @This()) bool {
+                return bun.strings.cmpStringsAsc(context, this.key, other.key);
+            }
+        };
+
+        pub fn onBufferedWriterDone(this: *Export, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.print_state != null);
+            }
+
+            this.print_state.?.err = e;
+            const exit_code: u8 = if (e != null) e.?.errno else 0;
+            this.bltn.done(exit_code);
+        }
+
+        pub fn start(this: *Export) Maybe(void) {
+            const args = this.bltn.argsSlice();
+
+            // Calling `export` with no arguments prints all exported variables lexigraphically ordered
+            if (args.len == 0) {
+                var arena = this.bltn.arena;
+
+                var keys = std.ArrayList(Entry).init(arena.allocator());
+                var iter = this.bltn.export_env.iterator();
+                while (iter.next()) |entry| {
+                    keys.append(.{
+                        .key = entry.key_ptr.*,
+                        .value = entry.value_ptr.*,
+                    }) catch bun.outOfMemory();
+                }
+
+                std.mem.sort(Entry, keys.items[0..], {}, Entry.compare);
+
+                const len = brk: {
+                    var len: usize = 0;
+                    for (keys.items) |entry| {
+                        len += std.fmt.count("{s}={s}\n", .{ entry.key, entry.value });
+                    }
+                    break :brk len;
+                };
+                var buf = arena.allocator().alloc(u8, len) catch bun.outOfMemory();
+                {
+                    var i: usize = 0;
+                    for (keys.items) |entry| {
+                        const written_slice = std.fmt.bufPrint(buf[i..], "{s}={s}\n", .{ entry.key, entry.value }) catch @panic("This should not happen");
+                        i += written_slice.len;
+                    }
+                }
+
+                if (!this.bltn.stdout.needsIO()) {
+                    switch (this.bltn.writeNoIO(.stdout, buf)) {
+                        .err => |e| {
+                            this.bltn.exit_code = e.errno;
+                            return Maybe(void).initErr(e);
+                        },
+                        .result => |written| {
+                            if (comptime bun.Environment.allow_assert) std.debug.assert(written == buf.len);
+                        },
+                    }
+                    this.bltn.done(0);
+                    return Maybe(void).success;
+                }
+
+                this.print_state = .{
+                    .bufwriter = BufferedWriter{
+                        .remain = buf,
+                        .fd = this.bltn.stdout.fd,
+                        .parent = BufferedWriter.ParentPtr{ .ptr = BufferedWriter.ParentPtr.Repr.init(this) },
+                    },
+                };
+
+                this.print_state.?.bufwriter.write();
+
+                // if (this.print_state.?.isDone()) {
+                //     if (this.print_state.?.bufwriter.err) |e| {
+                //         this.bltn.exit_code = e.errno;
+                //         return Maybe(void).initErr(e);
+                //     }
+                //     this.bltn.exit_code = 0;
+                //     return Maybe(void).success;
+                // }
+
+                return Maybe(void).success;
+            }
+
+            @panic("FIXME TODO set env");
+        }
+
+        pub fn deinit(this: *Export) void {
+            _ = this;
+        }
+    };
+};
+
 pub const Cmd = struct {
     base: State,
     node: *const ast.Cmd,
     parent: ParentPtr,
 
-    spawn_arena: Arena,
+    spawn_arena: bun.ArenaAllocator,
+    /// This allocated by the above arena
     args: std.ArrayList(?[*:0]const u8),
 
     /// Expansion state
     expansion: Expansion,
-    name_and_args_idx: u32,
+    name_and_args_idx: u32 = 0,
 
-    cmd: ?*Subprocess,
-    exit_code: ?u8,
+    exec: Exec = .none,
+    exit_code: ?u8 = null,
     io: IO,
-    buffered_closed: BufferedIoClosed = .{},
+    freed: bool = false,
+
+    pub const Exec = union(enum) {
+        none,
+        bltn: Builtin,
+        subproc: struct {
+            child: *Subprocess,
+            buffered_closed: BufferedIoClosed = .{},
+        },
+    };
 
     const BufferedIoClosed = struct {
         stdin: ?BufferedIoState = null,
@@ -1631,17 +2122,19 @@ pub const Cmd = struct {
             std.debug.print("Ruh roh: {any}\n", .{err});
             @panic("Ruh roh");
         };
-        cmd.base = .{ .kind = .cmd, .interpreter = interpreter };
-        cmd.node = node;
-        cmd.cmd = null;
-        cmd.parent = parent;
+        cmd.* = .{
+            .base = .{ .kind = .cmd, .interpreter = interpreter },
+            .node = node,
+            .parent = parent,
 
-        cmd.spawn_arena = Arena.init(interpreter.allocator);
-        cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory();
+            .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
+            .args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory(),
 
-        cmd.exit_code = null;
-        cmd.io = io;
-        cmd.buffered_closed = .{};
+            .exit_code = null,
+            .io = io,
+            .expansion = undefined,
+            .name_and_args_idx = 0,
+        };
 
         Expansion.init(
             interpreter,
@@ -1652,8 +2145,6 @@ pub const Cmd = struct {
                 .array_of_ptr = &cmd.args,
             },
         );
-        cmd.name_and_args_idx = 0;
-
         return cmd;
     }
 
@@ -1664,7 +2155,7 @@ pub const Cmd = struct {
 
     pub fn run(this: *Cmd) void {
         this.initSubproc() catch |err| {
-            // FIXME this is bad
+            // FIXME this might throw errors other than allocations so this is bad need to handle this properly
             std.debug.print("THIS THE ERROR: {any}\n", .{err});
             bun.outOfMemory();
         };
@@ -1699,27 +2190,14 @@ pub const Cmd = struct {
         log("cmd init subproc ({x})", .{@intFromPtr(this)});
         this.base.interpreter.cmd_local_env.clearRetainingCapacity();
 
-        var arena = bun.ArenaAllocator.init(this.base.interpreter.allocator);
+        var arena = &this.spawn_arena;
         var arena_allocator = arena.allocator();
-        defer arena.deinit();
 
         for (this.node.assigns) |*assign| {
             this.base.interpreter.assignVar(assign, .cmd);
         }
 
-        var spawn_args = Subprocess.SpawnArgs.default(&arena, this.base.interpreter.global.bunVM(), false);
-
-        // Fill the env from the export end and cmd local env
-        {
-            var env_iter = this.base.interpreter.export_env.iterator();
-            if (!spawn_args.fillEnv(&env_iter, false)) {
-                return ShellError.GlobalThisThrown;
-            }
-            env_iter = this.base.interpreter.cmd_local_env.iterator();
-            if (!spawn_args.fillEnv(&env_iter, false)) {
-                return ShellError.GlobalThisThrown;
-            }
-        }
+        var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.global.bunVM(), false);
 
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
         spawn_args.cmd_parent = this;
@@ -1737,10 +2215,39 @@ pub const Cmd = struct {
                 this.base.interpreter.global.throwInvalidArguments("No command specified", .{});
                 return ShellError.Process;
             };
+
             const first_arg_len = std.mem.len(first_arg);
-            // if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
-            //     return .{ .builtin = self.init_builtin(b, args, io, cmd, in_cmd_subst) };
-            // }
+
+            if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
+                const bltn = Builtin.init(
+                    this,
+                    this.base.interpreter,
+                    b,
+                    arena,
+                    this.node,
+                    &this.args,
+                    this.base.interpreter.export_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
+                    this.base.interpreter.cmd_local_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
+                    &this.io,
+                    false,
+                );
+                _ = bltn;
+
+                if (comptime bun.Environment.allow_assert) {
+                    std.debug.assert(this.exec == .bltn);
+                }
+
+                log("WTF: {s}", .{@tagName(this.exec)});
+
+                switch (this.exec.bltn.start()) {
+                    .result => {},
+                    .err => |e| {
+                        _ = e;
+                        @panic("FIXME TODO HANDLE THIS!");
+                    },
+                }
+                return;
+            }
 
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
@@ -1756,6 +2263,18 @@ pub const Cmd = struct {
             break :args this.args;
         };
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+
+        // Fill the env from the export end and cmd local env
+        {
+            var env_iter = this.base.interpreter.export_env.iterator();
+            if (!spawn_args.fillEnv(&env_iter, false)) {
+                return ShellError.GlobalThisThrown;
+            }
+            env_iter = this.base.interpreter.cmd_local_env.iterator();
+            if (!spawn_args.fillEnv(&env_iter, false)) {
+                return ShellError.GlobalThisThrown;
+            }
+        }
 
         this.io.to_subproc_stdio(&spawn_args.stdio);
 
@@ -1822,25 +2341,48 @@ pub const Cmd = struct {
             }
         }
 
-        this.buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
-        log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), this.buffered_closed });
+        const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
+        log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
 
         const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
         subproc.ref();
-        this.cmd = subproc;
+        this.exec = .{ .subproc = .{
+            .child = subproc,
+            .buffered_closed = buffered_closed,
+        } };
 
         // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {
         //     this.cmd.?.stdout.pipe.buffer.watch();
         // }
     }
 
-    pub fn expectStdoutSlice(this: *Cmd) []const u8 {
-        if (this.cmd.?.stdout.pipe != .buffer) @panic("FIXME support stream stdout");
-        return this.cmd.?.stdout.pipe.buffer.internal_buffer.slice();
+    /// Returns null if stdout is buffered
+    pub fn stdoutSlice(this: *Cmd) ?[]const u8 {
+        switch (this.exec) {
+            .none => return null,
+            .subproc => {
+                if (this.exec.subproc.buffered_closed.stdout != null and this.exec.subproc.buffered_closed.stdout.?.state == .closed) {
+                    return this.exec.subproc.buffered_closed.stdout.?.state.closed.slice();
+                }
+                return null;
+            },
+            .bltn => {
+                switch (this.exec.bltn.stdout) {
+                    .buf => return this.exec.bltn.stdout.buf.items[0..],
+                    .arraybuf => return this.exec.bltn.stdout.arraybuf.buf.slice(),
+                    else => return null,
+                }
+            },
+        }
     }
 
     pub fn hasFinished(this: *Cmd) bool {
-        return this.exit_code != null and this.buffered_closed.allClosed();
+        if (this.exit_code == null) return false;
+        if (this.exec != .none) {
+            if (this.exec == .subproc) return this.exec.subproc.buffered_closed.allClosed();
+            return this.exec.bltn.ioAllClosed();
+        }
+        return true;
     }
 
     pub fn onExit(this: *Cmd, exit_code: u8) void {
@@ -1879,19 +2421,27 @@ pub const Cmd = struct {
         //     this.cmd = null;
         // }
 
-        if (this.cmd) |cmd| {
-            if (cmd.hasExited()) {
-                cmd.unref(true);
-                // cmd.deinit();
+        log("WTF: {s}", .{@tagName(this.exec)});
+        if (this.exec != .none) {
+            if (this.exec == .subproc) {
+                var cmd = this.exec.subproc.child;
+                if (cmd.hasExited()) {
+                    cmd.unref(true);
+                    // cmd.deinit();
+                } else {
+                    _ = cmd.tryKill(9);
+                    cmd.unref(true);
+                    cmd.deinit();
+                }
+                this.exec.subproc.buffered_closed.deinit(this.base.interpreter.global.bunVM().allocator);
             } else {
-                _ = cmd.tryKill(9);
-                cmd.unref(true);
-                cmd.deinit();
+                this.exec.bltn.deinit();
             }
-            this.cmd = null;
+            this.exec = .none;
         }
 
-        this.buffered_closed.deinit(this.base.interpreter.global.bunVM().allocator);
+        // this.spawn_arena.deinit();
+        this.freed = true;
         this.base.interpreter.allocator.destroy(this);
     }
 
@@ -1906,19 +2456,21 @@ pub const Cmd = struct {
     }
 
     pub fn bufferedOutputCloseStdout(this: *Cmd) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.exec == .subproc);
+        }
         log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
-        assert(this.cmd != null, "bufferedOutputCloseStdout called while cmd is null");
-        var subproc = this.cmd.?;
-        this.buffered_closed.close(.{ .stdout = &subproc.stdout });
-        subproc.closeIO(.stdout);
+        this.exec.subproc.buffered_closed.close(.{ .stdout = &this.exec.subproc.child.stdout });
+        this.exec.subproc.child.closeIO(.stdout);
     }
 
     pub fn bufferedOutputCloseStderr(this: *Cmd) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.exec == .subproc);
+        }
         log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
-        assert(this.cmd != null, "bufferedOutputCloseStderr called while cmd is null");
-        var subproc = this.cmd.?;
-        this.buffered_closed.close(.{ .stderr = &subproc.stderr });
-        subproc.closeIO(.stderr);
+        this.exec.subproc.buffered_closed.close(.{ .stderr = &this.exec.subproc.child.stderr });
+        this.exec.subproc.child.closeIO(.stderr);
     }
 };
 
@@ -2168,5 +2720,155 @@ pub const ShellGlobTask = struct {
         print("deinit", .{});
         this.result.deinit();
         this.allocator.destroy(this);
+    }
+};
+
+/// This is modified version of BufferedInput for file descriptors only. This is intended to be placed in a field of a struct
+pub const BufferedWriter = struct {
+    remain: []const u8 = "",
+    fd: bun.FileDescriptor = bun.invalid_fd,
+    poll_ref: ?*bun.Async.FilePoll = null,
+    written: usize = 0,
+    parent: ParentPtr,
+    err: ?Syscall.Error = null,
+
+    const print = bun.Output.scoped(.BufferedWriter, false);
+
+    const ParentPtr = struct {
+        const Types = .{Builtin.Export};
+        ptr: Repr,
+        const Repr = TaggedPointerUnion(Types);
+
+        fn underlying(this: ParentPtr) type {
+            inline for (Types) |Ty| {
+                if (this.ptr.is(Ty)) return Ty;
+            }
+            @panic("Uh oh");
+        }
+
+        fn onDone(this: ParentPtr, bw: *BufferedWriter, e: ?Syscall.Error) void {
+            if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(bw, e);
+            unreachable;
+        }
+    };
+
+    pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
+
+    pub fn onReady(this: *BufferedWriter, _: i64) void {
+        if (this.fd == bun.invalid_fd) {
+            return;
+        }
+
+        this.write();
+    }
+
+    pub fn writeIfPossible(this: *BufferedWriter, comptime is_sync: bool) void {
+        if (comptime !is_sync) {
+            // we ask, "Is it possible to write right now?"
+            // we do this rather than epoll or kqueue()
+            // because we don't want to block the thread waiting for the write
+            switch (bun.isWritable(this.fd)) {
+                .ready => {
+                    if (this.poll_ref) |poll| {
+                        poll.flags.insert(.writable);
+                        poll.flags.insert(.fifo);
+                        std.debug.assert(poll.flags.contains(.poll_writable));
+                    }
+                },
+                .hup => {
+                    this.deinit();
+                    return;
+                },
+                .not_ready => {
+                    if (!this.isWatching()) this.watch(this.fd);
+                    return;
+                },
+            }
+        }
+
+        this.writeAllowBlocking(is_sync);
+    }
+
+    pub fn write(this: *BufferedWriter) void {
+        this.writeAllowBlocking(false);
+    }
+
+    pub fn writeAllowBlocking(this: *BufferedWriter, allow_blocking: bool) void {
+        var to_write = this.remain;
+
+        if (to_write.len == 0) {
+            // we are done!
+            this.closeFDIfOpen();
+            return;
+        }
+
+        if (comptime bun.Environment.allow_assert) {
+            // bun.assertNonBlocking(this.fd);
+        }
+
+        while (to_write.len > 0) {
+            switch (bun.sys.write(this.fd, to_write)) {
+                .err => |e| {
+                    if (e.isRetry()) {
+                        log("write({d}) retry", .{
+                            to_write.len,
+                        });
+
+                        this.watch(this.fd);
+                        this.poll_ref.?.flags.insert(.fifo);
+                        return;
+                    }
+
+                    if (e.getErrno() == .PIPE) {
+                        this.deinit();
+                        return;
+                    }
+
+                    // fail
+                    log("write({d}) fail: {d}", .{ to_write.len, e.errno });
+                    this.err = e;
+                    this.deinit();
+                    return;
+                },
+
+                .result => |bytes_written| {
+                    this.written += bytes_written;
+
+                    log(
+                        "write({d}) {d}",
+                        .{
+                            to_write.len,
+                            bytes_written,
+                        },
+                    );
+
+                    this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                    to_write = to_write[bytes_written..];
+
+                    // we are done or it accepts no more input
+                    if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
+                        this.deinit();
+                        return;
+                    }
+                },
+            }
+        }
+    }
+
+    fn closeFDIfOpen(this: *BufferedWriter) void {
+        if (this.poll_ref) |poll| {
+            this.poll_ref = null;
+            poll.deinit();
+        }
+
+        if (this.fd != bun.invalid_fd) {
+            _ = bun.sys.close(this.fd);
+            this.fd = bun.invalid_fd;
+        }
+    }
+
+    pub fn deinit(this: *BufferedWriter) void {
+        this.closeFDIfOpen();
+        this.parent.onDone(this, this.err);
     }
 };

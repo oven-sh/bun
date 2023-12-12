@@ -90,6 +90,14 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
+        pub inline fn initErr(e: Syscall.Error) Maybe(ReturnType) {
+            return .{ .err = e };
+        }
+
+        pub inline fn initResult(result: ReturnType) Maybe(ReturnType) {
+            return .{ .result = result };
+        }
+
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             switch (this) {
                 .err => |e| {

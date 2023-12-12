@@ -73,7 +73,7 @@ pub const ShellSubprocess = struct {
     // pub const Readable = util.Readable;
     pub const Stdio = util.Stdio;
 
-    pub const BufferedInput = util.BufferedInput;
+    // pub const BufferedInput = util.BufferedInput;
     // pub const BufferedOutput = util.BufferedOutput;
 
     pub const Flags = util.Flags;
@@ -572,6 +572,146 @@ pub const ShellSubprocess = struct {
             if (this.internal_buffer.cap > 0 and !this.from_jsc) {
                 this.internal_buffer.listManaged(bun.default_allocator).deinit();
                 this.internal_buffer = .{};
+            }
+        }
+    };
+
+    pub const BufferedInput = struct {
+        remain: []const u8 = "",
+        fd: bun.FileDescriptor = bun.invalid_fd,
+        poll_ref: ?*Async.FilePoll = null,
+        written: usize = 0,
+
+        source: union(enum) {
+            blob: JSC.WebCore.AnyBlob,
+            array_buffer: JSC.ArrayBuffer.Strong,
+        },
+
+        pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
+
+        pub fn onReady(this: *BufferedInput, _: i64) void {
+            if (this.fd == bun.invalid_fd) {
+                return;
+            }
+
+            this.write();
+        }
+
+        pub fn writeIfPossible(this: *BufferedInput, comptime is_sync: bool) void {
+            if (comptime !is_sync) {
+
+                // we ask, "Is it possible to write right now?"
+                // we do this rather than epoll or kqueue()
+                // because we don't want to block the thread waiting for the write
+                switch (bun.isWritable(this.fd)) {
+                    .ready => {
+                        if (this.poll_ref) |poll| {
+                            poll.flags.insert(.writable);
+                            poll.flags.insert(.fifo);
+                            std.debug.assert(poll.flags.contains(.poll_writable));
+                        }
+                    },
+                    .hup => {
+                        this.deinit();
+                        return;
+                    },
+                    .not_ready => {
+                        if (!this.isWatching()) this.watch(this.fd);
+                        return;
+                    },
+                }
+            }
+
+            this.writeAllowBlocking(is_sync);
+        }
+
+        pub fn write(this: *BufferedInput) void {
+            this.writeAllowBlocking(false);
+        }
+
+        pub fn writeAllowBlocking(this: *BufferedInput, allow_blocking: bool) void {
+            var to_write = this.remain;
+
+            if (to_write.len == 0) {
+                // we are done!
+                this.closeFDIfOpen();
+                return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                // bun.assertNonBlocking(this.fd);
+            }
+
+            while (to_write.len > 0) {
+                switch (bun.sys.write(this.fd, to_write)) {
+                    .err => |e| {
+                        if (e.isRetry()) {
+                            log("write({d}) retry", .{
+                                to_write.len,
+                            });
+
+                            this.watch(this.fd);
+                            this.poll_ref.?.flags.insert(.fifo);
+                            return;
+                        }
+
+                        if (e.getErrno() == .PIPE) {
+                            this.deinit();
+                            return;
+                        }
+
+                        // fail
+                        log("write({d}) fail: {d}", .{ to_write.len, e.errno });
+                        this.deinit();
+                        return;
+                    },
+
+                    .result => |bytes_written| {
+                        this.written += bytes_written;
+
+                        log(
+                            "write({d}) {d}",
+                            .{
+                                to_write.len,
+                                bytes_written,
+                            },
+                        );
+
+                        this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                        to_write = to_write[bytes_written..];
+
+                        // we are done or it accepts no more input
+                        if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
+                            this.deinit();
+                            return;
+                        }
+                    },
+                }
+            }
+        }
+
+        fn closeFDIfOpen(this: *BufferedInput) void {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            if (this.fd != bun.invalid_fd) {
+                _ = bun.sys.close(this.fd);
+                this.fd = bun.invalid_fd;
+            }
+        }
+
+        pub fn deinit(this: *BufferedInput) void {
+            this.closeFDIfOpen();
+
+            switch (this.source) {
+                .blob => |*blob| {
+                    blob.detach();
+                },
+                .array_buffer => |*array_buffer| {
+                    array_buffer.deinit();
+                },
             }
         }
     };

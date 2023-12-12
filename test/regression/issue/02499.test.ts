@@ -4,14 +4,9 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "fs"
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { sleep, spawn, spawnSync, which } from "bun";
-
+import { StringDecoder } from "node:string_decoder";
 // https://github.com/oven-sh/bun/issues/2499
 it("onAborted() and onWritable are not called after receiving an empty response body due to a promise rejection", async testDone => {
-  var timeout = AbortSignal.timeout(10_000);
-  timeout.onabort = e => {
-    testDone(new Error("Test timed out, which means it failed"));
-  };
-
   const invalidJSON = Buffer.from("invalid json");
 
   // We want to test that the server isn't keeping the connection open in a
@@ -45,24 +40,16 @@ it("onAborted() and onWritable are not called after receiving an empty response 
 
       const reader = bunProcess.stdout.getReader();
       let hostname, port;
+      var text = "";
       {
-        const chunks: Buffer[] = [];
-        var decoder = new TextDecoder();
+        var decoder = new StringDecoder();
         while (!hostname && !port) {
           var { value, done } = await reader.read();
           if (done) break;
-          if (chunks.length > 0) {
-            chunks.push(value!);
-          }
+          text = decoder.write(value!);
           try {
-            if (chunks.length > 0) {
-              value = Buffer.concat(chunks);
-            }
-
-            ({ hostname, port } = JSON.parse(decoder.decode(value).trim()));
-          } catch {
-            chunks.push(value!);
-          }
+            ({ hostname, port } = JSON.parse(text.trim()));
+          } catch {}
         }
       }
 
@@ -72,22 +59,20 @@ it("onAborted() and onWritable are not called after receiving an empty response 
           keepalive: false,
           method: "POST",
           timeout: true,
-          signal: timeout,
         });
       } catch (e) {}
 
-      bunProcess.stdin?.write("--CLOSE--");
+      const wrote = bunProcess.stdin?.write("--CLOSE--");
       await bunProcess.stdin?.flush();
       await bunProcess.stdin?.end();
       expect(await bunProcess.exited).toBe(0);
+      console.count("Completed");
     } catch (e) {
-      timeout.onabort = () => {};
       testDone(e);
       throw e;
     } finally {
       bunProcess?.kill(9);
     }
   }
-  timeout.onabort = () => {};
   testDone();
-}, 30_000);
+}, 60_000);

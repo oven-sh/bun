@@ -1,54 +1,21 @@
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
-  var stream = Bun.stdin.stream();
-
   const StringDecoder: typeof import("string_decoder").StringDecoder = require("node:string_decoder").StringDecoder;
-  const decoder = new StringDecoder("utf8");
-
   var indexOf = Bun.indexOfLine;
-  var actualChunk: Uint8Array;
-  var i: number = -1;
-  var idx: number;
-  var last: number;
-  var done: boolean;
-  var value: Uint8Array[];
-  var value_len: number;
-  var pendingChunk: Uint8Array | undefined;
-  var reader: ReadableStreamDefaultReader | undefined = stream.getReader();
+
   async function* ConsoleAsyncIterator() {
+    var stream = Bun.stdin.stream();
+
+    const decoder = new StringDecoder("utf8");
+
     var deferredError;
+    var done = false;
+    var value: Uint8Array[];
+    var pendingChunk: Uint8Array | undefined;
+    var reader: ReadableStreamDefaultReader | undefined = stream.getReader();
+
     try {
-      if (i !== -1) {
-        last = i + 1;
-        i = indexOf(actualChunk, last);
-
-        while (i !== -1) {
-          yield decoder.write(actualChunk.subarray(last, i));
-          last = i + 1;
-          i = indexOf(actualChunk, last);
-        }
-
-        for (idx++; idx < value_len; idx++) {
-          actualChunk = value[idx];
-          if (pendingChunk) {
-            actualChunk = Buffer.concat([pendingChunk, actualChunk]);
-            pendingChunk = undefined;
-          }
-
-          last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
-          i = indexOf(actualChunk, last);
-          while (i !== -1) {
-            yield decoder.write(actualChunk.subarray(last, i));
-            last = i + 1;
-            i = indexOf(actualChunk, last);
-          }
-          i = -1;
-
-          pendingChunk = actualChunk.subarray(last);
-        }
-        actualChunk = undefined!;
-      }
+      var text = "";
 
       while (true) {
         reader ??= stream.getReader();
@@ -64,36 +31,51 @@ export function asyncIterator(this: Console) {
         reader = undefined;
         stream = Bun.stdin.stream();
 
+        if (!done) {
+          for (let chunk of value) {
+            text += decoder.write(chunk);
+          }
+        } else if (value && value.length > 0) {
+          const valueLength = value.length - 1;
+          for (let i = 0; i < valueLength; i++) {
+            text += decoder.write(value[i]);
+          }
+          text += decoder.end(value[valueLength]);
+        } else {
+          text += decoder.end();
+        }
+
+        {
+          let i = 0,
+            textLength = text.length;
+
+          while (i < textLength) {
+            let j = text.indexOf("\n", i);
+            if (j === -1) {
+              break;
+            }
+
+            const next = j + 1;
+            if (text[j - 1] === "\r") {
+              j--;
+            }
+            yield text.slice(i, j);
+            i = next;
+          }
+
+          if (i < textLength) {
+            text = text.slice(i);
+          } else {
+            text = "";
+          }
+        }
+
         if (done) {
-          if (pendingChunk) {
-            yield decoder.write(pendingChunk);
+          if (text.length > 0) {
+            yield text;
           }
           return;
         }
-
-        // we assume it was given line-by-line
-        for (idx = 0, value_len = value.length; idx < value_len; idx++) {
-          actualChunk = value[idx];
-          if (pendingChunk) {
-            actualChunk = Buffer.concat([pendingChunk, actualChunk]);
-            pendingChunk = undefined;
-          }
-
-          last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
-          i = indexOf(actualChunk, last);
-          while (i !== -1) {
-            // This yield may end the function, in that case we need to be able to recover state
-            // if the iterator was fired up again.
-            yield decoder.write(actualChunk.subarray(last, i));
-            last = i + 1;
-            i = indexOf(actualChunk, last);
-          }
-          i = -1;
-
-          pendingChunk = actualChunk.subarray(last);
-        }
-        actualChunk = undefined!;
       }
     } catch (e) {
       deferredError = e;

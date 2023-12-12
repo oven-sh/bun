@@ -202,7 +202,7 @@ pub const PackageManagerCommand = struct {
 
             var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
-            while (iterator.nextNodeModulesFolder()) |node_modules| {
+            while (iterator.nextNodeModulesFolder(null)) |node_modules| {
                 const path_len = node_modules.relative_path.len;
                 const path = try ctx.allocator.alloc(u8, path_len + 1);
                 bun.copy(u8, path, node_modules.relative_path);
@@ -214,6 +214,7 @@ pub const PackageManagerCommand = struct {
                 try directories.append(.{
                     .relative_path = path[0..path_len :0],
                     .dependencies = dependencies,
+                    .tree_id = node_modules.tree_id,
                 });
             }
 
@@ -243,7 +244,7 @@ pub const PackageManagerCommand = struct {
                 for (sorted_dependencies, 0..) |*dep, i| {
                     dep.* = @as(DependencyID, @truncate(root_deps.off + i));
                 }
-                std.sort.block(DependencyID, sorted_dependencies, ByName{
+                std.sort.pdq(DependencyID, sorted_dependencies, ByName{
                     .dependencies = dependencies,
                     .buf = string_bytes,
                 }, ByName.isLessThan);
@@ -368,7 +369,7 @@ fn printNodeModulesFolderStructure(
     const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
     defer allocator.free(sorted_dependencies);
     bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
-    std.sort.block(DependencyID, sorted_dependencies, ByName{
+    std.sort.pdq(DependencyID, sorted_dependencies, ByName{
         .dependencies = dependencies,
         .buf = string_bytes,
     }, ByName.isLessThan);

@@ -1,6 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "../../../../harness";
-import { copyFileSync, cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import {
+  copyFileSync,
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  promises as fs,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { cp } from "fs/promises";
@@ -29,43 +39,43 @@ async function tempDirToBuildIn() {
   return dir;
 }
 
-function readdirRecursive(dir: string) {
-  let results: string[] = [];
-
-  readdirSync(dir, { withFileTypes: true }).forEach(file => {
-    if (file.isDirectory()) {
-      results = results.concat(readdirRecursive(join(dir, file.name)).map(x => join(file.name, x)));
-    } else {
-      results.push(file.name);
-    }
-  });
-
-  return results;
-}
-
-function hashAllFiles(dir: string) {
-  const files = readdirRecursive(dir).sort();
+async function hashAllFiles(dir: string) {
+  console.log("Hashing");
+  const files = (await fs.readdir(dir, { recursive: true })).sort();
   const hashes: Record<string, string> = {};
-  for (const file of files) {
-    const hash = new Bun.CryptoHasher("sha256");
-    hash.update(readFileSync(join(dir, file)));
-    hashes[file] = hash.digest("hex");
+  const promises = new Array(files.length);
+  for (let i = 0; i < promises.length; i++) {
+    promises[i] = (async function (file, path) {
+      const contents = await fs.readFile(path);
+      console.log("file", file, path);
+      hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
+    })(files[i], join(dir, files[i]));
   }
+  await Promise.all(promises);
   return hashes;
 }
 
 test("next build works", async () => {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-  const install = Bun.spawnSync([bunExe(), "i"], { cwd: root, env: bunEnv });
-  if (install.exitCode !== 0) {
+  const install = Bun.spawn([bunExe(), "i"], {
+    cwd: root,
+    env: bunEnv,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if ((await install.exited) !== 0) {
     throw new Error("Failed to install dependencies");
   }
+
+  console.log("Starting build...");
 
   const bunDir = await tempDirToBuildIn();
   const nodeDir = await tempDirToBuildIn();
 
-  const bunBuild = await Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "build"], {
+  console.time("[bun] next build");
+  const bunBuild = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "build"], {
     cwd: bunDir,
     // env: bunEnv,
     stdio: ["ignore", "pipe", "inherit"],
@@ -74,18 +84,32 @@ test("next build works", async () => {
       NODE_ENV: "production",
     },
   });
-  const nodeBuild = await Bun.spawn(["node", "node_modules/.bin/next", "build"], {
+
+  console.time("[node] next build");
+  const nodeBuild = Bun.spawn(["node", "node_modules/.bin/next", "build"], {
     cwd: nodeDir,
-    env: bunEnv,
+    env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  await Promise.all([bunBuild.exited, nodeBuild.exited]);
+  await Promise.all([
+    bunBuild.exited.then(a => {
+      console.timeEnd("[bun] next build");
+      return a;
+    }),
+    nodeBuild.exited.then(a => {
+      console.timeEnd("[node] next build");
+      return a;
+    }),
+  ]);
   expect(nodeBuild.exitCode).toBe(0);
   expect(bunBuild.exitCode).toBe(0);
 
-  // remove timestamps from output
-  const bunCliOutput = (await Bun.readableStreamToText(bunBuild.stdout)).replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
-  const nodeCliOutput = (await Bun.readableStreamToText(nodeBuild.stdout)).replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
+  const bunCliOutput = (await new Response(bunBuild.stdout).text())
+    // remove timestamps from output
+    .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
+  const nodeCliOutput = (await new Response(nodeBuild.stdout).text())
+    // remove timestamps from output
+    .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
 
   expect(bunCliOutput).toBe(nodeCliOutput);
 
@@ -111,8 +135,8 @@ test("next build works", async () => {
     rmSync(join(nodeBuildDir, key), { recursive: true });
   }
 
-  const bunBuildHash = hashAllFiles(bunBuildDir);
-  const nodeBuildHash = hashAllFiles(nodeBuildDir);
+  console.log("Hashing files...");
+  const [bunBuildHash, nodeBuildHash] = await Promise.all([hashAllFiles(bunBuildDir), hashAllFiles(nodeBuildDir)]);
 
   try {
     expect(bunBuildHash).toEqual(nodeBuildHash);
@@ -137,6 +161,6 @@ test("next build works", async () => {
   }
 
   build_passed = true;
-}, 300000);
+}, 600000);
 
 const version_string = "[production needs a constant string]";

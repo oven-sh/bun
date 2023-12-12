@@ -682,14 +682,38 @@ pub const UpgradeCommand = struct {
                     .cwd = tmpdir_path,
                     .max_output_bytes = 512,
                 }) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> Failed to verify Bun {s}<r>)", .{@errorName(err)});
+                    defer save_dir_.deleteTree(version_name) catch {};
+
+                    if (err == error.FileNotFound) {
+                        if (std.fs.cwd().access(exe, .{})) {
+                            // On systems like NixOS, the FileNotFound is actually the system-wide linker,
+                            // as they do not have one (most systems have it at a known path). This is how
+                            // ChildProcess returns FileNotFound despite the actual
+                            //
+                            // In these cases, prebuilt binaries from GitHub will never work without
+                            // extra patching, so we will print a message deferring them to their system
+                            // package manager.
+                            Output.prettyErrorln(
+                                \\<r><red>error<r><d>:<r> 'bun upgrade' is unsupported on systems without ld
+                                \\
+                                \\You are likely on an immutable system such as NixOS, where dynamic
+                                \\libraries are stored in a global cache.
+                                \\
+                                \\Please use your system's package manager to properly upgrade bun.
+                                \\
+                            , .{});
+                            Global.exit(1);
+                            return;
+                        } else |_| {}
+                    }
+
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>)", .{@errorName(err)});
                     Global.exit(1);
                 };
 
                 if (result.term.Exited != 0) {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> failed to verify Bun<r> (exit code: {d})", .{result.term.Exited});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to verify Bun<r> (exit code: {d})", .{result.term.Exited});
                     Global.exit(1);
                 }
 

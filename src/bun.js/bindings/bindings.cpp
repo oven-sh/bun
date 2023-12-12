@@ -76,6 +76,7 @@
 #include "JSDOMWrapperCache.h"
 
 #include "wtf/text/AtomString.h"
+#include "wtf/Scope.h"
 #include "HTTPHeaderNames.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JavaScriptCore/TestRunnerUtils.h"
@@ -498,6 +499,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (addToStack) {
         stack.append({ v1, v2 });
     }
+    auto removeFromStack = WTF::makeScopeExit([&] { if (addToStack) { stack.remove(originalLength); } });
 
     JSCell* c1 = v1.asCell();
     JSCell* c2 = v2.asCell();
@@ -901,10 +903,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             RETURN_IF_EXCEPTION(*scope, false);
         }
 
-        if (addToStack) {
-            stack.remove(originalLength);
-        }
-
         RETURN_IF_EXCEPTION(*scope, false);
 
         return true;
@@ -1021,10 +1019,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (addToStack) {
-                stack.remove(originalLength);
-            }
-
             return result;
         }
     }
@@ -1071,10 +1065,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         RETURN_IF_EXCEPTION(*scope, false);
-    }
-
-    if (addToStack) {
-        stack.remove(originalLength);
     }
 
     return true;
@@ -2127,6 +2117,12 @@ JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* 
 {
     return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
+JSC__JSValue JSC__JSValue__getDirectIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
+    uint32_t arg3)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(jsValue).getObject();
+    return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
+}
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1,
     const ZigString* arg2)
 {
@@ -3025,6 +3021,19 @@ void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const Z
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
+}
+
+extern "C" void JSC__JSValue__putMayBeIndex(JSC__JSValue target, JSC__JSGlobalObject* globalObject, const BunString* key, JSC__JSValue value)
+{
+    JSC::VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::String keyStr = key->toWTFString();
+    JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
+
+    JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
+    object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
@@ -4607,7 +4616,6 @@ restart:
             auto* prop = entry.key();
 
             if (prop == vm.propertyNames->constructor
-                || prop == vm.propertyNames->length
                 || prop == vm.propertyNames->underscoreProto
                 || prop == vm.propertyNames->toStringTagSymbol)
                 return true;
@@ -4695,8 +4703,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->length
-                        || property == vm.propertyNames->underscoreProto
+                    if (property == vm.propertyNames->underscoreProto
                         || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }

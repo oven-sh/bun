@@ -188,14 +188,14 @@ const CreateOptions = struct {
     open: bool = false,
 
     const params = [_]clap.Param(clap.Help){
-        clap.parseParam("--help                     Print this menu") catch unreachable,
-        clap.parseParam("--force                    Overwrite existing files") catch unreachable,
-        clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
-        clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
-        clap.parseParam("--verbose                  Too many logs") catch unreachable,
-        clap.parseParam("--no-package-json          Disable package.json transforms") catch unreachable,
-        clap.parseParam("--open                     On finish, start bun & open in-browser") catch unreachable,
-        clap.parseParam("<POS>...                   ") catch unreachable,
+        clap.parseParam("-h, --help                     Print this menu") catch unreachable,
+        clap.parseParam("--force                        Overwrite existing files") catch unreachable,
+        clap.parseParam("--no-install                   Don't install node_modules") catch unreachable,
+        clap.parseParam("--no-git                       Don't create a git repository") catch unreachable,
+        clap.parseParam("--verbose                      Too many logs") catch unreachable,
+        clap.parseParam("--no-package-json              Disable package.json transforms") catch unreachable,
+        clap.parseParam("--open                         On finish, start bun & open in-browser") catch unreachable,
+        clap.parseParam("<POS>...                       ") catch unreachable,
     };
 
     pub fn parse(ctx: Command.Context) !CreateOptions {

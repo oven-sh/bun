@@ -1,3 +1,4 @@
+const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const mem = std.mem;
 const strings = @import("./string_immutable.zig");
@@ -41,7 +42,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         } else {
             @compileError("Not implemented for this key type");
         }
-        std.sort.block(KV, &sorted_kvs, {}, lenAsc);
+        std.sort.pdq(KV, &sorted_kvs, {}, lenAsc);
         const min_len = sorted_kvs[0].key.len;
         const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
         var len_indexes: [max_len + 1]usize = undefined;
@@ -164,6 +165,30 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
 
             return null;
+        }
+
+        /// Caller must ensure that the input is a string.
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
+            if (comptime @import("root").bun.Environment.allow_assert) {
+                if (!input.isString()) {
+                    @panic("ComptimeStringMap.fromJS: input is not a string");
+                }
+            }
+
+            const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            return getWithEql(str, @import("root").bun.String.eqlComptime);
+        }
+
+        /// Caller must ensure that the input is a string.
+        pub fn fromJSCaseInsensitive(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
+            if (comptime @import("root").bun.Environment.allow_assert) {
+                if (!input.isString()) {
+                    @panic("ComptimeStringMap.fromJS: input is not a string");
+                }
+            }
+
+            const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            return str.inMapCaseInsensitive(@This());
         }
 
         pub fn getWithEql(input: anytype, comptime eql: anytype) ?V {

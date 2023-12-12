@@ -297,7 +297,7 @@ pub const MinifyRenamer = struct {
                     .count = slot.count,
                 };
             }
-            std.sort.block(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
+            std.sort.pdq(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
 
             var next_name: isize = 0;
 
@@ -395,7 +395,7 @@ pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: 
             sorted_members_buf[i] = member.ref.innerIndex();
             i += 1;
         }
-        std.sort.block(u32, sorted_members_buf, {}, std.sort.asc(u32));
+        std.sort.pdq(u32, sorted_members_buf, {}, std.sort.asc(u32));
 
         // Assign slots for this scope's symbols. Only do this if the slot is
         // not already assigned. Nested scopes have copies of symbols from parent
@@ -593,7 +593,7 @@ pub const NumberRenamer = struct {
                 remaining = remaining[1..];
             }
             std.debug.assert(remaining.len == 0);
-            std.sort.block(u32, sorted.items, {}, std.sort.asc(u32));
+            std.sort.pdq(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
                 r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));

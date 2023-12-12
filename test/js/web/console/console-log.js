@@ -1,3 +1,4 @@
+console.log({ a: "" });
 console.log("Hello World!");
 console.log(0);
 console.log(-0);
@@ -81,6 +82,8 @@ console.dir({ 1: { 2: { 3: 3 } } }, { depth: 0, colors: false }, "Some ignored a
 console.dir({ 1: { 2: { 3: 3 } } }, { depth: -1, colors: false }, "Some ignored arg");
 console.dir({ 1: { 2: { 3: 3 } } }, { depth: 1.2, colors: false }, "Some ignored arg");
 console.dir({ 1: { 2: { 3: 3 } } }, { depth: Infinity, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: -Infinity, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: NaN, colors: false }, "Some ignored arg");
 const set = new Set([1, "123", { a: [], str: "123123132", nr: 3453 }]);
 console.log(set.keys());
 console.log(set.values());
@@ -106,3 +109,64 @@ const objectWithStringTag = {
   [Symbol.toStringTag]: "myCustomName",
 };
 console.log(objectWithStringTag);
+
+console.log({ length: 4, 0: 1, 1: 2, 2: 3, 3: 4 });
+console.log([1, 2, 3]);
+function hole(array, ...ranges) {
+  var result = new Array(array.length);
+  for (let index of ranges) {
+    result[index] = array[index];
+  }
+
+  return result;
+}
+console.log(hole([1, 2, 3], 1));
+console.log(hole([1, 2, 3], 0, 1));
+console.log(hole([1, 2, 3], 0, 1, 2));
+console.log(hole([1, 2, 3], 2));
+
+{
+  const overriddenArray = [1, 2, 3, 4];
+  overriddenArray.length = 42;
+  delete overriddenArray[2];
+  console.log(overriddenArray);
+}
+
+{
+  const overriddenArray = [1, 2, 4];
+  overriddenArray.length = 42;
+  delete overriddenArray[1];
+  console.log(overriddenArray);
+}
+
+{
+  const overriddenArray = new Array(42);
+  delete overriddenArray[1];
+  console.log(overriddenArray);
+}
+
+{
+  // huge holey array
+  const overriddenArray = new Array(1024);
+  console.log(overriddenArray);
+}
+
+{
+  // array too large to have an inline storage capacity
+  const overriddenArray = new Array(1024);
+  for (let i = 0; i < overriddenArray.length; i++) {
+    overriddenArray[i] = "i" + i;
+  }
+  delete overriddenArray[1];
+  delete overriddenArray[876];
+  console.log(overriddenArray);
+}
+
+// ensure length property is shown
+{
+  console.log({ a: 42, length: 0 });
+  console.log({ [1]: 42, length: 1 });
+}
+
+// TODO: handle DerivedArray
+// It appears to not be set and I don't know why.

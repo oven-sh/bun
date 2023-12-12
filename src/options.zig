@@ -385,22 +385,11 @@ pub const Target = enum {
     pub const Map = ComptimeStringMap(
         Target,
         .{
-            .{
-                "browser",
-                Target.browser,
-            },
-            .{
-                "bun",
-                Target.bun,
-            },
-            .{
-                "bun_macro",
-                Target.bun_macro,
-            },
-            .{
-                "node",
-                Target.node,
-            },
+            .{ "browser", Target.browser },
+            .{ "bun", Target.bun },
+            .{ "bun_macro", Target.bun_macro },
+            .{ "macro", Target.bun_macro },
+            .{ "node", Target.node },
         },
     );
 
@@ -410,24 +399,7 @@ pub const Target = enum {
 
             return null;
         }
-        var zig_str = JSC.ZigString.init("");
-        value.toZigString(&zig_str, global);
-
-        var slice = zig_str.slice();
-
-        const Eight = strings.ExactSizeMatcher(8);
-
-        return switch (Eight.match(slice)) {
-            Eight.case("deno"), Eight.case("browser") => Target.browser,
-            Eight.case("bun") => Target.bun,
-            Eight.case("macro") => Target.bun_macro,
-            Eight.case("node") => Target.node,
-            else => {
-                JSC.throwInvalidArguments("target must be one of: deno, browser, bun, macro, node", .{}, global, exception);
-
-                return null;
-            },
-        };
+        return Map.fromJS(global, value);
     }
 
     pub fn toAPI(this: Target) Api.Target {
@@ -648,15 +620,11 @@ pub const Format = enum {
         if (format.isUndefinedOrNull()) return null;
 
         if (!format.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("Format must be a string", .{}, global, exception);
+            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
             return null;
         }
 
-        var zig_str = JSC.ZigString.init("");
-        format.toZigString(&zig_str, global);
-        if (zig_str.len == 0) return null;
-
-        return fromString(zig_str.slice()) orelse {
+        return Map.fromJS(global, format) orelse {
             JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
             return null;
         };

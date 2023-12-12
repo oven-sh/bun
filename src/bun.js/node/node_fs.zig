@@ -1903,8 +1903,9 @@ pub const Arguments = struct {
         /// @default false
         recursive: bool = false,
         /// A file mode. If a string is passed, it is parsed as an octal integer. If not specified
-        /// @default
         mode: Mode = DefaultMode,
+        /// If set to true, the return value is never set to a string
+        always_return_none: bool = false,
 
         pub const DefaultMode = 0o777;
 
@@ -4247,8 +4248,11 @@ pub const NodeFS = struct {
                 }
             },
             .result => {
+                if (args.always_return_none or !return_path) {
+                    return .{ .result = .{ .none = {} } };
+                }
                 return .{
-                    .result = if (return_path) .{ .string = bun.String.createFromOSPath(path) } else .{ .none = {} },
+                    .result = .{ .string = bun.String.createFromOSPath(path) },
                 };
             },
         }
@@ -4340,8 +4344,11 @@ pub const NodeFS = struct {
             .result => {},
         }
 
+        if (args.return_empty_string or !return_path) {
+            return Option{ .result = bun.String.empty };
+        }
         return .{
-            .result = if (return_path) .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) } else .{ .none = {} },
+            .result = .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) },
         };
     }
 

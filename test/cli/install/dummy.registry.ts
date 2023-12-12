@@ -94,7 +94,7 @@ export function dummyBeforeAll() {
       return await handler(request);
     },
     port: 0,
-    hostname: '0.0.0.0'
+    hostname: "0.0.0.0",
   });
   root_url = `http://localhost:${server.port}`;
 }

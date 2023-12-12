@@ -363,6 +363,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                     .with_file_types => |*res| {
                         for (res.items) |item| {
                             item.name.deref();
+                            item.path.deref();
                         }
                         res.clearAndFree();
                     },
@@ -479,7 +480,10 @@ pub const AsyncReaddirRecursiveTask = struct {
                         for (entries.items) |*item| {
                             switch (comptime ResultType) {
                                 bun.String => item.deref(),
-                                Dirent => item.name.deref(),
+                                Dirent => {
+                                    item.name.deref();
+                                    item.path.deref();
+                                },
                                 Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
                                 else => unreachable,
                             }
@@ -4525,6 +4529,7 @@ pub const NodeFS = struct {
                     switch (comptime ExpectedType) {
                         Dirent => {
                             item.name.deref();
+                            item.path.deref();
                         },
                         Buffer => {
                             item.destroy();
@@ -4842,6 +4847,7 @@ pub const NodeFS = struct {
                         switch (comptime ExpectedType) {
                             Dirent => {
                                 result.name.deref();
+                                result.path.deref();
                             },
                             Buffer => {
                                 result.destroy();

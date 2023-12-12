@@ -14,6 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
 function testSatisfiesExact(left: any, right: any, expected: boolean) {
@@ -93,6 +94,8 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-r2", "1.2.3-r100"],
       ["1.2.3-r100", "1.2.3-R2"],
       ["1.0.0-pre.a.b", "1.0.0-pre.a"],
+      ["1.0.0-alpha.22-alpha.jkwejf334jkj43", "1.0.0-alpha.3"],
+      ["1.0.0-alpha.1beta", "1.0.0-alpha.2"],
     ];
     for (const [left, right] of tests) {
       expect(order(left, right)).toBe(1);
@@ -685,5 +688,9 @@ describe("Bun.semver.satisfies()", () => {
     for (const [range, version] of tests) {
       expect(satisfies(version, range)).toBeFalse();
     }
+  });
+
+  test("pre-release snapshot", () => {
+    expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
 });

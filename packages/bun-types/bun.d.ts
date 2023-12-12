@@ -318,7 +318,7 @@ declare module "bun" {
    *
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
-   * If `destination` exists, it must be a regular file or symlink to a file.
+   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
    *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
@@ -329,8 +329,14 @@ declare module "bun" {
     destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
     options?: {
-      /** If writing to a PathLike, set the permissions of the file. */
-      mode?: number;
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
     },
   ): Promise<number>;
 
@@ -345,7 +351,20 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(destination: BunFile, input: Response): Promise<number>;
+  export function write(
+    destination: BunFile,
+    input: Response,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    *
@@ -362,6 +381,16 @@ declare module "bun" {
   export function write(
     destinationPath: PathLike,
     input: Response,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
   ): Promise<number>;
 
   /**
@@ -384,7 +413,20 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(destination: BunFile, input: BunFile): Promise<number>;
+  export function write(
+    destination: BunFile,
+    input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    *
@@ -409,6 +451,16 @@ declare module "bun" {
   export function write(
     destinationPath: PathLike,
     input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
   ): Promise<number>;
 
   export interface SystemError extends Error {
@@ -1112,6 +1164,11 @@ declare module "bun" {
      * it in some cases. Do your own benchmarks!
      */
     inline?: boolean;
+
+    /**
+     * @default "warn"
+     */
+    logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
   }
 
   /**

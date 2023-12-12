@@ -628,15 +628,39 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
         return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {
-            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
-            else => null,
+            // "fd isn't a valid open file descriptor."
+            .BADF => {
+                if (Environment.isDebug) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = EBADF<r>", .{fd});
+                    std.debug.dumpCurrentStackTrace(null);
+                }
+                return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
+            },
+            else => |err| {
+                if (Environment.isDebug and err != .SUCCESS) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = {s}<r>", .{ fd, @tagName(err) });
+                }
+                return null;
+            },
         };
     }
 
     if (comptime Environment.isLinux) {
         return switch (linux.getErrno(linux.close(fd))) {
-            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
-            else => null,
+            // "fd isn't a valid open file descriptor."
+            .BADF => {
+                if (Environment.isDebug) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = EBADF<r>", .{fd});
+                    std.debug.dumpCurrentStackTrace(null);
+                }
+                return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
+            },
+            else => |err| {
+                if (Environment.isDebug and err != .SUCCESS) {
+                    bun.Output.prettyErrorln("<red><b>close({d}) = {s}<r>", .{ fd, @tagName(err) });
+                }
+                return null;
+            },
         };
     }
 
@@ -644,6 +668,7 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
         std.debug.assert(fd != 0);
 
         if (kernel32.CloseHandle(bun.fdcast(fd)) == 0) {
+            log("<red><b>close({}) = FAILED<r>", .{fd});
             return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
         }
 
@@ -756,6 +781,13 @@ pub fn pwritev(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize
 
 pub fn readv(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     const fd = bun.fdcast(fd_);
+
+    if (comptime Environment.allow_assert) {
+        if (buffers.len == 0) {
+            @panic("readv() called with 0 length buffer");
+        }
+    }
+
     if (comptime Environment.isMac) {
         const rc = readv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
@@ -785,6 +817,12 @@ pub fn readv(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
 
 pub fn preadv(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     const fd = bun.fdcast(fd_);
+    if (comptime Environment.allow_assert) {
+        if (buffers.len == 0) {
+            @panic("preadv() called with 0 length buffer");
+        }
+    }
+
     if (comptime Environment.isMac) {
         const rc = preadv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
@@ -853,6 +891,12 @@ pub fn pread(fd_: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const fd = bun.fdcast(fd_);
     const adjusted_len = @min(buf.len, max_count);
 
+    if (comptime Environment.allow_assert) {
+        if (adjusted_len == 0) {
+            @panic("pread() called with 0 length buffer");
+        }
+    }
+
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
@@ -871,6 +915,12 @@ else
     sys.pwrite;
 
 pub fn pwrite(fd_: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usize) {
+    if (comptime Environment.allow_assert) {
+        if (bytes.len == 0) {
+            @panic("pwrite() called with 0 length buffer");
+        }
+    }
+
     const fd = bun.fdcast(fd_);
     const adjusted_len = @min(bytes.len, max_count);
 
@@ -889,6 +939,11 @@ pub fn pwrite(fd_: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usi
 }
 
 pub fn read(fd_: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    if (comptime Environment.allow_assert) {
+        if (buf.len == 0) {
+            @panic("read() called with 0 length buffer");
+        }
+    }
     const fd = bun.fdcast(fd_);
     const debug_timer = bun.Output.DebugTimer.start();
     const adjusted_len = @min(buf.len, max_count);
@@ -919,6 +974,11 @@ pub fn read(fd_: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 pub fn recv(fd_: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const fd = bun.fdcast(fd_);
     const adjusted_len = @min(buf.len, max_count);
+    if (comptime Environment.allow_assert) {
+        if (adjusted_len == 0) {
+            @panic("recv() called with 0 length buffer");
+        }
+    }
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, adjusted_len, flag, null, null);
@@ -1022,6 +1082,17 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
+pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.renameat(from_dir, from, to_dir, to), .rename)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
 pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
@@ -1086,6 +1157,28 @@ pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1544,5 +1637,26 @@ pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun
         ),
         .link,
         basename,
+    ) orelse Maybe(void).success;
+}
+
+pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isLinux) {
+        @compileError("Linux only.");
+    }
+
+    if (comptime Environment.allow_assert)
+        std.debug.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+
+    return Maybe(void).errnoSysP(
+        std.os.linux.linkat(
+            bun.fdcast(tmpfd),
+            "",
+            dirfd,
+            name,
+            os.AT.EMPTY_PATH,
+        ),
+        .link,
+        name,
     ) orelse Maybe(void).success;
 }

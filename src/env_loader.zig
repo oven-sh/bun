@@ -240,7 +240,7 @@ pub const Loader = struct {
         var key_buf_len: usize = 0;
         var e_strings_to_allocate: usize = 0;
 
-        if (behavior != .disable) {
+        if (behavior != .disable and behavior != .load_all_without_inlining) {
             if (behavior == .prefix) {
                 std.debug.assert(prefix.len > 0);
 
@@ -1015,6 +1015,8 @@ pub const Map = struct {
     };
     pub const HashTable = bun.StringArrayHashMap(HashTableValue);
 
+    const GetOrPutResult = HashTable.GetOrPutResult;
+
     map: HashTable,
 
     pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
@@ -1032,7 +1034,7 @@ pub const Map = struct {
                 bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
                 envp_buf[i] = env_buf.ptr;
             }
-            std.debug.assert(i == envp_count);
+            if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
         }
         return envp_buf;
     }
@@ -1069,6 +1071,10 @@ pub const Map = struct {
             .value = value,
             .conditional = false,
         });
+    }
+
+    pub inline fn getOrPutWithoutValue(this: *Map, key: string) !GetOrPutResult {
+        return this.map.getOrPut(key);
     }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {

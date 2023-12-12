@@ -15,6 +15,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -24,6 +25,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -407,7 +409,11 @@ jobs:
           cd ${{matrix.tag}}
           chmod +x bun
           pwd >> $GITHUB_PATH
-          ./bun --version
+      - id: bun-version-check
+        name: Bun version check
+        run: |
+          # If this hangs, it means something is seriously wrong with the build
+          bun --version
       - id: install
         name: Install dependencies
         run: |

@@ -293,7 +293,7 @@ pub const LocRef = struct {
 
 pub const Flags = struct {
     pub const JSXElement = enum {
-        is_key_before_rest,
+        is_key_after_spread,
         has_any_dynamic,
         can_be_inlined,
         can_be_hoisted,
@@ -671,7 +671,7 @@ pub const CharFreq = struct {
             break :brk _array;
         };
 
-        std.sort.block(CharAndCount, &array, {}, CharAndCount.lessThan);
+        std.sort.pdq(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -2071,11 +2071,11 @@ pub const E = struct {
         }
 
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.block(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
+            std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.block(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
+            std.sort.pdq(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {
@@ -6470,6 +6470,7 @@ pub const Part = struct {
 
 pub const Result = union(enum) {
     already_bundled: void,
+    cached: void,
     ast: Ast,
 };
 

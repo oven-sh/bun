@@ -241,6 +241,7 @@ enum DotEnvBehavior {
   disable = 1;
   prefix = 2;
   load_all = 3;
+  load_all_without_inlining = 4;
 }
 
 message EnvConfig {
@@ -589,6 +590,7 @@ message BunInstall {
   string global_bin_dir = 18;
   bool frozen_lockfile = 19;
   bool exact = 20;
+  uint32 concurrent_scripts = 21;
 }
 
 struct ClientServerModule {

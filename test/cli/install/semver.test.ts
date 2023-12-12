@@ -14,6 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
 function testSatisfiesExact(left: any, right: any, expected: boolean) {
@@ -39,6 +40,25 @@ function testSatisfies(right: any, left: any, expected: boolean) {
 }
 
 describe("Bun.semver.order()", () => {
+  test("whitespace bug fix", () => {
+    expect(
+      order(
+        `1.2.3`,
+        `
+1.2.3`,
+      ),
+    ).toBe(0);
+    expect(
+      order(
+        `1.2.3`,
+        `\t
+1.2.3`,
+      ),
+    ).toBe(0);
+    expect(order("1.2.3", " 1.2.3")).toBe(0);
+    expect(order(`\n\t1.2.3`, " 1.2.3")).toBe(0);
+    expect(order(`\r\t\n\r1.2.3`, " 1.2.3")).toBe(0);
+  });
   // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/comparisons.js#L4
   test("comparisons", () => {
     var tests = [
@@ -74,6 +94,8 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-r2", "1.2.3-r100"],
       ["1.2.3-r100", "1.2.3-R2"],
       ["1.0.0-pre.a.b", "1.0.0-pre.a"],
+      ["1.0.0-alpha.22-alpha.jkwejf334jkj43", "1.0.0-alpha.3"],
+      ["1.0.0-alpha.1beta", "1.0.0-alpha.2"],
     ];
     for (const [left, right] of tests) {
       expect(order(left, right)).toBe(1);
@@ -666,5 +688,9 @@ describe("Bun.semver.satisfies()", () => {
     for (const [range, version] of tests) {
       expect(satisfies(version, range)).toBeFalse();
     }
+  });
+
+  test("pre-release snapshot", () => {
+    expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
 });

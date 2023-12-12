@@ -385,22 +385,11 @@ pub const Target = enum {
     pub const Map = ComptimeStringMap(
         Target,
         .{
-            .{
-                "browser",
-                Target.browser,
-            },
-            .{
-                "bun",
-                Target.bun,
-            },
-            .{
-                "bun_macro",
-                Target.bun_macro,
-            },
-            .{
-                "node",
-                Target.node,
-            },
+            .{ "browser", Target.browser },
+            .{ "bun", Target.bun },
+            .{ "bun_macro", Target.bun_macro },
+            .{ "macro", Target.bun_macro },
+            .{ "node", Target.node },
         },
     );
 
@@ -410,24 +399,7 @@ pub const Target = enum {
 
             return null;
         }
-        var zig_str = JSC.ZigString.init("");
-        value.toZigString(&zig_str, global);
-
-        var slice = zig_str.slice();
-
-        const Eight = strings.ExactSizeMatcher(8);
-
-        return switch (Eight.match(slice)) {
-            Eight.case("deno"), Eight.case("browser") => Target.browser,
-            Eight.case("bun") => Target.bun,
-            Eight.case("macro") => Target.bun_macro,
-            Eight.case("node") => Target.node,
-            else => {
-                JSC.throwInvalidArguments("target must be one of: deno, browser, bun, macro, node", .{}, global, exception);
-
-                return null;
-            },
-        };
+        return Map.fromJS(global, value);
     }
 
     pub fn toAPI(this: Target) Api.Target {
@@ -648,15 +620,11 @@ pub const Format = enum {
         if (format.isUndefinedOrNull()) return null;
 
         if (!format.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("Format must be a string", .{}, global, exception);
+            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
             return null;
         }
 
-        var zig_str = JSC.ZigString.init("");
-        format.toZigString(&zig_str, global);
-        if (zig_str.len == 0) return null;
-
-        return fromString(zig_str.slice()) orelse {
+        return Map.fromJS(global, format) orelse {
             JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
             return null;
         };
@@ -978,6 +946,15 @@ pub const JSX = struct {
             development: string = "react/jsx-dev-runtime",
             production: string = "react/jsx-runtime",
         };
+
+        pub fn hashForRuntimeTranspiler(this: *const Pragma, hasher: *std.hash.Wyhash) void {
+            for (this.factory) |factory| hasher.update(factory);
+            for (this.fragment) |fragment| hasher.update(fragment);
+            hasher.update(this.import_source.development);
+            hasher.update(this.import_source.production);
+            hasher.update(this.classic_import_source);
+            hasher.update(this.package_name);
+        }
 
         pub fn importSource(this: *const Pragma) string {
             return switch (this.development) {
@@ -1707,9 +1684,8 @@ pub const BundleOptions = struct {
                 opts.allow_runtime = false;
             },
             .bun => {
-                // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
-                // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
+
                 opts.env.behavior = .load_all;
                 if (transform.extension_order.len == 0) {
                     // we must also support require'ing .node files
@@ -2018,7 +1994,7 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), &(try std.os.toPosixPath(file.value.move.getPathname())), bun.fdcast(dir), &(try std.os.toPosixPath(rel_path)));
+        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), bun.fdcast(dir), bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {

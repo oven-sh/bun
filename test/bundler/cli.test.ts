@@ -12,7 +12,7 @@ describe("bun build", () => {
     });
     expect(exitCode).toBe(0);
     expect(stderr.toString("utf8")).toContain(
-      'warn: "key" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+      'warn: "key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
     );
   });
 

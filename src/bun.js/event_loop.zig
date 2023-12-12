@@ -21,7 +21,7 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("root").bun.http.NetworkThread;
+
 const uws = @import("root").bun.uws;
 const Async = bun.Async;
 
@@ -83,13 +83,9 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
     };
 }
 
-pub fn IOTask(comptime Context: type) type {
-    return WorkTask(Context, true);
-}
-
-pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
+pub fn WorkTask(comptime Context: type) type {
     return struct {
-        const TaskType = if (async_io) NetworkThread.Task else WorkPoolTask;
+        const TaskType = WorkPoolTask;
 
         const This = @This();
         ctx: *Context,
@@ -140,12 +136,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
             var vm = this.event_loop.virtual_machine;
             this.ref.ref(vm);
             this.async_task_tracker.didSchedule(this.globalThis);
-            if (comptime async_io) {
-                NetworkThread.init() catch return;
-                NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
-            } else {
-                WorkPool.schedule(&this.task);
-            }
+            WorkPool.schedule(&this.task);
         }
 
         pub fn onFinish(this: *This) void {

@@ -1521,14 +1521,9 @@ pub const Command = struct {
                     }
                     break :brk false;
                 };
-                if (print_help) {
-                    Command.Tag.printHelp(.CreateCommand, true);
-                    Global.exit(0);
-                    return;
-                }
 
                 var template_name_start: usize = 0;
-                var positionals: [2]string = undefined;
+                var positionals: [2]string = .{ "", "" };
 
                 var positional_i: usize = 0;
 
@@ -1545,6 +1540,16 @@ pub const Command = struct {
                             positional_i += 1;
                         }
                     }
+                }
+
+                if (print_help or
+                    // "bun create --"
+                    // "bun create -abc --"
+                    positional_i == 0)
+                {
+                    Command.Tag.printHelp(.CreateCommand, true);
+                    Global.exit(0);
+                    return;
                 }
 
                 const template_name = positionals[0];
@@ -1747,7 +1752,7 @@ pub const Command = struct {
                 // if we get here, the command was not parsed
                 // or the user just ran `bun` with no arguments
                 if (ctx.positionals.len > 0) {
-                    Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                    Output.warn("failed to parse command\n", .{});
                 }
                 Output.flush();
                 try HelpCommand.exec(allocator);

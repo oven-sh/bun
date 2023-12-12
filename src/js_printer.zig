@@ -1017,7 +1017,7 @@ fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            if (comptime !is_bun_platform) unreachable;
+            comptime std.debug.assert(is_bun_platform);
 
             switch (p.options.module_type) {
                 .cjs => {
@@ -5828,7 +5828,7 @@ pub fn printAst(
             }
         }
 
-        std.sort.block(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+        std.sort.pdq(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
 
         try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
         var minifier = tree.char_freq.?.compile(allocator);

@@ -1153,7 +1153,7 @@ pub const ExportsMap = struct {
                     // PATTERN_KEY_COMPARE which orders in descending order of specificity.
                     const GlobLengthSorter: type = strings.NewGlobLengthSorter(Entry.Data.Map.MapEntry, "key");
                     var sorter = GlobLengthSorter{};
-                    std.sort.block(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
+                    std.sort.pdq(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
 
                     return Entry{
                         .data = .{

@@ -167,6 +167,8 @@ pub const Result = struct {
 
     is_external: bool = false,
 
+    is_external_and_rewrite_import_path: bool = false,
+
     is_standalone_module: bool = false,
 
     // This is true when the package was loaded from within the node_modules directory.
@@ -359,6 +361,7 @@ pub const MatchResult = struct {
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     dir_info: ?*DirInfo = null,
     module_type: options.ModuleType = .unknown,
+    is_external: bool = false,
 
     pub const Union = union(enum) {
         not_found: void,
@@ -1213,6 +1216,8 @@ pub const Resolver = struct {
                                         .package_json = pkg,
                                         .jsx = r.opts.jsx,
                                         .module_type = _result.module_type,
+                                        .is_external = _result.is_external,
+                                        .is_external_and_rewrite_import_path = _result.is_external,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -1379,6 +1384,10 @@ pub const Resolver = struct {
                     result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
                     result.jsx = r.opts.jsx;
                     result.module_type = res.module_type;
+                    result.is_external = res.is_external;
+                    // Potentially rewrite the import path if it's external that
+                    // was remapped to a different path
+                    result.is_external_and_rewrite_import_path = result.is_external;
 
                     if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                         return .{ .success = result };
@@ -1404,6 +1413,11 @@ pub const Resolver = struct {
                                             result.package_json = remapped.package_json;
                                             result.diff_case = remapped.diff_case;
                                             result.module_type = remapped.module_type;
+                                            result.is_external = remapped.is_external;
+
+                                            // Potentially rewrite the import path if it's external that
+                                            // was remapped to a different path
+                                            result.is_external_and_rewrite_import_path = result.is_external;
 
                                             result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                             return .{ .success = result };
@@ -1569,10 +1583,15 @@ pub const Resolver = struct {
 
         // Find the parent directory with the "package.json" file
         var dir_info_package_json: ?*DirInfo = dir_info;
-        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null) : (dir_info_package_json = dir_info_package_json.?.getParent()) {}
+        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null)
+            dir_info_package_json = dir_info_package_json.?.getParent();
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
-        if (dir_info_package_json != null and strings.hasPrefix(import_path, "#") and !forbid_imports and dir_info_package_json.?.package_json.?.imports != null) {
+        if (dir_info_package_json != null and
+            strings.hasPrefixComptime(import_path, "#") and
+            !forbid_imports and
+            dir_info_package_json.?.package_json.?.imports != null)
+        {
             return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
         }
 
@@ -2871,7 +2890,9 @@ pub const Resolver = struct {
 
         const esmodule = ESModule{
             .conditions = switch (kind) {
-                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                ast.ImportKind.require,
+                ast.ImportKind.require_resolve,
+                => r.opts.conditions.require,
                 else => r.opts.conditions.import,
             },
             .allocator = r.allocator,
@@ -2881,7 +2902,31 @@ pub const Resolver = struct {
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
 
-        if (esm_resolution.status == .PackageResolve)
+        if (esm_resolution.status == .PackageResolve) {
+            // https://github.com/oven-sh/bun/issues/4972
+            // Resolve a subpath import to a Bun or Node.js builtin
+            //
+            // Code example:
+            //
+            //     import { readFileSync } from '#fs';
+            //
+            // package.json:
+            //
+            //     "imports": {
+            //       "#fs": "node:fs"
+            //     }
+            //
+            if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
+                if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
+                    return .{
+                        .success = .{
+                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .is_external = true,
+                        },
+                    };
+                }
+            }
+
             return r.loadNodeModules(
                 esm_resolution.path,
                 kind,
@@ -2889,6 +2934,7 @@ pub const Resolver = struct {
                 global_cache,
                 true,
             );
+        }
 
         if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, "")) |result| {
             return .{ .success = result };

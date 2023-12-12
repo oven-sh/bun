@@ -178,9 +178,27 @@ pub const FilePoll = struct {
         return poll;
     }
 
+    pub fn initWithPackageManager(m: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
+        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
+    }
+
+    pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+        var poll = manager.file_poll_store.get();
+        poll.fd = fd;
+        poll.flags = Flags.Set.init(flags);
+        poll.owner = owner;
+        poll.next_to_free = null;
+
+        return poll;
+    }
+
     pub fn deinit(this: *FilePoll) void {
         var vm = JSC.VirtualMachine.get();
         this.deinitWithVM(vm);
+    }
+
+    pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
+        return this.fd;
     }
 
     pub const deinitForceUnregister = deinit;

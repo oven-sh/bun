@@ -42,7 +42,7 @@ const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const NetworkThread = @import("root").bun.http.NetworkThread;
+
 const uws = @import("root").bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
@@ -284,7 +284,7 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        std.sort.block(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
 
         iter = map.valueIterator();
         var writer = Output.errorWriter();

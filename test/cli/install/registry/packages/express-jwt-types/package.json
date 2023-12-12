@@ -1,0 +1,41 @@
+{
+	"name": "express-jwt-types",
+	"versions": {
+		"6.0.4": {
+			"name": "express-jwt-types",
+			"version": "6.0.4",
+			"dependencies": {
+				"express-unless-types": "*"
+			},
+			"_id": "express-jwt-types@6.0.4",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "10.2.0",
+			"dist": {
+				"integrity": "sha512-Nte5Huy2dMk97hcGSxsfMsIyyzpyWRoQZkTngHikHMgE9jUZkMXqBdet5rTXZBm6OIgtNQQtH0l2cQ2S7uQ7LQ==",
+				"shasum": "227d2eff785ec3460266dffe4ddfc94c1841d545",
+				"tarball": "http://localhost:4873/express-jwt-types/-/express-jwt-types-6.0.4.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-12-10T22:33:15.389Z",
+		"created": "2023-12-10T22:33:15.389Z",
+		"6.0.4": "2023-12-10T22:33:15.389Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "6.0.4"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"express-jwt-types-6.0.4.tgz": {
+			"shasum": "227d2eff785ec3460266dffe4ddfc94c1841d545",
+			"version": "6.0.4"
+		}
+	},
+	"_rev": "",
+	"_id": "express-jwt-types",
+	"readme": "ERROR: No README data found!"
+}

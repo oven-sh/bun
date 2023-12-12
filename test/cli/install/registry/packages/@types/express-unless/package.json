@@ -1,0 +1,42 @@
+{
+	"name": "@types/express-unless",
+	"versions": {
+		"2.0.1": {
+			"name": "@types/express-unless",
+			"version": "2.0.1",
+			"dependencies": {
+				"express-unless": "*"
+			},
+			"deprecated": "DEPRECATED",
+			"_id": "@types/express-unless@2.0.1",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "10.2.0",
+			"dist": {
+				"integrity": "sha512-PCrPFJ9E4RgVFLkBQPYOEvOeIUkTt/HgDybJGa7GvyyDGtonMFoVrjioAF6SmdxG6zDjJdm//NW64DbaZkl6nA==",
+				"shasum": "d43d65e985d09ddd547d2a972cda2c71342721a7",
+				"tarball": "http://localhost:4873/@types/express-unless/-/@types/express-unless-2.0.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-12-10T22:29:12.861Z",
+		"created": "2023-12-10T22:29:12.861Z",
+		"2.0.1": "2023-12-10T22:29:12.861Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"express-unless-2.0.1.tgz": {
+			"shasum": "d43d65e985d09ddd547d2a972cda2c71342721a7",
+			"version": "2.0.1"
+		}
+	},
+	"_rev": "",
+	"_id": "@types/express-unless",
+	"readme": "ERROR: No README data found!"
+}

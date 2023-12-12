@@ -95,6 +95,7 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-r100", "1.2.3-R2"],
       ["1.0.0-pre.a.b", "1.0.0-pre.a"],
       ["1.0.0-alpha.22-alpha.jkwejf334jkj43", "1.0.0-alpha.3"],
+      ["1.0.0-alpha.1beta", "1.0.0-alpha.2"],
     ];
     for (const [left, right] of tests) {
       expect(order(left, right)).toBe(1);

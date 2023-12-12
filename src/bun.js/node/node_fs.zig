@@ -4216,6 +4216,7 @@ pub const NodeFS = struct {
                 break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
             }
         };
+        // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPath(path, args.mode, !always_return_none),
         };

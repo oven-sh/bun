@@ -3915,7 +3915,7 @@ pub const NodeFS = struct {
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
             if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
-                const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
+                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
                 if (rc == 0) {
                     _ = C.fchmod(dest_fd, stat_.mode);
                     _ = Syscall.close(dest_fd);
@@ -6029,7 +6029,7 @@ pub const NodeFS = struct {
             var size: usize = @intCast(@max(stat_.size, 0));
 
             if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
-                const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
+                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
                 if (rc == 0) {
                     _ = C.fchmod(dest_fd, stat_.mode);
                     _ = Syscall.close(dest_fd);

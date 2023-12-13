@@ -582,3 +582,13 @@ pub fn getErrno(rc: anytype) E {
 
 pub const getuid = std.os.linux.getuid;
 pub const getgid = std.os.linux.getgid;
+pub const linux_fs = if (bun.Environment.isLinux) @cImport({
+    @cInclude("linux/fs.h");
+}) else struct {};
+
+/// https://man7.org/linux/man-pages/man2/ioctl_ficlone.2.html
+///
+/// Support for FICLONE is dependent on the filesystem driver.
+pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
+    return std.os.linux.ioctl(@intCast(dest_fd), linux_fs.FICLONE, @intCast(srcfd));
+}

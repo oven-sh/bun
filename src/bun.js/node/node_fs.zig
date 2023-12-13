@@ -3870,11 +3870,6 @@ pub const NodeFS = struct {
             var src = args.src.sliceZ(&src_buf);
             var dest = args.dest.sliceZ(&dest_buf);
 
-            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
-            if (args.mode.isForceClone()) {
-                return Maybe(Return.CopyFile).todo;
-            }
-
             const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                 .result => |result| result,
                 .err => |err| return .{ .err = err },
@@ -3905,6 +3900,33 @@ pub const NodeFS = struct {
 
             var size: usize = @intCast(@max(stat_.size, 0));
 
+            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+            if (args.mode.isForceClone()) {
+                if (ret.errnoSysP(bun.C.linux.ioctl_ficlone(dest_fd, src_fd), .ioctl_ficlone, dest)) |err| {
+                    _ = Syscall.close(dest_fd);
+                    // This is racey, but it's the best we can do
+                    _ = bun.sys.unlink(dest);
+                    return err;
+                }
+                _ = C.fchmod(dest_fd, stat_.mode);
+                _ = Syscall.close(dest_fd);
+                return ret.success;
+            }
+
+            // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
+            if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
+                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
+                if (rc == 0) {
+                    _ = C.fchmod(dest_fd, stat_.mode);
+                    _ = Syscall.close(dest_fd);
+                    return ret.success;
+                }
+
+                // If this fails for any reason, we say it's disabled
+                // We don't want to add the system call overhead of running this function on a lot of files that don't support it
+                bun.disable_ioctl_ficlone();
+            }
+
             defer {
                 _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
                 _ = linux.fchmod(dest_fd, stat_.mode);
@@ -3923,10 +3945,16 @@ pub const NodeFS = struct {
                 while (true) {
 
                     // Linux Kernel 5.3 or later
+                    // Not supported in gVisor
                     const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            inline .XDEV, .NOSYS => |errno| brk: {
+                                if (comptime errno == .NOSYS) {
+                                    bun.disableCopyFileRangeSyscall();
+                                }
+                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                            },
                             else => return err,
                         };
                     }
@@ -3937,10 +3965,16 @@ pub const NodeFS = struct {
             } else {
                 while (size > 0) {
                     // Linux Kernel 5.3 or later
+                    // Not supported in gVisor
                     const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            inline .XDEV, .NOSYS => |errno| brk: {
+                                if (comptime errno == .NOSYS) {
+                                    bun.disableCopyFileRangeSyscall();
+                                }
+                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                            },
                             else => return err,
                         };
                     }
@@ -5994,6 +6028,17 @@ pub const NodeFS = struct {
 
             var size: usize = @intCast(@max(stat_.size, 0));
 
+            if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
+                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
+                if (rc == 0) {
+                    _ = C.fchmod(dest_fd, stat_.mode);
+                    _ = Syscall.close(dest_fd);
+                    return ret.success;
+                }
+
+                bun.disable_ioctl_ficlone();
+            }
+
             defer {
                 _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
                 _ = linux.fchmod(dest_fd, stat_.mode);
@@ -6011,10 +6056,16 @@ pub const NodeFS = struct {
                 // copy until EOF
                 while (true) {
                     // Linux Kernel 5.3 or later
+                    // Not supported in gVisor
                     const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            inline .XDEV, .NOSYS => |errno| brk: {
+                                if (comptime errno == .NOSYS) {
+                                    bun.disableCopyFileRangeSyscall();
+                                }
+                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                            },
                             else => return err,
                         };
                     }
@@ -6025,10 +6076,16 @@ pub const NodeFS = struct {
             } else {
                 while (size > 0) {
                     // Linux Kernel 5.3 or later
+                    // Not supported in gVisor
                     const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            inline .XDEV, .NOSYS => |errno| brk: {
+                                if (comptime errno == .NOSYS) {
+                                    bun.disableCopyFileRangeSyscall();
+                                }
+                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                            },
                             else => return err,
                         };
                     }

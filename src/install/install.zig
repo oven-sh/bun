@@ -1909,7 +1909,6 @@ pub const PackageManager = struct {
     global_link_dir: ?std.fs.IterableDir = null,
     global_dir: ?std.fs.IterableDir = null,
     global_link_dir_path: string = "",
-    waiter: Waiter = undefined,
     wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     onWake: WakeHandler = .{},
@@ -1917,7 +1916,9 @@ pub const PackageManager = struct {
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
+    /// Do not use directly outside of wait or wake
     uws_event_loop: *uws.Loop,
+
     file_poll_store: bun.Async.FilePoll.Store,
 
     // name hash from alias package name -> aliased package dependency version info
@@ -1933,6 +1934,20 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    const TimePasser = struct {
+        pub var last_time: c_longlong = -1;
+    };
+
+    pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
+        const iter = instance.uws_event_loop.iterationNumber();
+        if (TimePasser.last_time < iter) {
+            TimePasser.last_time = iter;
+            return true;
+        }
+
+        return false;
+    }
 
     pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !struct { *DirInfo, bundler.Bundler } {
         if (this.env_configure) |env_configure| {
@@ -2047,13 +2062,22 @@ pub const PackageManager = struct {
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
-        this.waiter.wake();
+        this.uws_event_loop.wakeup();
+    }
+
+    pub fn tickLifecycleScripts(this: *PackageManager) void {
+        if (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+            this.uws_event_loop.tickWithoutIdle();
+        }
     }
 
     pub fn sleep(this: *PackageManager) void {
-        if (this.wait_count.swap(0, .Monotonic) > 0) return;
+        if (this.wait_count.swap(0, .Monotonic) > 0) {
+            this.tickLifecycleScripts();
+            return;
+        }
         Output.flush();
-        _ = this.waiter.wait() catch 0;
+        this.uws_event_loop.tick();
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -2135,7 +2159,7 @@ pub const PackageManager = struct {
                             };
 
                             if (PackageManager.verbose_install and this.pending_tasks > 0) {
-                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
                             }
 
                             if (this.pending_tasks > 0)
@@ -5027,8 +5051,6 @@ pub const PackageManager = struct {
 
         manager.drainDependencyList();
 
-        manager.uws_event_loop.tickWithoutIdle();
-
         if (comptime log_level.showProgress()) {
             if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
                 const completed_items = manager.total_tasks - manager.pending_tasks;
@@ -6109,7 +6131,6 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
-            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
             .workspaces = workspaces,
             // .progress
             .uws_event_loop = uws.Loop.get(),
@@ -6202,7 +6223,6 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
             .uws_event_loop = uws.Loop.get(),
             .file_poll_store = bun.Async.FilePoll.Store.init(allocator),
             .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
@@ -7589,8 +7609,12 @@ pub const PackageManager = struct {
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.first().package_name;
-                while (RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
-                    this.manager.uws_event_loop.tickWithTimeout(125);
+                while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
+                    if (PackageManager.verbose_install) {
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                    }
+
+                    PackageManager.instance.sleep();
                 }
 
                 this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
@@ -7619,7 +7643,11 @@ pub const PackageManager = struct {
             }
 
             while (this.manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                this.manager.uws_event_loop.tickWithTimeout(125);
+                if (PackageManager.verbose_install) {
+                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                }
+
+                PackageManager.instance.sleep();
             }
         }
 
@@ -7628,7 +7656,7 @@ pub const PackageManager = struct {
             const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
             return (deps.subsetOf(this.completed_trees) or
                 deps.eql(this.completed_trees)) and
-                RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
+                LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
         pub fn printTreeDeps(this: *PackageInstaller) void {
@@ -8552,6 +8580,8 @@ pub const PackageManager = struct {
                         );
                         if (!installer.options.do.install_packages) return error.InstallFailed;
                     }
+
+                    this.tickLifecycleScripts();
                 }
 
                 for (remaining) |dependency_id| {
@@ -8571,6 +8601,8 @@ pub const PackageManager = struct {
                     log_level,
                 );
                 if (!installer.options.do.install_packages) return error.InstallFailed;
+
+                this.tickLifecycleScripts();
             }
 
             while (this.pending_tasks > 0 and installer.options.do.install_packages) {
@@ -8587,12 +8619,16 @@ pub const PackageManager = struct {
                     log_level,
                 );
 
-                if (PackageManager.verbose_install and this.pending_tasks > 0) {
-                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                if (PackageManager.verbose_install and PackageManager.instance.pending_tasks > 0) {
+                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
                 }
 
                 if (this.pending_tasks > 0)
-                    this.sleep();
+                    this.sleep()
+                else
+                    this.tickLifecycleScripts();
+            } else {
+                this.tickLifecycleScripts();
             }
 
             this.finished_installing.store(true, .Monotonic);
@@ -8619,7 +8655,11 @@ pub const PackageManager = struct {
             }
 
             while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                this.uws_event_loop.tickWithTimeout(125);
+                if (PackageManager.verbose_install) {
+                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.Monotonic)});
+                }
+
+                PackageManager.instance.sleep();
             }
 
             if (comptime log_level.showProgress()) {
@@ -8964,7 +9004,7 @@ pub const PackageManager = struct {
                 );
 
                 if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                    if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
                 }
 
                 if (manager.pending_tasks > 0)
@@ -8992,7 +9032,7 @@ pub const PackageManager = struct {
                     );
 
                     if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                        Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
                     }
 
                     if (manager.pending_tasks > 0)
@@ -9265,7 +9305,7 @@ pub const PackageManager = struct {
         const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_bundler.env.map.put("PATH", original_path);
 
-        try RunCommand.spawnPackageScripts(this, list, envp);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp);
     }
 };
 
@@ -9280,6 +9320,8 @@ pub const PackageManifestError = error{
     PackageManifestHTTP4xx,
     PackageManifestHTTP5xx,
 };
+
+pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
 
 test "UpdateRequests.parse" {
     var log = logger.Log.init(default_allocator);

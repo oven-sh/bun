@@ -36,6 +36,29 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
     }
 
     if (comptime bun.Environment.isLinux) {
+        if (can_use_ioctl_ficlone()) {
+            // We only check once if the ioctl is supported, and cache the result.
+            // EXT4 does not support FICLONE.
+            const rc = bun.C.linux.ioctl_ficlone(@intCast(fd_out), @intCast(fd_in));
+            switch (std.os.linux.getErrno(rc)) {
+                .SUCCESS => return,
+                .FBIG => return error.FileTooBig,
+                .IO => return error.InputOutput,
+                .ISDIR => return error.IsDir,
+                .NOMEM => return error.OutOfMemory,
+                .NOSPC => return error.NoSpaceLeft,
+                .OVERFLOW => return error.Unseekable,
+                .PERM => return error.PermissionDenied,
+                .TXTBSY => return error.FileBusy,
+                .XDEV => {},
+                .BADF, .INVAL, .OPNOTSUPP, .NOSYS => {
+                    bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
+                    can_use_ioctl_ficlone_.store(-1, .Monotonic);
+                },
+                else => |err| return os.unexpectedErrno(err),
+            }
+        }
+
         // Try copy_file_range first as that works at the FS level and is the
         // most efficient method (if available).
         var offset: u64 = 0;
@@ -66,6 +89,12 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
 const Platform = @import("root").bun.analytics.GenerateHeader.GeneratePlatform;
 
 var can_use_copy_file_range = std.atomic.Atomic(i32).init(0);
+pub inline fn disableCopyFileRangeSyscall() void {
+    if (comptime !bun.Environment.isLinux) {
+        return;
+    }
+    can_use_copy_file_range.store(-1, .Monotonic);
+}
 pub fn canUseCopyFileRangeSyscall() bool {
     const result = can_use_copy_file_range.load(.Monotonic);
     if (result == 0) {
@@ -84,6 +113,38 @@ pub fn canUseCopyFileRangeSyscall() bool {
         } else {
             bun.Output.debug("copy_file_range is NOT supported", .{});
             can_use_copy_file_range.store(-1, .Monotonic);
+            return false;
+        }
+    }
+
+    return result == 1;
+}
+
+pub var can_use_ioctl_ficlone_ = std.atomic.Atomic(i32).init(0);
+pub inline fn disable_ioctl_ficlone() void {
+    if (comptime !bun.Environment.isLinux) {
+        return;
+    }
+    can_use_ioctl_ficlone_.store(-1, .Monotonic);
+}
+pub fn can_use_ioctl_ficlone() bool {
+    const result = can_use_ioctl_ficlone_.load(.Monotonic);
+    if (result == 0) {
+        // This flag mostly exists to make other code more easily testable.
+        if (bun.getenvZ("BUN_CONFIG_DISABLE_ioctl_ficlonerange") != null) {
+            bun.Output.debug("ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange", .{});
+            can_use_ioctl_ficlone_.store(-1, .Monotonic);
+            return false;
+        }
+
+        const kernel = Platform.kernelVersion();
+        if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
+            bun.Output.debug("ioctl_ficlonerange is supported", .{});
+            can_use_ioctl_ficlone_.store(1, .Monotonic);
+            return true;
+        } else {
+            bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
+            can_use_ioctl_ficlone_.store(-1, .Monotonic);
             return false;
         }
     }

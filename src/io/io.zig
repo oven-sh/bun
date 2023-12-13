@@ -853,3 +853,5 @@ pub const Poll = struct {
 };
 
 pub const retry = std.os.system.E.AGAIN;
+
+pub const PipeReader = @import("./PipeReader.zig").PipeReader;

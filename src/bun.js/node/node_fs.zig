@@ -346,7 +346,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     /// All the subtasks will use this fd to open files
     root_fd: FileDescriptor = bun.invalid_fd,
 
-    /// This isued when joining the file paths for error messages
+    /// This is used when joining the file paths for error messages
     root_path: PathString = PathString.empty,
 
     pending_err: ?Syscall.Error = null,
@@ -4553,8 +4553,8 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     entries.append(.{
-                        .name = bun.String.create(std.fs.path.basename(utf8_name)),
-                        .path = bun.String.create(std.fs.path.dirname(utf8_name) orelse utf8_name),
+                        .name = bun.String.create(utf8_name),
+                        .path = bun.String.create(args.path.slice()),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },

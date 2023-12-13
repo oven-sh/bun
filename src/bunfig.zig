@@ -319,11 +319,9 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (json.get("exact")) |exact_install_expr| {
-                        try this.expect(exact_install_expr, .e_boolean);
-
-                        if (exact_install_expr.asBool().?) {
-                            install.exact = true;
+                    if (_bun.get("exact")) |exact| {
+                        if (exact.asBool()) |value| {
+                            install.exact = value;
                         }
                     }
 

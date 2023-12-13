@@ -29,5 +29,9 @@ function mapFiles(files) {
 
 results['fs.readdirSync'] = mapFiles(fs.readdirSync(target, { withFileTypes: true }));
 results['fs.readdirSync recursive'] = mapFiles(fs.readdirSync(target, { withFileTypes: true, recursive: true }));
+fs.promises.readdir(target, { withFileTypes: true, recursive: true })
+  .then(files => {
+    results['fs.promises.readdir recursive'] = mapFiles(files);
+    console.log(results);
+  });
 
-console.log(results);

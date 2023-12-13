@@ -232,7 +232,7 @@ pub const FDImpl = packed struct {
                         if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
                             const errno = switch (std.os.windows.kernel32.GetLastError()) {
                                 .INVALID_HANDLE => @intFromEnum(os.E.BADF),
-                                else => |i| i,
+                                else => |i| @intFromEnum(i),
                             };
                             break :result bun.sys.Error{
                                 .errno = errno,

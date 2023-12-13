@@ -321,6 +321,10 @@ pub const RunCommand = struct {
             //     std.debug.print("env length: {d}\n", .{counter});
             // }
 
+            if (Environment.isWindows) {
+                @panic("TODO: implement LifecycleScriptSubprocess on Windows");
+            }
+
             var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
             if (comptime Environment.isMac) {
                 flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
@@ -932,16 +936,16 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    const bun_node_dir = switch (@import("builtin").target.os.tag) {
+    const bun_node_dir = (switch (Environment.os) {
         // TODO:
         .windows => "TMPDIR",
 
-        .macos => "/private/tmp",
+        .mac => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
-        "/bun-node"
+        "/bun-node-" ++ Environment.git_sha_short
     else
-        "/bun-debug-node";
+        "/bun-debug-node");
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {

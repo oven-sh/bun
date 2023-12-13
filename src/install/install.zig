@@ -7983,7 +7983,7 @@ pub const PackageManager = struct {
                                 var node_modules_is_ok = false;
                             };
                             if (!Singleton.node_modules_is_ok) {
-                                const stat = std.os.fstat(this.node_modules_folder.dir.fd) catch |err| {
+                                const stat = bun.sys.fstat(bun.toFD(this.node_modules_folder.dir.fd)).unwrap() catch |err| {
                                     Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                         this.names[package_id].slice(buf),
                                     });
@@ -7993,12 +7993,12 @@ pub const PackageManager = struct {
                                     Global.exit(1);
                                 };
 
-                                const is_writable = if (stat.uid == bun.C.getuid())
-                                    stat.mode & std.os.S.IWUSR > 0
+                                const is_writable = if (Environment.isWindows or stat.uid == bun.C.getuid())
+                                    stat.mode & bun.S.IWUSR > 0
                                 else if (stat.gid == bun.C.getgid())
-                                    stat.mode & std.os.S.IWGRP > 0
+                                    stat.mode & bun.S.IWGRP > 0
                                 else
-                                    stat.mode & std.os.S.IWOTH > 0;
+                                    stat.mode & bun.S.IWOTH > 0;
 
                                 if (!is_writable) {
                                     Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});

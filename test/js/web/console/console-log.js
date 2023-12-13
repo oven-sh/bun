@@ -170,3 +170,21 @@ console.log(hole([1, 2, 3], 2));
 
 // TODO: handle DerivedArray
 // It appears to not be set and I don't know why.
+
+console.log("%f", 0.5);
+console.log("%f", {
+  [Symbol.toPrimitive]() {
+    return 0.9;
+  },
+});
+console.log("%f", {
+  [Symbol.toPrimitive]() {
+    return "abc";
+  },
+});
+console.log("%f", Symbol(0.1));
+
+console.log("%d", 1);
+console.log("%d", Symbol(1));
+console.log("%i", 1);
+console.log("%i", Symbol(1));

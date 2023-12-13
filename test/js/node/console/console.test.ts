@@ -88,30 +88,3 @@ test("console._stderr", () => {
     configurable: true,
   });
 });
-
-describe("console formatter", () => {
-  test("format float", async () => {
-    const [stream, value] = writable();
-    const c = new Console({ stdout: stream, stderr: stream, colorMode: true });
-    c.log("%f", 0.5);
-    c.log("%f", {
-      [Symbol.toPrimitive]() {
-        return 0.9;
-      },
-    });
-    c.log("%f", Symbol(0.1));
-    stream.end();
-    expect(await value()).toBe("0.5\n0.9\nNaN\n");
-  });
-
-  test("format number", async () => {
-    const [stream, value] = writable();
-    const c = new Console({ stdout: stream, stderr: stream, colorMode: true });
-    c.log("%d", 1);
-    c.log("%d", Symbol(1));
-    c.log("%i", 1);
-    c.log("%i", Symbol(1));
-    stream.end();
-    expect(await value()).toBe("1\nNaN\n1\nNaN\n");
-  });
-});

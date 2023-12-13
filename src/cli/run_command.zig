@@ -448,19 +448,19 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    const bun_node_dir = switch (@import("builtin").target.os.tag) {
+    pub const bun_node_dir = switch (@import("builtin").target.os.tag) {
         // TODO:
         .windows => "TMPDIR",
 
         .macos => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
-        "/bun-node"
+        "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node";
+        "/bun-debug-node" ++ (if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "");
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-    fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+    pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         if (comptime Environment.isWindows) {
             bun.todo(@src(), {});
             return;
@@ -628,7 +628,6 @@ pub const RunCommand = struct {
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
-        add_temp_node_gyp: bool,
     ) !void {
         var package_json_dir: string = "";
 
@@ -704,13 +703,6 @@ pub const RunCommand = struct {
             }
 
             try new_path.appendSlice(PATH);
-
-            if (add_temp_node_gyp) {
-                try new_path.append(std.fs.path.delimiter);
-                try new_path.appendSlice(PackageManager.instance.temp_dir_name);
-                try new_path.append(std.fs.path.sep);
-                try new_path.appendSlice(PackageManager.instance.node_gyp_tempdir_name);
-            }
         }
 
         this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
@@ -1124,7 +1116,7 @@ pub const RunCommand = struct {
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
-        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun, false);
+        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {

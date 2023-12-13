@@ -1899,10 +1899,7 @@ pub const PackageManager = struct {
 
     node_gyp_tempdir_name: string = "",
 
-    env_configure: ?struct {
-        root_dir_info: *DirInfo,
-        bundler: bundler.Bundler,
-    } = null,
+    env_configure: ?ScriptRunEnvironment = null,
 
     lockfile: *Lockfile = undefined,
 
@@ -1931,6 +1928,11 @@ pub const PackageManager = struct {
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     pub var verbose_install = false;
 
+    pub const ScriptRunEnvironment = struct {
+        root_dir_info: *DirInfo,
+        bundler: bundler.Bundler,
+    };
+
     const PackageDedupeList = std.HashMapUnmanaged(
         u32,
         void,
@@ -1952,21 +1954,24 @@ pub const PackageManager = struct {
         return false;
     }
 
-    pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !struct { *DirInfo, bundler.Bundler } {
-        if (this.env_configure) |env_configure| {
-            return .{ env_configure.root_dir_info, env_configure.bundler };
+    pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !*bundler.Bundler {
+        if (this.env_configure) |*env_configure| {
+            return &env_configure.bundler;
         }
 
         // We need to figure out the PATH and other environment variables
         // to do that, we re-use the code from bun run
         // this is expensive, it traverses the entire directory tree going up to the root
         // so we really only want to do it when strictly necessary
-        var this_bundler: bundler.Bundler = undefined;
-        var ORIGINAL_PATH: string = "";
+        this.env_configure = .{
+            .root_dir_info = undefined,
+            .bundler = undefined,
+        };
+        var this_bundler: *bundler.Bundler = &this.env_configure.?.bundler;
 
         const root_dir_info = try RunCommand.configureEnvForRun(
             ctx,
-            &this_bundler,
+            this_bundler,
             this.env,
             log_level != .silent,
         );
@@ -1979,41 +1984,29 @@ pub const PackageManager = struct {
             };
         }
 
-        {
-            // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
-            // cmake can use it to hopefully speed things up
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const ccache_path = bun.which(
-                &buf,
-                ORIGINAL_PATH,
-                FileSystem.instance.top_level_dir,
-                "ccache",
-            ) orelse "";
+        this.env.loadCCachePath(this_bundler.fs);
 
-            if (ccache_path.len > 0) {
-                var cxx_gop = try this.env.map.getOrPutWithoutValue("CMAKE_CXX_COMPILER_LAUNCHER");
-                if (!cxx_gop.found_existing) {
-                    cxx_gop.value_ptr.* = .{
-                        .value = try this.env.allocator.dupe(u8, "ccache"),
-                        .conditional = false,
-                    };
+        {
+            var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
+                _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
+            } else brk: {
+                var current_path = this.env.get("PATH") orelse "";
+                var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                var bun_path: string = "";
+                RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
+                if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
+                    try PATH.append(':');
                 }
-                var c_gop = try this.env.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
-                if (!c_gop.found_existing) {
-                    c_gop.value_ptr.* = .{
-                        .value = try this.env.allocator.dupe(u8, "ccache"),
-                        .conditional = false,
-                    };
-                }
+                try PATH.appendSlice(current_path);
+                try this.env.map.put("PATH", PATH.items);
+                _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, RunCommand.bun_node_dir) catch bun.outOfMemory());
             }
         }
 
-        this.env_configure = .{
-            .root_dir_info = root_dir_info,
-            .bundler = this_bundler,
-        };
+        this.env_configure.?.root_dir_info = root_dir_info;
 
-        return .{ this.env_configure.?.root_dir_info, this.env_configure.?.bundler };
+        return this_bundler;
     }
 
     pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
@@ -2476,7 +2469,7 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        var bytes: string = "#!/usr/bin/env sh\nbun x node-gyp@latest \"$@\"";
+        var bytes: string = "#!/usr/bin/env sh\nbun x node-gyp \"$@\"";
         var index: usize = 0;
         while (index < bytes.len) {
             switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
@@ -2489,6 +2482,15 @@ pub const PackageManager = struct {
                 },
             }
         }
+
+        // Add our node-gyp tempdir to the path
+        var existing_path = this.env.get("PATH") orelse "";
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + node_gyp_tempdir_name.len);
+        try PATH.appendSlice(existing_path);
+        if (existing_path.len > 0 and existing_path[existing_path.len - 1] != ':')
+            try PATH.append(':');
+        try PATH.appendSlice(node_gyp_tempdir_name);
+        try this.env.map.put("PATH", PATH.items);
     }
 
     pub var instance: PackageManager = undefined;
@@ -9350,33 +9352,64 @@ pub const PackageManager = struct {
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         var uses_node_gyp = false;
+        var any_scripts = false;
+        var cwd: string = "";
         for (list.items) |_item| {
             if (_item) |item| {
+                any_scripts = true;
+                cwd = item.cwd;
                 if (strings.containsComptime(item.script, "node-gyp")) {
                     uses_node_gyp = true;
                     break;
                 }
             }
         }
+        if (!any_scripts) {
+            return;
+        }
 
         if (uses_node_gyp) {
             try this.ensureTempNodeGypScript();
         }
 
-        const root_dir_info, const this_bundler = try this.configureEnvForScripts(ctx, log_level);
-        var original_path: string = undefined;
+        const this_bundler = try this.configureEnvForScripts(ctx, log_level);
+        var original_path = this_bundler.env.map.get("PATH") orelse "";
 
-        try RunCommand.configurePathForRun(
-            ctx,
-            root_dir_info,
-            &this_bundler,
-            &original_path,
-            list.first().cwd,
-            false,
-            uses_node_gyp,
-        );
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
+        // var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(this_bundler.) catch null;
+        // var last_dir_with_node_modules: ?*DirInfo = null;
+        // while (current_dir) |dir| {
+        //     if (dir.hasNodeModules()) {
+        //         last_dir_with_node_modules = dir;
+        //         if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
+        //             try PATH.appendSlice(":");
+        //         }
+        //         try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
+        //         try PATH.appendSlice("/node_modules/.bin");
+        //     }
+        //     current_dir = dir.getParent();
+        // }
+
+        for (this_bundler.resolver.binDirs()) |bin_path| {
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
+                try PATH.appendSlice(":");
+            }
+            try PATH.appendSlice(bin_path);
+        }
+
+        if (original_path.len > 0) {
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
+                try PATH.append(':');
+            }
+
+            try PATH.appendSlice(original_path);
+        }
+
+        this_bundler.env.map.put("PATH", PATH.items) catch unreachable;
+
         const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_bundler.env.map.put("PATH", original_path);
+        PATH.deinit();
 
         try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp);
     }

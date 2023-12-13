@@ -265,6 +265,7 @@ pub const BunxCommand = struct {
             &ORIGINAL_PATH,
             root_dir_info.abs_path,
             force_using_bun,
+            false,
         );
 
         var PATH = this_bundler.env.map.get("PATH").?;

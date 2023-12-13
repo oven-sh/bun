@@ -1105,6 +1105,7 @@ pub const RunCommand = struct {
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
+        add_temp_node_gyp: bool,
     ) !void {
         var package_json_dir: string = "";
 
@@ -1180,11 +1181,13 @@ pub const RunCommand = struct {
             }
 
             try new_path.appendSlice(PATH);
-            try new_path.append(std.fs.path.delimiter);
 
-            try new_path.appendSlice(PackageManager.instance.temp_dir_name);
-            try new_path.append(std.fs.path.sep);
-            try new_path.appendSlice(PackageManager.instance.node_gyp_tempdir_name);
+            if (add_temp_node_gyp) {
+                try new_path.append(std.fs.path.delimiter);
+                try new_path.appendSlice(PackageManager.instance.temp_dir_name);
+                try new_path.append(std.fs.path.sep);
+                try new_path.appendSlice(PackageManager.instance.node_gyp_tempdir_name);
+            }
         }
 
         this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
@@ -1598,7 +1601,7 @@ pub const RunCommand = struct {
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
-        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
+        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun, false);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {

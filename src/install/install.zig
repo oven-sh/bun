@@ -2421,7 +2421,7 @@ pub const PackageManager = struct {
         return tempdir;
     }
 
-    pub fn createNodeGypScript(this: *PackageManager) !void {
+    pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
@@ -9305,11 +9305,32 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        try this.createNodeGypScript();
+        var uses_node_gyp = false;
+        for (list.items) |_item| {
+            if (_item) |item| {
+                if (strings.containsComptime(item.script, "node-gyp")) {
+                    uses_node_gyp = true;
+                    break;
+                }
+            }
+        }
+
+        if (uses_node_gyp) {
+            try this.ensureTempNodeGypScript();
+        }
 
         const root_dir_info, const this_bundler = try this.configureEnvForScripts(ctx, log_level);
         var original_path: string = undefined;
-        try RunCommand.configurePathForRun(ctx, root_dir_info, &this_bundler, &original_path, list.first().cwd, false);
+
+        try RunCommand.configurePathForRun(
+            ctx,
+            root_dir_info,
+            &this_bundler,
+            &original_path,
+            list.first().cwd,
+            false,
+            uses_node_gyp,
+        );
         const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_bundler.env.map.put("PATH", original_path);
 

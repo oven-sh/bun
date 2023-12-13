@@ -85,6 +85,24 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     std.process.exit(1);
 }
 
+pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
+pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
+pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const ShellCompletions = @import("./cli/shell_completions.zig");
+pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
+pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
         const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
@@ -1242,45 +1260,6 @@ pub const Command = struct {
             if (bun.getenvZ("MI_VERBOSE") == null) {
                 bun.Mimalloc.mi_option_set_enabled(.verbose, false);
             }
-        }
-
-        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-
-        const AddCommand = @import("./cli/add_command.zig").AddCommand;
-        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-        const CreateCommandExample = @import("./cli/create_command.zig").Example;
-        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-        const RunCommand = @import("./cli/run_command.zig").RunCommand;
-        const ShellCompletions = @import("./cli/shell_completions.zig");
-        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-
-        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-
-        if (comptime bun.fast_debug_build_mode) {
-            // _ = AddCommand;
-            // _ = BuildCommand;
-            // _ = CreateCommand;
-            _ = CreateListExamplesCommand;
-            // _ = InstallCommand;
-            // _ = LinkCommand;
-            // _ = UnlinkCommand;
-            // _ = InstallCompletionsCommand;
-            // _ = PackageManagerCommand;
-            // _ = RemoveCommand;
-            // _ = RunCommand;
-            // _ = ShellCompletions;
-            // _ = TestCommand;
-            // _ = UpdateCommand;
-            // _ = UpgradeCommand;
-            // _ = BunxCommand;
         }
 
         // there's a bug with openSelfExe() on Windows

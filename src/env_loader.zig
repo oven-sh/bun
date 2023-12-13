@@ -168,13 +168,19 @@ pub const Loader = struct {
         }
         return http_proxy;
     }
+    var node_path_to_use_set_once: []const u8 = "";
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
         var buf: Fs.PathBuffer = undefined;
 
         var node_path_to_use = override_node;
         if (node_path_to_use.len == 0) {
-            var node = this.getNodePath(fs, &buf) orelse return false;
-            node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
+            if (node_path_to_use_set_once.len > 0) {
+                node_path_to_use = node_path_to_use_set_once;
+            } else {
+                var node = this.getNodePath(fs, &buf) orelse return false;
+                node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
+                node_path_to_use_set_once = node_path_to_use;
+            }
         }
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);

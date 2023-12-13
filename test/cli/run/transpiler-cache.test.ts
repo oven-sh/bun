@@ -6,10 +6,10 @@ import { bunEnv, bunExe, bunRun } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
-function dummyFile(size: number, cache_bust: string, value: string) {
+function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
   const data = Buffer.alloc(size);
   data.write("/*" + cache_bust);
-  const end = `*/\nconsole.log(${JSON.stringify(value)});`;
+  const end = `*/\nconsole.log(${(value as any).code ?? JSON.stringify(value)});`;
   data.fill("*", 2 + cache_bust.length, size - end.length, "utf-8");
   data.write(end, size - end.length, "utf-8");
   return data;
@@ -159,5 +159,18 @@ describe("transpiler cache", () => {
     expect(a.stdout == "b");
 
     chmodSync(join(cache_dir), "777");
+  });
+  test("does not inline process.env", () => {
+    writeFileSync(
+      join(temp_dir, "a.js"),
+      dummyFile((50 * 1024 * 1.5) | 0, "1", { code: "process.env.NODE_ENV, process.env.HELLO" }),
+    );
+    const a = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: undefined, HELLO: "1" });
+    expect(a.stdout == "development 1");
+    assert(existsSync(cache_dir));
+    expect(newCacheCount()).toBe(1);
+    const b = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: "production", HELLO: "5" });
+    expect(b.stdout == "production 5");
+    expect(newCacheCount()).toBe(0);
   });
 });

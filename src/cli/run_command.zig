@@ -15,10 +15,11 @@ const JSC = bun.JSC;
 const WaiterThread = JSC.Subprocess.WaiterThread;
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
-const clap = @import("root").bun.clap;
-const cli = @import("../cli.zig");
-const Arguments = cli.Arguments;
+const logger = bun.logger;
+const clap = bun.clap;
+const CLI = bun.CLI;
+const Arguments = CLI.Arguments;
+const Command = CLI.Command;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -31,7 +32,6 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const Command = cli.Command;
 const bundler = bun.bundler;
 
 const DotEnv = @import("../env_loader.zig");
@@ -1534,7 +1534,7 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
                             }
 
                             if (ctx.preloads.len == 0)
@@ -1734,7 +1734,7 @@ pub const RunCommand = struct {
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {
-        std.debug.assert(cli.pretend_to_be_node);
+        std.debug.assert(CLI.pretend_to_be_node);
 
         if (ctx.positionals.len == 0) {
             Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});

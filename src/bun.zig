@@ -1494,8 +1494,8 @@ const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
 pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
-pub const canUse_ioctl_FICLONE = CopyFile.canUse_ioctl_FICLONE;
-pub const disable_ioctl_FICLONE = CopyFile.disable_ioctl_FICLONE;
+pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
+pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
 
 pub fn parseDouble(input: []const u8) !f64 {

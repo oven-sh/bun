@@ -36,7 +36,7 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
     }
 
     if (comptime bun.Environment.isLinux) {
-        if (canUse_ioctl_FICLONE()) {
+        if (can_use_ioctl_ficlone()) {
             // We only check once if the ioctl is supported, and cache the result.
             // EXT4 does not support FICLONE.
             const rc = bun.C.linux.ioctl_ficlone(fd_in, fd_out);
@@ -121,13 +121,13 @@ pub fn canUseCopyFileRangeSyscall() bool {
 }
 
 pub var can_use_ioctl_ficlone_ = std.atomic.Atomic(i32).init(0);
-pub inline fn disable_ioctl_FICLONE() void {
+pub inline fn disable_ioctl_ficlone() void {
     if (comptime !bun.Environment.isLinux) {
         return;
     }
     can_use_ioctl_ficlone_.store(-1, .Monotonic);
 }
-pub fn canUse_ioctl_FICLONE() bool {
+pub fn can_use_ioctl_ficlone() bool {
     const result = can_use_ioctl_ficlone_.load(.Monotonic);
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.

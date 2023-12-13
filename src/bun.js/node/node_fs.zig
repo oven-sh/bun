@@ -3914,7 +3914,7 @@ pub const NodeFS = struct {
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if (os.S.ISREG(stat_.mode) and bun.canUse_ioctl_FICLONE()) {
+            if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
                     _ = C.fchmod(dest_fd, stat_.mode);
@@ -3924,7 +3924,7 @@ pub const NodeFS = struct {
 
                 // If this fails for any reason, we say it's disabled
                 // We don't want to add the system call overhead of running this function on a lot of files that don't support it
-                bun.disable_ioctl_FICLONE();
+                bun.disable_ioctl_ficlone();
             }
 
             defer {
@@ -6028,7 +6028,7 @@ pub const NodeFS = struct {
 
             var size: usize = @intCast(@max(stat_.size, 0));
 
-            if (os.S.ISREG(stat_.mode) and bun.canUse_ioctl_FICLONE()) {
+            if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
                     _ = C.fchmod(dest_fd, stat_.mode);
@@ -6036,7 +6036,7 @@ pub const NodeFS = struct {
                     return ret.success;
                 }
 
-                bun.disable_ioctl_FICLONE();
+                bun.disable_ioctl_ficlone();
             }
 
             defer {

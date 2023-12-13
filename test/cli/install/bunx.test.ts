@@ -15,6 +15,24 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
+it("should invoke default package bin", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "cowsay", "hello"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim()).toContain("< hello >");
+  expect(await exited).toBe(0);
+});
+
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
   const processes = Array.from({ length: 3 }, (_, i) => {
     return spawn({
@@ -83,7 +101,7 @@ it("should output usage if no arguments are passed", async () => {
 
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).toContain("Usage: ");
+  expect(err).toContain("Usage: bunx");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toHaveLength(0);
@@ -174,7 +192,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("error");
   expect(withoutCache.stdout).toBeDefined();
   let out = await new Response(withoutCache.stdout).text();
-  expect(out.trim()).toContain("Usage: cowsay");
+  expect(out.trim()).toContain("Usage:\nbun x");
   expect(await withoutCache.exited).toBe(0);
 
   // cached
@@ -192,7 +210,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("error");
   expect(cached.stdout).toBeDefined();
   out = await new Response(cached.stdout).text();
-  expect(out.trim()).toContain("Usage: cowsay");
+  expect(out.trim()).toContain("Usage:\nbun x");
   expect(await cached.exited).toBe(0);
 });
 
@@ -232,4 +250,79 @@ it("should work for github repository with committish", async () => {
   out = await new Response(cached.stdout).text();
   expect(out.trim()).toContain("hello bun!");
   expect(await cached.exited).toBe(0);
+});
+
+it("should handle --package flag", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "--package", "cowsay", "--", "cowsay", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(await exited).toBe(0);
+});
+
+it("with --package, should invoke bin with name that does not match package name", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "--package", "cowsay", "--", "cowthink", "moo"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  // `cowthink` command prints bubble with ( parens ) rather than cowsay default of < angles >
+  expect(out.trim()).toContain("( moo )");
+  expect(await exited).toBe(0);
+});
+
+it("with --package, arguments after -- should be passed to package", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "--package", "cowsay", "--", "cowthink", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim()).toContain("Usage: cowthink");
+  expect(out.trim()).not.toContain("bun");
+  expect(await exited).toBe(0);
+});
+
+it("should exit if --package specified without --", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "--package", "cowsay", "hello"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Perhaps you meant the following?");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toHaveLength(0);
+  expect(await exited).toBe(1);
 });

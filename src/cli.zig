@@ -182,11 +182,6 @@ pub const Arguments = struct {
     };
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    const bunx_commands = [_]ParamType{
-        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
-
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
@@ -1906,16 +1901,9 @@ pub const Command = struct {
 
                 Command.Tag.BunxCommand => {
                     Output.prettyErrorln(
-                        \\<b>Usage: bunx <r><cyan>[...flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
                         \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
-                        \\Flags:
-                        \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
-                        \\
-                        \\Examples<d>:<r>
-                        \\  <b>bunx prisma migrate<r>
-                        \\  <b>bunx prettier foo.js<r>
-                        \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>
+                        \\Run <cyan>bunx --help<r> for additional usage information.
                         \\
                     , .{});
                 },

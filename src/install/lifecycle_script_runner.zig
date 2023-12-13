@@ -47,8 +47,8 @@ pub const LifecycleScriptSubprocess = struct {
             getFd,
             getBuffer,
             null,
-            onRegisterPoll,
-            onDone,
+            registerPoll,
+            done,
             onError,
         );
 
@@ -67,7 +67,7 @@ pub const LifecycleScriptSubprocess = struct {
             this.is_done = true;
         }
 
-        pub fn onDone(this: *OutputReader, _: []u8) void {
+        pub fn done(this: *OutputReader, _: []u8) void {
             this.finish();
             this.subprocess().onOutputDone();
         }
@@ -77,7 +77,7 @@ pub const LifecycleScriptSubprocess = struct {
             this.subprocess().onOutputError(err);
         }
 
-        pub fn onRegisterPoll(this: *OutputReader) void {
+        pub fn registerPoll(this: *OutputReader) void {
             switch (this.poll.register(this.subprocess().manager.uws_event_loop, .readable, true)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{

@@ -9,8 +9,8 @@ pub fn PipeReader(
     comptime getFd: fn (*This) bun.FileDescriptor,
     comptime getBuffer: fn (*This) *std.ArrayList(u8),
     comptime onReadChunk: ?fn (*This, chunk: []u8) void,
-    comptime onRegisterPoll: ?fn (*This) void,
-    comptime onDone: fn (*This, []u8) void,
+    comptime registerPoll: ?fn (*This) void,
+    comptime done: fn (*This, []u8) void,
     comptime onError: fn (*This, bun.sys.Error) void,
 ) type {
     return struct {
@@ -18,8 +18,8 @@ pub fn PipeReader(
             .getFd = getFd,
             .getBuffer = getBuffer,
             .onReadChunk = onReadChunk,
-            .onRegisterPoll = onRegisterPoll,
-            .onDone = onDone,
+            .registerPoll = registerPoll,
+            .done = done,
             .onError = onError,
         };
 
@@ -31,7 +31,7 @@ pub fn PipeReader(
                     readFromBlockingPipeWithoutBlocking(this, buffer, fd, 0);
                 },
                 .not_ready => {
-                    if (comptime vtable.onRegisterPoll) |register| {
+                    if (comptime vtable.registerPoll) |register| {
                         register(this);
                     }
                 },
@@ -65,7 +65,7 @@ pub fn PipeReader(
                 switch (bun.sys.read(fd, buffer)) {
                     .result => |bytes_read| {
                         if (bytes_read == 0) {
-                            vtable.onDone(parent, resizable_buffer.items);
+                            vtable.done(parent, resizable_buffer.items);
                             return;
                         }
 
@@ -98,7 +98,7 @@ pub fn PipeReader(
                                     }
                                 }
 
-                                if (comptime vtable.onRegisterPoll) |register| {
+                                if (comptime vtable.registerPoll) |register| {
                                     register(parent);
                                 }
 

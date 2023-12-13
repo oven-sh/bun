@@ -17,7 +17,8 @@ const WaiterThread = JSC.Subprocess.WaiterThread;
 const lex = bun.js_lexer;
 const logger = @import("root").bun.logger;
 const clap = @import("root").bun.clap;
-const Arguments = @import("../cli.zig").Arguments;
+const cli = @import("../cli.zig");
+const Arguments = cli.Arguments;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -30,7 +31,7 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const Command = @import("../cli.zig").Command;
+const Command = cli.Command;
 const bundler = bun.bundler;
 
 const DotEnv = @import("../env_loader.zig");
@@ -1730,6 +1731,43 @@ pub const RunCommand = struct {
         }
 
         return false;
+    }
+
+    pub fn execAsIfNode(ctx: Command.Context) !void {
+        std.debug.assert(cli.pretend_to_be_node);
+
+        if (ctx.positionals.len == 0) {
+            Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});
+            Global.exit(1);
+        }
+
+        // TODO(@paperdave): merge windows branch
+        // var win_resolver = resolve_path.PosixToWinNormalizer{};
+
+        const filename = ctx.positionals[0];
+
+        const normalized_filename = if (std.fs.path.isAbsolute(filename))
+            // TODO(@paperdave): merge windows branch
+            // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
+            filename
+        else brk: {
+            const cwd = try bun.getcwd(&path_buf);
+            path_buf[cwd.len] = std.fs.path.sep_posix;
+            var parts = [_]string{filename};
+            break :brk resolve_path.joinAbsStringBuf(
+                path_buf[0 .. cwd.len + 1],
+                &path_buf2,
+                &parts,
+                .loose,
+            );
+        };
+
+        Run.boot(ctx, normalized_filename) catch |err| {
+            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+
+            Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
+            Global.exit(1);
+        };
     }
 };
 

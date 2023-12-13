@@ -986,6 +986,14 @@ pub const ReservedCommand = struct {
 
 const AddCompletions = @import("./cli/add_completions.zig");
 
+/// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
+/// to pretend to be node.js by always choosing RunCommand with a relative filepath.
+///
+/// Examples of how this differs from bun alone:
+/// - `node build`               -> `bun run ./build`
+/// - `node scripts/postinstall` -> `bun run ./scripts/postinstall`
+pub var pretend_to_be_node = false;
+
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -1127,9 +1135,10 @@ pub const Command = struct {
         if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
 
-        if (strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
-            std.debug.print("", .{});
+        if (strings.endsWithComptime(argv0, "node")) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+            pretend_to_be_node = true;
+            return .RunCommand;
         }
 
         if (comptime Environment.isDebug) {
@@ -1614,6 +1623,10 @@ pub const Command = struct {
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
+                if (pretend_to_be_node) {
+                    try RunCommand.execAsIfNode(ctx);
+                    return;
+                }
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
                         return;
@@ -1726,7 +1739,7 @@ pub const Command = struct {
                         return;
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
 
@@ -1738,12 +1751,12 @@ pub const Command = struct {
                 }
 
                 if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> module not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Module not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> file not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);

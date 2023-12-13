@@ -933,63 +933,58 @@ pub const RunCommand = struct {
         .macos => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
-        "/bun-node"
+        "/bun-node-" ++ Environment.git_sha
     else
         "/bun-debug-node";
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
-        if (comptime Environment.isWindows) {
-            bun.todo(@src(), {});
-            return;
+        // If we are already running as "node", the path should exist
+        if (CLI.pretend_to_be_node) return;
+
+        var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
+
+        // if we are already an absolute path, use that
+        // if the user started the application via a shebang, it's likely that the path is absolute already
+        if (bun.argv()[0][0] == '/') {
+            optional_bun_path.* = bun.span(bun.argv()[0]);
+            argv0 = bun.argv()[0];
+        } else if (optional_bun_path.len == 0) {
+            // otherwise, ask the OS for the absolute path
+            var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+            if (self.len > 0) {
+                self.ptr[self.len] = 0;
+                argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                optional_bun_path.* = self;
+            }
+        }
+
+        if (optional_bun_path.len == 0) {
+            argv0 = bun.argv()[0];
         }
 
         var retried = false;
+        while (true) {
+            inner: {
+                std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
+                    if (err == error.PathAlreadyExists) break :inner;
+                    if (retried)
+                        return;
 
-        if (!strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
-            var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
+                    std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
 
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (bun.argv()[0][0] == '/') {
-                optional_bun_path.* = bun.span(bun.argv()[0]);
-                argv0 = bun.argv()[0];
-            } else if (optional_bun_path.len == 0) {
-                // otherwise, ask the OS for the absolute path
-                var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
-                if (self.len > 0) {
-                    self.ptr[self.len] = 0;
-                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
-                    optional_bun_path.* = self;
-                }
+                    retried = true;
+                    continue;
+                };
             }
-
-            if (optional_bun_path.len == 0) {
-                argv0 = bun.argv()[0];
-            }
-
-            while (true) {
-                inner: {
-                    std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
-                        if (err == error.PathAlreadyExists) break :inner;
-                        if (retried)
-                            return;
-
-                        std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
-
-                        retried = true;
-                        continue;
-                    };
-                }
-                break;
-            }
+            break;
         }
 
         if (PATH.items.len > 0) {
-            try PATH.append(':');
+            try PATH.append(std.fs.path.delimiter);
         }
 
-        try PATH.appendSlice(bun_node_dir ++ ":");
+        try PATH.appendSlice(bun_node_dir);
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };

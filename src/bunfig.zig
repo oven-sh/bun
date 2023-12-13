@@ -302,7 +302,7 @@ pub const Bunfig = struct {
                         break :brk install_;
                     };
 
-                    if (json.get("auto")) |auto_install_expr| {
+                    if (_bun.get("auto")) |auto_install_expr| {
                         if (auto_install_expr.data == .e_string) {
                             this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
                                 try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
@@ -319,15 +319,13 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (json.get("exact")) |exact_install_expr| {
-                        try this.expect(exact_install_expr, .e_boolean);
-
-                        if (exact_install_expr.asBool().?) {
-                            install.exact = true;
+                    if (_bun.get("exact")) |exact| {
+                        if (exact.asBool()) |value| {
+                            install.exact = value;
                         }
                     }
 
-                    if (json.get("prefer")) |prefer_expr| {
+                    if (_bun.get("prefer")) |prefer_expr| {
                         try this.expect(prefer_expr, .e_string);
 
                         if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {

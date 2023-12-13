@@ -16,7 +16,7 @@ const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Which = @import("../which.zig");
+const which = @import("../which.zig").which;
 const Braces = @import("./braces.zig");
 const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
@@ -1918,7 +1918,7 @@ pub const Cmd = struct {
             }
 
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+            var resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
                 this.base.interpreter.global.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{first_arg});
                 return ShellError.Process;
             };
@@ -2408,7 +2408,7 @@ pub const BufferedWriter = struct {
     const print = bun.Output.scoped(.BufferedWriter, false);
 
     const ParentPtr = struct {
-        const Types = .{ Builtin.Export, Builtin.Echo, Builtin.Cd };
+        const Types = .{ Builtin.Export, Builtin.Echo, Builtin.Cd, Builtin.Which };
         ptr: Repr,
         const Repr = TaggedPointerUnion(Types);
 
@@ -2429,6 +2429,7 @@ pub const BufferedWriter = struct {
             if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(bw, e);
+            if (this.ptr.is(Builtin.Which)) return this.ptr.as(Builtin.Which).onBufferedWriterDone(bw, e);
             unreachable;
         }
     };
@@ -2577,7 +2578,7 @@ pub const Builtin = struct {
         cd: Cd,
         echo: Echo,
         pwd,
-        which,
+        which: Which,
         rm,
     },
 
@@ -2697,8 +2698,8 @@ pub const Builtin = struct {
             .@"export" => this.callImplWithType(Export, Ret, "export", field, args_),
             .echo => this.callImplWithType(Echo, Ret, "echo", field, args_),
             .cd => this.callImplWithType(Cd, Ret, "cd", field, args_),
+            .which => this.callImplWithType(Which, Ret, "which", field, args_),
             .pwd => @panic("FIXME TODO"),
-            .which => @panic("FIXME TODO"),
             .rm => @panic("FIXME TODO"),
         };
     }
@@ -2847,6 +2848,13 @@ pub const Builtin = struct {
                     },
                 };
             },
+            .which => {
+                cmd.exec.bltn.impl = .{
+                    .which = Which{
+                        .bltn = &cmd.exec.bltn,
+                    },
+                };
+            },
             else => @panic("FIXME TODO"),
         }
     }
@@ -2887,23 +2895,23 @@ pub const Builtin = struct {
         // this.arena.deinit();
     }
 
-    pub fn writeNonBlocking(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
-        if (comptime io_kind != .stdout and io_kind != .stderr) {
-            @compileError("Bad IO" ++ @tagName(io_kind));
-        }
+    // pub fn writeNonBlocking(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
+    //     if (comptime io_kind != .stdout and io_kind != .stderr) {
+    //         @compileError("Bad IO" ++ @tagName(io_kind));
+    //     }
 
-        var io: *BuiltinIO = &@field(this, @tagName(io_kind));
-        switch (io.*) {
-            .buf, .arraybuf => {
-                return this.writeNoIO(io_kind, buf);
-            },
-            .fd => {
-                return Syscall.write(io.fd, buf);
-            },
-        }
-    }
+    //     var io: *BuiltinIO = &@field(this, @tagName(io_kind));
+    //     switch (io.*) {
+    //         .buf, .arraybuf => {
+    //             return this.writeNoIO(io_kind, buf);
+    //         },
+    //         .fd => {
+    //             return Syscall.write(io.fd, buf);
+    //         },
+    //     }
+    // }
 
-    pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
+    pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(usize) {
         if (comptime io_kind != .stdout and io_kind != .stderr) {
             @compileError("Bad IO" ++ @tagName(io_kind));
         }
@@ -2943,9 +2951,9 @@ pub const Builtin = struct {
         return this.stdin.isClosed() and this.stdout.isClosed() and this.stderr.isClosed();
     }
 
-    pub fn fmtErrorArena(this: *Builtin, comptime kind: Kind, comptime fmt_: []const u8, args: anytype) []u8 {
-        const cmd_str = comptime kind.asString();
-        const fmt = cmd_str ++ ": " ++ fmt_;
+    pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []const u8, args: anytype) []u8 {
+        const cmd_str = comptime if (kind) |k| k.asString() ++ ": " else "";
+        const fmt = cmd_str ++ fmt_;
         return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
     }
 
@@ -3132,6 +3140,170 @@ pub const Builtin = struct {
 
         pub fn deinit(this: *Echo) void {
             log("({s}) deinit", .{@tagName(.echo)});
+            _ = this;
+        }
+    };
+
+    /// 1 arg  => returns absolute path of the arg (not found becomes exit code 1)
+    /// N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
+    pub const Which = struct {
+        bltn: *Builtin,
+
+        state: union(enum) {
+            idle,
+            one_arg: struct {
+                writer: BufferedWriter,
+            },
+            multi_args: struct {
+                args_slice: []const [*:0]const u8,
+                arg_idx: usize,
+                had_not_found: bool = false,
+                state: union(enum) {
+                    none,
+                    waiting_write: BufferedWriter,
+                },
+            },
+            done,
+            err: Syscall.Error,
+        } = .idle,
+
+        pub fn start(this: *Which) Maybe(void) {
+            const args = this.bltn.argsSlice();
+            if (args.len == 0) {
+                if (!this.bltn.stdout.needsIO()) {
+                    switch (this.bltn.writeNoIO(.stdout, "\n")) {
+                        .err => |e| {
+                            return Maybe(void).initErr(e);
+                        },
+                        .result => {},
+                    }
+                    this.bltn.done(1);
+                    return Maybe(void).success;
+                }
+                this.state = .{
+                    .one_arg = .{
+                        .writer = BufferedWriter{
+                            .fd = this.bltn.stdout.fd,
+                            .remain = "\n",
+                            .parent = BufferedWriter.ParentPtr.init(this),
+                        },
+                    },
+                };
+                this.state.one_arg.writer.writeAllowBlocking(false);
+                return Maybe(void).success;
+            }
+
+            if (!this.bltn.stdout.needsIO()) {
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
+                var had_not_found = false;
+                for (args) |arg_raw| {
+                    const arg = arg_raw[0..std.mem.len(arg_raw)];
+                    var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                        had_not_found = true;
+                        const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
+                        switch (this.bltn.writeNoIO(.stdout, buf)) {
+                            .err => |e| return Maybe(void).initErr(e),
+                            .result => {},
+                        }
+                        continue;
+                    };
+
+                    switch (this.bltn.writeNoIO(.stdout, resolved)) {
+                        .err => |e| return Maybe(void).initErr(e),
+                        .result => {},
+                    }
+                }
+                this.bltn.done(@intFromBool(had_not_found));
+                return Maybe(void).success;
+            }
+
+            this.state = .{
+                .multi_args = .{
+                    .args_slice = args,
+                    .arg_idx = 0,
+                    .state = .none,
+                },
+            };
+            this.next();
+            return Maybe(void).success;
+        }
+
+        pub fn next(this: *Which) void {
+            var multiargs = &this.state.multi_args;
+            if (multiargs.arg_idx >= multiargs.args_slice.len) {
+                // Done
+                this.bltn.done(@intFromBool(multiargs.had_not_found));
+                return;
+            }
+
+            const arg_raw = multiargs.args_slice[multiargs.arg_idx];
+            const arg = arg_raw[0..std.mem.len(arg_raw)];
+
+            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
+
+            var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
+                multiargs.had_not_found = true;
+                multiargs.state = .{
+                    .waiting_write = BufferedWriter{
+                        .fd = this.bltn.stdout.fd,
+                        .remain = buf,
+                        .parent = BufferedWriter.ParentPtr.init(this),
+                    },
+                };
+                multiargs.state.waiting_write.writeIfPossible(false);
+                // yield execution
+                return;
+            };
+
+            const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
+            multiargs.state = .{
+                .waiting_write = BufferedWriter{
+                    .fd = this.bltn.stdout.fd,
+                    .remain = buf,
+                    .parent = BufferedWriter.ParentPtr.init(this),
+                },
+            };
+            multiargs.state.waiting_write.writeIfPossible(false);
+            return;
+        }
+
+        fn argComplete(this: *Which) void {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
+            }
+
+            this.state.multi_args.arg_idx += 1;
+            this.state.multi_args.state = .none;
+            this.next();
+        }
+
+        pub fn onBufferedWriterDone(this: *Which, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .one_arg or
+                    (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.bltn.done(e.?.errno);
+                return;
+            }
+
+            if (this.state == .one_arg) {
+                // Calling which with on arguments returns exit code 1
+                this.bltn.done(1);
+                return;
+            }
+
+            this.argComplete();
+        }
+
+        pub fn deinit(this: *Which) void {
+            log("({s}) deinit", .{@tagName(.which)});
             _ = this;
         }
     };

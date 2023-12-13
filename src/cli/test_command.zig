@@ -637,6 +637,16 @@ pub const TestCommand = struct {
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
         vm.bundler.options.rewrite_jest_for_tests = true;
+        vm.bundler.options.env.behavior = .load_all_without_inlining;
+
+        const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
+        if (!node_env_entry.found_existing) {
+            node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
+            node_env_entry.value_ptr.* = .{
+                .value = try env_loader.allocator.dupe(u8, "test"),
+                .conditional = false,
+            };
+        }
 
         try vm.bundler.configureDefines();
 

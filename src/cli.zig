@@ -79,7 +79,7 @@ pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver)
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     @setCold(true);
-    diag.name.long = "--target";
+    diag.name.long = "target";
     diag.arg = _target;
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);

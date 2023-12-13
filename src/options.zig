@@ -1107,14 +1107,6 @@ pub const Timings = struct {
 };
 
 pub const DefaultUserDefines = struct {
-    pub const HotModuleReloading = struct {
-        pub const Key = "process.env.BUN_HMR_ENABLED";
-        pub const Value = "true";
-    };
-    pub const HotModuleReloadingVerbose = struct {
-        pub const Key = "process.env.BUN_HMR_VERBOSE";
-        pub const Value = "true";
-    };
     // This must be globally scoped so it doesn't disappear
     pub const NodeEnv = struct {
         pub const Key = "process.env.NODE_ENV";
@@ -1129,16 +1121,13 @@ pub const DefaultUserDefines = struct {
 pub fn definesFromTransformOptions(
     allocator: std.mem.Allocator,
     log: *logger.Log,
-    _input_define: ?Api.StringMap,
-    hmr: bool,
+    maybe_input_define: ?Api.StringMap,
     target: Target,
-    loader: ?*DotEnv.Loader,
+    env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
-    debugger: bool,
 ) !*defines.Define {
-    _ = debugger;
-    var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
+    var input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
         defines.RawDefines,
@@ -1150,73 +1139,71 @@ pub fn definesFromTransformOptions(
     var environment_defines = defines.UserDefinesArray.init(allocator);
     defer environment_defines.deinit();
 
-    if (loader) |_loader| {
-        if (framework_env) |framework| {
-            _ = try _loader.copyForDefine(
-                defines.RawDefines,
-                &user_defines,
-                defines.UserDefinesArray,
-                &environment_defines,
-                framework.toAPI().defaults,
-                framework.behavior,
-                framework.prefix,
-                allocator,
-            );
-        } else {
-            _ = try _loader.copyForDefine(
-                defines.RawDefines,
-                &user_defines,
-                defines.UserDefinesArray,
-                &environment_defines,
-                std.mem.zeroes(Api.StringMap),
-                Api.DotEnvBehavior.disable,
-                "",
-                allocator,
-            );
+    var behavior: Api.DotEnvBehavior = .disable;
+
+    load_env: {
+        const env = env_loader orelse break :load_env;
+        const framework = framework_env orelse break :load_env;
+
+        if (Environment.allow_assert) {
+            std.debug.assert(framework.behavior != ._none);
         }
+
+        behavior = framework.behavior;
+        if (behavior == .load_all_without_inlining or behavior == .disable)
+            break :load_env;
+
+        try env.copyForDefine(
+            defines.RawDefines,
+            &user_defines,
+            defines.UserDefinesArray,
+            &environment_defines,
+            framework.toAPI().defaults,
+            framework.behavior,
+            framework.prefix,
+            allocator,
+        );
     }
 
-    var quoted_node_env: string = brk: {
-        if (NODE_ENV) |node_env| {
-            if (node_env.len > 0) {
-                if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
-                    (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
-                {
-                    break :brk node_env;
-                }
+    if (behavior != .load_all_without_inlining) {
+        var quoted_node_env: string = brk: {
+            if (NODE_ENV) |node_env| {
+                if (node_env.len > 0) {
+                    if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                        (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+                    {
+                        break :brk node_env;
+                    }
 
-                // avoid allocating if we can
-                if (strings.eqlComptime(node_env, "production")) {
-                    break :brk "\"production\"";
-                } else if (strings.eqlComptime(node_env, "development")) {
-                    break :brk "\"development\"";
-                } else if (strings.eqlComptime(node_env, "test")) {
-                    break :brk "\"test\"";
-                } else {
-                    break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                    // avoid allocating if we can
+                    if (strings.eqlComptime(node_env, "production")) {
+                        break :brk "\"production\"";
+                    } else if (strings.eqlComptime(node_env, "development")) {
+                        break :brk "\"development\"";
+                    } else if (strings.eqlComptime(node_env, "test")) {
+                        break :brk "\"test\"";
+                    } else {
+                        break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                    }
                 }
             }
+            break :brk "\"development\"";
+        };
+
+        _ = try user_defines.getOrPutValue(
+            "process.env.NODE_ENV",
+            quoted_node_env,
+        );
+        _ = try user_defines.getOrPutValue(
+            "process.env.BUN_ENV",
+            quoted_node_env,
+        );
+
+        // Automatically set `process.browser` to `true` for browsers and false for node+js
+        // This enables some extra dead code elimination
+        if (target.processBrowserDefineValue()) |value| {
+            _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
         }
-        break :brk "\"development\"";
-    };
-
-    _ = try user_defines.getOrPutValue(
-        "process.env.NODE_ENV",
-        quoted_node_env,
-    );
-    _ = try user_defines.getOrPutValue(
-        "process.env.BUN_ENV",
-        quoted_node_env,
-    );
-
-    if (hmr) {
-        try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);
-    }
-
-    // Automatically set `process.browser` to `true` for browsers and false for node+js
-    // This enables some extra dead code elimination
-    if (target.processBrowserDefineValue()) |value| {
-        _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
     }
 
     if (target.isBun()) {
@@ -1525,7 +1512,6 @@ pub const BundleOptions = struct {
             allocator,
             this.log,
             this.transform_options.define,
-            this.transform_options.serve orelse false,
             this.target,
             loader_,
             env,
@@ -1543,7 +1529,6 @@ pub const BundleOptions = struct {
 
                 break :node_env "\"development\"";
             },
-            this.debugger,
         );
         this.defines_loaded = true;
     }

@@ -2069,13 +2069,15 @@ pub const PackageManager = struct {
         this.uws_event_loop.tickWithoutIdle();
     }
 
+    pub fn tickLifecycleScripts(this: *PackageManager) void {
+        if (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+            this.tickWithoutSleep();
+        }
+    }
+
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) {
-            if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                // If there are any pending lifecycle script tasks, we need to check if the file descriptor statuses have changed.
-                this.tickWithoutSleep();
-            }
-
+            this.tickLifecycleScripts();
             return;
         }
         Output.flush();
@@ -8583,9 +8585,7 @@ pub const PackageManager = struct {
                         if (!installer.options.do.install_packages) return error.InstallFailed;
                     }
 
-                    if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                        this.tickWithoutSleep();
-                    }
+                    this.tickLifecycleScripts();
                 }
 
                 for (remaining) |dependency_id| {
@@ -8606,9 +8606,7 @@ pub const PackageManager = struct {
                 );
                 if (!installer.options.do.install_packages) return error.InstallFailed;
 
-                if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                    this.tickWithoutSleep();
-                }
+                this.tickLifecycleScripts();
             }
 
             while (this.pending_tasks > 0 and installer.options.do.install_packages) {
@@ -8631,11 +8629,10 @@ pub const PackageManager = struct {
 
                 if (this.pending_tasks > 0)
                     this.sleep()
-                else if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                    this.tickWithoutSleep();
-                }
-            } else if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                this.tickWithoutSleep();
+                else
+                    this.tickLifecycleScripts();
+            } else {
+                this.tickLifecycleScripts();
             }
 
             this.finished_installing.store(true, .Monotonic);

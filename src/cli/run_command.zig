@@ -841,6 +841,16 @@ pub const RunCommand = struct {
         return true;
     }
 
+    /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
+    /// This prevents '"node" exited with ...' when it was actually bun.
+    /// As of writing this is only used for 'runBinary'
+    fn basenameOrBun(str: []const u8) []const u8 {
+        if (strings.eqlComptime(str, bun_node_dir ++ "/node")) {
+            return "bun";
+        }
+        return std.fs.path.basename(str);
+    }
+
     pub fn runBinary(
         ctx: Command.Context,
         executable: []const u8,
@@ -882,31 +892,31 @@ pub const RunCommand = struct {
                     }
                 }
             }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
             Global.exit(1);
         };
         switch (result) {
             .Exited => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
                 if (sig > 0 and sig != 2 and !silent)
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
                 Global.exit(sig);
             },
             .Signal => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
                 if (sig > 0 and sig != 2 and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
                 }
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Stopped => |sig| {
                 if (sig > 0 and !silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Unknown => |sig| {
                 if (!silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ basenameOrBun(executable), sig });
                 Global.exit(1);
             },
         }
@@ -933,11 +943,12 @@ pub const RunCommand = struct {
         .macos => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
-        "/bun-node-" ++ Environment.git_sha
+        "/bun-node-" ++ Environment.git_sha_short
     else
         "/bun-debug-node";
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
@@ -984,7 +995,10 @@ pub const RunCommand = struct {
             try PATH.append(std.fs.path.delimiter);
         }
 
-        try PATH.appendSlice(bun_node_dir);
+        // The reason for the extra delim is because we are going to append the system PATH
+        // later on. this is done by the caller, and explains why we are adding bun_node_dir
+        // to the end of the path slice rather than the start.
+        try PATH.appendSlice(bun_node_dir ++ .{std.fs.path.delimiter});
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
@@ -1730,6 +1744,15 @@ pub const RunCommand = struct {
 
     pub fn execAsIfNode(ctx: Command.Context) !void {
         std.debug.assert(CLI.pretend_to_be_node);
+
+        if (ctx.runtime_options.eval_script.len > 0) {
+            const trigger = bun.pathLiteral("/[eval]");
+            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            const cwd = try std.os.getcwd(&entry_point_buf);
+            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
+            return;
+        }
 
         if (ctx.positionals.len == 0) {
             Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});

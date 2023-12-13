@@ -81,4 +81,9 @@ describe("fake node cli", () => {
       expect(fakeNodeRun(temp, "build").stdout).toBe("pass");
     });
   });
+
+  test("node -e ", () => {
+    const temp = tempDirWithFiles("fake-node", {});
+    expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
+  });
 });

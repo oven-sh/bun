@@ -157,9 +157,9 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
   };
 }
 
-export function fakeNodeRun(dir: string, file: string, env?: Record<string, string>) {
+export function fakeNodeRun(dir: string, file: string | string[], env?: Record<string, string>) {
   var path = require("path");
-  const result = Bun.spawnSync([bunExe(), "--bun", "node", file], {
+  const result = Bun.spawnSync([bunExe(), "--bun", "node", ...(Array.isArray(file) ? file : [file])], {
     cwd: dir ?? path.dirname(file),
     env: {
       ...bunEnv,

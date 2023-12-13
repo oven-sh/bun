@@ -1519,6 +1519,7 @@ pub const RunCommand = struct {
                     var must_normalize = false;
                     const file_: anyerror!std.fs.File = brk: {
                         if (std.fs.path.isAbsolute(script_name_to_search)) {
+                            // TODO(@paperdave): i dont think this is correct
                             must_normalize = Environment.isWindows;
                             break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
                         } else {

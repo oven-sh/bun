@@ -76,6 +76,7 @@ $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
 if ($LASTEXITCODE -ne 0) {
   Write-Output "Install Failed - could not verify bun.exe"
   Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
+  # TODO check for lastexitcode -1073741795 and print a better message
   exit 1
 }
 $DisplayVersion = if ($BunRevision -like "*-canary.*") {

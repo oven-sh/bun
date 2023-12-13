@@ -113,7 +113,7 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.f
             if (err.getErrno() == .ISDIR) {
                 _ = bun.sys.rmdirat(bun.toFD(to_dir), destination.ptr);
 
-                try (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(from_dir), destination).unwrap());
+                try (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination).unwrap());
                 return;
             }
 

@@ -418,12 +418,6 @@ pub fn openDirAtWindows(
         log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
-    if (Environment.isDebug) {
-        if (rc == std.os.windows.NTSTATUS.OBJECT_PATH_SYNTAX_BAD) {
-            @breakpoint();
-        }
-    }
-
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
             return JSC.Maybe(bun.FileDescriptor){
@@ -540,12 +534,6 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
 
         if (comptime Environment.allow_assert) {
             log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
-        }
-
-        if (Environment.isDebug) {
-            if (rc == std.os.windows.NTSTATUS.OBJECT_PATH_SYNTAX_BAD) {
-                @breakpoint();
-            }
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {

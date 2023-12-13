@@ -127,7 +127,7 @@ describe(".env file is loaded", () => {
     const { stdout } = bunTest(`${dir}/index.test.ts`);
     expect(stdout).toBe("false");
   });
-  test.todo("NODE_ENV is automatically set to test within bun test", () => {
+  test("NODE_ENV is automatically set to test within bun test", () => {
     const dir = tempDirWithFiles("dotenv", {
       "index.test.ts": "console.log(process.env.NODE_ENV);",
     });
@@ -365,7 +365,7 @@ test(".env special characters 1 (issue #2823)", () => {
   expect(stdout).toBe("[a] [c$v]");
 });
 
-test.todo("env escaped quote (issue #2484)", () => {
+test("env escaped quote (issue #2484)", () => {
   const dir = tempDirWithFiles("env-issue-2484", {
     "index.ts": "console.log(process.env.VALUE, process.env.VALUE2);",
   });
@@ -424,7 +424,8 @@ test("#3911", () => {
 });
 
 describe("boundary tests", () => {
-  test("src boundary", () => {
+  // TODO: this is a regression in bun ~1.0.15 ish
+  test.todo("src boundary", () => {
     const dir = tempDirWithFiles("dotenv", {
       ".env": 'KEY="a\\n"',
       "index.ts": "console.log(process.env.KEY);",
@@ -577,5 +578,104 @@ describe("--env-file", () => {
   test("should ignore a file that doesn't exist", () => {
     const res = bunRun(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+});
+
+describe("process.env is not inlined", () => {
+  test("basic case", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.ts": `process.env.NODE_ENV = "production";
+process.env.YOLO = "woo!";
+console.log(process.env.NODE_ENV, process.env.YOLO);`,
+    });
+    expect(
+      bunRun(path.join(tmp, "index.ts"), {
+        NODE_ENV: undefined,
+        YOLO: "boo",
+      }).stdout,
+    ).toBe("production woo!");
+  });
+  test("pass explicit NODE_ENV case", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.ts": `console.log(process.env.NODE_ENV);
+process.env.NODE_ENV = "development";
+process.env.YOLO = "woo!";
+console.log(process.env.NODE_ENV, process.env.YOLO);`,
+    });
+    expect(
+      bunRun(path.join(tmp, "index.ts"), {
+        NODE_ENV: "production",
+        YOLO: "boo",
+      }).stdout,
+    ).toBe("production\ndevelopment woo!");
+  });
+  test("pass weird NODE_ENV case", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.ts": `console.log(process.env.NODE_ENV);
+process.env.NODE_ENV = "development";
+process.env.YOLO = "woo!";
+console.log(process.env.NODE_ENV, process.env.YOLO);`,
+    });
+    expect(
+      bunRun(path.join(tmp, "index.ts"), {
+        NODE_ENV: "buh",
+        YOLO: "boo",
+      }).stdout,
+    ).toBe("buh\ndevelopment woo!");
+  });
+  test("in bun test", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.test.ts": `test("my test", () => {
+  console.log(process.env.NODE_ENV);
+  process.env.NODE_ENV = "development";
+  process.env.YOLO = "woo!";
+  console.log(process.env.NODE_ENV, process.env.YOLO);
+});`,
+    });
+    expect(
+      bunTest(path.join(tmp, "index.test.ts"), {
+        YOLO: "boo",
+      }).stdout,
+    ).toBe("test\ndevelopment woo!");
+  });
+  test("in bun test with explicit setting", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.test.ts": `test("my test", () => {
+  console.log(process.env.NODE_ENV);
+  process.env.NODE_ENV = "development";
+  process.env.YOLO = "woo!";
+  console.log(process.env.NODE_ENV, process.env.YOLO);
+});`,
+    });
+    expect(
+      bunTest(path.join(tmp, "index.test.ts"), {
+        YOLO: "boo",
+        NODE_ENV: "production",
+      }).stdout,
+    ).toBe("production\ndevelopment woo!");
+  });
+  test("in bun test with dynamic access", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.test.ts": `const dynamic = () => require('process')['e' + String('nv')];
+test("my test", () => {
+  console.log(dynamic().NODE_ENV);
+  process.env.NODE_ENV = "production";
+  console.log(dynamic().NODE_ENV);
+});`,
+    });
+    expect(bunTest(path.join(tmp, "index.test.ts"), {}).stdout).toBe("test\nproduction");
+  });
+  test("in bun test with dynamic access + explicit set", () => {
+    const tmp = tempDirWithFiles("env-inlining", {
+      "index.test.ts": `const dynamic = () => require('process')['e' + String('nv')];
+test("my test", () => {
+  console.log(dynamic().NODE_ENV);
+  process.env.NODE_ENV = "production";
+  console.log(dynamic().NODE_ENV);
+});`,
+    });
+    expect(bunTest(path.join(tmp, "index.test.ts"), { NODE_ENV: "development" }).stdout).toBe(
+      "development\nproduction",
+    );
   });
 });

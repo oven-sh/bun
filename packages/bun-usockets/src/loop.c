@@ -116,12 +116,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                context->on_socket_timeout(s);
+                if (context->on_socket_timeout != NULL) context->on_socket_timeout(s);
             }
 
             if (context->iterator == s && long_ticks == s->long_timeout) {
                 s->long_timeout = 255;
-                context->on_socket_long_timeout(s);
+                if (context->on_socket_long_timeout != NULL) context->on_socket_long_timeout(s);
             }   
 
             /* Check for unlink / link (if the event handler did not modify the chain, we step 1) */

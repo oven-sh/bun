@@ -16,9 +16,8 @@ const Which = @import("../../../which.zig");
 const Async = bun.Async;
 const IPC = @import("../../ipc.zig");
 const uws = bun.uws;
-const LifecycleScriptSubprocess = @import("../../../cli/run_command.zig").RunCommand.LifecycleScriptSubprocess;
 
-const PosixSpawn = @import("./spawn.zig").PosixSpawn;
+const PosixSpawn = bun.posix.spawn;
 
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
@@ -2210,6 +2209,8 @@ pub const Subprocess = struct {
     // use a thread to wait for the child process to exit.
     // We use a single thread to call waitpid() in a loop.
     pub const WaiterThread = struct {
+        const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+
         concurrent_queue: Queue = .{},
         lifecycle_script_concurrent_queue: LifecycleScriptTaskQueue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),

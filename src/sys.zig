@@ -113,6 +113,7 @@ pub const Tag = enum(u8) {
     pwritev,
     readv,
     preadv,
+    ioctl_ficlone,
     NtQueryDirectoryFile,
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);

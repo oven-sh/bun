@@ -139,15 +139,6 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        interpreter.shell_env = std.StringArrayHashMap([:0]const u8).init(allocator);
-        interpreter.cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator);
-        interpreter.export_env = export_env;
-
-        interpreter.script = script;
-        interpreter.allocator = allocator;
-        interpreter.promise = .{};
-        interpreter.jsobjs = jsobjs;
-
         var pathbuf = try arena.allocator().alloc(u8, bun.MAX_PATH_BYTES);
 
         const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
@@ -168,12 +159,24 @@ pub const Interpreter = struct {
             },
         };
 
-        interpreter.__cwd_pathbuf = @ptrCast(pathbuf.ptr);
-        interpreter.cwd = pathbuf[0..cwd.len :0];
-        interpreter.prev_cwd = pathbuf[0..cwd.len :0];
-        interpreter.cwd_fd = cwd_fd;
+        interpreter.* = .{
+            .global = global,
 
-        interpreter.arena = arena.*;
+            .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+            .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+            .export_env = export_env,
+
+            .script = script,
+            .allocator = allocator,
+            .promise = .{},
+            .jsobjs = jsobjs,
+            .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
+            .cwd = pathbuf[0..cwd.len :0],
+            .prev_cwd = pathbuf[0..cwd.len :0],
+            .cwd_fd = cwd_fd,
+
+            .arena = arena.*,
+        };
 
         var promise = JSC.JSPromise.create(global);
         interpreter.promise.strong.set(global, promise.asValue(global));
@@ -274,7 +277,7 @@ pub const Interpreter = struct {
 
         var prev_cwd_buf = brk: {
             if (self.__prevcwd_pathbuf) |prev| break :brk prev;
-            break :brk try self.allocator.alloc(u8, bun.MAX_PATH_BYTES);
+            break :brk self.allocator.alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
         };
 
         std.mem.copyForwards(u8, prev_cwd_buf[0..self.cwd.len], self.cwd[0..self.cwd.len]);
@@ -1400,9 +1403,10 @@ pub const Cond = struct {
             std.debug.assert(this.left == null or this.right == null);
             std.debug.assert(this.currently_executing != null);
         }
-        log("conditional child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "right" else "left" });
+        log("conditional child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "left" else "right" });
 
         child.deinit();
+        this.currently_executing = null;
 
         if (this.left == null) {
             this.left = exit_code;
@@ -2009,11 +2013,11 @@ pub const Cmd = struct {
         log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
 
         const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
-        subproc.ref();
         this.exec = .{ .subproc = .{
             .child = subproc,
             .buffered_closed = buffered_closed,
         } };
+        subproc.ref();
 
         // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {
         //     this.cmd.?.stdout.pipe.buffer.watch();
@@ -2404,7 +2408,7 @@ pub const BufferedWriter = struct {
     const print = bun.Output.scoped(.BufferedWriter, false);
 
     const ParentPtr = struct {
-        const Types = .{ Builtin.Export, Builtin.Echo };
+        const Types = .{ Builtin.Export, Builtin.Echo, Builtin.Cd };
         ptr: Repr,
         const Repr = TaggedPointerUnion(Types);
 
@@ -2424,6 +2428,7 @@ pub const BufferedWriter = struct {
         fn onDone(this: ParentPtr, bw: *BufferedWriter, e: ?Syscall.Error) void {
             if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(bw, e);
+            if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(bw, e);
             unreachable;
         }
     };
@@ -2435,7 +2440,7 @@ pub const BufferedWriter = struct {
             return;
         }
 
-        this.write();
+        this.__write();
     }
 
     pub fn writeIfPossible(this: *BufferedWriter, comptime is_sync: bool) void {
@@ -2465,7 +2470,12 @@ pub const BufferedWriter = struct {
         this.writeAllowBlocking(is_sync);
     }
 
-    pub fn write(this: *BufferedWriter) void {
+    /// Calling this directly will block if the fd is not opened with non
+    /// blocking option. If the fd is blocking, you should call
+    /// `writeIfPossible()` first, which will check if the fd is writable. If so
+    /// it will then call this function, if not, then it will poll for the fd to
+    /// be writable
+    pub fn __write(this: *BufferedWriter) void {
         this.writeAllowBlocking(false);
     }
 
@@ -2564,7 +2574,7 @@ pub const Builtin = struct {
 
     impl: union(Kind) {
         @"export": Export,
-        cd,
+        cd: Cd,
         echo: Echo,
         pwd,
         which,
@@ -2686,7 +2696,7 @@ pub const Builtin = struct {
         return switch (this.kind) {
             .@"export" => this.callImplWithType(Export, Ret, "export", field, args_),
             .echo => this.callImplWithType(Echo, Ret, "echo", field, args_),
-            .cd => @panic("FIXME TODO"),
+            .cd => this.callImplWithType(Cd, Ret, "cd", field, args_),
             .pwd => @panic("FIXME TODO"),
             .which => @panic("FIXME TODO"),
             .rm => @panic("FIXME TODO"),
@@ -2830,6 +2840,13 @@ pub const Builtin = struct {
                     },
                 };
             },
+            .cd => {
+                cmd.exec.bltn.impl = .{
+                    .cd = Cd{
+                        .bltn = &cmd.exec.bltn,
+                    },
+                };
+            },
             else => @panic("FIXME TODO"),
         }
     }
@@ -2871,7 +2888,7 @@ pub const Builtin = struct {
     }
 
     pub fn writeNonBlocking(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
-        if (comptime io_kind != .stdout or io_kind != .stdin) {
+        if (comptime io_kind != .stdout and io_kind != .stderr) {
             @compileError("Bad IO" ++ @tagName(io_kind));
         }
 
@@ -2887,7 +2904,7 @@ pub const Builtin = struct {
     }
 
     pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []u8) Maybe(usize) {
-        if (comptime io_kind != .stdout and io_kind != .stdin) {
+        if (comptime io_kind != .stdout and io_kind != .stderr) {
             @compileError("Bad IO" ++ @tagName(io_kind));
         }
 
@@ -2926,8 +2943,7 @@ pub const Builtin = struct {
         return this.stdin.isClosed() and this.stdout.isClosed() and this.stderr.isClosed();
     }
 
-    pub fn fmtErrorArena(this: *Builtin, comptime fmt_: []const u8, args: anytype) []u8 {
-        const kind = @as(Kind, this.impl);
+    pub fn fmtErrorArena(this: *Builtin, comptime kind: Kind, comptime fmt_: []const u8, args: anytype) []u8 {
         const cmd_str = comptime kind.asString();
         const fmt = cmd_str ++ ": " ++ fmt_;
         return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
@@ -3022,7 +3038,7 @@ pub const Builtin = struct {
                     },
                 };
 
-                this.print_state.?.bufwriter.write();
+                this.print_state.?.bufwriter.writeIfPossible(false);
 
                 // if (this.print_state.?.isDone()) {
                 //     if (this.print_state.?.bufwriter.err) |e| {
@@ -3040,6 +3056,7 @@ pub const Builtin = struct {
         }
 
         pub fn deinit(this: *Export) void {
+            log("({s}) deinit", .{@tagName(.@"export")});
             _ = this;
         }
     };
@@ -3093,7 +3110,7 @@ pub const Builtin = struct {
                 .parent = BufferedWriter.ParentPtr.init(this),
             };
             this.state = .waiting;
-            this.io_write_state.?.write();
+            this.io_write_state.?.writeIfPossible(false);
             return Maybe(void).success;
         }
 
@@ -3114,6 +3131,7 @@ pub const Builtin = struct {
         }
 
         pub fn deinit(this: *Echo) void {
+            log("({s}) deinit", .{@tagName(.echo)});
             _ = this;
         }
     };
@@ -3128,13 +3146,12 @@ pub const Builtin = struct {
             idle,
             waiting_write_stderr: struct {
                 buffered_writer: BufferedWriter,
-                buf: []u8,
             },
             done,
             err: Syscall.Error,
-        },
+        } = .idle,
 
-        fn writeStderrNonBlocking(this: *Cd, buf: []u8) Maybe(void) {
+        fn writeStderrNonBlocking(this: *Cd, buf: []u8) void {
             this.state = .{
                 .waiting_write_stderr = .{
                     .buffered_writer = BufferedWriter{
@@ -3144,19 +3161,14 @@ pub const Builtin = struct {
                     },
                 },
             };
-            this.state.waiting_write_stderr.buffered_writer.write();
+            this.state.waiting_write_stderr.buffered_writer.writeIfPossible(false);
         }
 
         pub fn start(this: *Cd) Maybe(void) {
             const args = this.bltn.argsSlice();
             if (args.len > 1) {
-                const buf = this.bltn.fmtErrorArena("too many arguments", .{});
-                switch (this.writeStderrNonBlocking(buf)) {
-                    .err => |e| {
-                        return Maybe(void).initErr(e);
-                    },
-                    .result => {},
-                }
+                const buf = this.bltn.fmtErrorArena(.cd, "too many arguments", .{});
+                this.writeStderrNonBlocking(buf);
                 // yield execution
                 return Maybe(void).success;
             }
@@ -3185,6 +3197,8 @@ pub const Builtin = struct {
                     }
                 },
             }
+            this.bltn.done(0);
+            return Maybe(void).success;
         }
 
         fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: [:0]const u8) Maybe(void) {
@@ -3192,33 +3206,35 @@ pub const Builtin = struct {
 
             switch (errno) {
                 @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
-                    const buf = this.bltn.fmtErrorArena("not a directory: {s}", .{new_cwd_});
+                    const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
                     if (!this.bltn.stderr.needsIO()) {
-                        this.bltn.writeNoIO(.stderr, buf);
+                        switch (this.bltn.writeNoIO(.stderr, buf)) {
+                            .err => |e| return Maybe(void).initErr(e),
+                            .result => {},
+                        }
                         this.state = .done;
                         this.bltn.done(1);
                         // yield execution
                         return Maybe(void).success;
                     }
-                    switch (this.writeStderrNonBlocking(buf)) {
-                        .err => |e| return Maybe(void).initErr(e),
-                        .result => {},
-                    }
+
+                    this.writeStderrNonBlocking(buf);
                     return Maybe(void).success;
                 },
                 @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
-                    const buf = this.bltn.fmtErrorArena("not a directory: {s}", .{new_cwd_});
+                    const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
                     if (!this.bltn.stderr.needsIO()) {
-                        this.bltn.writeNoIO(.stderr, buf);
+                        switch (this.bltn.writeNoIO(.stderr, buf)) {
+                            .err => |e| return Maybe(void).initErr(e),
+                            .result => {},
+                        }
                         this.state = .done;
                         this.bltn.done(1);
                         // yield execution
                         return Maybe(void).success;
                     }
-                    switch (this.writeStderrNonBlocking(buf)) {
-                        .err => |e| return Maybe(void).initErr(e),
-                        .result => {},
-                    }
+
+                    this.writeStderrNonBlocking(buf);
                     return Maybe(void).success;
                 },
                 else => return Maybe(void).success,
@@ -3228,7 +3244,7 @@ pub const Builtin = struct {
         pub fn onBufferedWriterDone(this: *Cd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
             _ = bufwriter;
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.io_write_state != null and this.state == .waiting);
+                std.debug.assert(this.state == .waiting_write_stderr);
             }
 
             if (e != null) {
@@ -3242,6 +3258,7 @@ pub const Builtin = struct {
         }
 
         pub fn deinit(this: *Cd) void {
+            log("({s}) deinit", .{@tagName(.cd)});
             _ = this;
         }
     };

@@ -2422,6 +2422,10 @@ pub const PackageManager = struct {
     }
 
     pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
+        if (comptime Environment.isWindows) {
+            @panic("TODO: command prompt version of temp node-gyp script");
+        }
+
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();

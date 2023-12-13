@@ -1122,13 +1122,11 @@ pub fn definesFromTransformOptions(
     allocator: std.mem.Allocator,
     log: *logger.Log,
     maybe_input_define: ?Api.StringMap,
-    hmr: bool,
     target: Target,
     env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
 ) !*defines.Define {
-    _ = hmr;
     var input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(

@@ -86,6 +86,14 @@ pub const Interpreter = struct {
     /// This should be allocated using the arena
     jsobjs: []JSValue,
 
+    /// The current working directory of the shell
+    __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
+    prev_cwd: [:0]const u8,
+    __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
+    cwd: [:0]const u8,
+    // FIXME TODO deinit
+    cwd_fd: bun.FileDescriptor,
+
     const ShellErrorKind = error{
         OutOfMemory,
         Syscall,
@@ -136,10 +144,36 @@ pub const Interpreter = struct {
         interpreter.export_env = export_env;
 
         interpreter.script = script;
-        interpreter.arena = arena.*;
         interpreter.allocator = allocator;
         interpreter.promise = .{};
         interpreter.jsobjs = jsobjs;
+
+        var pathbuf = try arena.allocator().alloc(u8, bun.MAX_PATH_BYTES);
+
+        const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
+            .result => |cwd| cwd.ptr[0..cwd.len :0],
+            .err => |err| {
+                const errJs = err.toJSC(global);
+                global.throwValue(errJs);
+                return ShellError.Init;
+            },
+        };
+
+        const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            .result => |fd| fd,
+            .err => |err| {
+                const errJs = err.toJSC(global);
+                global.throwValue(errJs);
+                return ShellError.Init;
+            },
+        };
+
+        interpreter.__cwd_pathbuf = @ptrCast(pathbuf.ptr);
+        interpreter.cwd = pathbuf[0..cwd.len :0];
+        interpreter.prev_cwd = pathbuf[0..cwd.len :0];
+        interpreter.cwd_fd = cwd_fd;
+
+        interpreter.arena = arena.*;
 
         var promise = JSC.JSPromise.create(global);
         interpreter.promise.strong.set(global, promise.asValue(global));
@@ -206,6 +240,65 @@ pub const Interpreter = struct {
             .shell => this.shell_env.put(assign.label, value),
             .exported => this.export_env.put(assign.label, value),
         }) catch |e| OOM(e);
+    }
+
+    fn changePrevCwd(self: *Interpreter) Maybe(void) {
+        return self.changeCwd(self.prev_cwd);
+    }
+
+    fn changeCwd(self: *Interpreter, new_cwd_: [:0]const u8) Maybe(void) {
+        const new_cwd: [:0]const u8 = brk: {
+            if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
+
+            const existing_cwd = self.cwd;
+            const cwd_str = ResolvePath.joinZ(&[_][]const u8{
+                existing_cwd,
+                new_cwd_,
+            }, .auto);
+
+            break :brk cwd_str;
+        };
+
+        const new_cwd_fd = switch (Syscall.openat(
+            self.cwd_fd,
+            new_cwd,
+            std.os.O.DIRECTORY | std.os.O.RDONLY,
+            0,
+        )) {
+            .result => |fd| fd,
+            .err => |err| {
+                return Maybe(void).initErr(err);
+            },
+        };
+        _ = Syscall.close2(self.cwd_fd);
+
+        var prev_cwd_buf = brk: {
+            if (self.__prevcwd_pathbuf) |prev| break :brk prev;
+            break :brk try self.allocator.alloc(u8, bun.MAX_PATH_BYTES);
+        };
+
+        std.mem.copyForwards(u8, prev_cwd_buf[0..self.cwd.len], self.cwd[0..self.cwd.len]);
+        prev_cwd_buf[self.cwd.len] = 0;
+        self.prev_cwd = prev_cwd_buf[0..self.cwd.len :0];
+
+        std.mem.copyForwards(u8, self.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
+        self.__cwd_pathbuf[new_cwd.len] = 0;
+        self.cwd = new_cwd;
+
+        self.cwd_fd = new_cwd_fd;
+
+        return Maybe(void).success;
+    }
+
+    fn getHomedir(self: *Interpreter) [:0]const u8 {
+        if (comptime bun.Environment.isWindows) {
+            if (self.export_env.get("USERPROFILE")) |env|
+                return env;
+        } else {
+            if (self.export_env.get("HOME")) |env|
+                return env;
+        }
+        return "unknown";
     }
 };
 
@@ -2302,7 +2395,7 @@ pub const ShellGlobTask = struct {
 /// it.
 pub const BufferedWriter = struct {
     remain: []const u8 = "",
-    fd: bun.FileDescriptor = bun.invalid_fd,
+    fd: bun.FileDescriptor,
     poll_ref: ?*bun.Async.FilePoll = null,
     written: usize = 0,
     parent: ParentPtr,
@@ -2833,6 +2926,13 @@ pub const Builtin = struct {
         return this.stdin.isClosed() and this.stdout.isClosed() and this.stderr.isClosed();
     }
 
+    pub fn fmtErrorArena(this: *Builtin, comptime fmt_: []const u8, args: anytype) []u8 {
+        const kind = @as(Kind, this.impl);
+        const cmd_str = comptime kind.asString();
+        const fmt = cmd_str ++ ": " ++ fmt_;
+        return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
+    }
+
     pub const Export = struct {
         bltn: *Builtin,
         print_state: ?struct {
@@ -2911,6 +3011,8 @@ pub const Builtin = struct {
                     this.bltn.done(0);
                     return Maybe(void).success;
                 }
+
+                if (comptime bun.Environment.allow_assert) {}
 
                 this.print_state = .{
                     .bufwriter = BufferedWriter{
@@ -3012,6 +3114,134 @@ pub const Builtin = struct {
         }
 
         pub fn deinit(this: *Echo) void {
+            _ = this;
+        }
+    };
+
+    /// Some additional behaviour beyond basic `cd <dir>`:
+    /// - `cd` by itself or `cd ~` will always put the user in their home directory.
+    /// - `cd ~username` will put the user in the home directory of the specified user
+    /// - `cd -` will put the user in the previous directory
+    pub const Cd = struct {
+        bltn: *Builtin,
+        state: union(enum) {
+            idle,
+            waiting_write_stderr: struct {
+                buffered_writer: BufferedWriter,
+                buf: []u8,
+            },
+            done,
+            err: Syscall.Error,
+        },
+
+        fn writeStderrNonBlocking(this: *Cd, buf: []u8) Maybe(void) {
+            this.state = .{
+                .waiting_write_stderr = .{
+                    .buffered_writer = BufferedWriter{
+                        .fd = this.bltn.stderr.fd,
+                        .remain = buf,
+                        .parent = BufferedWriter.ParentPtr.init(this),
+                    },
+                },
+            };
+            this.state.waiting_write_stderr.buffered_writer.write();
+        }
+
+        pub fn start(this: *Cd) Maybe(void) {
+            const args = this.bltn.argsSlice();
+            if (args.len > 1) {
+                const buf = this.bltn.fmtErrorArena("too many arguments", .{});
+                switch (this.writeStderrNonBlocking(buf)) {
+                    .err => |e| {
+                        return Maybe(void).initErr(e);
+                    },
+                    .result => {},
+                }
+                // yield execution
+                return Maybe(void).success;
+            }
+
+            const first_arg = args[0][0..std.mem.len(args[0]) :0];
+            switch (first_arg[0]) {
+                '-' => {
+                    switch (this.bltn.parentCmd().base.interpreter.changePrevCwd()) {
+                        .result => {},
+                        .err => |err| {
+                            return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.interpreter.prev_cwd);
+                        },
+                    }
+                },
+                '~' => {
+                    const homedir = this.bltn.parentCmd().base.interpreter.getHomedir();
+                    switch (this.bltn.parentCmd().base.interpreter.changeCwd(homedir)) {
+                        .result => {},
+                        .err => |err| return this.handleChangeCwdErr(err, homedir),
+                    }
+                },
+                else => {
+                    switch (this.bltn.parentCmd().base.interpreter.changeCwd(first_arg)) {
+                        .result => {},
+                        .err => |err| return this.handleChangeCwdErr(err, first_arg),
+                    }
+                },
+            }
+        }
+
+        fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: [:0]const u8) Maybe(void) {
+            const errno: usize = @intCast(err.errno);
+
+            switch (errno) {
+                @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
+                    const buf = this.bltn.fmtErrorArena("not a directory: {s}", .{new_cwd_});
+                    if (!this.bltn.stderr.needsIO()) {
+                        this.bltn.writeNoIO(.stderr, buf);
+                        this.state = .done;
+                        this.bltn.done(1);
+                        // yield execution
+                        return Maybe(void).success;
+                    }
+                    switch (this.writeStderrNonBlocking(buf)) {
+                        .err => |e| return Maybe(void).initErr(e),
+                        .result => {},
+                    }
+                    return Maybe(void).success;
+                },
+                @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
+                    const buf = this.bltn.fmtErrorArena("not a directory: {s}", .{new_cwd_});
+                    if (!this.bltn.stderr.needsIO()) {
+                        this.bltn.writeNoIO(.stderr, buf);
+                        this.state = .done;
+                        this.bltn.done(1);
+                        // yield execution
+                        return Maybe(void).success;
+                    }
+                    switch (this.writeStderrNonBlocking(buf)) {
+                        .err => |e| return Maybe(void).initErr(e),
+                        .result => {},
+                    }
+                    return Maybe(void).success;
+                },
+                else => return Maybe(void).success,
+            }
+        }
+
+        pub fn onBufferedWriterDone(this: *Cd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.io_write_state != null and this.state == .waiting);
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.bltn.done(e.?.errno);
+                return;
+            }
+
+            this.state = .done;
+            this.bltn.done(0);
+        }
+
+        pub fn deinit(this: *Cd) void {
             _ = this;
         }
     };

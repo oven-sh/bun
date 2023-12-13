@@ -1844,6 +1844,7 @@ const Waiter = struct {
 pub const PackageManager = struct {
     cache_directory_: ?std.fs.IterableDir = null,
     temp_dir_: ?std.fs.IterableDir = null,
+    temp_dir_name: string = "",
     root_dir: *Fs.FileSystem.DirEntry,
     allocator: std.mem.Allocator,
     log: *logger.Log,
@@ -1895,6 +1896,8 @@ pub const PackageManager = struct {
     total_scripts: usize = 0,
 
     root_lifecycle_scripts: ?Package.Scripts.List = null,
+
+    node_gyp_tempdir_name: string = "",
 
     env_configure: ?struct {
         root_dir_info: *DirInfo,
@@ -2355,9 +2358,10 @@ pub const PackageManager = struct {
         var cache_directory = this.getCacheDirectory();
         // The chosen tempdir must be on the same filesystem as the cache directory
         // This makes renameat() work
-        const default_tempdir = Fs.FileSystem.RealFS.getDefaultTempDir();
+        this.temp_dir_name = Fs.FileSystem.RealFS.getDefaultTempDir();
+
         var tried_dot_tmp = false;
-        var tempdir: std.fs.IterableDir = std.fs.cwd().makeOpenPathIterable(default_tempdir, .{}) catch brk: {
+        var tempdir: std.fs.IterableDir = std.fs.cwd().makeOpenPathIterable(this.temp_dir_name, .{}) catch brk: {
             tried_dot_tmp = true;
             break :brk cache_directory.dir.makeOpenPathIterable(".tmp", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
@@ -2415,6 +2419,48 @@ pub const PackageManager = struct {
         }
 
         return tempdir;
+    }
+
+    pub fn createNodeGypScript(this: *PackageManager) !void {
+        if (this.node_gyp_tempdir_name.len > 0) return;
+
+        const tempdir = this.getTemporaryDirectory();
+        var tempdir_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &tempdir_name_buf, 12345));
+
+        // used later for adding to path for scripts
+        this.node_gyp_tempdir_name = try this.allocator.dupe(u8, node_gyp_tempdir_name);
+
+        var node_gyp_tempdir = tempdir.dir.makeOpenPath(node_gyp_tempdir_name, .{}) catch |err| {
+            if (err == error.EEXIST) {
+                // it should not exist
+                Output.prettyErrorln("<r><red>error<r>: node-gyp tmpdir already exists", .{});
+                Global.crash();
+            }
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
+            Global.crash();
+        };
+        defer node_gyp_tempdir.close();
+
+        var node_gyp_file = node_gyp_tempdir.createFile("node-gyp", .{ .mode = 0o777 }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
+            Global.crash();
+        };
+        defer node_gyp_file.close();
+
+        var bytes: string = "#!/usr/bin/env sh\nbun x node-gyp@latest \"$@\"";
+        var index: usize = 0;
+        while (index < bytes.len) {
+            switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
+                .result => |written| {
+                    index += written;
+                },
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to node-gyp file", .{@tagName(err.getErrno())});
+                    Global.crash();
+                },
+            }
+        }
     }
 
     pub var instance: PackageManager = undefined;
@@ -9259,6 +9305,8 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
+        try this.createNodeGypScript();
+
         const root_dir_info, const this_bundler = try this.configureEnvForScripts(ctx, log_level);
         var original_path: string = undefined;
         try RunCommand.configurePathForRun(ctx, root_dir_info, &this_bundler, &original_path, list.first().cwd, false);

@@ -1180,6 +1180,11 @@ pub const RunCommand = struct {
             }
 
             try new_path.appendSlice(PATH);
+            try new_path.append(std.fs.path.delimiter);
+
+            try new_path.appendSlice(PackageManager.instance.temp_dir_name);
+            try new_path.append(std.fs.path.sep);
+            try new_path.appendSlice(PackageManager.instance.node_gyp_tempdir_name);
         }
 
         this_bundler.env.map.put("PATH", new_path.items) catch unreachable;

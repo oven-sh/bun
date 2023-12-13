@@ -2065,13 +2065,9 @@ pub const PackageManager = struct {
         this.uws_event_loop.wakeup();
     }
 
-    pub fn tickWithoutSleep(this: *PackageManager) void {
-        this.uws_event_loop.tickWithoutIdle();
-    }
-
     pub fn tickLifecycleScripts(this: *PackageManager) void {
         if (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-            this.tickWithoutSleep();
+            this.uws_event_loop.tickWithoutIdle();
         }
     }
 

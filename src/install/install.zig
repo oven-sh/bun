@@ -8581,7 +8581,9 @@ pub const PackageManager = struct {
                             log_level,
                         );
                         if (!installer.options.do.install_packages) return error.InstallFailed;
-                    } else if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                    }
+
+                    if (PackageManager.instance.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                         this.tickWithoutSleep();
                     }
                 }

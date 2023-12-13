@@ -105,9 +105,9 @@ export function tempDirWithFiles(basename: string, files: Record<string, string 
   return dir;
 }
 
-export function bunRun(file: string, env?: Record<string, string | undefined>, execArgv: string[] = []) {
+export function bunRun(file: string, env?: Record<string, string>) {
   var path = require("path");
-  const result = Bun.spawnSync([bunExe(), ...execArgv, file], {
+  const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
     env: {
       ...bunEnv,

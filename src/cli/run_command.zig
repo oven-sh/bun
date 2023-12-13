@@ -47,7 +47,7 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
-const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
+const PosixSpawn = bun.posix.spawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
@@ -59,7 +59,7 @@ pub const RunCommand = struct {
         "zsh",
     };
 
-    pub fn findShell(PATH: string, cwd: string) ?stringZ {
+    fn findShellImpl(PATH: string, cwd: string) ?stringZ {
         if (comptime Environment.isWindows) {
             return "C:\\Windows\\System32\\cmd.exe";
         }
@@ -89,6 +89,31 @@ pub const RunCommand = struct {
             if (Try.shell(shell)) {
                 return shell;
             }
+        }
+
+        return null;
+    }
+
+    /// Find the "best" shell to use
+    /// Cached to only run once
+    pub fn findShell(PATH: string, cwd: string) ?stringZ {
+        const bufs = struct {
+            pub var shell_buf_once: [bun.MAX_PATH_BYTES]u8 = undefined;
+            pub var found_shell: [:0]const u8 = "";
+        };
+        if (bufs.found_shell.len > 0) {
+            return bufs.found_shell;
+        }
+
+        if (findShellImpl(PATH, cwd)) |found| {
+            if (found.len < bufs.shell_buf_once.len) {
+                @memcpy(bufs.shell_buf_once[0..found.len], found);
+                bufs.shell_buf_once[found.len] = 0;
+                bufs.found_shell = bufs.shell_buf_once[0..found.len :0];
+                return bufs.found_shell;
+            }
+
+            return found;
         }
 
         return null;
@@ -307,7 +332,7 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |code| {
                 if (code > 0) {
-                    if (code != 2 and !silent) {
+                    if (code > 2 and !silent) {
                         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
                         Output.flush();
                     }

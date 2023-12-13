@@ -7589,7 +7589,7 @@ pub const PackageManager = struct {
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.first().package_name;
-                while (RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
+                while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
                     this.manager.uws_event_loop.tickWithTimeout(125);
                 }
 
@@ -7628,7 +7628,7 @@ pub const PackageManager = struct {
             const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
             return (deps.subsetOf(this.completed_trees) or
                 deps.eql(this.completed_trees)) and
-                RunCommand.LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
+                LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
         pub fn printTreeDeps(this: *PackageInstaller) void {
@@ -9265,7 +9265,7 @@ pub const PackageManager = struct {
         const envp = try this_bundler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_bundler.env.map.put("PATH", original_path);
 
-        try RunCommand.spawnPackageScripts(this, list, envp);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp);
     }
 };
 
@@ -9280,6 +9280,8 @@ pub const PackageManifestError = error{
     PackageManifestHTTP4xx,
     PackageManifestHTTP5xx,
 };
+
+pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
 
 test "UpdateRequests.parse" {
     var log = logger.Log.init(default_allocator);

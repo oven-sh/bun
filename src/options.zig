@@ -1107,14 +1107,6 @@ pub const Timings = struct {
 };
 
 pub const DefaultUserDefines = struct {
-    pub const HotModuleReloading = struct {
-        pub const Key = "process.env.BUN_HMR_ENABLED";
-        pub const Value = "true";
-    };
-    pub const HotModuleReloadingVerbose = struct {
-        pub const Key = "process.env.BUN_HMR_VERBOSE";
-        pub const Value = "true";
-    };
     // This must be globally scoped so it doesn't disappear
     pub const NodeEnv = struct {
         pub const Key = "process.env.NODE_ENV";
@@ -1136,6 +1128,7 @@ pub fn definesFromTransformOptions(
     framework_env: ?*const Env,
     NODE_ENV: ?string,
 ) !*defines.Define {
+    _ = hmr;
     var input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
@@ -1207,10 +1200,6 @@ pub fn definesFromTransformOptions(
             "process.env.BUN_ENV",
             quoted_node_env,
         );
-
-        if (hmr) {
-            try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);
-        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -1525,7 +1514,6 @@ pub const BundleOptions = struct {
             allocator,
             this.log,
             this.transform_options.define,
-            this.transform_options.serve orelse false,
             this.target,
             loader_,
             env,

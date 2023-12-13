@@ -569,7 +569,6 @@ pub const TestCommand = struct {
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
-            try map.put("NODE_ENV", "test");
 
             var loader = try ctx.allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
@@ -639,6 +638,14 @@ pub const TestCommand = struct {
         vm.preload = ctx.preloads;
         vm.bundler.options.rewrite_jest_for_tests = true;
         vm.bundler.options.env.behavior = .load_all_without_inlining;
+
+        const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
+        if (!node_env_entry.found_existing) {
+            node_env_entry.value_ptr.* = .{
+                .value = try env_loader.allocator.dupe(u8, "test"),
+                .conditional = false,
+            };
+        }
 
         try vm.bundler.configureDefines();
 

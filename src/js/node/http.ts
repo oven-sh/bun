@@ -883,6 +883,7 @@ const headersSymbol = Symbol("headers");
 const finishedSymbol = Symbol("finished");
 const timeoutTimerSymbol = Symbol("timeoutTimer");
 const fakeSocketSymbol = Symbol("fakeSocket");
+const kUniqueHeaders = Symbol('kUniqueHeaders');
 function OutgoingMessage(options) {
   Writable.$call(this, options);
   this.headersSent = false;
@@ -890,6 +891,7 @@ function OutgoingMessage(options) {
   this[finishedSymbol] = false;
   this[kEndCalled] = false;
   this[kAbortController] = null;
+  this._header = null;
 }
 
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
@@ -974,6 +976,197 @@ OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
 
   return this;
 };
+
+function matchHeader(self, state, field, value) {
+  if (field.length < 4 || field.length > 17)
+    return;
+  field = field.toLowerCase();
+  switch (field) {
+    case 'connection':
+      state.connection = true;
+      self._removedConnection = false;
+      break;
+    case 'transfer-encoding':
+      state.te = true;
+      self._removedTE = false;
+      break;
+    case 'content-length':
+      state.contLen = true;
+      self._contentLength = value;
+      self._removedContLen = false;
+      break;
+    case 'date':
+    case 'expect':
+    case 'trailer':
+      state[field] = true;
+      break;
+    case 'keep-alive':
+      self._defaultKeepAlive = false;
+      break;
+  }
+}
+
+function storeHeader(self, state, key, value, validate) {
+  if (validate)
+    validateHeaderValue(key, value);
+  state.header += key + ': ' + value + '\r\n';
+  matchHeader(self, state, key, value);
+}
+
+function isCookieField(s) {
+  return s.length === 6 && s.toLowerCase() === 'cookie';
+}
+
+function isContentDispositionField(s) {
+  return s.length === 19 && s.toLowerCase() === 'content-disposition';
+}
+
+function processHeader(self, state, key, value, validate) {
+  // If key is content-disposition and there is content-length
+  // encode the value in latin1
+  // https://www.rfc-editor.org/rfc/rfc6266#section-4.3
+  // Refs: https://github.com/nodejs/node/pull/46528
+  if (isContentDispositionField(key) && self._contentLength) {
+    value = Buffer.from(value, 'latin1');
+  }
+
+  if (ArrayIsArray(value)) {
+    if (
+      (value.length < 2 || !isCookieField(key)) &&
+      (!self[kUniqueHeaders] || !self[kUniqueHeaders].has(key.toLowerCase()))
+    ) {
+      // Retain for(;;) loop for performance reasons
+      // Refs: https://github.com/nodejs/node/pull/30958
+      for (let i = 0; i < value.length; i++)
+        storeHeader(self, state, key, value[i], validate);
+      return;
+    }
+    value = value.join('; ');
+  }
+  storeHeader(self, state, key, value, validate);
+}
+
+OutgoingMessage.prototype._storeHeader = function (firstLine, headers) {
+  const state = {
+    connection: false,
+    contLen: false,
+    te: false,
+    date: false,
+    expect: false,
+    trailer: false,
+    header: firstLine,
+  };
+
+  if (headers) {
+    if (headers === this[kOutHeaders]) {
+      for (const key in headers) {
+        const entry = headers[key];
+        processHeader(this, state, entry[0], entry[1], false);
+      }
+    } else if (ArrayIsArray(headers)) {
+      if (headers.length && ArrayIsArray(headers[0])) {
+        for (let i = 0; i < headers.length; i++) {
+          const entry = headers[i];
+          processHeader(this, state, entry[0], entry[1], true);
+        }
+      } else {
+        if (headers.length % 2 !== 0) {
+          throw new Error("The argument 'headers' is invalid. Received " + headers);
+        }
+
+        for (let n = 0; n < headers.length; n += 2) {
+          processHeader(this, state, headers[n + 0], headers[n + 1], true);
+        }
+      }
+    } else {
+      for (const key in headers) {
+        if (headers.hasOwnProperty(key)) {
+          processHeader(this, state, key, headers[key], true);
+        }
+      }
+    }
+  }
+
+  let { header } = state;
+
+  // Date header
+  if (this.sendDate && !state.date) {
+    header += 'Date: ' + new Date().toUTCString() + '\r\n';
+  }
+
+  // Force the connection to close when the response is a 204 No Content or
+  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
+  // header.
+  //
+  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
+  // node.js used to send out a zero chunk anyway to accommodate clients
+  // that don't have special handling for those responses.
+  //
+  // It was pointed out that this might confuse reverse proxies to the point
+  // of creating security liabilities, so suppress the zero chunk and force
+  // the connection to close.
+  if (this.chunkedEncoding && (this.statusCode === 204 ||
+                               this.statusCode === 304)) {
+    this.chunkedEncoding = false;
+    this.shouldKeepAlive = false;
+  }
+
+  // keep-alive logic
+  if (this._removedConnection) {
+    // shouldKeepAlive is generally true for HTTP/1.1. In that common case,
+    // even if the connection header isn't sent, we still persist by default.
+    this._last = !this.shouldKeepAlive;
+  } else if (!state.connection) {
+    const shouldSendKeepAlive = this.shouldKeepAlive &&
+        (state.contLen || this.useChunkedEncodingByDefault || this.agent);
+    if (shouldSendKeepAlive && this.maxRequestsOnConnectionReached) {
+      header += 'Connection: close\r\n';
+    } else if (shouldSendKeepAlive) {
+      header += 'Connection: keep-alive\r\n';
+      if (this._keepAliveTimeout && this._defaultKeepAlive) {
+        const timeoutSeconds = Math.floor(this._keepAliveTimeout / 1000);
+        let max = '';
+        if (~~this._maxRequestsPerSocket > 0) {
+          max = `, max=${this._maxRequestsPerSocket}`;
+        }
+        header += `Keep-Alive: timeout=${timeoutSeconds}${max}\r\n`;
+      }
+    } else {
+      this._last = true;
+      header += 'Connection: close\r\n';
+    }
+  }
+
+  if (!state.contLen && !state.te) {
+    if (!this._hasBody) {
+      // Make sure we don't end the 0\r\n\r\n at the end of the message.
+      this.chunkedEncoding = false;
+    } else if (!this.useChunkedEncodingByDefault) {
+      this._last = true;
+    } else if (!state.trailer &&
+               !this._removedContLen &&
+               typeof this._contentLength === 'number') {
+      header += 'Content-Length: ' + this._contentLength + '\r\n';
+    } else if (!this._removedTE) {
+      header += 'Transfer-Encoding: chunked\r\n';
+      this.chunkedEncoding = true;
+    } else {
+      // We can't keep alive in this case, because with no header info the body
+      // is defined as all data until the connection is closed.
+      this._last = true;
+    }
+  }
+
+  // Test non-chunked message does not have trailer header set,
+  // message will be terminated by the first empty line after the
+  // header fields, regardless of the header fields present in the
+  // message, and thus cannot contain a message body or 'trailers'.
+  if (this.chunkedEncoding !== true && state.trailer) {
+    throw new Error('Trailers are invalid with this transfer encoding');
+  }
+
+  this._header = header + '\r\n';
+}
 
 Object.defineProperty(OutgoingMessage.prototype, "headers", {
   // For compat with IncomingRequest
@@ -1965,6 +2158,8 @@ function _writeHead(statusCode, reason, obj, response) {
     }
   }
 
+  const statusLine = `HTTP/1.1 ${statusCode} ${response.statusMessage}\r\n`;
+
   if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
     // RFC 2616, 10.2.5:
     // The 204 response MUST NOT include a message-body, and thus is always
@@ -1978,6 +2173,8 @@ function _writeHead(statusCode, reason, obj, response) {
     // terminated by an empty line.
     response._hasBody = false;
   }
+
+  response._storeHeader(statusLine, response.getHeaders());
 }
 
 /**

@@ -52,7 +52,7 @@ describe("expect()", () => {
     await expect(Promise.reject({ a: 1, b: 2 })).rejects.toMatchObject({ a: 1 });
     await expect(Promise.reject({ a: 1, b: 2 })).rejects.not.toMatchObject({ c: 1 });
     await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
-    //await expect(Promise.reject(new Error())).rejects.toThrow(); // FIXME
+    await expect(Promise.reject(new Error())).rejects.toThrow();
 
     // not receiving a rejected promise -> should throw
     if (isBun) {
@@ -82,6 +82,7 @@ describe("expect()", () => {
         throw new Error();
       }),
     ).resolves.toThrow();
+    await expect(Promise.resolve(new Error())).resolves.toThrow();
 
     // not receiving a resolved promise -> should throw
     if (isBun) {

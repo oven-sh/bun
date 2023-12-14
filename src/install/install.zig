@@ -2444,13 +2444,13 @@ pub const PackageManager = struct {
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
-        var tempdir_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &tempdir_name_buf, 12345));
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
 
         // used later for adding to path for scripts
         this.node_gyp_tempdir_name = try this.allocator.dupe(u8, node_gyp_tempdir_name);
 
-        var node_gyp_tempdir = tempdir.dir.makeOpenPath(node_gyp_tempdir_name, .{}) catch |err| {
+        var node_gyp_tempdir = tempdir.dir.makeOpenPath(this.node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
                 Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
@@ -2483,14 +2483,20 @@ pub const PackageManager = struct {
 
         // Add our node-gyp tempdir to the path
         var existing_path = this.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + node_gyp_tempdir_name.len);
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
         try PATH.appendSlice(this.temp_dir_name);
         try PATH.append(std.fs.path.sep);
-        try PATH.appendSlice(node_gyp_tempdir_name);
+        try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
+
+        const path_to_ignore = try std.fmt.bufPrint(&path_buf, "{s}" ++ &[_]u8{std.fs.path.sep} ++ "{s}", .{
+            strings.withoutTrailingSlash(this.temp_dir_name),
+            this.node_gyp_tempdir_name,
+        });
+        try this.env.map.put("BUN_WHICH_IGNORE_CWD", try this.allocator.dupe(u8, path_to_ignore));
     }
 
     pub var instance: PackageManager = undefined;

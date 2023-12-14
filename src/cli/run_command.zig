@@ -511,7 +511,7 @@ pub const RunCommand = struct {
             try PATH.append(std.fs.path.delimiter);
         }
 
-        try PATH.appendSlice(bun_node_dir ++ &[_]u8{std.fs.path.delimiter});
+        try PATH.appendSlice(bun_node_dir);
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };

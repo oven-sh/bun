@@ -48,6 +48,10 @@ pub const Iterator = switch (builtin.os.tag) {
             else => @compileError("unimplemented"),
         };
 
+        fn fd(self: *Self) os.fd_t {
+            return self.dir.fd;
+        }
+
         fn nextDarwin(self: *Self) Result {
             start_over: while (true) {
                 if (self.index >= self.end_index) {
@@ -112,6 +116,10 @@ pub const Iterator = switch (builtin.os.tag) {
 
         pub const Error = IteratorError;
 
+        fn fd(self: *Self) os.fd_t {
+            return self.dir.fd;
+        }
+
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
         pub fn next(self: *Self) Result {
@@ -164,6 +172,10 @@ pub const Iterator = switch (builtin.os.tag) {
         const Self = @This();
 
         pub const Error = IteratorError;
+
+        fn fd(self: *Self) os.fd_t {
+            return self.dir.fd;
+        }
 
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
@@ -262,6 +274,10 @@ pub const Iterator = switch (builtin.os.tag) {
 
         pub const Error = IteratorError;
 
+        fn fd(self: *Self) os.fd_t {
+            return self.dir.fd;
+        }
+
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
         pub fn next(self: *Self) Result {
@@ -326,6 +342,10 @@ pub const WrappedIterator = struct {
 
     pub inline fn next(self: *Self) Result {
         return self.iter.next();
+    }
+
+    pub inline fn fd(self: *Self) os.fd_t {
+        return self.iter.fd();
     }
 };
 

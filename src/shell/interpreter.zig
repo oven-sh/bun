@@ -1888,7 +1888,7 @@ pub const Cmd = struct {
             const first_arg_len = std.mem.len(first_arg);
 
             if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
-                const bltn = Builtin.init(
+                _ = Builtin.init(
                     this,
                     this.base.interpreter,
                     b,
@@ -1900,7 +1900,6 @@ pub const Cmd = struct {
                     &this.io,
                     false,
                 );
-                _ = bltn;
 
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.exec == .bltn);
@@ -2293,17 +2292,28 @@ const CmdEnvIter = struct {
     }
 };
 
+/// A concurrent task, the idea is that this task is not heap allocated because
+/// it will be in a field of one of the Shell state structs which will be heap
+/// allocated.
 pub fn ShellTask(
     comptime Ctx: type,
+    /// Function to be called when the thread pool starts the task, this could
+    /// be on anyone of the thread pool threads so be mindful of concurrency
+    /// nuances
     comptime runFromThreadPool_: fn (*Ctx) void,
+    /// Function that is called on the main thread, once the event loop
+    /// processes that the task is done
     comptime runFromJS_: fn (*Ctx) void,
     comptime print: fn (comptime fmt: []const u8, args: anytype) void,
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
-        event_loop: JSC.EventLoop,
+        event_loop: *JSC.EventLoop,
         // This is a poll because we want it to enter the uSockets loop
         ref: bun.Async.KeepAlive = .{},
+        concurrent_task: JSC.ConcurrentTask = .{},
+
+        pub const InnerShellTask = @This();
 
         pub fn schedule(this: *@This()) void {
             print("schedule", .{});
@@ -2311,9 +2321,14 @@ pub fn ShellTask(
             WorkPool.schedule(&this.task);
         }
 
+        pub fn onFinish(this: *@This()) void {
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+        }
+
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
             var this = @fieldParentPtr(@This(), "task", task);
-            runFromThreadPool_(this);
+            var ctx = @fieldParentPtr(Ctx, "task", this);
+            runFromThreadPool_(ctx);
         }
 
         pub fn runFromJS(this: *@This()) void {
@@ -2323,6 +2338,8 @@ pub fn ShellTask(
             this.ref.unref(this.event_loop.virtual_machine);
         }
 
+        /// Normally, this would deallocate the task but because the task is a
+        /// field on a heap allocated struct we do nothing here.
         pub fn deinit(this: *@This()) void {
             _ = this;
         }
@@ -2445,7 +2462,13 @@ pub const BufferedWriter = struct {
     const print = bun.Output.scoped(.BufferedWriter, false);
 
     const ParentPtr = struct {
-        const Types = .{ Builtin.Export, Builtin.Echo, Builtin.Cd, Builtin.Which };
+        const Types = .{
+            Builtin.Export,
+            Builtin.Echo,
+            Builtin.Cd,
+            Builtin.Which,
+            Builtin.Rm,
+        };
         ptr: Repr,
         const Repr = TaggedPointerUnion(Types);
 
@@ -2467,7 +2490,8 @@ pub const BufferedWriter = struct {
             if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Which)) return this.ptr.as(Builtin.Which).onBufferedWriterDone(bw, e);
-            unreachable;
+            if (this.ptr.is(Builtin.Rm)) return this.ptr.as(Builtin.Rm).onBufferedWriterDone(bw, e);
+            @panic("Invalid ptr tag");
         }
     };
 
@@ -2616,7 +2640,7 @@ pub const Builtin = struct {
         echo: Echo,
         pwd,
         which: Which,
-        rm,
+        rm: Rm,
     },
 
     const Kind = enum {
@@ -2867,7 +2891,10 @@ pub const Builtin = struct {
             },
             .rm => {
                 cmd.exec.bltn.impl = .{
-                    .rm = Rm{ .bltn = &cmd.exec.bltn },
+                    .rm = Rm{
+                        .bltn = &cmd.exec.bltn,
+                        .opts = .{},
+                    },
                 };
             },
             .echo => {
@@ -3474,8 +3501,211 @@ pub const Builtin = struct {
 
     pub const Rm = struct {
         bltn: *Builtin,
-
         opts: Opts,
+        state: union(enum) {
+            idle,
+            parse_opts: struct {
+                args_slice: []const [*:0]const u8,
+                idx: u32 = 0,
+                state: union(enum) {
+                    normal,
+                    wait_write_err: BufferedWriter,
+                } = .normal,
+            },
+            exec: struct {
+                task: RmTask,
+                state: union(enum) {
+                    idle,
+                    waiting,
+                },
+            },
+            done,
+            err: Syscall.Error,
+        } = .idle,
+
+        pub fn start(this: *Rm) Maybe(void) {
+            return this.next();
+        }
+
+        pub fn next(this: *Rm) Maybe(void) {
+            while (this.state != .done and this.state != .err) {
+                switch (this.state) {
+                    .idle => {
+                        this.state = .{
+                            .parse_opts = .{
+                                .args_slice = this.bltn.argsSlice(),
+                            },
+                        };
+                        continue;
+                    },
+                    .parse_opts => {
+                        var parse_opts = &this.state.parse_opts;
+                        switch (parse_opts.state) {
+                            .normal => {
+                                // This means there were no arguments or only
+                                // flag arguments meaning no positionals, in
+                                // either case we must print the usage error
+                                // string
+                                if (parse_opts.idx >= parse_opts.args_slice.len) {
+                                    const error_string = Builtin.Kind.usageString(.rm);
+                                    if (this.bltn.stderr.needsIO()) {
+                                        parse_opts.state = .{
+                                            .wait_write_err = BufferedWriter{
+                                                .fd = this.bltn.stderr.fd,
+                                                .remain = error_string,
+                                                .parent = BufferedWriter.ParentPtr.init(this),
+                                            },
+                                        };
+                                        parse_opts.state.wait_write_err.writeIfPossible(false);
+                                        return Maybe(void).success;
+                                    }
+
+                                    switch (this.bltn.writeNoIO(.stderr, error_string)) {
+                                        .result => {},
+                                        .err => |e| return Maybe(void).initErr(e),
+                                    }
+                                    this.bltn.done(1);
+                                    return Maybe(void).success;
+                                }
+
+                                const idx = parse_opts.idx;
+
+                                const arg_raw = parse_opts.args_slice[idx];
+                                const arg = arg_raw[0..std.mem.len(arg_raw)];
+
+                                switch (this.opts.parseFlag(this.bltn, arg)) {
+                                    .continue_parsing => {
+                                        parse_opts.idx += 1;
+                                        continue;
+                                    },
+                                    .done => {
+                                        const filepath_args_start = idx;
+                                        const filepath_args = parse_opts.args_slice[filepath_args_start..];
+                                        const cwd_fd = switch (Syscall.open(".", os.O.DIRECTORY | os.O.RDONLY, 0)) {
+                                            .result => |fd| fd,
+                                            .err => |e| return Maybe(void).initErr(e),
+                                        };
+                                        this.state = .{
+                                            .exec = .{
+                                                .task = RmTask{
+                                                    .entries_to_delete = filepath_args,
+                                                    .rm = this,
+                                                    .cwd = cwd_fd,
+                                                    .task = .{
+                                                        .event_loop = JSC.VirtualMachine.get().event_loop,
+                                                    },
+                                                },
+                                                .state = .idle,
+                                            },
+                                        };
+                                        // this.state.exec.task.schedule();
+                                        return Maybe(void).success;
+                                    },
+                                    .illegal_option => {
+                                        const error_string = "rm: illegal option -- -\n";
+                                        if (this.bltn.stderr.needsIO()) {
+                                            parse_opts.state = .{
+                                                .wait_write_err = BufferedWriter{
+                                                    .fd = this.bltn.stderr.fd,
+                                                    .remain = error_string,
+                                                    .parent = BufferedWriter.ParentPtr.init(this),
+                                                },
+                                            };
+                                            parse_opts.state.wait_write_err.writeIfPossible(false);
+                                            return Maybe(void).success;
+                                        }
+
+                                        switch (this.bltn.writeNoIO(.stderr, error_string)) {
+                                            .result => {},
+                                            .err => |e| return Maybe(void).initErr(e),
+                                        }
+                                        this.bltn.done(1);
+                                        return Maybe(void).success;
+                                    },
+                                    .illegal_option_with_flag => {
+                                        const flag = arg;
+                                        const error_string = this.bltn.fmtErrorArena(.rm, "illegal option -- {s}\n", .{flag[1..]});
+                                        if (this.bltn.stderr.needsIO()) {
+                                            parse_opts.state = .{
+                                                .wait_write_err = BufferedWriter{
+                                                    .fd = this.bltn.stderr.fd,
+                                                    .remain = error_string,
+                                                    .parent = BufferedWriter.ParentPtr.init(this),
+                                                },
+                                            };
+                                            parse_opts.state.wait_write_err.writeIfPossible(false);
+                                            return Maybe(void).success;
+                                        }
+
+                                        switch (this.bltn.writeNoIO(.stderr, error_string)) {
+                                            .result => {},
+                                            .err => |e| return Maybe(void).initErr(e),
+                                        }
+                                        this.bltn.done(1);
+                                        return Maybe(void).success;
+                                    },
+                                }
+                            },
+                            .wait_write_err => {
+                                // Errored
+                                if (parse_opts.state.wait_write_err.err) |e| {
+                                    this.state = .{ .err = e };
+                                    continue;
+                                }
+
+                                // Done writing
+                                if (this.state.parse_opts.state.wait_write_err.remain.len == 0) {
+                                    this.state = .done;
+                                    continue;
+                                }
+
+                                // yield execution to continue writing
+                                return Maybe(void).success;
+                            },
+                        }
+                    },
+                    .exec => {
+                        // Schedule task
+                        if (this.state.exec.state == .idle) {
+                            this.state.exec.state = .waiting;
+                            this.state.exec.task.task.schedule();
+                        }
+
+                        // do nothing
+                        return Maybe(void).success;
+                    },
+                    .done => {
+                        this.bltn.done(0);
+                        return Maybe(void).success;
+                    },
+                    .err => {
+                        this.bltn.done(this.state.err.errno);
+                        return Maybe(void).success;
+                    },
+                }
+            }
+            return Maybe(void).success;
+        }
+
+        pub fn onBufferedWriterDone(this: *Rm, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err);
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.bltn.done(e.?.errno);
+                return;
+            }
+
+            this.bltn.done(1);
+            return;
+        }
+
+        pub fn deinit(this: *Rm) void {
+            _ = this;
+        }
 
         pub const Opts = struct {
             /// `--no-preserve-root` / `--preserve-root`
@@ -3544,38 +3774,46 @@ pub const Builtin = struct {
                 return null;
             }
 
-            fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) !u8 {
-                if (flag.len == 0) return 1;
-                if (flag[0] != '-') return 1;
+            const ParseFlagsResult = enum {
+                continue_parsing,
+                done,
+                illegal_option,
+                illegal_option_with_flag,
+            };
+
+            fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) ParseFlagsResult {
+                _ = bltn;
+                if (flag.len == 0) return .done;
+                if (flag[0] != '-') return .done;
                 if (flag.len > 2 and flag[1] == '-') {
                     if (bun.strings.eqlComptime(flag, "--preserve-root")) {
                         this.preserve_root = true;
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--no-preserve-root")) {
                         this.preserve_root = false;
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--recursive")) {
                         this.recursive = true;
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--verbose")) {
                         this.verbose = true;
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--dir")) {
                         this.remove_empty_dirs = true;
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--interactive=never")) {
                         this.prompt_behaviour = .never;
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--interactive=once")) {
                         this.prompt_behaviour = .{ .once = .{} };
-                        return 0;
+                        return .continue_parsing;
                     } else if (bun.strings.eqlComptime(flag, "--interactive=always")) {
                         this.prompt_behaviour = .always;
-                        return 0;
+                        return .continue_parsing;
                     }
 
-                    try bltn.write_err(&bltn.stderr, .rm, "illegal option -- -\n", .{});
-                    return 1;
+                    // try bltn.write_err(&bltn.stderr, .rm, "illegal option -- -\n", .{});
+                    return .illegal_option;
                 }
 
                 const small_flags = flag[1..];
@@ -3601,13 +3839,13 @@ pub const Builtin = struct {
                             this.prompt_behaviour = .always;
                         },
                         else => {
-                            try bltn.write_err(&bltn.stderr, .rm, "illegal option -- {s}\n", .{flag[1..]});
-                            return 1;
+                            // try bltn.write_err(&bltn.stderr, .rm, "illegal option -- {s}\n", .{flag[1..]});
+                            return .illegal_option_with_flag;
                         },
                     }
                 }
 
-                return 0;
+                return .continue_parsing;
             }
         };
 
@@ -3615,23 +3853,49 @@ pub const Builtin = struct {
             const print = bun.Output.scoped(.RmTask, false);
 
             rm: *Rm,
-
-            pub usingnamespace ShellTask(
+            cwd: bun.FileDescriptor,
+            entries_to_delete: []const [*:0]const u8,
+            task: ShellTask(
                 RmTask,
                 runFromThreadPool,
                 runFromJs,
                 print,
-            );
+            ),
 
             pub fn runFromThreadPool(this: *RmTask) void {
-                _ = this;
+                return this.run();
             }
 
             pub fn runFromJs(this: *RmTask) void {
-                _ = this;
+                // FIXME handle error properly
+                this.rm.bltn.done(0);
             }
 
             const Dir = std.fs.Dir;
+
+            pub fn run(this: *RmTask) void {
+                var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cwd_path = switch (bun.sys.getcwd(&pathbuf)) {
+                    .result => |p| p,
+                    .err => |e| {
+                        this.rm.state = .{ .err = e };
+                        return;
+                    },
+                };
+                pathbuf[cwd_path.len] = 0;
+                for (this.entries_to_delete) |entry_raw| {
+                    const entry = entry_raw[0..std.mem.len(entry_raw) :0];
+                    if (this.rm.opts.recursive) {
+                        switch (this.deleteTree(std.fs.Dir{ .fd = bun.fdcast(this.cwd) }, cwd_path[0..cwd_path.len :0], entry)) {
+                            .result => {},
+                            .err => |e| {
+                                this.rm.state = .{ .err = e };
+                                return;
+                            },
+                        }
+                    }
+                }
+            }
 
             /// Modified version of `std.fs.deleteTree`:
             /// - nonsense instances of `unreachable` removed
@@ -3643,8 +3907,20 @@ pub const Builtin = struct {
             /// removes it. If it cannot be removed because it is a non-empty directory,
             /// this function recursively removes its entries and then tries again.
             /// This operation is not atomic on most file systems.
-            pub fn deleteTree(this: *RmTask, self: std.fs.Dir, sub_path: [:0]const u8) Maybe(void) {
-                var initial_iterable = (try deleteTreeOpenInitialSubpath(sub_path, .file)) orelse return;
+            pub fn deleteTree(this: *RmTask, self: std.fs.Dir, self_path: [:0]const u8, sub_path: [:0]const u8) Maybe(void) {
+                const resolved_sub_path = if (ResolvePath.Platform.auto.isAbsolute(sub_path))
+                    sub_path
+                else
+                    ResolvePath.joinZ(&[_][:0]const u8{ self_path, sub_path }, .auto);
+
+                // Avoiding processing root directort if preserve root option is set
+                if (this.rm.opts.preserve_root and std.mem.eql(u8, resolved_sub_path[0..resolved_sub_path.len], "/"))
+                    return Maybe(void).success;
+
+                var initial_iterable = switch (this.deleteTreeOpenInitialSubpath(self, resolved_sub_path, .file)) {
+                    .result => |r| r orelse return Maybe(void).success,
+                    .err => |e| return .{ .err = e },
+                };
 
                 const StackItem = struct {
                     name: [:0]const u8,
@@ -3655,41 +3931,43 @@ pub const Builtin = struct {
                 var stack = std.BoundedArray(StackItem, 16){};
                 defer {
                     for (stack.slice()) |*item| {
-                        item.iter.dir.close();
+                        item.iter.iter.dir.close();
                     }
                 }
 
                 stack.appendAssumeCapacity(StackItem{
-                    .name = sub_path,
+                    .name = resolved_sub_path,
                     .parent_dir = self,
                     .iter = initial_iterable,
                 });
 
                 process_stack: while (stack.len != 0) {
                     var top: *StackItem = &(stack.slice()[stack.len - 1]);
-                    var entry = top.iter.next();
-                    while (switch (entry) {
+                    var entry_ = top.iter.next();
+                    while (switch (entry_) {
                         .err => @panic("FIXME TODO errors"),
                         .result => |ent| ent,
                         // gotta be careful not to pop otherwise this won't work
-                    }) |current| : (entry = top.iter.next()) {
+                    }) |entry| : (entry_ = top.iter.next()) {
                         var treat_as_dir = entry.kind == .directory;
                         handle_entry: while (true) {
                             if (treat_as_dir) {
                                 if (stack.ensureUnusedCapacity(1)) {
-                                    var iterable_dir = switch (this.openIterableDir(top.iter.dir, entry.name)) {
+                                    var iterable_dir = switch (this.openIterableDir(top.iter.iter.dir, entry.name.sliceAssumeZ())) {
                                         .result => |iter| iter,
                                         .err => |e| {
                                             const errno = errnocast(e.errno);
-
                                             switch (errno) {
-                                                bun.C.E.NOTDIR => {
+                                                @as(u16, @intFromEnum(bun.C.E.NOTDIR)) => {
                                                     treat_as_dir = false;
                                                     continue :handle_entry;
                                                 },
-                                                bun.C.E.NOENT => {
+                                                @as(u16, @intFromEnum(bun.C.E.NOENT)) => {
                                                     if (this.rm.opts.force) {
-                                                        this.verboseDeleted(current.name.sliceAssumeZ());
+                                                        switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
+                                                            .result => {},
+                                                            .err => |e2| return Maybe(void).initErr(e2),
+                                                        }
                                                         break :handle_entry;
                                                     }
                                                     return .{ .err = e };
@@ -3700,35 +3978,42 @@ pub const Builtin = struct {
                                     };
 
                                     stack.appendAssumeCapacity(StackItem{
-                                        .name = entry.name,
-                                        .parent_dir = std.fs.Dir{ .fd = bun.fdcast(top.iter.dir) },
+                                        .name = entry.name.sliceAssumeZ(),
+                                        .parent_dir = std.fs.Dir{ .fd = bun.fdcast(top.iter.iter.dir.fd) },
                                         .iter = iterable_dir,
                                     });
 
                                     continue :process_stack;
                                 } else |_| {
-                                    try top.iter.dir.deleteTreeMinStackSizeWithKindHint(entry.name, entry.kind);
+                                    switch (this.deleteTreeMinStackSizeWithKindHint(std.fs.Dir{ .fd = bun.fdcast(top.iter.iter.dir.fd) }, entry.name.sliceAssumeZ(), entry.kind)) {
+                                        .result => {},
+                                        .err => |e| return .{ .err = e },
+                                    }
+                                    // try top.iter.dir.deleteTreeMinStackSizeWithKindHint(entry.name, entry.kind);
                                     break :handle_entry;
                                 }
                             } else {
-                                switch (this.deleteFile(bun.toFD(top.iter.iter.dir.fd), current.name.sliceAssumeZ())) {
+                                switch (this.deleteFile(bun.toFD(top.iter.iter.dir.fd), entry.name.sliceAssumeZ())) {
                                     .result => break :handle_entry,
                                     .err => |e| {
                                         const errno = errnocast(e.errno);
 
                                         switch (errno) {
-                                            bun.C.E.NOENT => {
+                                            @intFromEnum(bun.C.E.NOENT) => {
                                                 if (this.rm.opts.force) {
-                                                    this.verboseDeleted(current.name.sliceAssumeZ());
+                                                    switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
+                                                        .result => {},
+                                                        .err => |e2| return Maybe(void).initErr(e2),
+                                                    }
                                                     break :handle_entry;
                                                 }
                                                 return .{ .err = e };
                                             },
-                                            bun.C.E.ISDIR => {
+                                            @intFromEnum(bun.C.E.ISDIR) => {
                                                 treat_as_dir = true;
                                                 continue :handle_entry;
                                             },
-                                            else => .{ .err = e },
+                                            else => return .{ .err = e },
                                         }
                                     },
                                 }
@@ -3749,10 +4034,12 @@ pub const Builtin = struct {
                     _ = stack.pop();
 
                     var need_to_retry: bool = false;
+
                     switch (this.deleteDir(bun.toFD(parent_dir.fd), name)) {
+                        .result => {},
                         .err => |e| {
-                            switch (errnocast(e)) {
-                                bun.C.E.NOTEMPTY => need_to_retry = true,
+                            switch (errnocast(e.errno)) {
+                                @intFromEnum(bun.C.E.NOTEMPTY) => need_to_retry = true,
                                 else => return .{ .err = e },
                             }
                         },
@@ -3769,11 +4056,11 @@ pub const Builtin = struct {
                                         .result => |iter| iter,
                                         .err => |e| {
                                             switch (errnocast(e.errno)) {
-                                                bun.C.E.NOTDIR => {
+                                                @intFromEnum(bun.C.E.NOTDIR) => {
                                                     treat_as_dir = false;
                                                     continue :handle_entry;
                                                 },
-                                                bun.C.E.NOENT => {
+                                                @intFromEnum(bun.C.E.NOENT) => {
                                                     if (this.rm.opts.force) {
                                                         switch (this.verboseDeleted(name)) {
                                                             .err => |e2| return .{ .err = e2 },
@@ -3795,18 +4082,21 @@ pub const Builtin = struct {
                                             const errno = errnocast(e.errno);
 
                                             switch (errno) {
-                                                bun.C.E.NOENT => {
+                                                @intFromEnum(bun.C.E.NOENT) => {
                                                     if (this.rm.opts.force) {
-                                                        this.verboseDeleted(name.sliceAssumeZ());
+                                                        switch (this.verboseDeleted(name)) {
+                                                            .result => {},
+                                                            .err => |e2| return Maybe(void).initErr(e2),
+                                                        }
                                                         continue :process_stack;
                                                     }
                                                     return .{ .err = e };
                                                 },
-                                                bun.C.E.ISDIR => {
+                                                @intFromEnum(bun.C.E.ISDIR) => {
                                                     treat_as_dir = true;
                                                     continue :handle_entry;
                                                 },
-                                                else => .{ .err = e },
+                                                else => return .{ .err = e },
                                             }
                                         },
                                     }
@@ -3825,15 +4115,17 @@ pub const Builtin = struct {
                         continue :process_stack;
                     }
                 }
+
+                return Maybe(void).success;
             }
 
             /// Like `deleteTree`, but only keeps one `Iterator` active at a time to minimize the function's stack size.
             /// This is slower than `deleteTree` but uses less stack space.
-            fn deleteTreeMinStackSizeWithKindHint(this: *RmTask, self: Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) Maybe(void) {
+            fn deleteTreeMinStackSizeWithKindHint(this: *RmTask, self: Dir, sub_path: [:0]const u8, kind_hint: std.fs.File.Kind) Maybe(void) {
                 start_over: while (true) {
                     var iterable_dir = switch (this.deleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) {
-                        .result => |r| r orelse return Maybe(void).sucess,
-                        .err => |e| .{ .err = e },
+                        .result => |r| r orelse return Maybe(void).success,
+                        .err => |e| return .{ .err = e },
                     };
 
                     var cleanup_dir_parent: ?DirIterator.WrappedIterator = null;
@@ -3854,17 +4146,15 @@ pub const Builtin = struct {
                     // ever store a single path component that was returned from the
                     // filesystem.
                     var dir_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var dir_name: []const u8 = sub_path;
+                    var dir_name: [:0]const u8 = sub_path;
 
                     // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
                     // Go through each entry and if it is not a directory, delete it. If it is a directory,
                     // open it, and close the original directory. Repeat. Then start the entire operation over.
 
                     scan_dir: while (true) {
-                        // var dir_it = iterable_dir.iterateAssumeFirstIteration();
                         var dir_it = iterable_dir;
                         var entry_ = dir_it.next();
-                        // dir_it: while (try dir_it.next()) |entry| {
                         dir_it: while (switch (entry_) {
                             .err => @panic("FIXME TODO ERRORS"),
                             .result => |ent| ent,
@@ -3873,23 +4163,27 @@ pub const Builtin = struct {
                             var treat_as_dir = entry.kind == .directory;
                             handle_entry: while (true) {
                                 if (treat_as_dir) {
-                                    const new_dir = switch (this.openIterableDir(std.fs.Dir{ .fd = iterable_dir.iter.dir }, entry.name.sliceAssumeZ())) {
+                                    const new_dir = switch (this.openIterableDir(std.fs.Dir{ .fd = iterable_dir.iter.dir.fd }, entry.name.sliceAssumeZ())) {
                                         .result => |iter| iter,
                                         .err => |e| {
                                             const errno = errnocast(e.errno);
                                             switch (errno) {
-                                                bun.C.E.NOTDIR => {
+                                                @intFromEnum(bun.C.E.NOTDIR) => {
                                                     treat_as_dir = false;
                                                     continue :handle_entry;
                                                 },
-                                                bun.C.E.NOENT => {
+                                                @intFromEnum(bun.C.E.NOENT) => {
                                                     if (this.rm.opts.force) {
-                                                        this.verboseDeleted(entry.name.sliceAssumeZ());
+                                                        switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
+                                                            .result => {},
+                                                            .err => |e2| return Maybe(void).initErr(e2),
+                                                        }
                                                         continue :dir_it;
                                                     }
                                                 },
-                                                else => return .{ .err = e },
+                                                else => {},
                                             }
+                                            return .{ .err = e };
                                         },
                                     };
 
@@ -3899,10 +4193,10 @@ pub const Builtin = struct {
 
                                     cleanup_dir_parent = iterable_dir;
                                     iterable_dir = new_dir;
-                                    const result = dir_name_buf[0..entry.name.len];
                                     dir_name_buf[entry.name.len] = 0;
-                                    @memcpy(result, entry.name);
-                                    dir_name = result;
+                                    const result = dir_name_buf[0..entry.name.len];
+                                    @memcpy(result, entry.name.slice());
+                                    dir_name = dir_name_buf[0..entry.name.len :0];
                                     continue :scan_dir;
                                 } else {
                                     switch (this.deleteFile(bun.toFD(iterable_dir.iter.dir.fd), entry.name.sliceAssumeZ())) {
@@ -3911,9 +4205,12 @@ pub const Builtin = struct {
                                             const errno = errnocast(e.errno);
 
                                             switch (errno) {
-                                                bun.C.E.NOENT => {
+                                                @intFromEnum(bun.C.E.NOENT) => {
                                                     if (this.rm.opts.force) {
-                                                        this.verboseDeleted(entry.name.sliceAssumeZ());
+                                                        switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
+                                                            .result => {},
+                                                            .err => |e2| return Maybe(void).initErr(e2),
+                                                        }
                                                         continue :dir_it;
                                                     }
                                                     return .{ .err = e };
@@ -3939,7 +4236,7 @@ pub const Builtin = struct {
                                 .err => |e| {
                                     switch (errnocast(e.errno)) {
                                         // These two things can happen due to file system race conditions.
-                                        bun.C.E.NOENT, bun.C.E.NOTEMPTY => continue :start_over,
+                                        @intFromEnum(bun.C.E.NOENT), @intFromEnum(bun.C.E.NOTEMPTY) => continue :start_over,
                                         else => return .{ .err = e },
                                     }
                                 },
@@ -3950,24 +4247,67 @@ pub const Builtin = struct {
                                 .result => {},
                                 .err => |e| {
                                     switch (errnocast(e.errno)) {
-                                        bun.C.E.NOENT => {
+                                        @intFromEnum(bun.C.E.NOENT) => {
                                             if (this.rm.opts.force) {
                                                 switch (this.verboseDeleted(sub_path)) {
                                                     .err => |e2| return .{ .err = e2 },
                                                     .result => {},
                                                 }
-                                                return;
+                                                return Maybe(void).success;
                                             }
                                         },
-                                        bun.C.E.NOTEMPTY => continue :start_over,
+                                        @intFromEnum(bun.C.E.NOTEMPTY) => continue :start_over,
                                         else => return .{ .err = e },
                                     }
                                 },
                             }
-                            return;
+                            return Maybe(void).success;
                         }
                     }
                 }
+            }
+
+            /// If the --preserve-root option is set, will return true if the
+            /// file descriptor points to root directory. Otherwise will always
+            /// return false
+            fn preserveRootCheck(this: *RmTask, fd: anytype) Maybe(bool) {
+                if (this.rm.opts.preserve_root) {
+                    var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const path = bun.getFdPath(fd, &pathbuf) catch |err| {
+                        const errno = switch (err) {
+                            .FileNotFound => bun.C.E.NOENT,
+                            .AccessDenied => bun.C.E.ACCES,
+                            .NameTooLong => bun.C.E.NAMETOOLONG,
+                            .NotSupported => bun.C.E.NOTSUP,
+                            .NotDir => bun.C.E.NOTDIR,
+                            .SymLinkLoop => bun.C.E.LOOP,
+                            .InputOutput => bun.C.E.IO,
+                            .FileTooBig => bun.C.E.FBIG,
+                            .IsDir => bun.C.E.ISDIR,
+                            .ProcessFdQuotaExceeded => bun.C.E.MFILE,
+                            .SystemFdQuotaExceeded => bun.C.E.NFILE,
+                            .NoDevice => bun.C.E.NODEV,
+                            .SystemResources => bun.C.E.NOSYS, // or EAGAIN if it's a temporary lack of resources
+                            .NoSpaceLeft => bun.C.E.NOSPC,
+                            .FileSystem => bun.C.E.IO, // or another appropriate error if there's a more specific cause
+                            .BadPathName => bun.C.E.NOENT, // ENOENT or EINVAL, depending on the situation
+                            .DeviceBusy => bun.C.E.BUSY,
+                            .SharingViolation => bun.C.E.ACCES, // For POSIX, EACCES might be the closest match
+                            .PipeBusy => bun.C.E.BUSY,
+                            .InvalidHandle => bun.C.E.BADF,
+                            .InvalidUtf8 => bun.C.E.INVAL,
+                            .NetworkNotFound => bun.C.E.NOENT, // or ENETUNREACH depending on context
+                            .PathAlreadyExists => bun.C.E.EXIST,
+                            .Unexpected => bun.C.E.INVAL, // or another error that makes sense in the context
+                        };
+
+                        return Maybe(bool).errno(errno);
+                    };
+                    // FIXME windows
+                    return .{ .result = std.mem.eql(u8, path, "/") };
+                }
+
+                return .{ .result = false };
             }
 
             fn openIterableDir(this: *RmTask, self: Dir, sub_path: [:0]const u8) Maybe(DirIterator.WrappedIterator) {
@@ -3999,46 +4339,33 @@ pub const Builtin = struct {
                             const fd = switch (Syscall.openat(self.fd, sub_path, os.O.DIRECTORY | os.O.RDONLY | os.O.CLOEXEC, 0)) {
                                 .err => |e| {
                                     switch (errnocast(e.errno)) {
-                                        bun.C.E.NOTDIR => {
+                                        @as(u16, @intFromEnum(bun.C.E.NOTDIR)) => {
                                             treat_as_dir = false;
                                             continue :handle_entry;
                                         },
-                                        bun.C.E.NOENT => {
+                                        @as(u16, @intFromEnum(bun.C.E.NOENT)) => {
                                             // That's fine, we were trying to remove this directory anyway.
                                             break :handle_entry;
                                         },
-                                        bun.C.E.BADF, // error.InvalidHandle
-                                        bun.C.E.ACCES, // error.AccessDenied
-                                        bun.C.E.LOOP, // error.SymLinkLoop
-                                        bun.C.E.MFILE, // error.ProcessFdQuotaExceeded
-                                        bun.C.E.NAMETOOLONG, // error.NameTooLong
-                                        bun.C.E.NFILE, // error.SystemFdQuotaExceeded
-                                        bun.C.E.NODEV, // error.NoDevice
-                                        bun.C.E.NOMEM, // error.SystemResources
-                                        bun.C.E.IO, // error.Unexpected (best approximate match)
-                                        bun.C.E.INVAL, // error.InvalidUtf8 (best approximate match)
-                                        bun.C.E.NOENT, // error.BadPathName
-                                        bun.C.E.NOENT, // error.NetworkNotFound (best approximate match)
-                                        bun.C.E.BUSY, // error.DeviceBusy
-                                        => return Maybe(?DirIterator.WrappedIterator).initErr(e),
+                                        else => return Maybe(?DirIterator.WrappedIterator).initErr(e),
                                     }
                                 },
                                 .result => |fd| fd,
                             };
                             var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
                             var iterator = DirIterator.iterate(dir);
-                            break :iterable_dir iterator;
+                            break :iterable_dir .{ .result = iterator };
                         } else {
                             switch (this.deleteFile(self.fd, sub_path)) {
                                 .result => return .{ .result = null },
                                 .err => |e| {
                                     switch (errnocast(e.errno)) {
-                                        bun.C.E.NOENT => return .{ .result = null },
-                                        bun.C.E.ISDIR => {
+                                        @as(u16, @intFromEnum(bun.C.E.NOENT)) => return .{ .result = null },
+                                        @as(u16, @intFromEnum(bun.C.E.ISDIR)) => {
                                             treat_as_dir = true;
                                             continue :handle_entry;
                                         },
-                                        else => Maybe(?DirIterator.WrappedIterator).initErr(e),
+                                        else => return Maybe(?DirIterator.WrappedIterator).initErr(e),
                                     }
                                 },
                             }
@@ -4056,9 +4383,8 @@ pub const Builtin = struct {
                     .result => return Maybe(void).success,
                     .err => |e| {
                         const errno = errnocast(e.errno);
-                        if (bun.C.E.NOENT == errno and this.rm.opts.force) {
-                            this.verboseDeleted(subpath);
-                            return Maybe(void).success;
+                        if (@intFromEnum(bun.C.E.NOENT) == errno and this.rm.opts.force) {
+                            return this.verboseDeleted(subpath);
                         }
                         return .{ .err = e };
                     },
@@ -4071,14 +4397,13 @@ pub const Builtin = struct {
                     .err => |e| {
                         _ = e;
 
-                        if (!this.opts.force) {
+                        if (!this.rm.opts.force) {
                             @panic("FIXME TODO errors with path");
                         }
                     },
                 }
 
-                this.verboseDeleted(subpath);
-                return Maybe(void).success;
+                return this.verboseDeleted(subpath);
             }
 
             pub fn verboseDeleted(this: *RmTask, path: [:0]const u8) Maybe(void) {
@@ -4091,11 +4416,6 @@ pub const Builtin = struct {
                 return Maybe(void).success;
             }
         };
-
-        pub fn start(this: *Rm) Maybe(void) {
-            _ = this;
-            // std.fs.deleteTreeAbsolute(absolute_path: []const u8)
-        }
     };
 };
 

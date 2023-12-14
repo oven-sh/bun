@@ -1002,6 +1002,8 @@ pub fn GlobWalker_(
 
         inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) !MatchedPath {
             if (!this.absolute) {
+                // If relative paths enabled, stdlib join is preferred over
+                // ResolvePath.joinBuf because it doesn't try to normalize the path
                 return try stdJoin(this.arena.allocator(), subdir_parts);
             }
 
@@ -1009,15 +1011,6 @@ pub fn GlobWalker_(
             if (comptime sentinel) return out[0 .. out.len - 1 :0];
 
             return out;
-
-            // return if (!this.absolute)
-            //     // If relative paths enabled, stdlib join is preferred over
-            //     // ResolvePath.joinBuf because it doesn't try to normalize the path
-            //     // try std.fs.path.join(this.arena.allocator(), subdir_parts)
-            //     try stdJoin(this.arena.allocator(), subdir_parts)
-            // else
-            //     // try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
-            //     try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {

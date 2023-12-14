@@ -345,6 +345,7 @@ node-expat
 node-hid
 node-jq
 node-libcurl
+node-mac-contacts
 node-pty
 node-rdkafka
 node-sass

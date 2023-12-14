@@ -1550,6 +1550,13 @@ pub const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
 pub const SRC_NODE_API_TYPES_H_ = "";
 pub const NAPI_MODULE_VERSION = @as(c_int, 1);
 
+// v8:: C++ symbols
+extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
+extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
+extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
+extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+
 pub fn fixDeadCodeElimination() void {
     JSC.markBinding(@src());
 
@@ -1690,4 +1697,11 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&node_api_create_external_string_latin1);
     std.mem.doNotOptimizeAway(&node_api_create_external_string_utf16);
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
+
+    // v8:: C++ symbols
+    std.mem.doNotOptimizeAway(&_ZN2v87Isolate10GetCurrentEv);
+    std.mem.doNotOptimizeAway(&_ZN2v87Isolate13TryGetCurrentEv);
+    std.mem.doNotOptimizeAway(&_ZN2v87Isolate17GetCurrentContextEv);
+    std.mem.doNotOptimizeAway(&_ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_);
+    std.mem.doNotOptimizeAway(&_ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_);
 }

@@ -358,7 +358,7 @@ pub const Arguments = struct {
             .allocator = allocator,
             .stop_after_positional_at = switch (cmd) {
                 .RunCommand => 2,
-                .AutoCommand => 1,
+                .AutoCommand, .RunAsNodeCommand => 1,
                 else => 0,
             },
         }) catch |err| {
@@ -497,7 +497,7 @@ pub const Arguments = struct {
         ctx.passthrough = args.remaining();
 
         // runtime commands
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
 
             if (args.flag("--hot")) {
@@ -1135,15 +1135,15 @@ pub const Command = struct {
         if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
 
-        if (strings.endsWithComptime(argv0, "node")) {
-            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
-            pretend_to_be_node = true;
-            return .RunCommand;
-        }
-
         if (comptime Environment.isDebug) {
             if (strings.endsWithComptime(argv0, "bunx-debug"))
                 return .BunxCommand;
+        }
+
+        if (strings.endsWithComptime(argv0, "node")) {
+            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+            pretend_to_be_node = true;
+            return .RunAsNodeCommand;
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
@@ -1623,10 +1623,7 @@ pub const Command = struct {
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
-                if (pretend_to_be_node) {
-                    try RunCommand.execAsIfNode(ctx);
-                    return;
-                }
+
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
                         return;
@@ -1634,6 +1631,12 @@ pub const Command = struct {
 
                     Global.exit(1);
                 }
+            },
+            .RunAsNodeCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .RunAsNodeCommand);
+                std.debug.assert(pretend_to_be_node);
+                try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
@@ -1855,6 +1858,7 @@ pub const Command = struct {
         PackageManagerCommand,
         RemoveCommand,
         RunCommand,
+        RunAsNodeCommand, // arg0 == 'node'
         TestCommand,
         UnlinkCommand,
         UpdateCommand,
@@ -1865,7 +1869,7 @@ pub const Command = struct {
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
-                .RunCommand => Arguments.run_params,
+                .RunCommand, .RunAsNodeCommand => Arguments.run_params,
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
@@ -1894,7 +1898,7 @@ pub const Command = struct {
                 Command.Tag.AutoCommand => {
                     HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
-                Command.Tag.RunCommand => {
+                .RunCommand, .RunAsNodeCommand => {
                     RunCommand_.printHelp(null);
                 },
 
@@ -2092,6 +2096,7 @@ pub const Command = struct {
             .BunxCommand = true,
             .AutoCommand = true,
             .RunCommand = true,
+            .RunAsNodeCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { fakeNodeRun, tempDirWithFiles } from "../../harness";
+import { bunExe, fakeNodeRun, tempDirWithFiles } from "../../harness";
 import { join } from "path";
 
 describe("fake node cli", () => {
@@ -85,5 +85,20 @@ describe("fake node cli", () => {
   test("node -e ", () => {
     const temp = tempDirWithFiles("fake-node", {});
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
+  });
+
+  test("process args work", () => {
+    const temp = tempDirWithFiles("fake-node", {
+      "index.js": "console.log(JSON.stringify(process.argv))",
+    });
+    expect(fakeNodeRun(temp, ["index", "a", "b", "c"]).stdout).toBe(
+      // note: no extension here is INTENTIONAL
+      JSON.stringify([bunExe(), join(temp, "index"), "a", "b", "c"]),
+    );
+  });
+
+  test("no args is exit code zero for now", () => {
+    const temp = tempDirWithFiles("fake-node", {});
+    expect(() => fakeNodeRun(temp, [])).toThrow();
   });
 });

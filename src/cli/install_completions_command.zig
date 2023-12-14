@@ -430,11 +430,16 @@ pub const InstallCompletionsCommand = struct {
 
                     break :brk true;
                 };
+
+                // Sometimes, stat() lies to us and says the file is 0 bytes
+                // Let's not trust it and read the whole file
+                const input_size = @max(dot_zshrc.getEndPos() catch break :brk true, 64 * 1024);
+
                 defer dot_zshrc.close();
                 var buf = allocator.alloc(
                     u8,
-                    // making up a number big enough to not overflow
-                    (dot_zshrc.getEndPos() catch break :brk true) + completions_path.len * 4 + 96,
+                    input_size +
+                        completions_path.len * 4 + 96,
                 ) catch break :brk true;
 
                 const read = dot_zshrc.preadAll(
@@ -445,7 +450,7 @@ pub const InstallCompletionsCommand = struct {
                 var contents = buf[0..read];
 
                 // Do they possibly have it in the file already?
-                if (std.mem.indexOf(u8, contents, completions_path) != null) {
+                if (strings.contains(contents, completions_path) or strings.contains(contents, "# bun completions\n")) {
                     break :brk false;
                 }
 

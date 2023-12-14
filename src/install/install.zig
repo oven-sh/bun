@@ -1978,6 +1978,7 @@ pub const PackageManager = struct {
 
         var init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");
         if (!init_cwd_gop.found_existing) {
+            init_cwd_gop.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_gop.key_ptr.*);
             init_cwd_gop.value_ptr.* = .{
                 .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
                 .conditional = false,
@@ -1993,12 +1994,9 @@ pub const PackageManager = struct {
             } else brk: {
                 var current_path = this.env.get("PATH") orelse "";
                 var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                try PATH.appendSlice(current_path);
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
-                if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
-                    try PATH.append(':');
-                }
-                try PATH.appendSlice(current_path);
                 try this.env.map.put("PATH", PATH.items);
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, RunCommand.bun_node_dir) catch bun.outOfMemory());
             }
@@ -2455,7 +2453,7 @@ pub const PackageManager = struct {
         var node_gyp_tempdir = tempdir.dir.makeOpenPath(node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
-                Output.prettyErrorln("<r><red>error<r>: node-gyp tmpdir already exists", .{});
+                Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
                 Global.crash();
             }
             Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
@@ -9353,11 +9351,11 @@ pub const PackageManager = struct {
     ) !void {
         var uses_node_gyp = false;
         var any_scripts = false;
-        var cwd: string = "";
         for (list.items) |_item| {
             if (_item) |item| {
                 any_scripts = true;
-                cwd = item.cwd;
+                // to be safe, add the temporary script for any usage
+                // of the string `node-gyp`.
                 if (strings.containsComptime(item.script, "node-gyp")) {
                     uses_node_gyp = true;
                     break;
@@ -9372,29 +9370,23 @@ pub const PackageManager = struct {
             try this.ensureTempNodeGypScript();
         }
 
+        const cwd = list.first().cwd;
         const this_bundler = try this.configureEnvForScripts(ctx, log_level);
         var original_path = this_bundler.env.map.get("PATH") orelse "";
 
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
-        // var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(this_bundler.) catch null;
-        // var last_dir_with_node_modules: ?*DirInfo = null;
-        // while (current_dir) |dir| {
-        //     if (dir.hasNodeModules()) {
-        //         last_dir_with_node_modules = dir;
-        //         if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
-        //             try PATH.appendSlice(":");
-        //         }
-        //         try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
-        //         try PATH.appendSlice("/node_modules/.bin");
-        //     }
-        //     current_dir = dir.getParent();
-        // }
-
-        for (this_bundler.resolver.binDirs()) |bin_path| {
-            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
-                try PATH.appendSlice(":");
+        var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch null;
+        var last_dir_with_node_modules: ?*DirInfo = null;
+        while (current_dir) |dir| {
+            if (dir.hasNodeModules()) {
+                last_dir_with_node_modules = dir;
+                if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
+                    try PATH.appendSlice(":");
+                }
+                try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
+                try PATH.appendSlice(this.options.bin_path);
             }
-            try PATH.appendSlice(bin_path);
+            current_dir = dir.getParent();
         }
 
         if (original_path.len > 0) {

@@ -194,6 +194,7 @@ pub const Loader = struct {
         if (ccache_path.len > 0) {
             var cxx_gop = try this.map.getOrPutWithoutValue("CMAKE_CXX_COMPILER_LAUNCHER");
             if (!cxx_gop.found_existing) {
+                cxx_gop.key_ptr.* = try this.allocator.dupe(u8, cxx_gop.key_ptr.*);
                 cxx_gop.value_ptr.* = .{
                     .value = try this.allocator.dupe(u8, ccache_path),
                     .conditional = false,
@@ -201,6 +202,7 @@ pub const Loader = struct {
             }
             var c_gop = try this.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
             if (!c_gop.found_existing) {
+                c_gop.key_ptr.* = try this.allocator.dupe(u8, c_gop.key_ptr.*);
                 c_gop.value_ptr.* = .{
                     .value = try this.allocator.dupe(u8, ccache_path),
                     .conditional = false,

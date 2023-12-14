@@ -1907,6 +1907,7 @@ pub const ZigConsoleClient = struct {
                     key_: [*c]ZigString,
                     value: JSValue,
                     is_symbol: bool,
+                    is_private_symbol: bool,
                 ) callconv(.C) void {
                     const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
@@ -1988,13 +1989,17 @@ pub const ZigConsoleClient = struct {
                                 .{JSPrinter.formatJSONString(key.slice())},
                             );
                         }
+                    } else if (Environment.isDebug and is_private_symbol) {
+                        this.addForNewLine(1 + "$:".len + key.len);
+                        writer.print(
+                            comptime Output.prettyFmt("<r><magenta>${any}<r><d>:<r> ", enable_ansi_colors),
+                            .{key},
+                        );
                     } else {
                         this.addForNewLine(1 + "[Symbol()]:".len + key.len);
                         writer.print(
                             comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({any})<r><d>]:<r> ", enable_ansi_colors),
-                            .{
-                                key,
-                            },
+                            .{key},
                         );
                     }
 

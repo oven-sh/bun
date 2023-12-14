@@ -4573,7 +4573,7 @@ bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* glo
     return JSValue::decode(JSValue0).toBoolean(globalObject);
 }
 
-void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
+void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -4655,7 +4655,15 @@ restart:
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol());
+
+            bool isPrivate = prop->isSymbol() && Identifier::fromUid(vm, prop).isPrivateName();
+
+#if !BUN_DEBUG
+            if (isPrivate)
+                return true;
+#endif
+
+            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             return true;
         });
         if (scope.exception()) {
@@ -4743,7 +4751,15 @@ restart:
                 }
 
                 JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
+
+                bool isPrivate = property.isPrivateName();
+
+#if !BUN_DEBUG
+                if (isPrivate)
+                    continue;
+#endif
+
+                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
             }
             // reuse memory
             properties.data()->propertyNameVector().shrink(0);
@@ -4763,7 +4779,7 @@ restart:
     }
 }
 
-void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
+void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -4838,7 +4854,7 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
         ZigString key = toZigString(name);
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
     }
     properties.releaseData();
 }

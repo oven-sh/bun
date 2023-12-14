@@ -133,6 +133,9 @@ pub const FilePoll = struct {
         pub var owner: Owner = Owner.init(@as(*Deactivated, @ptrFromInt(@as(usize, 0xDEADBEEF))));
     };
 
+    const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
+    const LifecycleScriptSubprocessPid = bun.install.LifecycleScriptSubprocess.PidPollData;
+
     pub const Owner = bun.TaggedPointerUnion(.{
         FileReader,
         FileSink,
@@ -142,6 +145,8 @@ pub const FilePoll = struct {
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
+        LifecycleScriptSubprocessOutputReader,
+        LifecycleScriptSubprocessPid,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -268,6 +273,17 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
+            },
+
+            @field(Owner.Tag, "OutputReader") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
+                var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
+                output.onPoll(size_or_offset);
+            },
+            @field(Owner.Tag, "PidPollData") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess Pid", .{poll.fd});
+                var loader: *bun.install.LifecycleScriptSubprocess = @ptrCast(ptr.as(LifecycleScriptSubprocessPid));
+                loader.onProcessUpdate(size_or_offset);
             },
 
             else => {
@@ -509,6 +525,36 @@ pub const FilePoll = struct {
         return poll;
     }
 
+    pub fn initWithPackageManager(m: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
+        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
+    }
+
+    pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+        var poll = manager.file_poll_store.get();
+        poll.fd = @intCast(fd);
+        poll.flags = Flags.Set.init(flags);
+        poll.owner = owner;
+        poll.next_to_free = null;
+
+        if (KQueueGenerationNumber != u0) {
+            max_generation_number +%= 1;
+            poll.generation_number = max_generation_number;
+        }
+
+        return poll;
+    }
+
+    pub inline fn canRef(this: *const FilePoll) bool {
+        if (this.flags.contains(.disable))
+            return false;
+
+        return !this.flags.contains(.has_incremented_poll_count);
+    }
+
+    pub inline fn canUnref(this: *const FilePoll) bool {
+        return this.flags.contains(.has_incremented_poll_count);
+    }
+
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         log("unref", .{});
@@ -709,6 +755,10 @@ pub const FilePoll = struct {
     }
 
     const invalid_fd = bun.invalid_fd;
+
+    pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
+        return @intCast(this.fd);
+    }
 
     pub fn unregister(this: *FilePoll, loop: *Loop, force_unregister: bool) JSC.Maybe(void) {
         return this.unregisterWithFd(loop, this.fd, force_unregister);

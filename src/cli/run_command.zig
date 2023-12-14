@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+const Async = bun.Async;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,6 +10,9 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const uws = bun.uws;
+const JSC = bun.JSC;
+const WaiterThread = JSC.Subprocess.WaiterThread;
 
 const lex = bun.js_lexer;
 const logger = @import("root").bun.logger;
@@ -43,6 +47,10 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
+const PosixSpawn = bun.posix.spawn;
+
+const PackageManager = @import("../install/install.zig").PackageManager;
+const Lockfile = @import("../install/lockfile.zig");
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -51,7 +59,7 @@ pub const RunCommand = struct {
         "zsh",
     };
 
-    pub fn findShell(PATH: string, cwd: string) ?string {
+    fn findShellImpl(PATH: string, cwd: string) ?stringZ {
         if (comptime Environment.isWindows) {
             return "C:\\Windows\\System32\\cmd.exe";
         }
@@ -81,6 +89,31 @@ pub const RunCommand = struct {
             if (Try.shell(shell)) {
                 return shell;
             }
+        }
+
+        return null;
+    }
+
+    /// Find the "best" shell to use
+    /// Cached to only run once
+    pub fn findShell(PATH: string, cwd: string) ?stringZ {
+        const bufs = struct {
+            pub var shell_buf_once: [bun.MAX_PATH_BYTES]u8 = undefined;
+            pub var found_shell: [:0]const u8 = "";
+        };
+        if (bufs.found_shell.len > 0) {
+            return bufs.found_shell;
+        }
+
+        if (findShellImpl(PATH, cwd)) |found| {
+            if (found.len < bufs.shell_buf_once.len) {
+                @memcpy(bufs.shell_buf_once[0..found.len], found);
+                bufs.shell_buf_once[found.len] = 0;
+                bufs.found_shell = bufs.shell_buf_once[0..found.len :0];
+                return bufs.found_shell;
+            }
+
+            return found;
         }
 
         return null;
@@ -227,7 +260,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub fn runPackageScript(
+    pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -299,7 +332,7 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |code| {
                 if (code > 0) {
-                    if (code != 2 and !silent) {
+                    if (code > 2 and !silent) {
                         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
                         Output.flush();
                     }
@@ -329,6 +362,7 @@ pub const RunCommand = struct {
 
         return true;
     }
+
     pub fn runBinary(
         ctx: Command.Context,
         executable: []const u8,
@@ -486,9 +520,7 @@ pub const RunCommand = struct {
         ctx: Command.Context,
         this_bundler: *bundler.Bundler,
         env: ?*DotEnv.Loader,
-        ORIGINAL_PATH: *string,
         log_errors: bool,
-        force_using_bun: bool,
     ) !*DirInfo {
         var args = ctx.args;
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
@@ -525,8 +557,6 @@ pub const RunCommand = struct {
             return error.CouldntReadCurrentDirectory;
         };
 
-        var package_json_dir: string = "";
-
         if (env == null) {
             this_bundler.env.loadProcess();
 
@@ -551,88 +581,6 @@ pub const RunCommand = struct {
                 }
             }
         }
-
-        var bin_dirs = this_bundler.resolver.binDirs();
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
-            }
-        }
-
-        var PATH = this_bundler.env.map.get("PATH") orelse "";
-        ORIGINAL_PATH.* = PATH;
-
-        const found_node = this_bundler.env.loadNodeJSConfig(
-            this_bundler.fs,
-            if (force_using_bun) bun_node_dir ++ "/node" else "",
-        ) catch false;
-
-        var needs_to_force_bun = force_using_bun or !found_node;
-        var optional_bun_self_path: string = "";
-
-        var new_path_len: usize = PATH.len + 2;
-        for (bin_dirs) |bin| {
-            new_path_len += bin.len + 1;
-        }
-
-        if (package_json_dir.len > 0) {
-            new_path_len += package_json_dir.len + 1;
-        }
-
-        new_path_len += root_dir_info.abs_path.len + "node_modules/.bin".len + 1;
-
-        if (needs_to_force_bun) {
-            new_path_len += bun_node_dir.len + 1;
-        }
-
-        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
-
-        if (needs_to_force_bun) {
-            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
-            if (!force_using_bun) {
-                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
-                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
-                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
-            }
-
-            needs_to_force_bun = false;
-        }
-
-        {
-            var needs_delim = false;
-            if (package_json_dir.len > 0) {
-                defer needs_delim = true;
-                if (needs_delim) {
-                    try new_path.append(std.fs.path.delimiter);
-                }
-                try new_path.appendSlice(package_json_dir);
-            }
-
-            var bin_dir_i: i32 = @as(i32, @intCast(bin_dirs.len)) - 1;
-            // Iterate in reverse order
-            // Directories are added to bin_dirs in top-down order
-            // That means the parent-most node_modules/.bin will be first
-            while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                defer needs_delim = true;
-                if (needs_delim) {
-                    try new_path.append(std.fs.path.delimiter);
-                }
-                try new_path.appendSlice(bin_dirs[@as(usize, @intCast(bin_dir_i))]);
-            }
-
-            if (needs_delim) {
-                try new_path.append(std.fs.path.delimiter);
-            }
-            try new_path.appendSlice(root_dir_info.abs_path);
-            try new_path.appendSlice(bun.pathLiteral("node_modules/.bin"));
-            try new_path.append(std.fs.path.delimiter);
-            try new_path.appendSlice(PATH);
-        }
-
-        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-        PATH = new_path.items;
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
 
@@ -671,6 +619,93 @@ pub const RunCommand = struct {
         }
 
         return root_dir_info;
+    }
+
+    pub fn configurePathForRun(
+        ctx: Command.Context,
+        root_dir_info: *DirInfo,
+        this_bundler: *bundler.Bundler,
+        ORIGINAL_PATH: ?*string,
+        cwd: string,
+        force_using_bun: bool,
+    ) !void {
+        var package_json_dir: string = "";
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
+            }
+        }
+
+        var PATH = this_bundler.env.map.get("PATH") orelse "";
+        if (ORIGINAL_PATH) |original_path| {
+            original_path.* = PATH;
+        }
+
+        const found_node = this_bundler.env.loadNodeJSConfig(
+            this_bundler.fs,
+            if (force_using_bun) bun_node_dir ++ "/node" else "",
+        ) catch false;
+
+        var needs_to_force_bun = force_using_bun or !found_node;
+        var optional_bun_self_path: string = "";
+
+        var new_path_len: usize = PATH.len + 2;
+
+        if (package_json_dir.len > 0) {
+            new_path_len += package_json_dir.len + 1;
+        }
+
+        {
+            var remain = cwd;
+            while (strings.lastIndexOfChar(remain, std.fs.path.sep)) |i| {
+                new_path_len += strings.withoutTrailingSlash(remain).len + "node_modules.bin".len + 1 + 2; // +2 for path separators, +1 for path delimiter
+                remain = remain[0..i];
+            } else {
+                new_path_len += strings.withoutTrailingSlash(remain).len + "node_modules.bin".len + 1 + 2; // +2 for path separators, +1 for path delimiter
+            }
+        }
+
+        if (needs_to_force_bun) {
+            new_path_len += bun_node_dir.len + 1;
+        }
+
+        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+
+        if (needs_to_force_bun) {
+            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
+            if (!force_using_bun) {
+                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
+                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
+                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
+            }
+
+            needs_to_force_bun = false;
+        }
+
+        {
+            if (package_json_dir.len > 0) {
+                try new_path.appendSlice(package_json_dir);
+                try new_path.append(std.fs.path.delimiter);
+            }
+
+            var remain = cwd;
+            while (strings.lastIndexOfChar(remain, std.fs.path.sep)) |i| {
+                try new_path.appendSlice(strings.withoutTrailingSlash(remain));
+                try new_path.appendSlice(bun.pathLiteral("/node_modules/.bin"));
+                try new_path.append(std.fs.path.delimiter);
+                remain = remain[0..i];
+            } else {
+                try new_path.appendSlice(strings.withoutTrailingSlash(remain));
+                try new_path.appendSlice(bun.pathLiteral("/node_modules/.bin"));
+                try new_path.append(std.fs.path.delimiter);
+            }
+
+            try new_path.appendSlice(PATH);
+        }
+
+        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1080,7 +1115,8 @@ pub const RunCommand = struct {
 
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
-        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
+        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
+        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
@@ -1093,11 +1129,11 @@ pub const RunCommand = struct {
                     else => {
                         if (scripts.get(script_name_to_search)) |script_content| {
                             // allocate enough to hold "post${scriptname}"
-
                             var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
+                            defer ctx.allocator.free(temp_script_buffer);
 
                             if (scripts.get(temp_script_buffer[1..])) |prescript| {
-                                if (!try runPackageScript(
+                                if (!try runPackageScriptForeground(
                                     ctx.allocator,
                                     prescript,
                                     temp_script_buffer[1..],
@@ -1110,7 +1146,7 @@ pub const RunCommand = struct {
                                 }
                             }
 
-                            if (!try runPackageScript(
+                            if (!try runPackageScriptForeground(
                                 ctx.allocator,
                                 script_content,
                                 script_name_to_search,
@@ -1123,7 +1159,7 @@ pub const RunCommand = struct {
                             temp_script_buffer[0.."post".len].* = "post".*;
 
                             if (scripts.get(temp_script_buffer)) |postscript| {
-                                if (!try runPackageScript(
+                                if (!try runPackageScriptForeground(
                                     ctx.allocator,
                                     postscript,
                                     temp_script_buffer,

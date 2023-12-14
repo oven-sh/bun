@@ -1,4 +1,0 @@
-static-ffmpeg
-canvas
-better-sqlite3
-node-sass

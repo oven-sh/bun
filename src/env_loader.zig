@@ -168,13 +168,19 @@ pub const Loader = struct {
         }
         return http_proxy;
     }
+    var node_path_to_use_set_once: []const u8 = "";
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
         var buf: Fs.PathBuffer = undefined;
 
         var node_path_to_use = override_node;
         if (node_path_to_use.len == 0) {
-            var node = this.getNodePath(fs, &buf) orelse return false;
-            node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
+            if (node_path_to_use_set_once.len > 0) {
+                node_path_to_use = node_path_to_use_set_once;
+            } else {
+                var node = this.getNodePath(fs, &buf) orelse return false;
+                node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
+                node_path_to_use_set_once = node_path_to_use;
+            }
         }
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);
@@ -218,7 +224,7 @@ pub const Loader = struct {
         behavior: Api.DotEnvBehavior,
         prefix: string,
         allocator: std.mem.Allocator,
-    ) ![]u8 {
+    ) !void {
         var iter = this.map.iter();
         var key_count: usize = 0;
         var string_map_hashes = try allocator.alloc(u64, framework_defaults.keys.len);
@@ -361,8 +367,6 @@ pub const Loader = struct {
                 _ = try to_json.getOrPutValue(key, value);
             }
         }
-
-        return key_buf;
     }
 
     pub fn init(map: *Map, allocator: std.mem.Allocator) Loader {
@@ -1015,6 +1019,8 @@ pub const Map = struct {
     };
     const HashTable = bun.StringArrayHashMap(HashTableValue);
 
+    const GetOrPutResult = HashTable.GetOrPutResult;
+
     map: HashTable,
 
     pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
@@ -1032,7 +1038,7 @@ pub const Map = struct {
                 bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
                 envp_buf[i] = env_buf.ptr;
             }
-            std.debug.assert(i == envp_count);
+            if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
         }
         return envp_buf;
     }
@@ -1069,6 +1075,10 @@ pub const Map = struct {
             .value = value,
             .conditional = false,
         });
+    }
+
+    pub inline fn getOrPutWithoutValue(this: *Map, key: string) !GetOrPutResult {
+        return this.map.getOrPut(key);
     }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {

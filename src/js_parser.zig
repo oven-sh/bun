@@ -3977,7 +3977,7 @@ pub const Parser = struct {
                 i += 1;
             }
 
-            std.sort.block(
+            std.sort.pdq(
                 u8,
                 runtime_imports[0..i],
                 {},

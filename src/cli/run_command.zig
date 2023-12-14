@@ -498,6 +498,7 @@ pub const RunCommand = struct {
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (Environment.isWindows) return bun.todo(@src(), {});
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 

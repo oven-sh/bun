@@ -3212,6 +3212,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        const thisValue = callframe.this();
+        if (Blob.streamGetCached(thisValue)) |cached| {
+            return cached;
+        }
         var recommended_chunk_size: SizeType = 0;
         var arguments_ = callframe.arguments(2);
         var arguments = arguments_.ptr[0..arguments_.len];
@@ -3223,11 +3227,28 @@ pub const Blob = struct {
 
             recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
         }
-        return JSC.WebCore.ReadableStream.fromBlob(
+        const stream = JSC.WebCore.ReadableStream.fromBlob(
             globalThis,
             this,
             recommended_chunk_size,
         );
+
+        if (this.store) |store| {
+            switch (store.data) {
+                .file => |f| switch (f.pathlike) {
+                    .fd => {
+                        // in the case we have a file descriptor store, we want to de-duplicate
+                        // readable streams. in every other case we want `.stream()` to be it's
+                        // own stream.
+                        Blob.streamSetCached(thisValue, globalThis, stream);
+                    },
+                    else => {},
+                },
+                else => {},
+            }
+        }
+
+        return stream;
     }
 
     fn promisified(

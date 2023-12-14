@@ -459,20 +459,20 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    const bun_node_dir = switch (@import("builtin").target.os.tag) {
+    pub const bun_node_dir = switch (@import("builtin").target.os.tag) {
         // TODO:
         .windows => "TMPDIR",
 
         .macos => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
-        "/bun-node-" ++ Environment.git_sha_short
+        "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node";
+        "/bun-debug-node" ++ (if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "");
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
-    fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+    pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
@@ -514,7 +514,7 @@ pub const RunCommand = struct {
             break;
         }
 
-        if (PATH.items.len > 0) {
+        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
             try PATH.append(std.fs.path.delimiter);
         }
 

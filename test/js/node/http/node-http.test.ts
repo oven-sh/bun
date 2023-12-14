@@ -1635,3 +1635,28 @@ it("#4415.2", () => {
   const res = new Response(req);
   expect(res.req).toBe(req);
 });
+
+it("#7539 _header", () => {
+  const sr = new ServerResponse({});
+  const date = new Date().toUTCString();
+
+  sr.writeHead(200, {
+    "Content-Type": "text/plain",
+    "Connection": "close",
+  });
+
+  expect(sr._header).toBe(`HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nconnection: close\r\nDate: ${date}\r\nTransfer-Encoding: chunked\r\n\r\n`);
+});
+
+it("#7539 _header", () => {
+  const sr = new ServerResponse({});
+
+  sr.writeHead(204, {
+    h1: ["a", "b"],
+    h2: ["c"],
+    cookie: ["foo=bar", "bar=baz"],
+    Date: 'qqq',
+  });
+
+  expect(sr._header).toBe("HTTP/1.1 204 No Content\r\ncookie: foo=bar, bar=baz\r\ndate: qqq\r\nh1: a, b\r\nh2: c\r\nConnection: keep-alive\r\n\r\n");
+});

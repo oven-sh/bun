@@ -857,3 +857,5 @@ pub const Poll = struct {
 };
 
 pub const retry = bun.C.E.AGAIN;
+
+pub const PipeReader = @import("./PipeReader.zig").PipeReader;

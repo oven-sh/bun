@@ -307,7 +307,7 @@ pub const BunxCommand = struct {
         const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 

@@ -1470,6 +1470,7 @@ export function isReadableStreamDisturbed(stream) {
   return $getByIdDirectPrivate(stream, "disturbed");
 }
 
+$visibility = "Private";
 export function readableStreamReaderGenericRelease(reader) {
   $assert(!!$getByIdDirectPrivate(reader, "ownerReadableStream"));
   $assert($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader") === reader);
@@ -1486,7 +1487,15 @@ export function readableStreamReaderGenericRelease(reader) {
 
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
   $markPromiseAsHandled(promise);
-  $putByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader", undefined);
+
+  var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
+  if ($getByIdDirectPrivate(stream, "bunNativeType") != 0) {
+    $debug(stream);
+    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingByteSource").$resume(
+      false,
+    );
+  }
+  $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
 }
 
@@ -1505,6 +1514,7 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
 }
 
 export function lazyLoadStream(stream, autoAllocateChunkSize) {
+  $debug("lazyLoadStream", stream, autoAllocateChunkSize);
   var nativeType = $getByIdDirectPrivate(stream, "bunNativeType");
   var nativePtr = $getByIdDirectPrivate(stream, "bunNativePtr");
   var Prototype = $lazyStreamPrototypeMap.$get(nativeType);
@@ -1573,7 +1583,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     const registry = deinit ? new FinalizationRegistry(deinit) : null;
     Prototype = class NativeReadableStreamSource {
       constructor(tag, autoAllocateChunkSize, drainValue) {
-        this.#tag = tag;
+        $putByIdDirectPrivate(this, "stream", tag);
         this.#cancellationToken = {};
         this.pull = this.#pull.bind(this);
         this.cancel = this.#cancel.bind(this);
@@ -1591,18 +1601,18 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       #cancellationToken;
+
       pull;
       cancel;
       start;
 
-      #tag;
       type = "bytes";
       autoAllocateChunkSize = 0;
 
       static startSync = start;
 
       #pull(controller) {
-        var tag = this.#tag;
+        var tag = $getByIdDirectPrivate(this, "stream");
 
         if (!tag) {
           controller.close();
@@ -1613,14 +1623,20 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       #cancel(reason) {
-        var tag = this.#tag;
+        var tag = $getByIdDirectPrivate(this, "stream");
 
         registry && registry.unregister(this.#cancellationToken);
         setRefOrUnref && setRefOrUnref(tag, false);
         cancel(tag, reason);
       }
+
       static deinit = deinit;
       static drain = drain;
+    };
+    // this is reuse of an existing private symbol
+    Prototype.prototype.$resume = function (has_ref) {
+      var tag = $getByIdDirectPrivate(this, "stream");
+      setRefOrUnref && setRefOrUnref(tag, has_ref);
     };
     $lazyStreamPrototypeMap.$set(nativeType, Prototype);
   }

@@ -67,23 +67,44 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
-  var reader: ReadableStreamDefaultReader | undefined;
+  // Ideally we could use this:
+  // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
+  // but we need to extend TTY/FS ReadStream
+
+  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   var readerRef;
+
+  var shouldUnref = false;
+
   function ref() {
+    $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= Bun.stdin.stream().getReader();
     // TODO: remove this. likely we are dereferencing the stream
     // when there is still more data to be read.
     readerRef ??= setInterval(() => {}, 1 << 30);
+    shouldUnref = false;
   }
 
   function unref() {
+    $debug("unref();");
     if (readerRef) {
       clearInterval(readerRef);
       readerRef = undefined;
+      $debug("cleared timeout");
     }
     if (reader) {
-      reader.cancel();
-      reader = undefined;
+      try {
+        reader.releaseLock();
+        reader = undefined;
+        $debug("released reader");
+      } catch (e: any) {
+        $debug("reader lock cannot be released, waiting");
+        $assert(e.message === "There are still pending read requests, cannot release the lock");
+
+        // Releasing the lock is not possible as there are active reads
+        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
+        shouldUnref = true;
+      }
     }
   }
 
@@ -115,26 +136,31 @@ export function getStdinStream(fd) {
 
   const originalPause = stream.pause;
   stream.pause = function () {
+    $debug("pause();");
+    let r = originalPause.$call(this);
     unref();
-    return originalPause.$call(this);
+    return r;
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
+    $debug("resume();");
     ref();
     return originalResume.$call(this);
   };
 
   async function internalRead(stream) {
+    $debug("internalRead();");
     try {
-      var done: any, value: any;
-      const read = reader?.readMany();
+      var done: boolean, value: Uint8Array[];
+      $assert(reader);
+      const pendingRead = reader.readMany();
 
-      if ($isPromise(read)) {
-        ({ done, value } = await read);
+      if ($isPromise(pendingRead)) {
+        ({ done, value } = await pendingRead);
       } else {
-        // @ts-expect-error
-        ({ done, value } = read);
+        $debug("readMany() did not return a promise");
+        ({ done, value } = pendingRead);
       }
 
       if (!done) {
@@ -145,6 +171,8 @@ export function getStdinStream(fd) {
         for (let i = 1; i < length; i++) {
           stream.push(value[i]);
         }
+
+        if (shouldUnref) unref();
       } else {
         stream.emit("end");
         if (!stream_destroyed) {
@@ -159,10 +187,17 @@ export function getStdinStream(fd) {
   }
 
   stream._read = function (size) {
-    internalRead(this);
+    $debug("_read();", reader);
+    if (!reader) {
+      // TODO: this is wrong
+      this.push(null);
+    } else if (!shouldUnref) {
+      internalRead(this);
+    }
   };
 
   stream.on("resume", () => {
+    $debug('on("resume");');
     ref();
     stream._undestroy();
   });

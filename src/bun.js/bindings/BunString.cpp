@@ -514,9 +514,7 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     }
 
     if (this->tag == BunStringTag::WTFStringImpl) {
-#if BUN_DEBUG
-        RELEASE_ASSERT(this->impl.wtf->refCount() > 0);
-#endif
+        ASSERT(this->impl.wtf->refCount() > 0);
         return WTF::String(this->impl.wtf);
     }
 

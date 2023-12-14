@@ -330,8 +330,8 @@ CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue
 CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3));
-CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4));
-CPP_DECL void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4));
+CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
+CPP_DECL void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
 CPP_DECL JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* arg0, ZigString* arg1, ZigString* arg2, size_t arg3, bool arg4);
 CPP_DECL JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* arg0, int64_t arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* arg0, uint64_t arg1);

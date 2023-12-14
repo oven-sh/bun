@@ -892,6 +892,10 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
+    pub fn iterationNumber(this: *const PosixLoop) c_longlong {
+        return this.internal_loop_data.iteration_nr;
+    }
+
     pub fn inc(this: *PosixLoop) void {
         this.num_polls += 1;
     }
@@ -2434,6 +2438,10 @@ pub const UVLoop = extern struct {
     }
 
     extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+
+    pub fn iterationNumber(this: *const UVLoop) c_longlong {
+        return this.internal_loop_data.iteration_nr;
+    }
 
     pub fn isActive(this: *const UVLoop) bool {
         return this.uv_loop.isActive();

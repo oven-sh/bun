@@ -122,6 +122,7 @@ pub const Tag = enum(u8) {
     pwritev,
     readv,
     preadv,
+    ioctl_ficlone,
 
     uv_spawn,
     uv_pipe,

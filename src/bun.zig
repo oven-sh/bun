@@ -1183,8 +1183,13 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     }
 }
 
+/// Do not use this function, call std.debug.panic directly.
+///
+/// This function used to panic in debug, and be `unreachable` in release
+/// however, if something is possibly reachable, it should not be marked unreachable.
+/// It now panics in all release modes.
 pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
-    if (comptime !Environment.allow_assert) unreachable;
+    // if (comptime !Environment.allow_assert) unreachable;
     std.debug.panic(fmts, args);
 }
 
@@ -1568,6 +1573,9 @@ pub fn U32HashMap(comptime Type: type) type {
 const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
+pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
+pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
+pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
 
 pub fn parseDouble(input: []const u8) !f64 {
@@ -1654,7 +1662,8 @@ pub fn isMissingIOUring() bool {
 
 pub const CLI = @import("./cli.zig");
 
-pub const PackageManager = @import("./install/install.zig").PackageManager;
+pub const install = @import("./install/install.zig");
+pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
@@ -2014,7 +2023,7 @@ pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
 ) void {
-    const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+    const PosixSpawn = posix.spawn;
     const bun = @This();
     var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
@@ -2482,6 +2491,8 @@ pub const posix = struct {
             else => @panic("Invalid stdio fd"),
         };
     }
+
+    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 };
 
 pub const win32 = struct {

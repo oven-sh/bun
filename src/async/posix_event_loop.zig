@@ -133,9 +133,8 @@ pub const FilePoll = struct {
         pub var owner: Owner = Owner.init(@as(*Deactivated, @ptrFromInt(@as(usize, 0xDEADBEEF))));
     };
 
-    const RunCommand = bun.RunCommand;
-    const LifecycleScriptSubprocess = RunCommand.LifecycleScriptSubprocess;
-    const LifecycleScriptSubprocessPid = RunCommand.LifecycleScriptSubprocess.PidPollData;
+    const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
+    const LifecycleScriptSubprocessPid = bun.install.LifecycleScriptSubprocess.PidPollData;
 
     pub const Owner = bun.TaggedPointerUnion(.{
         FileReader,
@@ -146,7 +145,7 @@ pub const FilePoll = struct {
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
-        LifecycleScriptSubprocess,
+        LifecycleScriptSubprocessOutputReader,
         LifecycleScriptSubprocessPid,
     });
 
@@ -276,15 +275,14 @@ pub const FilePoll = struct {
                 loader.onMachportChange();
             },
 
-            @field(Owner.Tag, "LifecycleScriptSubprocess") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess", .{poll.fd});
-                var loader: *LifecycleScriptSubprocess = ptr.as(LifecycleScriptSubprocess);
-                loader.onOutputUpdate(size_or_offset, poll.fileDescriptor());
+            @field(Owner.Tag, "OutputReader") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
+                var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
+                output.onPoll(size_or_offset);
             },
-
             @field(Owner.Tag, "PidPollData") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess Pid", .{poll.fd});
-                var loader: *LifecycleScriptSubprocess = ptr.as(LifecycleScriptSubprocess);
+                var loader: *bun.install.LifecycleScriptSubprocess = @ptrCast(ptr.as(LifecycleScriptSubprocessPid));
                 loader.onProcessUpdate(size_or_offset);
             },
 

@@ -728,9 +728,10 @@ endif()
 # --- Zig Object ---
 file(GLOB ZIG_FILES
     "${BUN_SRC}/*.zig"
-    "${BUN_SRC}/**/*.zig"
-    "${BUN_SRC}/**/**/*.zig"
-    "${BUN_SRC}/**/**/**/*.zig"
+    "${BUN_SRC}/*/*.zig"
+    "${BUN_SRC}/*/*/*.zig"
+    "${BUN_SRC}/*/*/*/*.zig"
+    "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
 if(NOT BUN_ZIG_OBJ)

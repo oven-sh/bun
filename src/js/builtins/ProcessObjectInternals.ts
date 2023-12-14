@@ -67,127 +67,159 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
-  var reader: ReadableStreamDefaultReader | undefined;
-  var readerRef;
-  function ref() {
-    reader ??= Bun.stdin.stream().getReader();
-    // TODO: remove this. likely we are dereferencing the stream
-    // when there is still more data to be read.
-    readerRef ??= setInterval(() => {}, 1 << 30);
-  }
+  return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
+  // var reader:  ReadableStreamDefaultReader<Uint8Array> | undefined;
+  // var readerRef;
 
-  function unref() {
-    if (readerRef) {
-      clearInterval(readerRef);
-      readerRef = undefined;
-    }
-    if (reader) {
-      reader.cancel();
-      reader = undefined;
-    }
-  }
+  // var shouldUnref = false;
 
-  const tty = require("node:tty");
+  // function ref() {
+  //   $debug("ref();", reader ? "already has reader" : "getting reader");
+  //   reader ??= Bun.stdin.stream().getReader();
+  //   // TODO: remove this. likely we are dereferencing the stream
+  //   // when there is still more data to be read.
+  //   readerRef ??= setInterval(() => {}, 1 << 30);
+  //   shouldUnref = false;
+  // }
 
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  // function unref() {
+  //   $debug("unref();");
+  //   if (readerRef) {
+  //     clearInterval(readerRef);
+  //     readerRef = undefined;
+  //     $debug("cleared timeout");
+  //   }
+  //   if (reader) {
+  //     try {
+  //       reader.releaseLock();
+  //       reader = undefined;
+  //       $debug("released reader");
+  //     } catch (e: any) {
+  //       $debug("reader lock cannot be released, waiting");
+  //       $assert(e.message === "There are still pending read requests, cannot release the lock");
 
-  const originalOn = stream.on;
+  //       // Releasing the lock is not possible as there are active reads
+  //       // we will instead pretend we are unref'd, and release the lock once the reads are finished.
+  //       shouldUnref = true;
+  //     }
+  //   }
+  // }
 
-  let stream_destroyed = false;
-  stream.on = function (event, listener) {
-    // Streams don't generally required to present any data when only
-    // `readable` events are present, i.e. `readableFlowing === false`
-    //
-    // However, Node.js has a this quirk whereby `process.stdin.read()`
-    // blocks under TTY mode, thus looping `.read()` in this particular
-    // case would not result in truncation.
-    //
-    // Therefore the following hack is only specific to `process.stdin`
-    // and does not apply to the underlying Stream implementation.
-    if (event === "readable") {
-      ref();
-    }
-    return originalOn.$call(this, event, listener);
-  };
+  // const tty = require("node:tty");
 
-  stream.fd = fd;
+  // const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
+  // const stream = new ReadStream(fd);
 
-  const originalPause = stream.pause;
-  stream.pause = function () {
-    unref();
-    return originalPause.$call(this);
-  };
+  // const originalOn = stream.on;
 
-  const originalResume = stream.resume;
-  stream.resume = function () {
-    ref();
-    return originalResume.$call(this);
-  };
+  // let stream_destroyed = false;
+  // stream.on = function (event, listener) {
+  //   // Streams don't generally required to present any data when only
+  //   // `readable` events are present, i.e. `readableFlowing === false`
+  //   //
+  //   // However, Node.js has a this quirk whereby `process.stdin.read()`
+  //   // blocks under TTY mode, thus looping `.read()` in this particular
+  //   // case would not result in truncation.
+  //   //
+  //   // Therefore the following hack is only specific to `process.stdin`
+  //   // and does not apply to the underlying Stream implementation.
+  //   if (event === "readable") {
+  //     ref();
+  //   }
+  //   return originalOn.$call(this, event, listener);
+  // };
 
-  async function internalRead(stream) {
-    try {
-      var done: any, value: any;
-      const read = reader?.readMany();
+  // stream.fd = fd;
 
-      if ($isPromise(read)) {
-        ({ done, value } = await read);
-      } else {
-        // @ts-expect-error
-        ({ done, value } = read);
-      }
+  // const originalPause = stream.pause;
+  // stream.pause = function () {
+  //   $debug("pause();");
+  //   let r = originalPause.$call(this);
+  //   unref();
+  //   return r;
+  // };
 
-      if (!done) {
-        stream.push(value[0]);
+  // const originalResume = stream.resume;
+  // stream.resume = function () {
+  //   $debug("resume();");
+  //   ref();
+  //   return originalResume.$call(this);
+  // };
 
-        // shouldn't actually happen, but just in case
-        const length = value.length;
-        for (let i = 1; i < length; i++) {
-          stream.push(value[i]);
-        }
-      } else {
-        stream.emit("end");
-        if (!stream_destroyed) {
-          stream_destroyed = true;
-          stream.destroy();
-          unref();
-        }
-      }
-    } catch (err) {
-      stream.destroy(err);
-    }
-  }
+  // async function internalRead(stream) {
+  //   $debug("internalRead();");
+  //   try {
+  //     var done: boolean, value: Uint8Array[];
+  //     $assert(reader);
+  //     const pendingRead = reader.readMany();
 
-  stream._read = function (size) {
-    internalRead(this);
-  };
+  //     if ($isPromise(pendingRead)) {
+  //       ({ done, value } = await pendingRead);
+  //     } else {
+  //       $debug("readMany() did not return a promise");
+  //       ({ done, value } = pendingRead);
+  //     }
 
-  stream.on("resume", () => {
-    ref();
-    stream._undestroy();
-  });
+  //     if (!done) {
+  //       stream.push(value[0]);
 
-  stream._readableState.reading = false;
+  //       // shouldn't actually happen, but just in case
+  //       const length = value.length;
+  //       for (let i = 1; i < length; i++) {
+  //         stream.push(value[i]);
+  //       }
 
-  stream.on("pause", () => {
-    process.nextTick(() => {
-      if (!stream.readableFlowing) {
-        stream._readableState.reading = false;
-      }
-    });
-  });
+  //       if (shouldUnref) unref();
+  //     } else {
+  //       stream.emit("end");
+  //       if (!stream_destroyed) {
+  //         stream_destroyed = true;
+  //         stream.destroy();
+  //         unref();
+  //       }
+  //     }
+  //   } catch (err) {
+  //     stream.destroy(err);
+  //   }
+  // }
 
-  stream.on("close", () => {
-    if (!stream_destroyed) {
-      stream_destroyed = true;
-      process.nextTick(() => {
-        stream.destroy();
-        unref();
-      });
-    }
-  });
+  // stream._read = function (size) {
+  //   $debug("_read();", reader);
+  //   if (!reader) {
+  //     // TODO: this is wrong
+  //     this.push(null);
+  //   } else if (!shouldUnref) {
+  //     internalRead(this);
+  //   }
+  // };
 
-  return stream;
+  // stream.on("resume", () => {
+  //   $debug('on("resume");');
+  //   ref();
+  //   stream._undestroy();
+  // });
+
+  // stream._readableState.reading = false;
+
+  // stream.on("pause", () => {
+  //   process.nextTick(() => {
+  //     if (!stream.readableFlowing) {
+  //       stream._readableState.reading = false;
+  //     }
+  //   });
+  // });
+
+  // stream.on("close", () => {
+  //   if (!stream_destroyed) {
+  //     stream_destroyed = true;
+  //     process.nextTick(() => {
+  //       stream.destroy();
+  //       unref();
+  //     });
+  //   }
+  // });
+
+  // return stream;
 }
 
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {

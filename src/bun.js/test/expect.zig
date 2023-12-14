@@ -813,24 +813,14 @@ pub const Expect = struct {
         if (not) {
             const expected_line = "Expected to not contain: <green>{any}<r>\n";
             const fmt = comptime getSignature("toContainEqual", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_fmt});
+            globalObject.throwPretty(fmt, .{expected_fmt});
             return .zero;
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainEqual", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -3012,7 +3002,8 @@ pub const Expect = struct {
         active_test_expectation_counter.actual += 1;
 
         const not = this.flags.not;
-        const pass = (value.isDate() and !std.math.isNan(value.getUnixTimestamp())) != not;
+        var pass = (value.isDate() and !std.math.isNan(value.getUnixTimestamp()));
+        if (not) pass = !pass;
 
         if (pass) return thisValue;
 

@@ -706,6 +706,7 @@ class Server extends EventEmitter {
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
+  listening = false;
 
   constructor(options, connectionListener) {
     super();
@@ -742,6 +743,7 @@ class Server extends EventEmitter {
       this.#server = null;
       this[bunSocketServerConnections] = 0;
       this.emit("close");
+      this.listening = false;
       if (typeof callback === "function") {
         callback();
       }
@@ -938,6 +940,7 @@ function emitListeningNextTick(self, onListen) {
       self.emit("error", err);
     }
   }
+  self.listening = true;
   self.emit("listening");
 }
 

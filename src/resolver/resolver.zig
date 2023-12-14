@@ -70,6 +70,7 @@ const bufs = struct {
     pub threadlocal var extension_path: [512]u8 = undefined;
     pub threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub threadlocal var esm_subpath: [512]u8 = undefined;
     pub threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -2846,6 +2847,15 @@ pub const Resolver = struct {
                 const total_length: ?u32 = strings.indexOfChar(original_path, '*');
                 var prefix_parts = [_]string{ abs_base_url, original_path[0 .. total_length orelse original_path.len] };
 
+                // Concatenate the matched text with the suffix from the wildcard path
+                var matched_text_with_suffix = bufs(.tsconfig_match_full_buf3);
+                var matched_text_with_suffix_len: usize = 0;
+                if (total_length != null) {
+                    const suffix = std.mem.trimLeft(u8, original_path[total_length orelse original_path.len ..], "*");
+                    matched_text_with_suffix_len = matched_text.len + suffix.len;
+                    bun.concat(u8, matched_text_with_suffix, &.{ matched_text, suffix });
+                }
+
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
                 var prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
@@ -2854,7 +2864,7 @@ pub const Resolver = struct {
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
                 var parts = [_]string{
                     prefix,
-                    if (total_length != null) std.mem.trimLeft(u8, matched_text, "/") else "",
+                    if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
                     std.mem.trimLeft(u8, longest_match.suffix, "/"),
                 };
                 var absolute_original_path = r.fs.absBuf(

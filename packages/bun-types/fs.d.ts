@@ -178,7 +178,7 @@ declare module "fs" {
     name: string;
     /**
      * The base path that this `fs.Dirent` object refers to.
-     * @since v1.0.17
+     * @since v??????
      */
     path: string;
   }

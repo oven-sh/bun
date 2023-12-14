@@ -401,7 +401,8 @@ pub const AsyncReaddirRecursiveTask = struct {
                 bun.default_allocator.destroy(this);
             }
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
+            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, &path_buf, false);
         }
     };
 
@@ -452,7 +453,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         return task.promise.value();
     }
 
-    pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8, comptime is_root: bool) void {
+    pub fn performWork(
+        this: *AsyncReaddirRecursiveTask,
+        basename: [:0]const u8,
+        buf: *[bun.MAX_PATH_BYTES]u8,
+        path_buf: *[bun.MAX_PATH_BYTES]u8,
+        comptime is_root: bool
+    ) void {
         switch (this.args.tag()) {
             inline else => |tag| {
                 const ResultType = comptime switch (tag) {
@@ -469,6 +476,7 @@ pub const AsyncReaddirRecursiveTask = struct {
 
                 switch (NodeFS.readdirWithEntriesRecursiveAsync(
                     buf,
+                    path_buf,
                     this.args,
                     this,
                     basename,
@@ -513,7 +521,8 @@ pub const AsyncReaddirRecursiveTask = struct {
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
         var this: *AsyncReaddirRecursiveTask = @fieldParentPtr(AsyncReaddirRecursiveTask, "task", task);
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        this.performWork(this.root_path.sliceAssumeZ(), &buf, &path_buf, true);
     }
 
     pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.ArrayList(ResultType)) void {
@@ -4573,6 +4582,7 @@ pub const NodeFS = struct {
 
     pub fn readdirWithEntriesRecursiveAsync(
         buf: *[bun.MAX_PATH_BYTES]u8,
+        path_buf: *[bun.MAX_PATH_BYTES]u8,
         args: Arguments.Readdir,
         async_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
@@ -4647,6 +4657,15 @@ pub const NodeFS = struct {
                 break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
             };
 
+            const dirent_path_to_copy = brk: {
+                if (async_task.root_path.sliceAssumeZ().ptr == basename.ptr) {
+                    break :brk args.path.slice();
+                }
+
+                const path_parts = [_]string{ args.path.slice(), name_to_copy };
+                break :brk std.fs.path.dirname(bun.path.joinZBuf(path_buf, &path_parts, .auto)) orelse args.path.slice();
+            };
+
             enqueue: {
                 switch (current.kind) {
                     // a symlink might be a directory or might not be
@@ -4674,7 +4693,7 @@ pub const NodeFS = struct {
                 Dirent => {
                     entries.append(.{
                         .name = bun.String.create(utf8_name),
-                        .path = bun.String.create(name_to_copy),
+                        .path = bun.String.create(dirent_path_to_copy),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },

@@ -2527,6 +2527,36 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
     });
+    test("node-gyp should always be available for lifecycle scripts", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            install: "node-gyp --version",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      const out = await new Response(stdout).text();
+
+      // if node-gyp isn't available, it would return a non-zero exit code
+      expect(await exited).toBe(0);
+    });
   });
 }
 

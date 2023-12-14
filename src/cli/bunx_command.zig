@@ -267,6 +267,12 @@ pub const BunxCommand = struct {
             force_using_bun,
         );
 
+        const ignore_cwd = this_bundler.env.map.get("BUN_WHICH_IGNORE_CWD") orelse "";
+
+        if (ignore_cwd.len > 0) {
+            _ = this_bundler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
+        }
+
         var PATH = this_bundler.env.map.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
@@ -288,7 +294,32 @@ pub const BunxCommand = struct {
             );
         };
 
-        const PATH_FOR_BIN_DIRS = PATH;
+        const PATH_FOR_BIN_DIRS = brk: {
+            if (ignore_cwd.len == 0) break :brk PATH;
+
+            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
+            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+            var path_iter = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
+            if (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.appendSlice(segment);
+                }
+            }
+            while (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.append(std.fs.path.delimiter);
+                    try new_path.appendSlice(segment);
+                }
+            }
+
+            break :brk new_path.items;
+        };
+
+        defer {
+            if (ignore_cwd.len > 0) {
+                ctx.allocator.free(PATH_FOR_BIN_DIRS);
+            }
+        }
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
@@ -318,7 +349,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -329,7 +360,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
-                this_bundler.fs.top_level_dir,
+                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -355,7 +386,7 @@ pub const BunxCommand = struct {
                         destination_ = bun.which(
                             &path_buf,
                             PATH_FOR_BIN_DIRS,
-                            this_bundler.fs.top_level_dir,
+                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -363,7 +394,7 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
-                        this_bundler.fs.top_level_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
@@ -450,7 +481,7 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
-            this_bundler.fs.top_level_dir,
+            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
@@ -473,7 +504,7 @@ pub const BunxCommand = struct {
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);

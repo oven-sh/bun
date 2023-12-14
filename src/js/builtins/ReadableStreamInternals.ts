@@ -1490,7 +1490,6 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if ($getByIdDirectPrivate(stream, "bunNativeType") != 0) {
-    $debug(stream);
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingByteSource").$resume(
       false,
     );

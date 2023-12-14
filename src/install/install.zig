@@ -2487,7 +2487,7 @@ pub const PackageManager = struct {
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
-        try PATH.appendSlice(this.temp_dir_name);
+        try PATH.appendSlice(strings.withoutTrailingSlash(this.temp_dir_name));
         try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
@@ -9357,26 +9357,18 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        var uses_node_gyp = false;
         var any_scripts = false;
-        for (list.items) |_item| {
-            if (_item) |item| {
+        for (list.items) |item| {
+            if (item != null) {
                 any_scripts = true;
-                // to be safe, add the temporary script for any usage
-                // of the string `node-gyp`.
-                if (strings.containsComptime(item.script, "node-gyp")) {
-                    uses_node_gyp = true;
-                    break;
-                }
+                break;
             }
         }
         if (!any_scripts) {
             return;
         }
 
-        if (uses_node_gyp) {
-            try this.ensureTempNodeGypScript();
-        }
+        try this.ensureTempNodeGypScript();
 
         const cwd = list.first().cwd;
         const this_bundler = try this.configureEnvForScripts(ctx, log_level);

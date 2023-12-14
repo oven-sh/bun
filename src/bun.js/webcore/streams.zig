@@ -4901,7 +4901,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(!this.isWatching());
             switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
                 .err => |err| {
-                    bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});
+                    std.debug.panic("FilePoll.register failed: {d}", .{err.errno});
                 },
                 .result => {},
             }

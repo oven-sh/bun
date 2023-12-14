@@ -228,8 +228,8 @@ pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSVa
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__fastGetDirect_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.VM, *bindings.JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
-pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
-pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
+pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool, bool) callconv(.C) void) void;
+pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool, bool) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: *bindings.JSGlobalObject, arg1: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: *bindings.JSGlobalObject, arg1: u64) JSC__JSValue;

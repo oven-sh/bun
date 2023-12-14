@@ -1153,8 +1153,13 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     }
 }
 
+/// Do not use this function, call std.debug.panic directly.
+///
+/// This function used to panic in debug, and be `unreachable` in release
+/// however, if something is possibly reachable, it should not be marked unreachable.
+/// It now panics in all release modes.
 pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
-    if (comptime !Environment.allow_assert) unreachable;
+    // if (comptime !Environment.allow_assert) unreachable;
     std.debug.panic(fmts, args);
 }
 

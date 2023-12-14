@@ -786,7 +786,10 @@ pub const JestPrettyFormat = struct {
                     key_: [*c]ZigString,
                     value: JSValue,
                     is_symbol: bool,
+                    is_private_symbol: bool,
                 ) callconv(.C) void {
+                    if (is_private_symbol) return;
+
                     const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
                     if (key.eqlComptime("call")) return;

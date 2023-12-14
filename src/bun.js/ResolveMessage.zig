@@ -51,6 +51,9 @@ pub const ResolveMessage = struct {
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {
+                if (strings.eqlComptime(referrer, "bun:main")) {
+                    return try std.fmt.allocPrint(allocator, "Module not found \"{s}\"", .{specifier});
+                }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
                     return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 } else {

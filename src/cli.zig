@@ -376,7 +376,7 @@ pub const Arguments = struct {
             .allocator = allocator,
             .stop_after_positional_at = switch (cmd) {
                 .RunCommand => 2,
-                .AutoCommand => 1,
+                .AutoCommand, .RunAsNodeCommand => 1,
                 else => 0,
             },
         }) catch |err| {
@@ -515,7 +515,7 @@ pub const Arguments = struct {
         ctx.passthrough = args.remaining();
 
         // runtime commands
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
 
             if (args.flag("--hot")) {
@@ -1004,6 +1004,14 @@ pub const ReservedCommand = struct {
 
 const AddCompletions = @import("./cli/add_completions.zig");
 
+/// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
+/// to pretend to be node.js by always choosing RunCommand with a relative filepath.
+///
+/// Examples of how this differs from bun alone:
+/// - `node build`               -> `bun run ./build`
+/// - `node scripts/postinstall` -> `bun run ./scripts/postinstall`
+pub var pretend_to_be_node = false;
+
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -1145,14 +1153,15 @@ pub const Command = struct {
         if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
 
-        if (strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
-            std.debug.print("", .{});
-            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
-        }
-
         if (comptime Environment.isDebug) {
             if (strings.endsWithComptime(argv0, "bunx-debug"))
                 return .BunxCommand;
+        }
+
+        if (strings.endsWithComptime(argv0, "node")) {
+            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+            pretend_to_be_node = true;
+            return .RunAsNodeCommand;
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
@@ -1593,6 +1602,7 @@ pub const Command = struct {
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
+
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
                         return;
@@ -1600,6 +1610,12 @@ pub const Command = struct {
 
                     Global.exit(1);
                 }
+            },
+            .RunAsNodeCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .RunAsNodeCommand);
+                std.debug.assert(pretend_to_be_node);
+                try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
@@ -1705,7 +1721,7 @@ pub const Command = struct {
                         return;
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
 
@@ -1717,12 +1733,12 @@ pub const Command = struct {
                 }
 
                 if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> module not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Module not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> file not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
@@ -1821,6 +1837,7 @@ pub const Command = struct {
         PackageManagerCommand,
         RemoveCommand,
         RunCommand,
+        RunAsNodeCommand, // arg0 == 'node'
         TestCommand,
         UnlinkCommand,
         UpdateCommand,
@@ -1831,7 +1848,7 @@ pub const Command = struct {
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
-                .RunCommand => Arguments.run_params,
+                .RunCommand, .RunAsNodeCommand => Arguments.run_params,
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
@@ -1860,7 +1877,7 @@ pub const Command = struct {
                 Command.Tag.AutoCommand => {
                     HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
-                Command.Tag.RunCommand => {
+                .RunCommand, .RunAsNodeCommand => {
                     RunCommand_.printHelp(null);
                 },
 
@@ -2058,6 +2075,7 @@ pub const Command = struct {
             .BunxCommand = true,
             .AutoCommand = true,
             .RunCommand = true,
+            .RunAsNodeCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{

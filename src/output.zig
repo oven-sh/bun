@@ -757,14 +757,15 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         // error unions
         if (info == .ErrorSet) {
             if (info.ErrorSet) |errors| {
+                if (errors.len == 0) {
+                    @compileError("Output.err was given an empty error set");
+                }
 
                 // TODO: convert zig errors to errno for better searchability?
                 if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
-
-                break :display_name .{ @errorName(error_name), false };
-            } else {
-                @compileLog("Output.err was given an empty error set");
             }
+
+            break :display_name .{ @errorName(error_name), false };
         }
 
         // enum literals

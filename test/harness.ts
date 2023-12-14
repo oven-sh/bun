@@ -156,3 +156,20 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
     stderr: result.stderr.toString("utf8").trim(),
   };
 }
+
+export function fakeNodeRun(dir: string, file: string | string[], env?: Record<string, string>) {
+  var path = require("path");
+  const result = Bun.spawnSync([bunExe(), "--bun", "node", ...(Array.isArray(file) ? file : [file])], {
+    cwd: dir ?? path.dirname(file),
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
+}

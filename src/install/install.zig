@@ -2485,8 +2485,8 @@ pub const PackageManager = struct {
         var existing_path = this.env.get("PATH") orelse "";
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
-        if (existing_path.len > 0 and existing_path[existing_path.len - 1] != ':')
-            try PATH.append(':');
+        if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
+            try PATH.append(std.fs.path.delimiter);
         try PATH.appendSlice(node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
     }

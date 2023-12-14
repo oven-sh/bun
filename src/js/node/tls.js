@@ -30,15 +30,19 @@ function parseCertString() {
   throwNotImplemented("Not implemented");
 }
 
+const rejectUnauthorizedDefault =
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
 function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
-      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer) && !(obj instanceof Blob))
+      const item = obj[i];
+      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
         return false;
     }
     return true;
   }
+  return false;
 }
 
 function unfqdn(host) {
@@ -346,6 +350,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     _secureEstablished = false;
+    _rejectUnauthorized = rejectUnauthorizedDefault;
     _securePending = true;
     _newSessionPending;
     _controlReleased;
@@ -473,6 +478,8 @@ const TLSSocket = (function (InternalTLSSocket) {
         serverName: this.servername || host || "localhost",
         checkServerIdentity: this.#checkServerIdentity,
         session: this.#session,
+        rejectUnauthorized: this._rejectUnauthorized,
+        requestCert: this._requestCert,
         ...this.#secureContext,
       };
     }
@@ -485,7 +492,7 @@ class Server extends NetServer {
   ca;
   passphrase;
   secureOptions;
-  _rejectUnauthorized;
+  _rejectUnauthorized = rejectUnauthorizedDefault;
   _requestCert;
   servername;
   ALPNProtocols;
@@ -557,11 +564,11 @@ class Server extends NetServer {
       if (requestCert) this._requestCert = requestCert;
       else this._requestCert = undefined;
 
-      const rejectUnauthorized = options.rejectUnauthorized || false;
+      const rejectUnauthorized = options.rejectUnauthorized;
 
-      if (rejectUnauthorized) {
+      if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = undefined;
+      } else this._rejectUnauthorized = rejectUnauthorizedDefault;
     }
   }
 
@@ -582,9 +589,8 @@ class Server extends NetServer {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        // Client always is NONE on set_verify
-        rejectUnauthorized: isClient ? false : this._rejectUnauthorized,
-        requestCert: isClient ? false : this._requestCert,
+        rejectUnauthorized: this._rejectUnauthorized,
+        requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
       },
       SocketClass,
@@ -633,10 +639,7 @@ function convertProtocols(protocols) {
         const len = Buffer.byteLength(c);
         if (len > 255) {
           throw new RangeError(
-            "The byte length of the protocol at index " + `${i} exceeds the maximum length.`,
-            "<= 255",
-            len,
-            true,
+            `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
           );
         }
         lens[i] = len;

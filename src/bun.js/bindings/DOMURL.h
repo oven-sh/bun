@@ -30,8 +30,8 @@
 
 #include "ExceptionOr.h"
 #include "URLDecomposition.h"
-#include "wtf/URL.h"
-#include "wtf/WeakPtr.h"
+#include <wtf/URL.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 

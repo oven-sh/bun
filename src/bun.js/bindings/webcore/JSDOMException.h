@@ -24,8 +24,8 @@
 
 #include "DOMException.h"
 #include "JSDOMWrapper.h"
-#include "JavaScriptCore/ErrorPrototype.h"
-#include "wtf/NeverDestroyed.h"
+#include <JavaScriptCore/ErrorPrototype.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

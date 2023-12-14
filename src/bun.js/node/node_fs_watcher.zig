@@ -16,6 +16,7 @@ const Output = bun.Output;
 const string = bun.string;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
+const Async = bun.Async;
 
 pub const FSWatcher = struct {
     ctx: *VirtualMachine,
@@ -26,7 +27,7 @@ pub const FSWatcher = struct {
     signal: ?*JSC.AbortSignal,
     persistent: bool,
     path_watcher: ?*PathWatcher.PathWatcher,
-    poll_ref: JSC.PollRef = .{},
+    poll_ref: Async.KeepAlive = .{},
     globalThis: *JSC.JSGlobalObject,
     js_this: JSC.JSValue,
     encoding: JSC.Node.Encoding,

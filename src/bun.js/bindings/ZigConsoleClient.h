@@ -1,8 +1,8 @@
 #pragma once
 
-#include "JavaScriptCore/ConsoleClient.h"
-#include "wtf/Vector.h"
-#include "wtf/text/WTFString.h"
+#include <JavaScriptCore/ConsoleClient.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace Inspector {
 class InspectorConsoleAgent;

@@ -41,7 +41,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(id);
 
@@ -53,7 +53,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(+id);
 
@@ -65,6 +65,20 @@ it("clearTimeout", async () => {
     setTimeout(resolve, 10);
   });
   expect(called).toBe(false);
+});
+
+it.todo("setImmediate runs after setTimeout cb", async () => {
+  var ranFirst = -1;
+  setTimeout(() => {
+    if (ranFirst === -1) ranFirst = 1;
+  }, 0);
+  setImmediate(() => {
+    if (ranFirst === -1) ranFirst = 0;
+  });
+
+  await Bun.sleep(5);
+
+  expect(ranFirst).toBe(1);
 });
 
 it("setTimeout(() => {}, 0)", async () => {
@@ -80,10 +94,10 @@ it("setTimeout(() => {}, 0)", async () => {
   expect(called).toBe(true);
   var ranFirst = -1;
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 1;
+    if (ranFirst === -1) ranFirst = 0;
   }, 1);
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 0;
+    if (ranFirst === -1) ranFirst = 1;
   }, 0);
 
   await new Promise((resolve, reject) => {

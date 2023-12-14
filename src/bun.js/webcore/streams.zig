@@ -1,11 +1,10 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
+const HTTPClient = bun.http;
+const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -21,7 +20,7 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-
+const Async = bun.Async;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
@@ -1245,7 +1244,7 @@ pub const FileSink = struct {
     has_adjusted_pipe_size_on_linux: bool = false,
     max_write_size: usize = std.math.maxInt(usize),
     reachable_from_js: bool = true,
-    poll_ref: ?*JSC.FilePoll = null,
+    poll_ref: ?*Async.FilePoll = null,
 
     pub usingnamespace NewReadyWatcher(@This(), .writable, ready);
     const log = Output.scoped(.FileSink, false);
@@ -1257,9 +1256,9 @@ pub const FileSink = struct {
     pub fn updateRef(this: *FileSink, value: bool) void {
         if (this.poll_ref) |poll| {
             if (value)
-                poll.enableKeepingProcessAlive(JSC.VirtualMachine.get())
+                poll.ref(JSC.VirtualMachine.get())
             else
-                poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                poll.unref(JSC.VirtualMachine.get());
         }
     }
 
@@ -1572,7 +1571,7 @@ pub const FileSink = struct {
 
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
-            poll.deinit();
+            poll.deinitForceUnregister();
         }
 
         if (this.auto_close) {
@@ -1743,7 +1742,7 @@ pub const FileSink = struct {
         if (signal_close) {
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
-                poll.deinit();
+                poll.deinitForceUnregister();
             }
 
             this.fd = bun.invalid_fd;
@@ -3790,7 +3789,7 @@ pub const AutoSizer = struct {
 pub const FIFO = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
-    poll_ref: ?*JSC.FilePoll = null,
+    poll_ref: ?*Async.FilePoll = null,
     fd: bun.FileDescriptor = bun.invalid_fd,
     to_read: ?u32 = null,
     close_on_empty_read: bool = false,
@@ -3811,6 +3810,7 @@ pub const FIFO = struct {
         this.close_on_empty_read = true;
         if (this.poll_ref) |poll| {
             poll.flags.insert(.hup);
+            poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
         }
 
         this.pending.result = .{ .done = {} };
@@ -3820,12 +3820,7 @@ pub const FIFO = struct {
     pub fn close(this: *FIFO) void {
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
-            if (comptime Environment.isLinux) {
-                // force target fd to be removed from epoll
-                poll.deinitForceUnregister();
-            } else {
-                poll.deinit();
-            }
+            poll.deinit();
         }
 
         const fd = this.fd;
@@ -4065,6 +4060,12 @@ pub const FIFO = struct {
         /// provided via kqueue(), only on macOS
         kqueue_read_amt: ?u32,
     ) ReadResult {
+        if (comptime Environment.isWindows) {
+            return ReadResult{
+                .err = Syscall.Error.todo,
+            };
+        }
+
         const available_to_read = this.getAvailableToRead(
             if (kqueue_read_amt != null)
                 @as(i64, @intCast(kqueue_read_amt.?))
@@ -4155,7 +4156,7 @@ pub const File = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
 
-    poll_ref: JSC.PollRef = .{},
+    poll_ref: Async.KeepAlive = .{},
     fd: bun.FileDescriptor = bun.invalid_fd,
     concurrent: Concurrent = .{},
     loop: *JSC.EventLoop,
@@ -4326,93 +4327,45 @@ pub const File = struct {
 
     const Concurrent = struct {
         read: Blob.SizeType = 0,
-        task: NetworkThread.Task = .{ .callback = Concurrent.taskCallback },
-        completion: AsyncIO.Completion = undefined,
+        task: bun.ThreadPool.Task = .{ .callback = Concurrent.taskCallback },
         chunk_size: Blob.SizeType = 0,
         main_thread_task: JSC.AnyTask = .{ .callback = onJSThread, .ctx = null },
         concurrent_task: JSC.ConcurrentTask = .{},
 
-        pub fn taskCallback(task: *NetworkThread.Task) void {
+        pub fn taskCallback(task: *bun.ThreadPool.Task) void {
             var this = @fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task));
             runAsync(this);
         }
 
-        pub fn onRead(this: *File, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-            this.concurrent.read = @as(Blob.SizeType, @truncate(result catch |err| {
-                if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
-                    this.pending.result = .{
-                        .err = .{
-                            .Error = Syscall.Error{
-                                .errno = @as(Syscall.Error.Int, @intCast(-completion.result)),
-                                .syscall = .read,
-                            },
-                        },
-                    };
-                } else {
-                    this.pending.result = .{
-                        .err = .{
-                            .Error = Syscall.Error{
-                                // this is too hacky
-                                .errno = @as(Syscall.Error.Int, @truncate(@as(u16, @intCast(@max(1, @intFromError(err)))))),
-                                .syscall = .read,
-                            },
-                        },
-                    };
-                }
-                this.concurrent.read = 0;
-                scheduleMainThreadTask(this);
-                return;
-            }));
-
-            scheduleMainThreadTask(this);
-        }
-
         pub fn scheduleRead(this: *File) void {
-            if (comptime Environment.isMac) {
-                var remaining = this.buf[this.concurrent.read..];
+            var remaining = this.buf[this.concurrent.read..];
 
-                while (remaining.len > 0) {
-                    const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
-                    switch (Syscall.read(this.fd, remaining[0..to_read])) {
-                        .err => |err| {
-                            const retry = E.AGAIN;
+            while (remaining.len > 0) {
+                const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
+                switch (Syscall.read(this.fd, remaining[0..to_read])) {
+                    .err => |err| {
+                        const retry = E.AGAIN;
 
-                            switch (err.getErrno()) {
-                                retry => break,
-                                else => {},
-                            }
+                        switch (err.getErrno()) {
+                            retry => break,
+                            else => {},
+                        }
 
-                            this.pending.result = .{ .err = .{ .Error = err } };
-                            scheduleMainThreadTask(this);
-                            return;
-                        },
-                        .result => |result| {
-                            this.concurrent.read += @as(Blob.SizeType, @intCast(result));
-                            remaining = remaining[result..];
+                        this.pending.result = .{ .err = .{ .Error = err } };
+                        scheduleMainThreadTask(this);
+                        return;
+                    },
+                    .result => |result| {
+                        this.concurrent.read += @as(Blob.SizeType, @intCast(result));
+                        remaining = remaining[result..];
 
-                            if (result == 0) {
-                                remaining.len = 0;
-                                break;
-                            }
-                        },
-                    }
-                }
-
-                if (remaining.len == 0) {
-                    scheduleMainThreadTask(this);
-                    return;
+                        if (result == 0) {
+                            remaining.len = 0;
+                            break;
+                        }
+                    },
                 }
             }
-
-            AsyncIO.global.read(
-                *File,
-                this,
-                onRead,
-                &this.concurrent.completion,
-                this.fd,
-                this.buf[this.concurrent.read..],
-                null,
-            );
 
             scheduleMainThreadTask(this);
         }
@@ -4465,10 +4418,8 @@ pub const File = struct {
     ) void {
         this.scheduled_count += 1;
         this.poll_ref.ref(globalThis.bunVM());
-        NetworkThread.init() catch {};
-
         this.concurrent.chunk_size = chunk_size;
-        NetworkThread.global.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
+        JSC.WorkPool.schedule(&this.concurrent.task);
     }
 
     pub fn read(this: *File, buf: []u8) ReadResult {
@@ -4618,6 +4569,10 @@ pub const FileReader = struct {
             }
         };
 
+        pub fn toBlob(this: *Readable) Blob {
+            if (this.isClosed()) return Blob.initEmpty(JSC.VirtualMachine.get().global);
+        }
+
         pub fn deinit(this: *Readable) void {
             switch (this.*) {
                 .FIFO => {
@@ -4742,7 +4697,7 @@ pub const FileReader = struct {
                             },
                         };
                         this.lazy_readable.readable.FIFO.watch(readable_file.fd);
-                        this.lazy_readable.readable.FIFO.pollRef().ref(this.globalThis().bunVM());
+                        this.lazy_readable.readable.FIFO.pollRef().enableKeepingProcessAlive(this.globalThis().bunVM());
                         if (!(blob.data.file.is_atty orelse false)) {
                             this.lazy_readable.readable.FIFO.poll_ref.?.flags.insert(.nonblocking);
                         }
@@ -4816,9 +4771,9 @@ pub const FileReader = struct {
                 .FIFO => {
                     if (this.lazy_readable.readable.FIFO.poll_ref) |poll| {
                         if (value) {
-                            poll.enableKeepingProcessAlive(this.globalThis().bunVM());
+                            poll.ref(this.globalThis().bunVM());
                         } else {
-                            poll.disableKeepingProcessAlive(this.globalThis().bunVM());
+                            poll.unref(this.globalThis().bunVM());
                         }
                     }
                 },
@@ -4858,7 +4813,7 @@ pub const FileReader = struct {
 
 pub fn NewReadyWatcher(
     comptime Context: type,
-    comptime flag_: JSC.FilePoll.Flags,
+    comptime flag_: Async.FilePoll.Flags,
     comptime onReady: anytype,
 ) type {
     return struct {
@@ -4893,16 +4848,22 @@ pub fn NewReadyWatcher(
         }
 
         pub fn unwatch(this: *Context, fd_: anytype) void {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+                return;
+            }
+
             const fd = @as(c_int, @intCast(fd_));
             std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
             std.debug.assert(
                 this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
+            this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
         }
 
-        pub fn pollRef(this: *Context) *JSC.FilePoll {
+        pub fn pollRef(this: *Context) *Async.FilePoll {
             return this.poll_ref orelse brk: {
-                this.poll_ref = JSC.FilePoll.init(
+                this.poll_ref = Async.FilePoll.init(
                     JSC.VirtualMachine.get(),
                     this.fd,
                     .{},
@@ -4922,9 +4883,12 @@ pub fn NewReadyWatcher(
         }
 
         pub fn watch(this: *Context, fd_: anytype) void {
+            if (comptime Environment.isWindows) {
+                return;
+            }
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
-            var poll_ref: *JSC.FilePoll = this.poll_ref orelse brk: {
-                this.poll_ref = JSC.FilePoll.init(
+            var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
+                this.poll_ref = Async.FilePoll.init(
                     JSC.VirtualMachine.get(),
                     fd,
                     .{},
@@ -4937,7 +4901,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(!this.isWatching());
             switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
                 .err => |err| {
-                    bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});
+                    std.debug.panic("FilePoll.register failed: {d}", .{err.errno});
                 },
                 .result => {},
             }

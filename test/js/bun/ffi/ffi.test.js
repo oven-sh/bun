@@ -575,6 +575,36 @@ function ffiRunner(fast) {
       }
     });
 
+    describe("integer identities work for all possible values", () => {
+      const cases = [
+        { type: "int8_t", min: -128, max: 127, fn: identity_int8_t },
+        { type: "int16_t", min: -32768, max: 32767, fn: identity_int16_t },
+        { type: "int32_t", min: -2147483648, max: 2147483647, fn: identity_int32_t },
+        { type: "int64_t", min: -9223372036854775808n, max: 9223372036854775807n, fn: identity_int64_t },
+        { type: "uint8_t", min: 0, max: 255, fn: identity_uint8_t },
+        { type: "uint16_t", min: 0, max: 65535, fn: identity_uint16_t },
+        { type: "uint32_t", min: 0, max: 4294967295, fn: identity_uint32_t },
+        { type: "uint64_t", min: 0n, max: 18446744073709551615n, fn: identity_uint64_t },
+      ];
+
+      for (const { type, min, max, fn } of cases) {
+        const bigint = typeof min === "bigint";
+        const inc = bigint
+          ? //
+            (max - min) / 32768n
+          : Math.ceil((max - min) / 32768);
+        it(type, () => {
+          expect(bigint ? BigInt(fn(min)) : fn(min)).toBe(min);
+          expect(bigint ? BigInt(fn(max)) : fn(max)).toBe(max);
+          expect(bigint ? BigInt(fn(0n)) : fn(0)).toBe(bigint ? 0n : 0);
+
+          for (let i = min; i <= max; i += inc) {
+            expect(bigint ? BigInt(fn(i)) : fn(i)).toBe(i);
+          }
+        });
+      }
+    });
+
     afterAll(() => {
       close();
     });

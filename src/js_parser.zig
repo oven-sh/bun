@@ -1,3 +1,7 @@
+/// ** IMPORTANT **
+/// ** When making changes to the JavaScript Parser that impact runtime behavior or fix bugs **
+/// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
+/// ** IMPORTANT **
 pub const std = @import("std");
 pub const logger = @import("root").bun.logger;
 pub const js_lexer = bun.js_lexer;
@@ -87,13 +91,13 @@ const SkipTypeParameterResult = enum {
 
 const TypeParameterFlag = packed struct {
     /// TypeScript 4.7
-    allow_in_out_variance_annoatations: bool = false,
+    allow_in_out_variance_annotations: bool = false,
 
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
     pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annoatations = true,
+        .allow_in_out_variance_annotations = true,
         .allow_const_modifier = true,
     };
 };
@@ -111,15 +115,13 @@ const JSXImport = enum {
         jsxs: ?LocRef = null,
         Fragment: ?LocRef = null,
         createElement: ?LocRef = null,
-        factory_name: []const u8 = "React.createElement",
-        fragment_name: []const u8 = "Fragment",
 
         pub fn get(this: *const Symbols, name: []const u8) ?Ref {
             if (strings.eqlComptime(name, "jsx")) return if (this.jsx) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxDEV")) return if (this.jsxDEV) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxs")) return if (this.jsxs) |jsxs| jsxs.ref.? else null;
-            if (strings.eql(name, this.fragment_name)) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
-            if (strings.eql(name, this.factory_name)) return if (this.createElement) |createElement| createElement.ref.? else null;
+            if (strings.eqlComptime(name, "Fragment")) return if (this.Fragment) |Fragment| Fragment.ref.? else null;
+            if (strings.eqlComptime(name, "createElement")) return if (this.createElement) |createElement| createElement.ref.? else null;
             return null;
         }
 
@@ -153,11 +155,14 @@ const JSXImport = enum {
             }
 
             if (this.Fragment != null) {
-                buf[i] = this.fragment_name;
+                buf[i] = "Fragment";
                 i += 1;
             }
 
             return buf[0..i];
+        }
+        pub fn sourceImportNames(this: *const Symbols) []const string {
+            return if (this.createElement != null) &[_]string{"createElement"} else &[_]string{};
         }
     };
 };
@@ -958,7 +963,6 @@ pub const ImportScanner = struct {
                     //
                     var did_remove_star_loc = false;
                     const keep_unused_imports = !p.options.features.trim_unused_imports;
-
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
@@ -2799,7 +2803,6 @@ pub const Parser = struct {
         jsx: options.JSX.Pragma,
         ts: bool = false,
         keep_names: bool = true,
-        omit_runtime_for_tests: bool = false,
         ignore_dce_annotations: bool = false,
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
@@ -2820,6 +2823,31 @@ pub const Parser = struct {
         module_type: options.ModuleType = .unknown,
 
         transform_only: bool = false,
+
+        pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
+            std.debug.assert(!this.bundle);
+
+            if (did_use_jsx) {
+                if (this.jsx.parse) {
+                    this.jsx.hashForRuntimeTranspiler(hasher);
+                    const jsx_optimizations = [_]bool{
+                        this.features.jsx_optimization_inline,
+                        this.features.jsx_optimization_hoist,
+                    };
+                    hasher.update(std.mem.asBytes(&jsx_optimizations));
+                } else {
+                    hasher.update("NO_JSX");
+                }
+            }
+
+            if (this.ts) {
+                hasher.update("TS");
+            } else {
+                hasher.update("NO_TS");
+            }
+
+            this.features.hashForRuntimeTranspiler(hasher);
+        }
 
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
@@ -3053,8 +3081,10 @@ pub const Parser = struct {
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
-        var result: js_ast.Result = undefined;
-        _ = result;
+
+        var binary_expression_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).init(binary_expression_stack_heap.get());
+        defer p.binary_expression_stack.clearAndFree();
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -3071,10 +3101,24 @@ pub const Parser = struct {
             try p.lexer.next();
         }
 
+        // Detect a leading "// @bun" pragma
         if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
             return js_ast.Result{
                 .already_bundled = {},
             };
+        }
+
+        // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
+        // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
+                    return js_ast.Result{
+                        .cached = {},
+                    };
+                }
+            }
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -3272,45 +3316,57 @@ pub const Parser = struct {
         const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
         defer postvisit_tracer.end();
 
-        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        var uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        var uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
 
-        if (uses_dirname or uses_filename) {
-            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
-            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-            if (uses_dirname) {
-                decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        // TODO: test UTF-8 file paths
-                        E.String.init(p.source.path.name.dir),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
-            }
-            if (uses_filename) {
-                decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.String.init(p.source.path.text),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
-            }
+        // Handle dirname and filename at bundle-time
+        // We always inject it at the top of the module
+        //
+        // This inlines
+        //
+        //    var __dirname = "foo/bar"
+        //    var __filename = "foo/bar/baz.js"
+        //
+        if (p.options.bundle or !p.options.features.commonjs_at_runtime) {
+            if (uses_dirname or uses_filename) {
+                const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+                var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+                if (uses_dirname) {
+                    decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            // TODO: test UTF-8 file paths
+                            E.String.init(p.source.path.name.dir),
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+                }
+                if (uses_filename) {
+                    decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            E.String.init(p.source.path.text),
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+                }
 
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = Decl.List.init(decls),
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
+                var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                part_stmts[0] = p.s(S.Local{
+                    .kind = .k_var,
+                    .decls = Decl.List.init(decls),
+                }, logger.Loc.Empty);
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .tag = .dirname_filename,
+                }) catch unreachable;
+                uses_dirname = false;
+                uses_filename = false;
+            }
         }
 
         var did_import_fast_refresh = false;
@@ -3630,12 +3686,58 @@ pub const Parser = struct {
             exports_kind = .cjs;
         } else if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
             exports_kind = .esm;
-        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
+        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return or p.has_with_scope) {
             exports_kind = .cjs;
             if (p.options.features.commonjs_at_runtime) {
                 wrapper_expr = .{
                     .bun_js = {},
                 };
+
+                const import_record: ?*const ImportRecord = brk: {
+                    for (p.import_records.items) |*import_record| {
+                        if (import_record.is_internal or import_record.is_unused) continue;
+                        if (import_record.kind == .stmt) break :brk import_record;
+                    }
+
+                    break :brk null;
+                };
+
+                // make it an error to use an import statement with a commonjs exports usage
+                if (import_record) |record| {
+                    // find the usage of the export symbol
+
+                    var notes = ListManaged(logger.Data).init(p.allocator);
+
+                    try notes.append(logger.Data{
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{strings.QuotedFormatter{ .text = record.path.text }}),
+                    });
+
+                    if (uses_module_ref) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because 'module' was used",
+                        });
+                    }
+
+                    if (uses_exports_ref) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because 'exports' was used",
+                        });
+                    }
+
+                    if (p.has_top_level_return) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because top-level return was used",
+                        });
+                    }
+
+                    if (p.has_with_scope) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because a \"with\" statement is used",
+                        });
+                    }
+
+                    try p.log.addRangeErrorWithNotes(p.source, record.range, "Cannot use import statement with CommonJS-only features", notes.items);
+                }
             } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
                 if (p.options.legacy_transform_require_to_import or p.options.features.dynamic_require) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -3707,6 +3809,62 @@ pub const Parser = struct {
             }
         }
 
+        // Handle dirname and filename at runtime.
+        //
+        // If we reach this point, it means:
+        //
+        // 1) we are building an ESM file that uses __dirname or __filename
+        // 2) we are targeting bun's runtime.
+        // 3) we are not bundling.
+        //
+        if (exports_kind == .esm and (uses_dirname or uses_filename)) {
+            std.debug.assert(!p.options.bundle);
+            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+            if (uses_dirname) {
+                // var __dirname = import.meta.dir
+                decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.Dot{
+                            .name = "dir",
+                            .name_loc = logger.Loc.Empty,
+                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                        },
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+            }
+            if (uses_filename) {
+                // var __filename = import.meta.path
+                decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.Dot{
+                            .name = "path",
+                            .name_loc = logger.Loc.Empty,
+                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                        },
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+            }
+
+            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            part_stmts[0] = p.s(S.Local{
+                .kind = .k_var,
+                .decls = Decl.List.init(decls),
+            }, logger.Loc.Empty);
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .tag = .dirname_filename,
+            }) catch unreachable;
+        }
+
         if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires and !force_esm) {
             exports_kind = .esm_with_dynamic_fallback_from_cjs;
         }
@@ -3718,6 +3876,13 @@ pub const Parser = struct {
             for (p.import_records.items) |*item| {
                 // skip if they did import it
                 if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
+                    if (p.options.features.runtime_transpiler_cache) |cache| {
+                        // If we rewrote import paths, we need to disable the runtime transpiler cache
+                        if (!strings.eqlComptime(item.path.text, "bun:test")) {
+                            cache.input_hash = null;
+                        }
+                    }
+
                     break :outer;
                 }
             }
@@ -3774,6 +3939,11 @@ pub const Parser = struct {
                 .import_record_indices = bun.BabyList(u32).init(import_record_indices),
                 .tag = .bun_test,
             }) catch unreachable;
+
+            // If we injected jest globals, we need to disable the runtime transpiler cache
+            if (p.options.features.runtime_transpiler_cache) |cache| {
+                cache.input_hash = null;
+            }
         }
 
         if (p.legacy_cjs_import_stmts.items.len > 0 and p.options.legacy_transform_require_to_import) {
@@ -3807,7 +3977,7 @@ pub const Parser = struct {
                 i += 1;
             }
 
-            std.sort.block(
+            std.sort.pdq(
                 u8,
                 runtime_imports[0..i],
                 {},
@@ -3843,6 +4013,19 @@ pub const Parser = struct {
                 p.generateImportStmt(
                     p.options.jsx.importSource(),
                     runtime_import_names,
+                    &before,
+                    &p.jsx_imports,
+                    null,
+                    "",
+                    false,
+                ) catch unreachable;
+            }
+
+            const source_import_names = p.jsx_imports.sourceImportNames();
+            if (source_import_names.len > 0) {
+                p.generateImportStmt(
+                    p.options.jsx.package_name,
+                    source_import_names,
                     &before,
                     &p.jsx_imports,
                     null,
@@ -3891,6 +4074,19 @@ pub const Parser = struct {
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
+
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (p.macro_call_count != 0) {
+                    // disable this for:
+                    // - macros
+                    cache.input_hash = null;
+                } else {
+                    cache.exports_kind = exports_kind;
+                }
+            }
+        }
 
         return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
@@ -4420,6 +4616,9 @@ fn NewParser_(
         has_export_default: bool = false,
         has_export_keyword: bool = false,
 
+        // Used for forcing CommonJS
+        has_with_scope: bool = false,
+
         is_file_considered_to_have_esm_exports: bool = false,
 
         hmr_module: GeneratedSymbol = GeneratedSymbol{ .primary = Ref.None, .backup = Ref.None, .ref = Ref.None },
@@ -4675,6 +4874,8 @@ fn NewParser_(
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
+        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -4854,17 +5055,15 @@ fn NewParser_(
                     return p.callRuntime(arg.loc, "__require", args);
                 },
                 else => {
-                    if (p.options.bundle) {
-                        const args = p.allocator.alloc(Expr, 1) catch unreachable;
-                        args[0] = arg;
-                        return p.newExpr(
-                            E.Call{
-                                .target = p.valueForRequire(arg.loc),
-                                .args = ExprNodeList.init(args),
-                            },
-                            arg.loc,
-                        );
-                    }
+                    const args = p.allocator.alloc(Expr, 1) catch unreachable;
+                    args[0] = arg;
+                    return p.newExpr(
+                        E.Call{
+                            .target = p.valueForRequire(arg.loc),
+                            .args = ExprNodeList.init(args),
+                        },
+                        arg.loc,
+                    );
                 },
             }
 
@@ -5351,7 +5550,7 @@ fn NewParser_(
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.Data{
                     .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
-                    .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
+                    .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
                 };
                 try p.log.addRangeErrorFmtWithNotes(
                     p.source,
@@ -6179,14 +6378,6 @@ fn NewParser_(
             //      import { Bar } from 'foo';
             //      Usages become Bar.createElement
 
-            if (p.options.jsx.runtime == .classic) {
-                if (p.options.jsx.fragment.len > 0)
-                    p.jsx_imports.fragment_name = p.options.jsx.fragment[if (p.options.jsx.fragment.len > 1) 1 else 0];
-            }
-
-            if (p.options.jsx.factory.len > 0)
-                p.jsx_imports.factory_name = p.options.jsx.factory[if (p.options.jsx.factory.len > 1) 1 else 0];
-
             switch (comptime jsx_transform_type) {
                 .react => {
                     if (!p.options.bundle) {
@@ -6518,6 +6709,14 @@ fn NewParser_(
 
             p.current_scope = scope;
 
+            if (comptime kind == .with) {
+                // "with" statements change the default from ESModule to CommonJS at runtime.
+                // "with" statements are not allowed in strict mode.
+                if (p.options.features.commonjs_at_runtime) {
+                    p.has_with_scope = true;
+                }
+            }
+
             if (comptime !Environment.isRelease) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
                 // where the pushed scopes are mistmatched between the first and second passes
@@ -6693,6 +6892,393 @@ fn NewParser_(
             }
             return ExprBindingTuple{ .binding = bind, .expr = initializer };
         }
+
+        const BinaryExpressionVisitor = struct {
+            e: *E.Binary,
+            loc: logger.Loc,
+            in: ExprIn,
+
+            /// Input for visiting the left child
+            left_in: ExprIn,
+
+            /// "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
+            is_stmt_expr: bool = false,
+
+            pub fn visitRightAndFinish(
+                v: *BinaryExpressionVisitor,
+                p: *P,
+            ) Expr {
+                var e_ = v.e;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and e_ == p.call_target.e_binary;
+                // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
+                const was_anonymous_named_expr = e_.right.isAnonymousNamed();
+
+                // Mark the control flow as dead if the branch is never taken
+                switch (e_.op) {
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            // "true || dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and !side_effects.value) {
+                            // "false && dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        if (side_effects.ok and !side_effects.value) {
+                            // "notNullOrUndefined ?? dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    else => {
+                        e_.right = p.visitExpr(e_.right);
+                    },
+                }
+
+                // Always put constants on the right for equality comparisons to help
+                // reduce the number of cases we have to check during pattern matching. We
+                // can only reorder expressions that do not have any side effects.
+                switch (e_.op) {
+                    .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
+                        if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
+                            const _left = e_.left;
+                            const _right = e_.right;
+                            e_.left = _right;
+                            e_.right = _left;
+                        }
+                    },
+                    else => {},
+                }
+
+                switch (e_.op) {
+                    .bin_comma => {
+                        // "(1, 2)" => "2"
+                        // "(sideEffects(), 2)" => "(sideEffects(), 2)"
+                        if (p.options.features.minify_syntax) {
+                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse return e_.right;
+                        }
+                    },
+                    .bin_loose_eq => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        if (equality.ok) {
+                            return p.newExpr(
+                                E.Boolean{ .value = equality.equal },
+                                v.loc,
+                            );
+                        }
+
+                        if (p.options.features.minify_syntax) {
+                            // "x == void 0" => "x == null"
+                            if (e_.left.data == .e_undefined) {
+                                e_.left.data = .{ .e_null = E.Null{} };
+                            } else if (e_.right.data == .e_undefined) {
+                                e_.right.data = .{ .e_null = E.Null{} };
+                            }
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                    },
+                    .bin_strict_eq => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+                    },
+                    .bin_loose_ne => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                        // "x != void 0" => "x != null"
+                        if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
+                            e_.right = p.newExpr(E.Null{}, e_.right.loc);
+                        }
+                    },
+                    .bin_strict_ne => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        if (nullorUndefined.ok) {
+                            if (!nullorUndefined.value) {
+                                return e_.left;
+                            } else if (nullorUndefined.side_effects == .no_side_effects) {
+                                // "(null ?? fn)()" => "fn()"
+                                // "(null ?? this.fn)" => "this.fn"
+                                // "(null ?? this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
+                            }
+                        }
+                    },
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            return e_.left;
+                        } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
+                            // "(0 || fn)()" => "fn()"
+                            // "(0 || this.fn)" => "this.fn"
+                            // "(0 || this.fn)()" => "(0, this.fn)()"
+                            if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                            }
+
+                            return e_.right;
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok) {
+                            if (!side_effects.value) {
+                                return e_.left;
+                            } else if (side_effects.side_effects == .no_side_effects) {
+                                // "(1 && fn)()" => "fn()"
+                                // "(1 && this.fn)" => "this.fn"
+                                // "(1 && this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
+                            }
+                        }
+                    },
+                    .bin_add => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, v.loc);
+                            }
+                        }
+
+                        if (foldStringAddition(e_.left, e_.right)) |res| {
+                            return res;
+                        }
+                    },
+                    .bin_sub => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_mul => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_div => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_rem => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(
+                                    // Use libc fmod here to be consistent with what JavaScriptCore does
+                                    // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                    E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
+                                    v.loc,
+                                );
+                            }
+                        }
+                    },
+                    .bin_pow => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_shl => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) << @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_shr => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_u_shr => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_and => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_or => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_xor => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    .bin_assign => {
+
+                        // Optionally preserve the name
+                        if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
+                            e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
+                        }
+                    },
+                    .bin_add_assign => {
+                        // notimpl();
+                    },
+                    .bin_sub_assign => {
+                        // notimpl();
+                    },
+                    .bin_mul_assign => {
+                        // notimpl();
+                    },
+                    .bin_div_assign => {
+                        // notimpl();
+                    },
+                    .bin_rem_assign => {
+                        // notimpl();
+                    },
+                    .bin_pow_assign => {
+                        // notimpl();
+                    },
+                    .bin_shl_assign => {
+                        // notimpl();
+                    },
+                    .bin_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_u_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_or_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_xor_assign => {
+                        // notimpl();
+                    },
+                    .bin_nullish_coalescing_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_or_assign => {
+                        // notimpl();
+                    },
+                    else => {},
+                }
+
+                return Expr{ .loc = v.loc, .data = .{ .e_binary = e_ } };
+            }
+
+            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *P) ?Expr {
+                var e_ = v.e;
+                switch (e_.left.data) {
+                    // Special-case private identifiers
+                    .e_private_identifier => |_private| {
+                        if (e_.op == .bin_in) {
+                            var private = _private;
+                            const name = p.loadNameFromRef(private.ref);
+                            const result = p.findSymbol(e_.left.loc, name) catch unreachable;
+                            private.ref = result.ref;
+
+                            // Unlike regular identifiers, there are no unbound private identifiers
+                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                            if (!Symbol.isKindPrivate(kind)) {
+                                const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
+                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                            }
+
+                            e_.right = p.visitExpr(e_.right);
+                            e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+
+                            // privateSymbolNeedsToBeLowered
+                            return Expr{ .loc = v.loc, .data = .{ .e_binary = e_ } };
+                        }
+                    },
+                    else => {},
+                }
+
+                v.is_stmt_expr = p.stmt_expr_value == .e_binary and p.stmt_expr_value.e_binary == e_;
+
+                v.left_in = ExprIn{
+                    .assign_target = e_.op.binaryAssignTarget(),
+                };
+
+                return null;
+            }
+        };
 
         fn forbidLexicalDecl(p: *P, loc: logger.Loc) anyerror!void {
             try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
@@ -8196,7 +8782,7 @@ fn NewParser_(
                     }
 
                     if (p.lexer.token == .t_in) {
-                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annoatations or has_in or has_out)) {
+                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annotations or has_in or has_out)) {
                             // Valid:
                             //   "type Foo<in T> = T"
                             // Invalid:
@@ -8213,7 +8799,7 @@ fn NewParser_(
 
                     if (p.lexer.isContextualKeyword("out")) {
                         const r = p.lexer.range();
-                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annoatations) {
+                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annotations) {
                             // Valid:
                             //   "type Foo<out T> = T"
                             // Invalid:
@@ -8369,7 +8955,7 @@ fn NewParser_(
             // Even anonymous classes can have TypeScript type parameters
             if (is_typescript_enabled) {
                 _ = try p.skipTypeScriptTypeParameters(.{
-                    .allow_in_out_variance_annoatations = true,
+                    .allow_in_out_variance_annotations = true,
                     .allow_const_modifier = true,
                 });
             }
@@ -8665,12 +9251,12 @@ fn NewParser_(
                                         .s_function => |func_container| {
                                             if (func_container.func.name) |name| {
                                                 break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
-                                            } else {}
+                                            }
                                         },
                                         .s_class => |class| {
                                             if (class.class.class_name) |name| {
                                                 break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
-                                            } else {}
+                                            }
                                         },
                                         else => {},
                                     }
@@ -8710,12 +9296,12 @@ fn NewParser_(
                                                 .s_function => |func_container| {
                                                     if (func_container.func.name) |_name| {
                                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
-                                                    } else {}
+                                                    }
                                                 },
                                                 .s_class => |class| {
                                                     if (class.class.class_name) |_name| {
                                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
-                                                    } else {}
+                                                    }
                                                 },
                                                 else => {},
                                             }
@@ -9034,12 +9620,18 @@ fn NewParser_(
                     try p.lexer.next();
                     try p.lexer.expect(.t_open_paren);
                     const test_ = try p.parseExpr(.lowest);
+                    const body_loc = p.lexer.loc();
                     try p.lexer.expect(.t_close_paren);
 
+                    // Push a scope so we make sure to prevent any bare identifiers referenced
+                    // within the body from being renamed. Renaming them might change the
+                    // semantics of the code.
+                    _ = try p.pushScopeForParsePass(.with, body_loc);
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
+                    p.popScope();
 
-                    return p.s(S.With{ .body = body, .value = test_ }, loc);
+                    return p.s(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();
@@ -9804,7 +10396,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -9932,7 +10524,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -10951,6 +11543,10 @@ fn NewParser_(
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
+                                        } else {
+                                            stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                .value = str.slice(p.allocator),
+                                            }, stmt.loc);
                                         }
                                     }
                                 },
@@ -11049,8 +11645,9 @@ fn NewParser_(
             return p.current_scope.strict_mode != .sloppy_mode;
         }
 
-        pub inline fn isStrictModeOutputFormat(_: *P) bool {
-            return true;
+        pub inline fn isStrictModeOutputFormat(p: *P) bool {
+            // TODO: once CJS or IIFE is supported, this will need to be updated
+            return p.options.bundle;
         }
 
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
@@ -13677,7 +14274,7 @@ fn NewParser_(
 
                     // Even anonymous classes can have TypeScript type parameters
                     if (is_typescript_enabled) {
-                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true, .allow_const_modifier = true });
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
                     }
 
                     const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
@@ -14131,7 +14728,7 @@ fn NewParser_(
 
             var previous_string_with_backslash_loc = logger.Loc{};
             var properties = G.Property.List{};
-            var key_prop: ?ExprNodeIndex = null;
+            var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
             var can_be_inlined = false;
@@ -14144,8 +14741,7 @@ fn NewParser_(
 
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
-                var key_prop_i: i32 = -1;
-                var spread_prop_i: i32 = -1;
+                var first_spread_prop_i: i32 = -1;
                 var i: i32 = 0;
                 parse_attributes: while (true) {
                     switch (p.lexer.token) {
@@ -14166,8 +14762,6 @@ fn NewParser_(
                                 }
 
                                 key_prop_i = i;
-                                key_prop = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
-                                continue;
                             }
 
                             can_be_inlined = can_be_inlined and special_prop != .ref;
@@ -14197,7 +14791,7 @@ fn NewParser_(
                                     try p.lexer.next();
                                     can_be_inlined = false;
 
-                                    spread_prop_i = i;
+                                    if (first_spread_prop_i == -1) first_spread_prop_i = i;
                                     spread_loc = p.lexer.loc();
                                     try props.append(G.Property{ .value = try p.parseExpr(.comma), .kind = .spread });
                                 },
@@ -14262,13 +14856,13 @@ fn NewParser_(
                     }
                 }
 
-                const is_key_before_rest = key_prop_i > -1 and spread_prop_i > key_prop_i;
-                flags.setPresent(.is_key_before_rest, is_key_before_rest);
-                if (is_key_before_rest and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
-                    try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
+                const is_key_after_spread = key_prop_i > -1 and first_spread_prop_i > -1 and key_prop_i > first_spread_prop_i;
+                flags.setPresent(.is_key_after_spread, is_key_after_spread);
+                properties = G.Property.List.fromList(props);
+                if (is_key_after_spread and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
+                    try p.log.addWarning(p.source, spread_loc, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
                 }
-                properties = G.Property.List.fromList(props);
             }
 
             // People sometimes try to use the output of "JSON.stringify()" as a JSX
@@ -14309,7 +14903,7 @@ fn NewParser_(
                 return p.newExpr(E.JSXElement{
                     .tag = start_tag,
                     .properties = properties,
-                    .key = key_prop,
+                    .key_prop_index = key_prop_i,
                     .flags = flags,
                     .close_tag_loc = close_tag_loc,
                 }, loc);
@@ -14330,14 +14924,18 @@ fn NewParser_(
                         // Use Next() instead of NextJSXElementChild() here since the next token is an expression
                         try p.lexer.next();
 
-                        // The "..." here is ignored (it's used to signal an array type in TypeScript)
-                        if (p.lexer.token == .t_dot_dot_dot and is_typescript_enabled) {
+                        const is_spread = p.lexer.token == .t_dot_dot_dot;
+                        if (is_spread) {
                             try p.lexer.next();
                         }
 
                         // The expression is optional, and may be absent
                         if (p.lexer.token != .t_close_brace) {
-                            try children.append(try p.parseExpr(.lowest));
+                            var item = try p.parseExpr(.lowest);
+                            if (is_spread) {
+                                item = p.newExpr(E.Spread{ .value = item }, loc);
+                            }
+                            try children.append(item);
                         }
 
                         // Use ExpectJSXElementChild() so we parse child strings
@@ -14384,7 +14982,7 @@ fn NewParser_(
                             .tag = end_tag.data.asExpr(),
                             .children = ExprNodeList.fromList(children),
                             .properties = properties,
-                            .key = key_prop,
+                            .key_prop_index = key_prop_i,
                             .flags = flags,
                             .close_tag_loc = end_tag.range.loc,
                         }, loc);
@@ -14828,7 +15426,7 @@ fn NewParser_(
                         var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                         notes[0] = logger.Data{
                             .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
-                            .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
+                            .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
                         };
 
                         const is_error = p.const_values.contains(result.ref) or p.options.bundle;
@@ -14913,26 +15511,23 @@ fn NewParser_(
                                 }
                             };
 
-                            const jsx_props = e_.properties.slice();
-                            for (jsx_props, 0..) |property, i| {
+                            const all_props: []G.Property = e_.properties.slice();
+                            for (all_props) |*property| {
                                 if (property.kind != .spread) {
-                                    e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
+                                    property.key = p.visitExpr(property.key.?);
                                 }
 
                                 if (property.value != null) {
-                                    e_.properties.ptr[i].value = p.visitExpr(e_.properties.ptr[i].value.?);
+                                    property.value = p.visitExpr(property.value.?);
                                 }
 
                                 if (property.initializer != null) {
-                                    e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
+                                    property.initializer = p.visitExpr(property.initializer.?);
                                 }
                             }
 
-                            if (e_.key) |key| {
-                                e_.key = p.visitExpr(key);
-                            }
-
-                            const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                            const runtime = if (p.options.jsx.runtime == .automatic) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                            const is_key_after_spread = e_.flags.contains(.is_key_after_spread);
                             var children_count = e_.children.len;
 
                             const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and
@@ -14954,282 +15549,279 @@ fn NewParser_(
 
                             // TODO: maybe we should split these into two different AST Nodes
                             // That would reduce the amount of allocations a little
-                            switch (runtime) {
-                                .classic => {
-                                    // Arguments to createElement()
-                                    const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
-                                    // There are at least two args:
-                                    // - name of the tag
-                                    // - props
-                                    var i: usize = 2;
+                            if (runtime == .classic or is_key_after_spread) {
+                                // Arguments to createElement()
+                                const args = p.allocator.alloc(Expr, 2 + children_count) catch unreachable;
+                                // There are at least two args:
+                                // - name of the tag
+                                // - props
+                                var i: usize = 2;
+                                args[0] = tag;
+
+                                const num_props = e_.properties.len;
+                                if (num_props > 0) {
+                                    var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
+                                    bun.copy(G.Property, props, e_.properties.slice());
+                                    args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
+                                } else {
+                                    args[1] = p.newExpr(E.Null{}, expr.loc);
+                                }
+
+                                const children_elements = e_.children.slice()[0..children_count];
+                                for (children_elements) |child| {
+                                    args[i] = p.visitExpr(child);
+                                    i += @as(usize, @intCast(@intFromBool(args[i].data != .e_missing)));
+                                }
+
+                                const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
+
+                                // Call createElement()
+                                return p.newExpr(E.Call{
+                                    .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
+                                    .args = ExprNodeList.init(args[0..i]),
+                                    // Enable tree shaking
+                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .close_paren_loc = e_.close_tag_loc,
+                                }, expr.loc);
+                            }
+                            // function jsxDEV(type, config, maybeKey, source, self) {
+                            else if (runtime == .automatic) {
+                                // --- These must be done in all cases --
+                                const allocator = p.allocator;
+                                var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
+
+                                const maybe_key_value: ?ExprNodeIndex =
+                                    if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
+
+                                // arguments needs to be like
+                                // {
+                                //    ...props,
+                                //    children: [el1, el2]
+                                // }
+
+                                {
+                                    var last_child: u32 = 0;
+                                    var children = e_.children.slice()[0..children_count];
+                                    for (children) |child| {
+                                        e_.children.ptr[last_child] = p.visitExpr(child);
+                                        // if tree-shaking removes the element, we must also remove it here.
+                                        last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr[last_child].data != .e_missing)));
+                                    }
+                                    e_.children.len = last_child;
+                                }
+
+                                const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
+
+                                // Optimization: if the only non-child prop is a spread object
+                                // we can just pass the object as the first argument
+                                // this goes as deep as there are spreads
+                                // <div {{...{...{...{...foo}}}}} />
+                                // ->
+                                // <div {{...foo}} />
+                                // jsx("div", {...foo})
+                                while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
+                                    props = props.items[0].value.?.data.e_object.properties.list();
+                                }
+
+                                // Typescript defines static jsx as children.len > 1 or single spread
+                                // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
+                                const is_static_jsx = e_.children.len > 1 or (e_.children.len == 1 and e_.children.ptr[0].data == .e_spread);
+
+                                if (is_static_jsx) {
+                                    props.append(allocator, G.Property{
+                                        .key = children_key,
+                                        .value = p.newExpr(E.Array{
+                                            .items = e_.children,
+                                            .is_single_line = e_.children.len < 2,
+                                        }, e_.close_tag_loc),
+                                    }) catch bun.outOfMemory();
+                                } else if (e_.children.len == 1) {
+                                    props.append(allocator, G.Property{
+                                        .key = children_key,
+                                        .value = e_.children.ptr[0],
+                                    }) catch bun.outOfMemory();
+                                }
+                                // --- These must be done in all cases --
+
+                                // Trivial elements can be inlined, removing the call to createElement or jsx()
+                                if (p.options.features.jsx_optimization_inline and e_.flags.contains(.can_be_inlined)) {
+                                    // The output object should look like this:
+                                    // https://babeljs.io/repl/#?browsers=defaults%2C%20not%20ie%2011%2C%20not%20ie_mob%2011&build=&builtIns=false&corejs=false&spec=false&loose=false&code_lz=FAMwrgdgxgLglgewgAgLIE8DCCC2AHJAUwhgAoBvAIwEMAvAXwEplzhl3kAnQmMTlADwAxBAmQA-AIwAmAMxsOAFgCsANgEB6EQnEBuYPWBA&debug=false&forceAllTransforms=false&shippedProposals=true&circleciRepo=&evaluate=false&fileSize=true&timeTravel=false&sourceType=module&lineWrap=true&presets=react%2Ctypescript&prettier=true&targets=&version=7.18.4&externalPlugins=%40babel%2Fplugin-transform-flow-strip-types%407.16.7%2C%40babel%2Fplugin-transform-react-inline-elements%407.16.7&assumptions=%7B%22arrayLikeIsIterable%22%3Atrue%2C%22constantReexports%22%3Atrue%2C%22constantSuper%22%3Atrue%2C%22enumerableModuleMeta%22%3Atrue%2C%22ignoreFunctionLength%22%3Atrue%2C%22ignoreToPrimitiveHint%22%3Atrue%2C%22mutableTemplateObject%22%3Atrue%2C%22iterableIsArray%22%3Atrue%2C%22noClassCalls%22%3Atrue%2C%22noNewArrows%22%3Atrue%2C%22noDocumentAll%22%3Atrue%2C%22objectRestNoSymbols%22%3Atrue%2C%22privateFieldsAsProperties%22%3Atrue%2C%22pureGetters%22%3Atrue%2C%22setComputedProperties%22%3Atrue%2C%22setClassMethods%22%3Atrue%2C%22setSpreadProperties%22%3Atrue%2C%22setPublicClassFields%22%3Atrue%2C%22skipForOfIteratorClosing%22%3Atrue%2C%22superIsCallableConstructor%22%3Atrue%7D
+                                    // return {
+                                    //     $$typeof: REACT_ELEMENT_TYPE,
+                                    //     type: type,
+                                    //     key: void 0 === key ? null : "" + key,
+                                    //     ref: null,
+                                    //     props: props,
+                                    //     _owner: null
+                                    // };
+                                    //
+                                    const key = if (maybe_key_value) |key_value| brk: {
+                                        // key: void 0 === key ? null : "" + key,
+                                        break :brk switch (key_value.data) {
+                                            .e_string => break :brk key_value,
+                                            .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
+                                            else => p.newExpr(E.If{
+                                                .test_ = p.newExpr(E.Binary{
+                                                    .left = p.newExpr(E.Undefined{}, key_value.loc),
+                                                    .op = Op.Code.bin_strict_eq,
+                                                    .right = key_value,
+                                                }, key_value.loc),
+                                                .yes = p.newExpr(E.Null{}, key_value.loc),
+                                                .no = p.newExpr(
+                                                    E.Binary{
+                                                        .op = Op.Code.bin_add,
+                                                        .left = p.newExpr(&E.String.empty, key_value.loc),
+                                                        .right = key_value,
+                                                    },
+                                                    key_value.loc,
+                                                ),
+                                            }, key_value.loc),
+                                        };
+                                    } else p.newExpr(E.Null{}, expr.loc);
+                                    var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
+
+                                    const props_object = p.newExpr(
+                                        E.Object{
+                                            .properties = G.Property.List.fromList(props),
+                                            .close_brace_loc = e_.close_tag_loc,
+                                        },
+                                        expr.loc,
+                                    );
+                                    const props_expression = brk: {
+                                        // we must check for default props
+                                        if (tag.data != .e_string) {
+                                            // We assume defaultProps is supposed to _not_ have side effects
+                                            // We do not support "key" or "ref" in defaultProps.
+                                            const defaultProps = p.newExpr(
+                                                E.Dot{
+                                                    .name = "defaultProps",
+                                                    .name_loc = tag.loc,
+                                                    .target = tag,
+                                                    .can_be_removed_if_unused = true,
+                                                    .call_can_be_unwrapped_if_unused = true,
+                                                },
+                                                tag.loc,
+                                            );
+                                            // props: MyComponent.defaultProps || {}
+                                            if (props.items.len == 0) {
+                                                break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
+                                            } else {
+                                                var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                call_args[0..2].* = .{
+                                                    props_object,
+                                                    defaultProps,
+                                                };
+                                                // __merge(props, MyComponent.defaultProps)
+                                                // originally, we always inlined here
+                                                // see https://twitter.com/jarredsumner/status/1534084541236686848
+                                                // but, that breaks for defaultProps
+                                                // we assume that most components do not have defaultProps
+                                                // so __merge quickly checks if it needs to merge any props
+                                                // and if not, it passes along the props object
+                                                // this skips an extra allocation
+                                                break :brk p.callRuntime(tag.loc, "__merge", call_args);
+                                            }
+                                        }
+
+                                        break :brk props_object;
+                                    };
+
+                                    jsx_element[0..6].* =
+                                        [_]G.Property{
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
+                                            .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
+                                            .value = tag,
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.key, .loc = key.loc },
+                                            .value = key,
+                                        },
+                                        // this is a de-opt
+                                        // any usage of ref should make it impossible for this code to be reached
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.ref, .loc = expr.loc },
+                                            .value = p.newExpr(E.Null{}, expr.loc),
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data.props, .loc = expr.loc },
+                                            .value = props_expression,
+                                        },
+                                        G.Property{
+                                            .key = Expr{ .data = Prefill.Data._owner, .loc = key.loc },
+                                            .value = p.newExpr(
+                                                E.Null{},
+                                                expr.loc,
+                                            ),
+                                        },
+                                    };
+
+                                    const output = p.newExpr(
+                                        E.Object{
+                                            .properties = G.Property.List.init(jsx_element),
+                                            .close_brace_loc = e_.close_tag_loc,
+                                        },
+                                        expr.loc,
+                                    );
+
+                                    return output;
+                                } else {
+                                    // -- The typical jsx automatic transform happens here --
+
+                                    // Either:
+                                    // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                                    // jsx(type, arguments, key)
+                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
                                     args[0] = tag;
 
-                                    const num_props = e_.properties.len + @intFromBool(e_.key != null);
-                                    if (num_props > 0) {
-                                        var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
-                                        bun.copy(G.Property, props, e_.properties.slice());
-                                        if (e_.key) |key| {
-                                            props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
-                                        }
-                                        args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
-                                    } else {
-                                        args[1] = p.newExpr(E.Null{}, expr.loc);
+                                    args[1] = p.newExpr(E.Object{
+                                        .properties = G.Property.List.fromList(props),
+                                    }, expr.loc);
+
+                                    if (maybe_key_value) |key| {
+                                        args[2] = key;
+                                    } else if (p.options.jsx.development) {
+                                        // if (maybeKey !== undefined)
+                                        args[2] = Expr{
+                                            .loc = expr.loc,
+                                            .data = .{
+                                                .e_undefined = E.Undefined{},
+                                            },
+                                        };
                                     }
 
-                                    const children_elements = e_.children.slice()[0..children_count];
-                                    for (children_elements) |child| {
-                                        args[i] = p.visitExpr(child);
-                                        i += @as(usize, @intCast(@intFromBool(args[i].data != .e_missing)));
+                                    if (p.options.jsx.development) {
+                                        // is the return type of the first child an array?
+                                        // It's dynamic
+                                        // Else, it's static
+                                        args[3] = Expr{
+                                            .loc = expr.loc,
+                                            .data = .{
+                                                .e_boolean = .{
+                                                    .value = is_static_jsx,
+                                                },
+                                            },
+                                        };
+
+                                        args[4] = p.newExpr(E.Undefined{}, expr.loc);
+                                        args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                                     }
 
-                                    const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
-
-                                    // Call createElement()
                                     return p.newExpr(E.Call{
-                                        .target = target,
-                                        .args = ExprNodeList.init(args[0..i]),
+                                        .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
+                                        .args = ExprNodeList.init(args),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                        .was_jsx_element = true,
                                         .close_paren_loc = e_.close_tag_loc,
                                     }, expr.loc);
-                                },
-                                // function jsxDEV(type, config, maybeKey, source, self) {
-                                .automatic => {
-                                    // --- These must be done in all cases --
-                                    const allocator = p.allocator;
-                                    var props = e_.properties.list();
-                                    // arguments needs to be like
-                                    // {
-                                    //    ...props,
-                                    //    children: [el1, el2]
-                                    // }
-
-                                    {
-                                        var last_child: u32 = 0;
-                                        var children = e_.children.slice()[0..children_count];
-                                        for (children) |child| {
-                                            e_.children.ptr[last_child] = p.visitExpr(child);
-                                            // if tree-shaking removes the element, we must also remove it here.
-                                            last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr[last_child].data != .e_missing)));
-                                        }
-                                        e_.children.len = last_child;
-                                    }
-
-                                    const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
-
-                                    // Optimization: if the only non-child prop is a spread object
-                                    // we can just pass the object as the first argument
-                                    // this goes as deep as there are spreads
-                                    // <div {{...{...{...{...foo}}}}} />
-                                    // ->
-                                    // <div {{...foo}} />
-                                    // jsx("div", {...foo})
-                                    while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
-                                        props = props.items[0].value.?.data.e_object.properties.list();
-                                    }
-
-                                    // Babel defines static jsx as children.len > 1
-                                    const is_static_jsx = e_.children.len > 1;
-
-                                    // if (p.options.jsx.development) {
-                                    switch (e_.children.len) {
-                                        0 => {},
-                                        1 => {
-                                            props.append(allocator, G.Property{
-                                                .key = children_key,
-                                                .value = e_.children.ptr[0],
-                                            }) catch unreachable;
-                                        },
-                                        else => {
-                                            props.append(allocator, G.Property{
-                                                .key = children_key,
-                                                .value = p.newExpr(E.Array{
-                                                    .items = e_.children,
-                                                    .is_single_line = e_.children.len < 2,
-                                                }, e_.close_tag_loc),
-                                            }) catch unreachable;
-                                        },
-                                    }
-                                    // --- These must be done in all cases --
-
-                                    // Trivial elements can be inlined, removing the call to createElement or jsx()
-                                    if (p.options.features.jsx_optimization_inline and e_.flags.contains(.can_be_inlined)) {
-                                        // The output object should look like this:
-                                        // https://babeljs.io/repl/#?browsers=defaults%2C%20not%20ie%2011%2C%20not%20ie_mob%2011&build=&builtIns=false&corejs=false&spec=false&loose=false&code_lz=FAMwrgdgxgLglgewgAgLIE8DCCC2AHJAUwhgAoBvAIwEMAvAXwEplzhl3kAnQmMTlADwAxBAmQA-AIwAmAMxsOAFgCsANgEB6EQnEBuYPWBA&debug=false&forceAllTransforms=false&shippedProposals=true&circleciRepo=&evaluate=false&fileSize=true&timeTravel=false&sourceType=module&lineWrap=true&presets=react%2Ctypescript&prettier=true&targets=&version=7.18.4&externalPlugins=%40babel%2Fplugin-transform-flow-strip-types%407.16.7%2C%40babel%2Fplugin-transform-react-inline-elements%407.16.7&assumptions=%7B%22arrayLikeIsIterable%22%3Atrue%2C%22constantReexports%22%3Atrue%2C%22constantSuper%22%3Atrue%2C%22enumerableModuleMeta%22%3Atrue%2C%22ignoreFunctionLength%22%3Atrue%2C%22ignoreToPrimitiveHint%22%3Atrue%2C%22mutableTemplateObject%22%3Atrue%2C%22iterableIsArray%22%3Atrue%2C%22noClassCalls%22%3Atrue%2C%22noNewArrows%22%3Atrue%2C%22noDocumentAll%22%3Atrue%2C%22objectRestNoSymbols%22%3Atrue%2C%22privateFieldsAsProperties%22%3Atrue%2C%22pureGetters%22%3Atrue%2C%22setComputedProperties%22%3Atrue%2C%22setClassMethods%22%3Atrue%2C%22setSpreadProperties%22%3Atrue%2C%22setPublicClassFields%22%3Atrue%2C%22skipForOfIteratorClosing%22%3Atrue%2C%22superIsCallableConstructor%22%3Atrue%7D
-                                        // return {
-                                        //     $$typeof: REACT_ELEMENT_TYPE,
-                                        //     type: type,
-                                        //     key: void 0 === key ? null : "" + key,
-                                        //     ref: null,
-                                        //     props: props,
-                                        //     _owner: null
-                                        // };
-                                        //
-                                        const key = if (e_.key) |key_| brk: {
-                                            // key: void 0 === key ? null : "" + key,
-                                            break :brk switch (key_.data) {
-                                                .e_string => break :brk key_,
-                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_.loc),
-                                                else => p.newExpr(E.If{
-                                                    .test_ = p.newExpr(E.Binary{
-                                                        .left = p.newExpr(E.Undefined{}, key_.loc),
-                                                        .op = Op.Code.bin_strict_eq,
-                                                        .right = key_,
-                                                    }, key_.loc),
-                                                    .yes = p.newExpr(E.Null{}, key_.loc),
-                                                    .no = p.newExpr(
-                                                        E.Binary{
-                                                            .op = Op.Code.bin_add,
-                                                            .left = p.newExpr(&E.String.empty, key_.loc),
-                                                            .right = key_,
-                                                        },
-                                                        key_.loc,
-                                                    ),
-                                                }, key_.loc),
-                                            };
-                                        } else p.newExpr(E.Null{}, expr.loc);
-                                        var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
-                                        const props_object = p.newExpr(
-                                            E.Object{
-                                                .properties = G.Property.List.fromList(props),
-                                                .close_brace_loc = e_.close_tag_loc,
-                                            },
-                                            expr.loc,
-                                        );
-                                        const props_expression = brk: {
-                                            // we must check for default props
-                                            if (tag.data != .e_string) {
-                                                // We assume defaultProps is supposed to _not_ have side effects
-                                                // We do not support "key" or "ref" in defaultProps.
-                                                const defaultProps = p.newExpr(
-                                                    E.Dot{
-                                                        .name = "defaultProps",
-                                                        .name_loc = tag.loc,
-                                                        .target = tag,
-                                                        .can_be_removed_if_unused = true,
-                                                        .call_can_be_unwrapped_if_unused = true,
-                                                    },
-                                                    tag.loc,
-                                                );
-                                                // props: MyComponent.defaultProps || {}
-                                                if (props.items.len == 0) {
-                                                    break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
-                                                } else {
-                                                    var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                    call_args[0..2].* = .{
-                                                        props_object,
-                                                        defaultProps,
-                                                    };
-                                                    // __merge(props, MyComponent.defaultProps)
-                                                    // originally, we always inlined here
-                                                    // see https://twitter.com/jarredsumner/status/1534084541236686848
-                                                    // but, that breaks for defaultProps
-                                                    // we assume that most components do not have defaultProps
-                                                    // so __merge quickly checks if it needs to merge any props
-                                                    // and if not, it passes along the props object
-                                                    // this skips an extra allocation
-                                                    break :brk p.callRuntime(tag.loc, "__merge", call_args);
-                                                }
-                                            }
-
-                                            break :brk props_object;
-                                        };
-
-                                        jsx_element[0..6].* =
-                                            [_]G.Property{
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                                .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
-                                                .value = tag,
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.key, .loc = key.loc },
-                                                .value = key,
-                                            },
-                                            // this is a de-opt
-                                            // any usage of ref should make it impossible for this code to be reached
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.ref, .loc = expr.loc },
-                                                .value = p.newExpr(E.Null{}, expr.loc),
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data.props, .loc = expr.loc },
-                                                .value = props_expression,
-                                            },
-                                            G.Property{
-                                                .key = Expr{ .data = Prefill.Data._owner, .loc = key.loc },
-                                                .value = p.newExpr(
-                                                    E.Null{},
-                                                    expr.loc,
-                                                ),
-                                            },
-                                        };
-
-                                        const output = p.newExpr(
-                                            E.Object{
-                                                .properties = G.Property.List.init(jsx_element),
-                                                .close_brace_loc = e_.close_tag_loc,
-                                            },
-                                            expr.loc,
-                                        );
-
-                                        return output;
-                                    } else {
-                                        // -- The typical jsx automatic transform happens here --
-
-                                        // Either:
-                                        // jsxDEV(type, arguments, key, isStaticChildren, source, self)
-                                        // jsx(type, arguments, key)
-                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(e_.key != null))) catch unreachable;
-                                        args[0] = tag;
-
-                                        args[1] = p.newExpr(E.Object{
-                                            .properties = G.Property.List.fromList(props),
-                                        }, expr.loc);
-
-                                        if (e_.key) |key| {
-                                            args[2] = key;
-                                        } else if (p.options.jsx.development) {
-                                            // if (maybeKey !== undefined)
-                                            args[2] = Expr{
-                                                .loc = expr.loc,
-                                                .data = .{
-                                                    .e_undefined = E.Undefined{},
-                                                },
-                                            };
-                                        }
-
-                                        if (p.options.jsx.development) {
-                                            // is the return type of the first child an array?
-                                            // It's dynamic
-                                            // Else, it's static
-                                            args[3] = Expr{
-                                                .loc = expr.loc,
-                                                .data = .{
-                                                    .e_boolean = .{
-                                                        .value = is_static_jsx,
-                                                    },
-                                                },
-                                            };
-
-                                            args[4] = p.newExpr(E.Undefined{}, expr.loc);
-                                            args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
-                                        }
-
-                                        return p.newExpr(E.Call{
-                                            .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
-                                            .args = ExprNodeList.init(args),
-                                            // Enable tree shaking
-                                            .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                                            .was_jsx_element = true,
-                                            .close_paren_loc = e_.close_tag_loc,
-                                        }, expr.loc);
-                                    }
-                                },
-                                else => unreachable,
+                                }
+                            } else {
+                                unreachable;
                             }
                         },
                         else => unreachable,
@@ -15272,13 +15864,7 @@ fn NewParser_(
                                         p.source,
                                         record.range,
                                         expr,
-                                        &.{},
                                         name,
-                                        MacroVisitor,
-                                        MacroVisitor{
-                                            .p = p,
-                                            .loc = expr.loc,
-                                        },
                                     ) catch return expr);
 
                                     if (macro_result.data != .e_template) {
@@ -15320,352 +15906,74 @@ fn NewParser_(
                 },
 
                 .e_binary => |e_| {
-                    switch (e_.left.data) {
-                        // Special-case private identifiers
-                        .e_private_identifier => |_private| {
-                            if (e_.op == .bin_in) {
-                                var private = _private;
-                                const name = p.loadNameFromRef(private.ref);
-                                const result = p.findSymbol(e_.left.loc, name) catch unreachable;
-                                private.ref = result.ref;
 
-                                // Unlike regular identifiers, there are no unbound private identifiers
-                                const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
-                                if (!Symbol.isKindPrivate(kind)) {
-                                    const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
-                                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
-                                }
+                    // The handling of binary expressions is convoluted because we're using
+                    // iteration on the heap instead of recursion on the call stack to avoid
+                    // stack overflow for deeply-nested ASTs.
+                    var v = BinaryExpressionVisitor{
+                        .e = e_,
+                        .loc = expr.loc,
+                        .in = in,
+                        .left_in = ExprIn{},
+                    };
 
-                                e_.right = p.visitExpr(e_.right);
-                                e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+                    // Everything uses a single stack to reduce allocation overhead. This stack
+                    // should almost always be very small, and almost all visits should reuse
+                    // existing memory without allocating anything.
+                    const stack_bottom = p.binary_expression_stack.items.len;
 
-                                // privateSymbolNeedsToBeLowered
-                                return expr;
-                            }
-                        },
-                        else => {},
+                    var current = Expr{ .data = .{ .e_binary = e_ }, .loc = v.loc };
+
+                    // Iterate down into the AST along the left node of the binary operation.
+                    // Continue iterating until we encounter something that's not a binary node.
+
+                    while (true) {
+                        if (v.checkAndPrepare(p)) |out| {
+                            current = out;
+                            break;
+                        }
+
+                        // Grab the arguments to our nested "visitExprInOut" call for the left
+                        // node. We only care about deeply-nested left nodes because most binary
+                        // operators in JavaScript are left-associative and the problematic edge
+                        // cases we're trying to avoid crashing on have lots of left-associative
+                        // binary operators chained together without parentheses (e.g. "1+2+...").
+                        var left = v.e.left;
+                        const left_in = v.left_in;
+
+                        var left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
+
+                        // Stop iterating if iteration doesn't apply to the left node. This checks
+                        // the assignment target because "visitExprInOut" has additional behavior
+                        // in that case that we don't want to miss (before the top-level "switch"
+                        // statement).
+                        if (left_binary == null or left_in.assign_target != .none) {
+                            v.e.left = p.visitExprInOut(left, left_in);
+                            current = v.visitRightAndFinish(p);
+                            break;
+                        }
+
+                        // Note that we only append to the stack (and therefore allocate memory
+                        // on the heap) when there are nested binary expressions. A single binary
+                        // expression doesn't add anything to the stack.
+                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        v = BinaryExpressionVisitor{
+                            .e = left_binary.?,
+                            .loc = left.loc,
+                            .in = left_in,
+                            .left_in = .{},
+                        };
                     }
 
-                    const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
-                    // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
-                    const was_anonymous_named_expr = e_.right.isAnonymousNamed();
-
-                    e_.left = p.visitExprInOut(e_.left, ExprIn{
-                        .assign_target = e_.op.binaryAssignTarget(),
-                    });
-
-                    // Mark the control flow as dead if the branch is never taken
-                    switch (e_.op) {
-                        .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                // "true || dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and !side_effects.value) {
-                                // "false && dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        .bin_nullish_coalescing => {
-                            const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
-                            if (side_effects.ok and !side_effects.value) {
-                                // "notNullOrUndefined ?? dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        else => {
-                            e_.right = p.visitExpr(e_.right);
-                        },
+                    // Process all binary operations from the deepest-visited node back toward
+                    // our original top-level binary operation.
+                    while (p.binary_expression_stack.items.len > stack_bottom) {
+                        v = p.binary_expression_stack.pop();
+                        v.e.left = current;
+                        current = v.visitRightAndFinish(p);
                     }
 
-                    // Always put constants on the right for equality comparisons to help
-                    // reduce the number of cases we have to check during pattern matching. We
-                    // can only reorder expressions that do not have any side effects.
-                    switch (e_.op) {
-                        .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
-                            if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
-                                const _left = e_.left;
-                                const _right = e_.right;
-                                e_.left = _right;
-                                e_.right = _left;
-                            }
-                        },
-                        else => {},
-                    }
-
-                    switch (e_.op) {
-                        .bin_comma => {
-                            // notimpl();
-                        },
-                        .bin_loose_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
-                            if (equality.ok) {
-                                return p.newExpr(
-                                    E.Boolean{ .value = equality.equal },
-                                    expr.loc,
-                                );
-                            }
-
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-
-                        },
-                        .bin_strict_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = equality.equal }, expr.loc);
-                            }
-
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-                        },
-                        .bin_loose_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
-                            }
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-
-                            // "x != void 0" => "x != null"
-                            if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
-                                e_.right = p.newExpr(E.Null{}, e_.right.loc);
-                            }
-                        },
-                        .bin_strict_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
-                            }
-                        },
-                        .bin_nullish_coalescing => {
-                            const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
-                            if (nullorUndefined.ok) {
-                                if (!nullorUndefined.value) {
-                                    return e_.left;
-                                } else if (nullorUndefined.side_effects == .no_side_effects) {
-                                    // "(null ?? fn)()" => "fn()"
-                                    // "(null ?? this.fn)" => "this.fn"
-                                    // "(null ?? this.fn)()" => "(0, this.fn)()"
-                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
-                                    }
-
-                                    return e_.right;
-                                }
-                            }
-                        },
-                        .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                return e_.left;
-                            } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
-                                // "(0 || fn)()" => "fn()"
-                                // "(0 || this.fn)" => "this.fn"
-                                // "(0 || this.fn)()" => "(0, this.fn)()"
-                                if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
-                                }
-
-                                return e_.right;
-                            }
-                        },
-                        .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok) {
-                                if (!side_effects.value) {
-                                    return e_.left;
-                                } else if (side_effects.side_effects == .no_side_effects) {
-                                    // "(1 && fn)()" => "fn()"
-                                    // "(1 && this.fn)" => "this.fn"
-                                    // "(1 && this.fn)()" => "(0, this.fn)()"
-                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
-                                    }
-
-                                    return e_.right;
-                                }
-                            }
-                        },
-                        .bin_add => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, expr.loc);
-                                }
-                            }
-
-                            if (foldStringAddition(e_.left, e_.right)) |res| {
-                                return res;
-                            }
-                        },
-                        .bin_sub => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_mul => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_div => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_rem => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(
-                                        // Use libc fmod here to be consistent with what JavaScriptCore does
-                                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                        E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
-                                        expr.loc,
-                                    );
-                                }
-                            }
-                        },
-                        .bin_pow => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_shl => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) << @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_shr => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_u_shr => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_and => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_or => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_xor => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        .bin_assign => {
-
-                            // Optionally preserve the name
-                            if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
-                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
-                            }
-                        },
-                        .bin_add_assign => {
-                            // notimpl();
-                        },
-                        .bin_sub_assign => {
-                            // notimpl();
-                        },
-                        .bin_mul_assign => {
-                            // notimpl();
-                        },
-                        .bin_div_assign => {
-                            // notimpl();
-                        },
-                        .bin_rem_assign => {
-                            // notimpl();
-                        },
-                        .bin_pow_assign => {
-                            // notimpl();
-                        },
-                        .bin_shl_assign => {
-                            // notimpl();
-                        },
-                        .bin_shr_assign => {
-                            // notimpl();
-                        },
-                        .bin_u_shr_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_or_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_and_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_xor_assign => {
-                            // notimpl();
-                        },
-                        .bin_nullish_coalescing_assign => {
-                            // notimpl();
-                        },
-                        .bin_logical_and_assign => {
-                            // notimpl();
-                        },
-                        .bin_logical_or_assign => {
-                            // notimpl();
-                        },
-                        else => {},
-                    }
+                    return current;
                 },
                 .e_index => |e_| {
                     const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index == p.call_target.e_index;
@@ -16379,17 +16687,14 @@ fn NewParser_(
                                 p.source,
                                 record.range,
                                 copied,
-                                &.{},
                                 name,
-                                MacroVisitor,
-                                MacroVisitor{ .p = p, .loc = expr.loc },
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
                                     if (p.log.msgs.items.len == start_error_count) {
                                         p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
                                     }
                                 } else {
-                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
+                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "\"{s}\" error in macro", .{@errorName(err)}) catch unreachable;
                                 }
                                 return expr;
                             };
@@ -16557,7 +16862,7 @@ fn NewParser_(
                         continue;
                     },
                     .s_directive => |dir| {
-                        if (strings.utf16EqlString(dir.value, "use strict")) {
+                        if (strings.eqlComptime(dir.value, "use strict")) {
                             return stmt.loc;
                         }
                     },
@@ -17097,11 +17402,7 @@ fn NewParser_(
                 inline else => |field| {
                     const ref: Ref = brk: {
                         if (p.jsx_imports.getWithTag(kind) == null) {
-                            const symbol_name = switch (kind) {
-                                .createElement => p.jsx_imports.factory_name,
-                                .Fragment => p.jsx_imports.fragment_name,
-                                else => @tagName(field),
-                            };
+                            const symbol_name = @tagName(field);
 
                             const loc_ref = LocRef{
                                 .loc = loc,
@@ -17587,10 +17888,6 @@ fn NewParser_(
                 },
                 .s_directive => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
-                    // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
-                    // }
-                    return;
                 },
                 .s_import => |data| {
                     try p.recordDeclaredSymbol(data.namespace_ref);
@@ -18170,14 +18467,21 @@ fn NewParser_(
                     }
                 },
                 .s_with => |data| {
-                    // using with is forbidden in strict mode
-                    // we largely only deal with strict mode
-                    // however, old code should still technically transpile
-                    // we do not attempt to preserve all the semantics of with
                     data.value = p.visitExpr(data.value);
-                    // This stmt can be a block or an expression
-                    if (comptime Environment.allow_assert) assert(data.body.data == .s_block or data.body.data == .s_expr);
+
+                    p.pushScopeForVisitPass(.with, data.body_loc) catch unreachable;
+
+                    // This can be many different kinds of statements.
+                    // example code:
+                    //
+                    //      with(this.document.defaultView || Object.create(null))
+                    //         with(this.document)
+                    //           with(this.form)
+                    //             with(this.element)
+                    //
                     data.body = p.visitSingleStmt(data.body, StmtsKind.none);
+
+                    p.popScope();
                 },
                 .s_while => |data| {
                     data.test_ = p.visitExpr(data.test_);
@@ -21037,6 +21341,10 @@ fn NewParser_(
             // operations, so they should all be child scopes and should all be popped
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
+            // Decrement the length so that in code with lots of scopes, we use
+            // less memory and do less work
+            p.scopes_in_order.items.len -= @as(usize, @intFromBool(p.scopes_in_order.items.len == scope_index + 1));
+
             // Remove the last child from the parent scope
             const last = parent.children.len - 1;
             if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
@@ -21245,19 +21553,11 @@ fn NewParser_(
                 //
                 //   (function (exports, require, module, __filename, __dirname) {
                 //      ...
-                //   }).call(
-                //      this.module.exports,
-                //      this.module.exports,
-                //      this.require,
-                //      this.module,
-                //      this.__filename,
-                //      this.__dirname,
-                //  );
+                //   })
                 //
-                //  `this` is a `CommonJSFunctionArgumentsStructure`
-                //  which is initialized in `evaluateCommonJSModuleOnce`
+                //  which is then called in `evaluateCommonJSModuleOnce`
                 .bun_js => {
-                    var args = allocator.alloc(Arg, 5) catch unreachable;
+                    var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
                     args[0..5].* = .{
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
@@ -21265,18 +21565,17 @@ fn NewParser_(
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
                     };
-
-                    const cjsArguments = Expr{
-                        .data = .{ .e_this = .{} },
-                        .loc = logger.Loc.Empty,
-                    };
+                    if (p.has_import_meta) {
+                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                        args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
+                    }
 
                     var total_stmts_count: usize = 0;
                     for (parts) |part| {
                         total_stmts_count += part.stmts.len;
                     }
 
-                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
+                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
                     {
                         var remaining_stmts = stmts_to_copy;
                         for (parts) |part| {
@@ -21292,7 +21591,7 @@ fn NewParser_(
                             .func = G.Fn{
                                 .name = null,
                                 .open_parens_loc = logger.Loc.Empty,
-                                .args = args[0..5],
+                                .args = args,
                                 .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
                                 .flags = Flags.Function.init(.{ .is_export = false }),
                             },
@@ -21300,111 +21599,11 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
-                    const this_module = p.newExpr(
-                        E.Dot{
-                            .name = "module",
-                            .target = cjsArguments,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const module_exports = p.newExpr(
-                        E.Dot{
-                            .name = "exports",
-                            .target = this_module,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
-                    call_args[0..6].* = .{
-                        module_exports, // this.module.exports (this value inside fn)
-                        module_exports, // this.module.exports (arg 1)
-                        p.newExpr(
-                            E.Dot{
-                                .name = "require",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        this_module, // this.module
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__filename",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__dirname",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                    };
-
-                    const call = p.newExpr(
-                        E.Call{
-                            .target = p.newExpr(
-                                E.Dot{
-                                    .target = wrapper,
-                                    .name = "call",
-                                    .name_loc = logger.Loc.Empty,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .args = ExprNodeList.init(call_args),
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var top_level_stmts = p.allocator.alloc(Stmt, 1 + @as(usize, @intFromBool(p.has_import_meta))) catch unreachable;
+                    var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
                     parts[0].stmts = top_level_stmts;
-
-                    // var $Bun_import_meta = this.createImportMeta(this.filename);
-                    if (p.has_import_meta) {
-                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch unreachable;
-                        var decl = allocator.alloc(Decl, 1) catch unreachable;
-                        decl[0] = Decl{
-                            .binding = Binding.alloc(
-                                p.allocator,
-                                B.Identifier{
-                                    .ref = p.import_meta_ref,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .value = p.newExpr(
-                                E.Call{
-                                    .target = p.newExpr(E.Dot{
-                                        .target = cjsArguments,
-                                        .name = "createImportMeta",
-                                        .name_loc = logger.Loc.Empty,
-                                    }, logger.Loc.Empty),
-                                    // reuse the `this.__filename` argument
-                                    .args = ExprNodeList.init(call_args[5..6]),
-                                },
-                                logger.Loc.Empty,
-                            ),
-                        };
-
-                        top_level_stmts[0] = p.s(
-                            S.Local{
-                                .decls = G.Decl.List.init(decl),
-                                .kind = .k_var,
-                            },
-                            logger.Loc.Empty,
-                        );
-                        top_level_stmts = top_level_stmts[1..];
-                    }
                     top_level_stmts[0] = p.s(
                         S.SExpr{
-                            .value = call,
+                            .value = wrapper,
                         },
                         logger.Loc.Empty,
                     );
@@ -22035,6 +22234,11 @@ fn NewParser_(
             if (opts.features.top_level_await or comptime only_scan_imports_and_do_not_visit) {
                 this.fn_or_arrow_data_parse.allow_await = .allow_expr;
                 this.fn_or_arrow_data_parse.is_top_level = true;
+            }
+
+            if (comptime !is_typescript_enabled) {
+                // This is so it doesn't impact runtime transpiler caching when not in use
+                this.options.features.emit_decorator_metadata = false;
             }
         }
     };

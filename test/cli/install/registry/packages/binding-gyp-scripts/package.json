@@ -1,0 +1,72 @@
+{
+	"name": "binding-gyp-scripts",
+	"versions": {
+		"1.0.0": {
+			"name": "binding-gyp-scripts",
+			"version": "1.0.0",
+			"dependencies": {
+				"node-gyp": "^1.0.0"
+			},
+			"_id": "binding-gyp-scripts@1.0.0",
+			"scripts": {
+				"install": "node-gyp rebuild"
+			},
+			"gypfile": true,
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ZShEQ6ay48wd5uLbKUtIzgGMfWBOTmMVGVG8mEM7bclyxslNC+Cvk2/j+OnzYZr7Eh1t0XQo3h35YoTF7+GQUQ==",
+				"shasum": "f74711cb59761e13ba9d2126a290bc847aab28c1",
+				"tarball": "http://localhost:4873/binding-gyp-scripts/-/binding-gyp-scripts-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.5.0": {
+			"name": "binding-gyp-scripts",
+			"version": "1.5.0",
+			"dependencies": {
+				"node-gyp": "1.5.0"
+			},
+			"scripts": {
+				"install": "node-gyp rebuild"
+			},
+			"gypfile": true,
+			"gitHead": "e0a78fdc023bcc2f4d739c6ba9d5c026a1b586ae",
+			"_id": "binding-gyp-scripts@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-D0IqsFdZGOSu7ppwqjvV+oDaIGbTaZrWIT79xvxzH98y7HE+UvxRi8QUXQwJsoegyaRwPtYQDqRcjUCefifKxw==",
+				"shasum": "2824b5bb0810c2f0625a1a8a7e6f6726a04f2419",
+				"tarball": "http://localhost:4873/binding-gyp-scripts/-/binding-gyp-scripts-1.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T06:24:52.994Z",
+		"created": "2023-11-01T22:04:59.983Z",
+		"1.0.0": "2023-11-01T22:04:59.983Z",
+		"1.5.0": "2023-11-15T06:24:52.994Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"binding-gyp-scripts-1.0.0.tgz": {
+			"shasum": "f74711cb59761e13ba9d2126a290bc847aab28c1",
+			"version": "1.0.0"
+		},
+		"binding-gyp-scripts-1.5.0.tgz": {
+			"shasum": "2824b5bb0810c2f0625a1a8a7e6f6726a04f2419",
+			"version": "1.5.0"
+		}
+	},
+	"_rev": "3-4ebd3d7005439d9e",
+	"_id": "binding-gyp-scripts",
+	"readme": "ERROR: No README data found!"
+}

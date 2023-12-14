@@ -38,7 +38,7 @@ pub const Snapshots = struct {
     };
 
     pub fn getOrPut(this: *Snapshots, expect: *Expect, value: JSValue, hint: string, globalObject: *JSC.JSGlobalObject) !?string {
-        switch (try this.getSnapshotFile(expect.scope.file_id)) {
+        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {

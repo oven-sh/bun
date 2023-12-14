@@ -10,9 +10,10 @@ const N = 100;
 test("spawn can write to stdin multiple chunks", async () => {
   const maxFD = openSync("/dev/null", "w");
   for (let i = 0; i < N; i++) {
-    const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
     var exited;
     await (async function () {
+      const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
+
       const proc = spawn({
         cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
         stdout: "pipe",
@@ -43,7 +44,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
           if (inCounter === 4) break;
         }
-        proc.stdin!.end();
+        await proc.stdin!.end();
       })();
 
       await Promise.all([prom, prom2]);

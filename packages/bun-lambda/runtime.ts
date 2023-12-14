@@ -279,7 +279,7 @@ async function sendResponse(response: unknown): Promise<void> {
   }
   await fetch(`runtime/invocation/${requestId}/response`, {
     method: "POST",
-    body: response === null ? null : JSON.stringify(response),
+    body: response === null ? null : (typeof response === 'string' ? response : JSON.stringify(response)),
   });
 }
 

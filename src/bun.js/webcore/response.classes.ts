@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -127,6 +127,7 @@ export default [
     configurable: false,
     structuredClone: { transferable: false, tag: 254 },
     estimatedSize: true,
+    values: ["stream"],
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

@@ -42,7 +42,10 @@ const server = Bun.serve({
 console.log(`Listening on http://localhost:${server.port} ...`);
 ```
 
-If you're using TypeScript, you may see a type error on the `Bun` global. To fix this, install `bun-types`.
+{% details summary="Seeing TypeScript errors on `Bun`?" %}
+If you used `bun init`, Bun will have automatically installed Bun's TypeScript declarations and configured your `tsconfig.json`. If you're trying out Bun in an existing project, you may see a type error on the `Bun` global.
+
+To fix this, first install `bun-types` as a dev dependency.
 
 ```sh
 $ bun add -d bun-types
@@ -57,6 +60,8 @@ Then add the following line to your `compilerOptions` in `tsconfig.json`.
   }
 }
 ```
+
+{% /details %}
 
 Run the file from your shell.
 

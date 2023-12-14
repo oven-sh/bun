@@ -35,14 +35,14 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
-const HTTPThread = @import("root").bun.HTTP.HTTPThread;
+const HTTPThread = @import("root").bun.http.HTTPThread;
 
 const JSC = @import("root").bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+
 const uws = @import("root").bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
@@ -284,7 +284,7 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        std.sort.block(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
 
         iter = map.valueIterator();
         var writer = Output.errorWriter();
@@ -436,7 +436,7 @@ const Scanner = struct {
 
         // In this particular case, we don't actually care about non-ascii latin1 characters.
         // so we skip the ascii check
-        const slice = if (test_name_str.is8Bit()) test_name_str.latin1() else brk: {
+        const slice = brk: {
             zig_slice = test_name_str.toUTF8(bun.default_allocator);
             break :brk zig_slice.slice();
         };
@@ -580,6 +580,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -636,6 +637,16 @@ pub const TestCommand = struct {
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
         vm.bundler.options.rewrite_jest_for_tests = true;
+        vm.bundler.options.env.behavior = .load_all_without_inlining;
+
+        const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
+        if (!node_env_entry.found_existing) {
+            node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
+            node_env_entry.value_ptr.* = .{
+                .value = try env_loader.allocator.dupe(u8, "test"),
+                .conditional = false,
+            };
+        }
 
         try vm.bundler.configureDefines();
 
@@ -665,24 +676,48 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var scanner = Scanner{
-            .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
-            .options = &vm.bundler.options,
-            .fs = vm.bundler.fs,
-            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
-            .results = std.ArrayList(PathString).init(ctx.allocator),
-        };
-        const dir_to_scan = brk: {
-            if (ctx.debug.test_directory.len > 0) {
-                break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
+        defer results.deinit();
+
+        const test_files, const search_count = scan: {
+            if (for (ctx.positionals) |arg| {
+                if (std.fs.path.isAbsolute(arg) or
+                    strings.startsWith(arg, "./") or
+                    strings.startsWith(arg, "../") or
+                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                    strings.startsWith(arg, "..\\")))) break true;
+            } else false) {
+                // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
+                for (ctx.positionals[1..]) |arg| {
+                    results.appendAssumeCapacity(PathString.init(arg));
+                }
+                break :scan .{ results.items, 0 };
             }
 
-            break :brk scanner.fs.top_level_dir;
+            // Treat arguments as filters and scan the codebase
+            const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
+
+            var scanner = Scanner{
+                .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
+                .options = &vm.bundler.options,
+                .fs = vm.bundler.fs,
+                .filter_names = filter_names,
+                .results = results,
+            };
+            const dir_to_scan = brk: {
+                if (ctx.debug.test_directory.len > 0) {
+                    break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+                }
+
+                break :brk scanner.fs.top_level_dir;
+            };
+
+            scanner.scan(dir_to_scan);
+            scanner.dirs_to_scan.deinit();
+
+            break :scan .{ scanner.results.items, scanner.search_count };
         };
 
-        scanner.scan(dir_to_scan);
-        scanner.dirs_to_scan.deinit();
-        const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
 
@@ -735,22 +770,51 @@ pub const TestCommand = struct {
 
         Output.flush();
 
-        if (scanner.filter_names.len == 0 and test_files.len == 0) {
-            Output.prettyErrorln(
-                \\<b><yellow>No tests found!<r>
-                \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                \\
-            ,
-                .{},
-            );
+        if (test_files.len == 0) {
+            if (ctx.positionals.len == 0) {
+                Output.prettyErrorln(
+                    \\<yellow>No tests found!<r>
+                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                    \\
+                , .{});
+            } else {
+                Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                var has_file_like: ?usize = null;
+                Output.prettyError(" ", .{});
+                for (ctx.positionals[1..], 1..) |filter, i| {
+                    Output.prettyError(" {s}", .{filter});
 
-            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-            if (scanner.search_count > 0)
-                Output.prettyError(
-                    \\ {d} files searched
-                , .{
-                    scanner.search_count,
-                });
+                    if (has_file_like == null and
+                        (strings.hasSuffixComptime(filter, ".ts") or
+                        strings.hasSuffixComptime(filter, ".tsx") or
+                        strings.hasSuffixComptime(filter, ".js") or
+                        strings.hasSuffixComptime(filter, ".jsx")))
+                    {
+                        has_file_like = i;
+                    }
+                }
+                if (search_count > 0) {
+                    Output.prettyError("\n{d} files were searched ", .{search_count});
+                    Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+                }
+
+                Output.prettyErrorln(
+                    \\
+                    \\
+                    \\<blue>note<r><d>:<r> Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                , .{});
+
+                // print a helpful note
+                if (has_file_like) |i| {
+                    Output.prettyErrorln(
+                        \\<blue>note<r><d>:<r> To treat the "{s}" filter as a path, run "bun test ./{s}"<r>
+                    , .{ ctx.positionals[i], ctx.positionals[i] });
+                }
+            }
+            Output.prettyError(
+                \\
+                \\Learn more about the test runner: <magenta>https://bun.sh/docs/cli/test<r>
+            , .{});
         } else {
             Output.prettyError("\n", .{});
 
@@ -934,7 +998,7 @@ pub const TestCommand = struct {
             }
             Output.flush();
 
-            var promise = try vm.loadEntryPoint(file_path);
+            var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
@@ -968,7 +1032,7 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
-                const module = reporter.jest.files.items(.module_scope)[module_id];
+                const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
@@ -976,14 +1040,18 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) {
-                    if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
+                while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
+                    if (!jest.Jest.runner.?.has_pending_tests) {
+                        jest.Jest.runner.?.drain();
+                    }
                     vm.eventLoop().tick();
 
                     while (jest.Jest.runner.?.has_pending_tests) {
                         vm.eventLoop().autoTick();
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
+                    } else {
+                        vm.eventLoop().tickImmediateTasks();
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
@@ -991,6 +1059,9 @@ pub const TestCommand = struct {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
+
+                vm.eventLoop().flushImmediateQueue();
+
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
                     .mild => {

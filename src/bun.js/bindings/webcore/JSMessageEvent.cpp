@@ -20,7 +20,7 @@
 
 #include "config.h"
 #include "JSMessageEvent.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -217,7 +217,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageEventPrototype, JSMessageEventProto
 
 using JSMessageEventDOMConstructor = JSDOMConstructor<JSMessageEvent>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -313,7 +313,7 @@ JSValue JSMessageEvent::getConstructor(VM& vm, const JSGlobalObject* globalObjec
     return getDOMConstructor<JSMessageEventDOMConstructor, DOMConstructorID::MessageEvent>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageEventConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -331,7 +331,7 @@ static inline JSValue jsMessageEvent_originGetter(JSGlobalObject& lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.origin())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_origin, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_origin, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageEvent>::get<jsMessageEvent_originGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -344,7 +344,7 @@ static inline JSValue jsMessageEvent_lastEventIdGetter(JSGlobalObject& lexicalGl
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.lastEventId())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_lastEventId, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_lastEventId, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageEvent>::get<jsMessageEvent_lastEventIdGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -358,7 +358,7 @@ static inline JSValue jsMessageEvent_sourceGetter(JSGlobalObject& lexicalGlobalO
     // RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLUnion<IDLInterface<WindowProxy>, IDLInterface<MessagePort>, IDLInterface<ServiceWorker>>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.source())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_source, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_source, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageEvent>::get<jsMessageEvent_sourceGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -369,7 +369,7 @@ static inline JSValue jsMessageEvent_dataGetter(JSGlobalObject& lexicalGlobalObj
     return thisObject.data(lexicalGlobalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_data, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_data, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageEvent>::get<jsMessageEvent_dataGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -380,7 +380,7 @@ static inline JSValue jsMessageEvent_portsGetter(JSGlobalObject& lexicalGlobalOb
     return thisObject.ports(lexicalGlobalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_ports, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_ports, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageEvent>::get<jsMessageEvent_portsGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }

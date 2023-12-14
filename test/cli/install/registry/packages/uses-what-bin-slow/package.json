@@ -1,0 +1,44 @@
+{
+	"name": "uses-what-bin-slow",
+	"versions": {
+		"1.0.0": {
+			"name": "uses-what-bin-slow",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "sleep 1 && what-bin"
+			},
+			"dependencies": {
+				"what-bin": "1.0.0"
+			},
+			"_id": "uses-what-bin-slow@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "10.2.0",
+			"dist": {
+				"integrity": "sha512-/l5wILffL/epzl68C0NJPAxpTAd4P0Jyu911I2oI2XTNy8GzPdfHTNQ18GddYovPjaL+bQhopfgkmiHfF9/n2Q==",
+				"shasum": "af87d384ce8a007905c42d87989fd3ccd8fa9d6b",
+				"tarball": "http://localhost:4873/uses-what-bin-slow/-/uses-what-bin-slow-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-21T23:39:12.762Z",
+		"created": "2023-11-21T23:39:12.762Z",
+		"1.0.0": "2023-11-21T23:39:12.762Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"uses-what-bin-slow-1.0.0.tgz": {
+			"shasum": "af87d384ce8a007905c42d87989fd3ccd8fa9d6b",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "uses-what-bin-slow",
+	"readme": "ERROR: No README data found!"
+}

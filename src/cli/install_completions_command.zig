@@ -37,7 +37,7 @@ const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = @import("root").bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 
@@ -72,7 +72,7 @@ pub const InstallCompletionsCommand = struct {
 
             // if that fails, try $HOME/.bun/bin
             outer: {
-                if (bun.getenvZ("HOME")) |home_dir| {
+                if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
                     std.os.symlink(exe, target) catch break :outer;
                     return;
@@ -81,7 +81,7 @@ pub const InstallCompletionsCommand = struct {
 
             // if that fails, try $HOME/.local/bin
             outer: {
-                if (bun.getenvZ("HOME")) |home_dir| {
+                if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
                     std.os.symlink(exe, target) catch break :outer;
                     return;
@@ -106,7 +106,7 @@ pub const InstallCompletionsCommand = struct {
             shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);
         }
 
-        var cwd = std.os.getcwd(&cwd_buf) catch {
+        var cwd = bun.getcwd(&cwd_buf) catch {
             // don't fail on this if we don't actually need to
             if (fail_exit_code == 1) {
                 if (!stdout.isTty()) {
@@ -189,7 +189,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.getenvZ("HOME")) |home_dir| {
+                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                         outer: {
                             var paths = [_]string{ home_dir, "./.config/fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
@@ -247,7 +247,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.getenvZ("HOME")) |home_dir| {
+                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                         {
                             outer: {
                                 var paths = [_]string{ home_dir, "./.oh-my-zsh/completions" };
@@ -299,7 +299,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.getenvZ("HOME")) |home_dir| {
+                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                         {
                             outer: {
                                 var paths = [_]string{ home_dir, "./.oh-my-bash/custom/completions" };
@@ -409,7 +409,7 @@ pub const InstallCompletionsCommand = struct {
                     }
 
                     second: {
-                        if (bun.getenvZ("HOME")) |zdot_dir| {
+                        if (bun.getenvZ(bun.DotEnv.home_env)) |zdot_dir| {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
@@ -419,7 +419,7 @@ pub const InstallCompletionsCommand = struct {
                     }
 
                     third: {
-                        if (bun.getenvZ("HOME")) |zdot_dir| {
+                        if (bun.getenvZ(bun.DotEnv.home_env)) |zdot_dir| {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
                             zshrc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
@@ -430,11 +430,16 @@ pub const InstallCompletionsCommand = struct {
 
                     break :brk true;
                 };
+
+                // Sometimes, stat() lies to us and says the file is 0 bytes
+                // Let's not trust it and read the whole file
+                const input_size = @max(dot_zshrc.getEndPos() catch break :brk true, 64 * 1024);
+
                 defer dot_zshrc.close();
                 var buf = allocator.alloc(
                     u8,
-                    // making up a number big enough to not overflow
-                    (dot_zshrc.getEndPos() catch break :brk true) + completions_path.len * 4 + 96,
+                    input_size +
+                        completions_path.len * 4 + 96,
                 ) catch break :brk true;
 
                 const read = dot_zshrc.preadAll(
@@ -445,7 +450,7 @@ pub const InstallCompletionsCommand = struct {
                 var contents = buf[0..read];
 
                 // Do they possibly have it in the file already?
-                if (std.mem.indexOf(u8, contents, completions_path) != null) {
+                if (strings.contains(contents, completions_path) or strings.contains(contents, "# bun completions\n")) {
                     break :brk false;
                 }
 

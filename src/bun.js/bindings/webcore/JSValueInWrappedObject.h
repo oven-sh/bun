@@ -26,9 +26,9 @@
 
 #include "DOMWrapperWorld.h"
 #include "JSDOMWrapper.h"
-#include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/SlotVisitor.h"
-#include "JavaScriptCore/Weak.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/SlotVisitor.h>
+#include <JavaScriptCore/Weak.h>
 #include <variant>
 
 namespace WebCore {

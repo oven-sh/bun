@@ -1,0 +1,39 @@
+{
+	"name": "has-symlinks",
+	"versions": {
+		"1.0.0": {
+			"name": "has-symlinks",
+			"version": "1.0.0",
+			"_id": "has-symlinks@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-+xI0HQvyJcknZrn7Z4MPhb4gvULxhyesHufdJL41eipUip+kB5xXSoNK0tOOd9QlVLi9P6oN13lN2inWq3Sh8A==",
+				"shasum": "db3d517dffa6a9636f1655116bc71c5cc61d9236",
+				"tarball": "http://localhost:4873/has-symlinks/-/has-symlinks-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:09.313Z",
+		"created": "2023-11-01T22:05:09.313Z",
+		"1.0.0": "2023-11-01T22:05:09.313Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"has-symlinks-1.0.0.tgz": {
+			"shasum": "db3d517dffa6a9636f1655116bc71c5cc61d9236",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-44aa16adc4a2b2f9",
+	"_id": "has-symlinks",
+	"readme": "ERROR: No README data found!"
+}

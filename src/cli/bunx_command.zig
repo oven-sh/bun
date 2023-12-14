@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-
+const Command = @import("../cli.zig").Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 pub const BunxCommand = struct {
@@ -23,11 +23,27 @@ pub const BunxCommand = struct {
 
         var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
         if (input[0] == '@') {
-            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
-                const index = slashIndex + 1;
+            // @org/some -> @org/create-some
+            // @org/some@v -> @org/create-some@v
+            if (strings.indexOfChar(input, '/')) |slash_i| {
+                const index = slash_i + 1;
                 @memcpy(new_str[0..index], input[0..index]);
                 @memcpy(new_str[index .. index + prefixLength], "create-");
                 @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org@v -> @org/create@v
+            else if (strings.indexOfChar(input[1..], '@')) |at_i| {
+                const index = at_i + 1;
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "/create");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org -> @org/create
+            else {
+                @memcpy(new_str[0..input.len], input);
+                @memcpy(new_str[input.len..], "/create");
                 return new_str;
             }
         }
@@ -142,21 +158,7 @@ pub const BunxCommand = struct {
     }
 
     fn exit_with_usage() noreturn {
-        Output.prettyErrorln(
-            \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
-            \\
-            \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
-            \\
-            \\example<d>:<r>
-            \\
-            \\  <cyan>bunx bun-repl<r>
-            \\  <cyan>bunx prettier foo.js<r>
-            \\
-            \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
-            \\
-            \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
-            \\
-        , .{});
+        Command.Tag.printHelp(.BunxCommand, false);
         Global.exit(1);
     }
 
@@ -253,10 +255,23 @@ pub const BunxCommand = struct {
             ctx,
             &this_bundler,
             null,
-            &ORIGINAL_PATH,
             true,
+        );
+
+        try Run.configurePathForRun(
+            ctx,
+            root_dir_info,
+            &this_bundler,
+            &ORIGINAL_PATH,
+            root_dir_info.abs_path,
             force_using_bun,
         );
+
+        const ignore_cwd = this_bundler.env.map.get("BUN_WHICH_IGNORE_CWD") orelse "";
+
+        if (ignore_cwd.len > 0) {
+            _ = this_bundler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
+        }
 
         var PATH = this_bundler.env.map.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
@@ -279,7 +294,32 @@ pub const BunxCommand = struct {
             );
         };
 
-        const PATH_FOR_BIN_DIRS = PATH;
+        const PATH_FOR_BIN_DIRS = brk: {
+            if (ignore_cwd.len == 0) break :brk PATH;
+
+            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
+            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+            var path_iter = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
+            if (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.appendSlice(segment);
+                }
+            }
+            while (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.append(std.fs.path.delimiter);
+                    try new_path.appendSlice(segment);
+                }
+            }
+
+            break :brk new_path.items;
+        };
+
+        defer {
+            if (ignore_cwd.len > 0) {
+                ctx.allocator.free(PATH_FOR_BIN_DIRS);
+            }
+        }
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
@@ -297,7 +337,7 @@ pub const BunxCommand = struct {
         const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
@@ -309,7 +349,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -320,7 +360,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
-                this_bundler.fs.top_level_dir,
+                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -346,7 +386,7 @@ pub const BunxCommand = struct {
                         destination_ = bun.which(
                             &path_buf,
                             PATH_FOR_BIN_DIRS,
-                            this_bundler.fs.top_level_dir,
+                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -354,7 +394,7 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
-                        this_bundler.fs.top_level_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
@@ -441,7 +481,7 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
-            this_bundler.fs.top_level_dir,
+            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
@@ -464,7 +504,7 @@ pub const BunxCommand = struct {
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);

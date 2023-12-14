@@ -86,6 +86,7 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.emit = function (event, ...args) {
     this.dispatchEvent(new (EventClass(event))(event, ...args));
+
     return this;
   };
 
@@ -110,6 +111,7 @@ function receiveMessageOnPort(port: MessagePort) {
   };
 }
 
+// TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
   Object.defineProperty(fake, "onmessage", {
@@ -125,7 +127,9 @@ function fakeParentPort() {
     get() {
       return self.onmessageerror;
     },
-    set(value) {},
+    set(value) {
+      self.onmessageerror = value;
+    },
   });
 
   Object.defineProperty(fake, "postMessage", {
@@ -135,9 +139,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "close", {
-    value() {
-      return process.exit(0);
-    },
+    value() {},
   });
 
   Object.defineProperty(fake, "start", {
@@ -205,8 +207,8 @@ class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
 
-  // this is used by wt.Worker.terminate();
-  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we havent sent .terminate() yet
+  // this is used by terminate();
+  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {

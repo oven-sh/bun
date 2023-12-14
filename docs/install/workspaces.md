@@ -24,7 +24,7 @@ tree
         └── tsconfig.json
 ```
 
-In the root `package.json`, the `"workspaces"` key is used to indicate which subdirectories should be considered packages/workspaces within the monorepo. It conventional to place all the workspace in a directory called `packages`.
+In the root `package.json`, the `"workspaces"` key is used to indicate which subdirectories should be considered packages/workspaces within the monorepo. It's conventional to place all the workspace in a directory called `packages`.
 
 ```json
 {

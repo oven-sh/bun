@@ -30,7 +30,7 @@
 #include "root.h"
 
 #include "ExceptionCode.h"
-#include "wtf/text/WTFString.h"
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 

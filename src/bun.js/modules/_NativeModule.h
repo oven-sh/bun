@@ -1,8 +1,8 @@
 // clang-format off
 #pragma once
 #include "JSBuffer.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 
 // These modules are implemented in native code as a function which writes ESM
@@ -25,6 +25,7 @@
 
 #define BUN_FOREACH_NATIVE_MODULE(macro) \
     macro("bun"_s, BunObject) \
+    macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \

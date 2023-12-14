@@ -1,0 +1,44 @@
+{
+	"name": "no-deps-scripted",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-scripted",
+			"version": "1.0.0",
+			"scripts": {
+				"preinstall": "node scripts/preinstall",
+				"install": "node scripts/install",
+				"postinstall": "node scripts/postinstall"
+			},
+			"_id": "no-deps-scripted@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-InpLUwDWR58F82wCFABV4qxwVz5BJAv9RWoafyuOsstSSMXsHQcUhcCqAaoWBA4rKHjmwDas8qLgYhtbIEpXEQ==",
+				"shasum": "5e2fcd364ee4c12947469e95286ae942f3744e79",
+				"tarball": "http://localhost:4873/no-deps-scripted/-/no-deps-scripted-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:20.334Z",
+		"created": "2023-11-01T22:05:20.334Z",
+		"1.0.0": "2023-11-01T22:05:20.334Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-scripted-1.0.0.tgz": {
+			"shasum": "5e2fcd364ee4c12947469e95286ae942f3744e79",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-ecda4b75c4008f22",
+	"_id": "no-deps-scripted",
+	"readme": "ERROR: No README data found!"
+}

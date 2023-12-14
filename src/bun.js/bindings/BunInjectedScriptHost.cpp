@@ -8,7 +8,7 @@
 #include "JSEventListener.h"
 #include "JSEventTarget.h"
 #include "JSWorker.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 
 #include "JSFetchHeaders.h"
 #include "JSURLSearchParams.h"

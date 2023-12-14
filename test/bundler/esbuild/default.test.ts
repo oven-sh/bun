@@ -1280,7 +1280,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "[Function] undefined undefined",
+      stdout: "[Function: fs] undefined undefined",
     },
     target: "browser",
   });
@@ -4106,7 +4106,7 @@ describe("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{}\n{"bar":123}',
+      stdout: 'Foo {}\n{"bar":123}',
     },
   });
   itBundled("default/DefineImportMeta", {

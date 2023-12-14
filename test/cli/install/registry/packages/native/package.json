@@ -1,0 +1,44 @@
+{
+	"name": "native",
+	"versions": {
+		"1.0.0": {
+			"name": "native",
+			"version": "1.0.0",
+			"dependencies": {
+				"native-bar-x64": "1.0.0",
+				"native-foo-x64": "1.0.0",
+				"native-foo-x86": "1.0.0"
+			},
+			"_id": "native@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-eLUiBKLZFusrS+8CBl8Np4Z4XnIRsBX6hMtdmmHiLAp8HQTTm8HDBvm2Ycp88VCNuI8tqXduoN/Ua2DpSHW7vg==",
+				"shasum": "c293069fd11fec57765c386a80d4346c97921a89",
+				"tarball": "http://localhost:4873/native/-/native-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:12.762Z",
+		"created": "2023-11-01T22:05:12.762Z",
+		"1.0.0": "2023-11-01T22:05:12.762Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"native-1.0.0.tgz": {
+			"shasum": "c293069fd11fec57765c386a80d4346c97921a89",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-67c2a9aa89a92433",
+	"_id": "native",
+	"readme": "ERROR: No README data found!"
+}

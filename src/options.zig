@@ -385,22 +385,11 @@ pub const Target = enum {
     pub const Map = ComptimeStringMap(
         Target,
         .{
-            .{
-                "browser",
-                Target.browser,
-            },
-            .{
-                "bun",
-                Target.bun,
-            },
-            .{
-                "bun_macro",
-                Target.bun_macro,
-            },
-            .{
-                "node",
-                Target.node,
-            },
+            .{ "browser", Target.browser },
+            .{ "bun", Target.bun },
+            .{ "bun_macro", Target.bun_macro },
+            .{ "macro", Target.bun_macro },
+            .{ "node", Target.node },
         },
     );
 
@@ -410,24 +399,7 @@ pub const Target = enum {
 
             return null;
         }
-        var zig_str = JSC.ZigString.init("");
-        value.toZigString(&zig_str, global);
-
-        var slice = zig_str.slice();
-
-        const Eight = strings.ExactSizeMatcher(8);
-
-        return switch (Eight.match(slice)) {
-            Eight.case("deno"), Eight.case("browser") => Target.browser,
-            Eight.case("bun") => Target.bun,
-            Eight.case("macro") => Target.bun_macro,
-            Eight.case("node") => Target.node,
-            else => {
-                JSC.throwInvalidArguments("target must be one of: deno, browser, bun, macro, node", .{}, global, exception);
-
-                return null;
-            },
-        };
+        return Map.fromJS(global, value);
     }
 
     pub fn toAPI(this: Target) Api.Target {
@@ -648,15 +620,11 @@ pub const Format = enum {
         if (format.isUndefinedOrNull()) return null;
 
         if (!format.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("Format must be a string", .{}, global, exception);
+            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
             return null;
         }
 
-        var zig_str = JSC.ZigString.init("");
-        format.toZigString(&zig_str, global);
-        if (zig_str.len == 0) return null;
-
-        return fromString(zig_str.slice()) orelse {
+        return Map.fromJS(global, format) orelse {
             JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
             return null;
         };
@@ -692,13 +660,13 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
+    pub fn toMimeType(this: Loader) bun.http.MimeType {
         return switch (this) {
-            .jsx, .js, .ts, .tsx => bun.HTTP.MimeType.javascript,
-            .css => bun.HTTP.MimeType.css,
-            .toml, .json => bun.HTTP.MimeType.json,
-            .wasm => bun.HTTP.MimeType.wasm,
-            else => bun.HTTP.MimeType.other,
+            .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
+            .css => bun.http.MimeType.css,
+            .toml, .json => bun.http.MimeType.json,
+            .wasm => bun.http.MimeType.wasm,
+            else => bun.http.MimeType.other,
         };
     }
 
@@ -979,6 +947,15 @@ pub const JSX = struct {
             production: string = "react/jsx-runtime",
         };
 
+        pub fn hashForRuntimeTranspiler(this: *const Pragma, hasher: *std.hash.Wyhash) void {
+            for (this.factory) |factory| hasher.update(factory);
+            for (this.fragment) |fragment| hasher.update(fragment);
+            hasher.update(this.import_source.development);
+            hasher.update(this.import_source.production);
+            hasher.update(this.classic_import_source);
+            hasher.update(this.package_name);
+        }
+
         pub fn importSource(this: *const Pragma) string {
             return switch (this.development) {
                 true => this.import_source.development,
@@ -987,6 +964,7 @@ pub const JSX = struct {
         }
 
         pub fn parsePackageName(str: string) string {
+            if (str.len == 0) return str;
             if (str[0] == '@') {
                 if (strings.indexOfChar(str[1..], '/')) |first_slash| {
                     var remainder = str[1 + first_slash + 1 ..];
@@ -1129,14 +1107,6 @@ pub const Timings = struct {
 };
 
 pub const DefaultUserDefines = struct {
-    pub const HotModuleReloading = struct {
-        pub const Key = "process.env.BUN_HMR_ENABLED";
-        pub const Value = "true";
-    };
-    pub const HotModuleReloadingVerbose = struct {
-        pub const Key = "process.env.BUN_HMR_VERBOSE";
-        pub const Value = "true";
-    };
     // This must be globally scoped so it doesn't disappear
     pub const NodeEnv = struct {
         pub const Key = "process.env.NODE_ENV";
@@ -1151,16 +1121,13 @@ pub const DefaultUserDefines = struct {
 pub fn definesFromTransformOptions(
     allocator: std.mem.Allocator,
     log: *logger.Log,
-    _input_define: ?Api.StringMap,
-    hmr: bool,
+    maybe_input_define: ?Api.StringMap,
     target: Target,
-    loader: ?*DotEnv.Loader,
+    env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
-    debugger: bool,
 ) !*defines.Define {
-    _ = debugger;
-    var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
+    var input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
         defines.RawDefines,
@@ -1172,73 +1139,71 @@ pub fn definesFromTransformOptions(
     var environment_defines = defines.UserDefinesArray.init(allocator);
     defer environment_defines.deinit();
 
-    if (loader) |_loader| {
-        if (framework_env) |framework| {
-            _ = try _loader.copyForDefine(
-                defines.RawDefines,
-                &user_defines,
-                defines.UserDefinesArray,
-                &environment_defines,
-                framework.toAPI().defaults,
-                framework.behavior,
-                framework.prefix,
-                allocator,
-            );
-        } else {
-            _ = try _loader.copyForDefine(
-                defines.RawDefines,
-                &user_defines,
-                defines.UserDefinesArray,
-                &environment_defines,
-                std.mem.zeroes(Api.StringMap),
-                Api.DotEnvBehavior.disable,
-                "",
-                allocator,
-            );
+    var behavior: Api.DotEnvBehavior = .disable;
+
+    load_env: {
+        const env = env_loader orelse break :load_env;
+        const framework = framework_env orelse break :load_env;
+
+        if (Environment.allow_assert) {
+            std.debug.assert(framework.behavior != ._none);
         }
+
+        behavior = framework.behavior;
+        if (behavior == .load_all_without_inlining or behavior == .disable)
+            break :load_env;
+
+        try env.copyForDefine(
+            defines.RawDefines,
+            &user_defines,
+            defines.UserDefinesArray,
+            &environment_defines,
+            framework.toAPI().defaults,
+            framework.behavior,
+            framework.prefix,
+            allocator,
+        );
     }
 
-    var quoted_node_env: string = brk: {
-        if (NODE_ENV) |node_env| {
-            if (node_env.len > 0) {
-                if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
-                    (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
-                {
-                    break :brk node_env;
-                }
+    if (behavior != .load_all_without_inlining) {
+        var quoted_node_env: string = brk: {
+            if (NODE_ENV) |node_env| {
+                if (node_env.len > 0) {
+                    if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                        (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+                    {
+                        break :brk node_env;
+                    }
 
-                // avoid allocating if we can
-                if (strings.eqlComptime(node_env, "production")) {
-                    break :brk "\"production\"";
-                } else if (strings.eqlComptime(node_env, "development")) {
-                    break :brk "\"development\"";
-                } else if (strings.eqlComptime(node_env, "test")) {
-                    break :brk "\"test\"";
-                } else {
-                    break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                    // avoid allocating if we can
+                    if (strings.eqlComptime(node_env, "production")) {
+                        break :brk "\"production\"";
+                    } else if (strings.eqlComptime(node_env, "development")) {
+                        break :brk "\"development\"";
+                    } else if (strings.eqlComptime(node_env, "test")) {
+                        break :brk "\"test\"";
+                    } else {
+                        break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                    }
                 }
             }
+            break :brk "\"development\"";
+        };
+
+        _ = try user_defines.getOrPutValue(
+            "process.env.NODE_ENV",
+            quoted_node_env,
+        );
+        _ = try user_defines.getOrPutValue(
+            "process.env.BUN_ENV",
+            quoted_node_env,
+        );
+
+        // Automatically set `process.browser` to `true` for browsers and false for node+js
+        // This enables some extra dead code elimination
+        if (target.processBrowserDefineValue()) |value| {
+            _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
         }
-        break :brk "\"development\"";
-    };
-
-    _ = try user_defines.getOrPutValue(
-        "process.env.NODE_ENV",
-        quoted_node_env,
-    );
-    _ = try user_defines.getOrPutValue(
-        "process.env.BUN_ENV",
-        quoted_node_env,
-    );
-
-    if (hmr) {
-        try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);
-    }
-
-    // Automatically set `process.browser` to `true` for browsers and false for node+js
-    // This enables some extra dead code elimination
-    if (target.processBrowserDefineValue()) |value| {
-        _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
     }
 
     if (target.isBun()) {
@@ -1272,6 +1237,51 @@ const default_loader_ext = [_]string{
 
     ".toml", ".wasm",
     ".txt",  ".text",
+};
+
+const node_modules_default_loader_ext_bun = [_]string{".node"};
+const node_modules_default_loader_ext = [_]string{
+    ".jsx",
+    ".js",
+    ".cjs",
+    ".mjs",
+    ".ts",
+    ".mts",
+    ".toml",
+    ".txt",
+    ".json",
+    ".css",
+    ".tsx",
+    ".cts",
+    ".wasm",
+    ".text",
+};
+
+pub const ResolveFileExtensions = struct {
+    node_modules: Group = .{
+        .esm = &BundleOptions.Defaults.NodeModules.ModuleExtensionOrder,
+        .default = &BundleOptions.Defaults.NodeModules.ExtensionOrder,
+    },
+    default: Group = .{},
+
+    inline fn group(this: *const ResolveFileExtensions, is_node_modules: bool) *const Group {
+        return switch (is_node_modules) {
+            true => &this.node_modules,
+            false => &this.default,
+        };
+    }
+
+    pub fn kind(this: *const ResolveFileExtensions, kind_: bun.ImportKind, is_node_modules: bool) []const string {
+        return switch (kind_) {
+            .stmt, .entry_point, .dynamic => this.group(is_node_modules).esm,
+            else => this.group(is_node_modules).default,
+        };
+    }
+
+    pub const Group = struct {
+        esm: []const string = &BundleOptions.Defaults.ModuleExtensionOrder,
+        default: []const string = &BundleOptions.Defaults.ExtensionOrder,
+    };
 };
 
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) !bun.StringArrayHashMap(Loader) {
@@ -1408,8 +1418,7 @@ pub const BundleOptions = struct {
     asset_naming: []const u8 = "",
     chunk_naming: []const u8 = "",
     public_path: []const u8 = "",
-    extension_order: []const string = &Defaults.ExtensionOrder,
-    esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
+    extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
@@ -1503,7 +1512,6 @@ pub const BundleOptions = struct {
             allocator,
             this.log,
             this.transform_options.define,
-            this.transform_options.serve orelse false,
             this.target,
             loader_,
             env,
@@ -1521,7 +1529,6 @@ pub const BundleOptions = struct {
 
                 break :node_env "\"development\"";
             },
-            this.debugger,
         );
         this.defines_loaded = true;
     }
@@ -1581,6 +1588,32 @@ pub const BundleOptions = struct {
         pub const CSSExtensionOrder = [_]string{
             ".css",
         };
+
+        pub const NodeModules = struct {
+            pub const ExtensionOrder = [_]string{
+                ".jsx",
+                ".cjs",
+                ".js",
+                ".mjs",
+                ".mts",
+                ".tsx",
+                ".ts",
+                ".cts",
+                ".json",
+            };
+
+            pub const ModuleExtensionOrder = [_]string{
+                ".mjs",
+                ".jsx",
+                ".mts",
+                ".js",
+                ".cjs",
+                ".tsx",
+                ".ts",
+                ".cts",
+                ".json",
+            };
+        };
     };
 
     pub fn fromApi(
@@ -1607,6 +1640,10 @@ pub const BundleOptions = struct {
         Analytics.Features.define = Analytics.Features.define or transform.define != null;
         Analytics.Features.loaders = Analytics.Features.loaders or transform.loaders != null;
 
+        if (transform.env_files.len > 0) {
+            opts.env.files = transform.env_files;
+        }
+
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
         }
@@ -1616,7 +1653,7 @@ pub const BundleOptions = struct {
         }
 
         if (transform.extension_order.len > 0) {
-            opts.extension_order = transform.extension_order;
+            opts.extension_order.default.default = transform.extension_order;
         }
 
         if (transform.target) |t| {
@@ -1626,42 +1663,19 @@ pub const BundleOptions = struct {
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
-        if (transform.serve orelse false) {
-            // When we're serving, we need some kind of URL.
-            if (!opts.origin.isAbsolute()) {
-                const protocol: string = if (opts.origin.hasHTTPLikeProtocol()) opts.origin.protocol else "http";
-
-                const had_valid_port = opts.origin.hasValidPort();
-                const port: string = if (had_valid_port) opts.origin.port else "3000";
-
-                opts.origin = URL.parse(
-                    try std.fmt.allocPrint(
-                        allocator,
-                        "{s}://localhost:{s}{s}",
-                        .{
-                            protocol,
-                            port,
-                            opts.origin.path,
-                        },
-                    ),
-                );
-                opts.origin.port_was_automatically_set = !had_valid_port;
-            }
-        }
-
         switch (opts.target) {
             .node => {
                 opts.import_path_format = .relative;
                 opts.allow_runtime = false;
             },
             .bun => {
-                // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
-                // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
+
                 opts.env.behavior = .load_all;
                 if (transform.extension_order.len == 0) {
                     // we must also support require'ing .node files
-                    opts.extension_order = Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
+                    opts.extension_order.default.default = comptime Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
+                    opts.extension_order.node_modules.default = comptime Defaults.NodeModules.ExtensionOrder ++ &[_][]const u8{".node"};
                 }
             },
             else => {},
@@ -1682,162 +1696,9 @@ pub const BundleOptions = struct {
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
-        if (comptime !bun.Environment.isWindows) {
-            if (transform.serve orelse false) {
-                opts.preserve_extensions = true;
-                opts.append_package_version_in_query_string = true;
-                if (opts.framework == null)
-                    opts.env.behavior = .load_all;
+        opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
 
-                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
-
-                opts.resolve_mode = .lazy;
-
-                var dir_to_use: string = opts.routes.static_dir;
-                const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
-                var disabled_static = false;
-
-                var chosen_dir = dir_to_use;
-
-                if (!static_dir_set) {
-                    chosen_dir = choice: {
-                        if (fs.fs.readDirectory(fs.top_level_dir, null, 0, false)) |dir_| {
-                            const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
-                            switch (dir.*) {
-                                .entries => {
-                                    if (dir.entries.getComptimeQuery("public")) |q| {
-                                        if (q.entry.kind(&fs.fs, true) == .dir) {
-                                            break :choice "public";
-                                        }
-                                    }
-
-                                    if (dir.entries.getComptimeQuery("static")) |q| {
-                                        if (q.entry.kind(&fs.fs, true) == .dir) {
-                                            break :choice "static";
-                                        }
-                                    }
-
-                                    break :choice ".";
-                                },
-                                else => {
-                                    break :choice "";
-                                },
-                            }
-                        } else |_| {
-                            break :choice "";
-                        }
-                    };
-
-                    if (chosen_dir.len == 0) {
-                        disabled_static = true;
-                        opts.routes.static_dir_enabled = false;
-                    }
-                }
-
-                if (!disabled_static) {
-                    var _dirs = [_]string{chosen_dir};
-                    opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                    const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
-                        switch (err) {
-                            error.FileNotFound => {
-                                opts.routes.static_dir_enabled = false;
-                            },
-                            error.AccessDenied => {
-                                Output.prettyErrorln(
-                                    "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
-                                    .{opts.routes.static_dir},
-                                );
-                                std.process.exit(1);
-                            },
-                            else => {
-                                Output.prettyErrorln(
-                                    "error: \"{s}\" when accessing public folder: \"{s}\"",
-                                    .{ @errorName(err), opts.routes.static_dir },
-                                );
-                                std.process.exit(1);
-                            },
-                        }
-
-                        break :brk null;
-                    };
-                    if (static_dir) |handle| {
-                        opts.routes.static_dir_handle = handle.dir;
-                    }
-                    opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
-                }
-
-                const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
-                    !opts.routes.routes_enabled;
-
-                if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
-                    const dir = opts.routes.static_dir_handle.?;
-                    var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
-                        switch (err) {
-                            error.FileNotFound => {},
-                            else => {
-                                Output.prettyErrorln(
-                                    "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                    .{ @errorName(err), opts.routes.static_dir },
-                                );
-                            },
-                        }
-
-                        opts.routes.single_page_app_routing = false;
-                        break :brk null;
-                    };
-
-                    if (index_html_file) |index_dot_html| {
-                        opts.routes.single_page_app_routing = true;
-                        opts.routes.single_page_app_fd = index_dot_html.handle;
-                    }
-                }
-
-                if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
-                    attempt: {
-                        var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        // If it's not in static-dir/index.html, check if it's in top level dir/index.html
-                        var parts = [_]string{"index.html"};
-                        var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
-                        abs_buf[full_path.len] = 0;
-                        var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
-
-                        const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
-                            switch (err) {
-                                error.FileNotFound => {},
-                                else => {
-                                    Output.prettyErrorln(
-                                        "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                        .{ @errorName(err), fs.top_level_dir },
-                                    );
-                                },
-                            }
-                            break :attempt;
-                        };
-
-                        opts.routes.single_page_app_routing = true;
-                        opts.routes.single_page_app_fd = file.handle;
-                    }
-                }
-
-                // Windows has weird locking rules for file access.
-                // so it's a bad idea to keep a file handle open for a long time on Windows.
-                if (Environment.isWindows and opts.routes.static_dir_handle != null) {
-                    opts.routes.static_dir_handle.?.close();
-                }
-                opts.hot_module_reloading = opts.target.isWebLike();
-
-                if (transform.disable_hmr orelse false)
-                    opts.hot_module_reloading = false;
-
-                opts.serve = true;
-            } else {
-                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
-            }
-        } else {
-            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
-        }
-
-        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production;
+        opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;
         if (opts.inlining)
             opts.minify_syntax = true;
@@ -1907,7 +1768,7 @@ pub const TransformOptions = struct {
 
         var cwd: string = "/";
         if (Environment.isWasi or Environment.isWindows) {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
         }
 
         var define = bun.StringHashMap(string).init(allocator);
@@ -2118,7 +1979,7 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), &(try std.os.toPosixPath(file.value.move.getPathname())), bun.fdcast(dir), &(try std.os.toPosixPath(rel_path)));
+        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), bun.fdcast(dir), bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
@@ -2276,6 +2137,9 @@ pub const Env = struct {
     prefix: string = "",
     defaults: List = List{},
     allocator: std.mem.Allocator = undefined,
+
+    /// List of explicit env files to load (e..g specified by --env-file args)
+    files: []const []const u8 = &[_][]u8{},
 
     pub fn init(
         allocator: std.mem.Allocator,

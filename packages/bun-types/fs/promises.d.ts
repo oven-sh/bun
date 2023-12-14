@@ -226,6 +226,7 @@ declare module "fs/promises" {
     options?:
       | (ObjectEncodingOptions & {
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         })
       | BufferEncoding
       | undefined
@@ -242,6 +243,7 @@ declare module "fs/promises" {
       | {
           encoding: "buffer";
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         }
       | "buffer",
   ): Promise<Buffer[]>;
@@ -255,6 +257,7 @@ declare module "fs/promises" {
     options?:
       | (ObjectEncodingOptions & {
           withFileTypes?: false | undefined;
+          recursive?: boolean | undefined;
         })
       | BufferEncoding
       | null,
@@ -268,6 +271,7 @@ declare module "fs/promises" {
     path: PathLike,
     options: ObjectEncodingOptions & {
       withFileTypes: true;
+      recursive?: boolean | undefined;
     },
   ): Promise<Dirent[]>;
   /**

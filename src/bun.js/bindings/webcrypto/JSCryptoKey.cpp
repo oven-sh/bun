@@ -219,7 +219,7 @@ void JSCryptoKey::destroy(JSC::JSCell* cell)
     thisObject->JSCryptoKey::~JSCryptoKey();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -237,7 +237,7 @@ static inline JSValue jsCryptoKey_typeGetter(JSGlobalObject& lexicalGlobalObject
     RELEASE_AND_RETURN(throwScope, (toJS<IDLEnumeration<CryptoKey::Type>>(lexicalGlobalObject, throwScope, impl.type())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_type, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_type, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_typeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -250,7 +250,7 @@ static inline JSValue jsCryptoKey_extractableGetter(JSGlobalObject& lexicalGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.extractable())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_extractable, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_extractable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_extractableGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -268,7 +268,7 @@ static inline JSValue jsCryptoKey_algorithmGetter(JSGlobalObject& lexicalGlobalO
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_algorithm, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_algorithm, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_algorithmGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -286,7 +286,7 @@ static inline JSValue jsCryptoKey_usagesGetter(JSGlobalObject& lexicalGlobalObje
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_usagesGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }

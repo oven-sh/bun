@@ -39,7 +39,7 @@ enum class CloneMode {
     Partial,
 };
 
-static EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, CloneMode mode)
+static JSC::EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, CloneMode mode)
 {
     VM& vm = lexicalGlobalObject->vm();
 

@@ -18,6 +18,7 @@ const Defines = @import("./defines.zig");
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
 const Npm = @import("./install/npm.zig");
+const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
@@ -301,7 +302,7 @@ pub const Bunfig = struct {
                         break :brk install_;
                     };
 
-                    if (json.get("auto")) |auto_install_expr| {
+                    if (_bun.get("auto")) |auto_install_expr| {
                         if (auto_install_expr.data == .e_string) {
                             this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
                                 try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
@@ -318,15 +319,13 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (json.get("exact")) |exact_install_expr| {
-                        try this.expect(exact_install_expr, .e_boolean);
-
-                        if (exact_install_expr.asBool().?) {
-                            install.exact = true;
+                    if (_bun.get("exact")) |exact| {
+                        if (exact.asBool()) |value| {
+                            install.exact = value;
                         }
                     }
 
-                    if (json.get("prefer")) |prefer_expr| {
+                    if (_bun.get("prefer")) |prefer_expr| {
                         try this.expect(prefer_expr, .e_string);
 
                         if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {
@@ -392,6 +391,13 @@ pub const Bunfig = struct {
                     if (_bun.get("frozenLockfile")) |frozen_lockfile| {
                         if (frozen_lockfile.asBool()) |value| {
                             install.frozen_lockfile = value;
+                        }
+                    }
+
+                    if (_bun.get("concurrentScripts")) |jobs| {
+                        if (jobs.data == .e_number) {
+                            install.concurrent_scripts = jobs.data.e_number.toU32();
+                            if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
                         }
                     }
 

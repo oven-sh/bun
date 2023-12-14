@@ -1070,11 +1070,15 @@ export function createTextStream(highWaterMark) {
       }
 
       if (hasString && !hasBuffer) {
+        if (rope.charCodeAt(0) === 0xfeff) {
+          rope = rope.slice(1);
+        }
+
         return rope;
       }
 
       if (hasBuffer && !hasString) {
-        return new globalThis.TextDecoder().decode(Bun.concatArrayBuffers(array));
+        return new globalThis.TextDecoder("utf-8", { ignoreBOM: true }).decode(Bun.concatArrayBuffers(array));
       }
 
       // worst case: mixed content
@@ -1089,12 +1093,16 @@ export function createTextStream(highWaterMark) {
       }
       array.length = 0;
       if (rope.length > 0) {
+        if (rope.charCodeAt(0) === 0xfeff) {
+          rope = rope.slice(1);
+        }
+
         arrayBufferSink.write(rope);
         rope = "";
       }
 
       // TODO: use builtin
-      return new globalThis.TextDecoder().decode(arrayBufferSink.end());
+      return new globalThis.TextDecoder("utf-8", { ignoreBOM: true }).decode(arrayBufferSink.end());
     },
 
     close() {
@@ -1259,10 +1267,11 @@ export function readableStreamError(stream, error) {
 }
 
 export function readableStreamDefaultControllerShouldCallPull(controller) {
-  const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-
   if (!$readableStreamDefaultControllerCanCloseOrEnqueue(controller)) return false;
   if (!($getByIdDirectPrivate(controller, "started") === 1)) return false;
+
+  const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+
   if (
     (!$isReadableStreamLocked(stream) ||
       !$getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty()) &&
@@ -1461,6 +1470,7 @@ export function isReadableStreamDisturbed(stream) {
   return $getByIdDirectPrivate(stream, "disturbed");
 }
 
+$visibility = "Private";
 export function readableStreamReaderGenericRelease(reader) {
   $assert(!!$getByIdDirectPrivate(reader, "ownerReadableStream"));
   $assert($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader") === reader);
@@ -1477,18 +1487,33 @@ export function readableStreamReaderGenericRelease(reader) {
 
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
   $markPromiseAsHandled(promise);
-  $putByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader", undefined);
+
+  var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
+  if ($getByIdDirectPrivate(stream, "bunNativeType") != 0) {
+    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingByteSource").$resume(
+      false,
+    );
+  }
+  $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
 }
 
 export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
-  return (
-    !$getByIdDirectPrivate(controller, "closeRequested") &&
-    $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable
-  );
+  if ($getByIdDirectPrivate(controller, "closeRequested")) {
+    return false;
+  }
+
+  const controlledReadableStream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+
+  if (!$isObject(controlledReadableStream)) {
+    return false;
+  }
+
+  return $getByIdDirectPrivate(controlledReadableStream, "state") === $streamReadable;
 }
 
 export function lazyLoadStream(stream, autoAllocateChunkSize) {
+  $debug("lazyLoadStream", stream, autoAllocateChunkSize);
   var nativeType = $getByIdDirectPrivate(stream, "bunNativeType");
   var nativePtr = $getByIdDirectPrivate(stream, "bunNativePtr");
   var Prototype = $lazyStreamPrototypeMap.$get(nativeType);
@@ -1557,7 +1582,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     const registry = deinit ? new FinalizationRegistry(deinit) : null;
     Prototype = class NativeReadableStreamSource {
       constructor(tag, autoAllocateChunkSize, drainValue) {
-        this.#tag = tag;
+        $putByIdDirectPrivate(this, "stream", tag);
         this.#cancellationToken = {};
         this.pull = this.#pull.bind(this);
         this.cancel = this.#cancel.bind(this);
@@ -1575,18 +1600,18 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       #cancellationToken;
+
       pull;
       cancel;
       start;
 
-      #tag;
       type = "bytes";
       autoAllocateChunkSize = 0;
 
       static startSync = start;
 
       #pull(controller) {
-        var tag = this.#tag;
+        var tag = $getByIdDirectPrivate(this, "stream");
 
         if (!tag) {
           controller.close();
@@ -1597,14 +1622,20 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       #cancel(reason) {
-        var tag = this.#tag;
+        var tag = $getByIdDirectPrivate(this, "stream");
 
         registry && registry.unregister(this.#cancellationToken);
         setRefOrUnref && setRefOrUnref(tag, false);
         cancel(tag, reason);
       }
+
       static deinit = deinit;
       static drain = drain;
+    };
+    // this is reuse of an existing private symbol
+    Prototype.prototype.$resume = function (has_ref) {
+      var tag = $getByIdDirectPrivate(this, "stream");
+      setRefOrUnref && setRefOrUnref(tag, has_ref);
     };
     $lazyStreamPrototypeMap.$set(nativeType, Prototype);
   }
@@ -1670,13 +1701,23 @@ export function readableStreamIntoArray(stream) {
   return processManyResult(manyResult);
 }
 
+export function withoutUTF8BOM(result) {
+  if (result.charCodeAt(0) === 0xfeff) {
+    return result.slice(1);
+  }
+
+  return result;
+}
+
 export function readableStreamIntoText(stream) {
   const [textStream, closer] = $createTextStream($getByIdDirectPrivate(stream, "highWaterMark"));
   const prom = $readStreamIntoSink(stream, textStream, false);
+
   if (prom && $isPromise(prom)) {
-    return Promise.$resolve(prom).$then(closer.promise);
+    return Promise.$resolve(prom).$then(closer.promise).$then($withoutUTF8BOM);
   }
-  return closer.promise;
+
+  return closer.promise.$then($withoutUTF8BOM);
 }
 
 export function readableStreamToArrayBufferDirect(stream, underlyingSource) {

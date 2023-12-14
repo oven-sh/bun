@@ -41,15 +41,15 @@
 #include "JSURLSearchParams.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
 
 #if ENABLE(MEDIA_SOURCE)
 #include "DOMURLMediaSource.h"
@@ -135,7 +135,7 @@ static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 2 } },
 };
 
-static inline EncodedJSValue constructJSDOMURL1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+static inline JSC::EncodedJSValue constructJSDOMURL1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -159,7 +159,7 @@ static inline EncodedJSValue constructJSDOMURL1(JSGlobalObject* lexicalGlobalObj
     return JSValue::encode(jsValue);
 }
 
-static inline EncodedJSValue constructJSDOMURL2(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+static inline JSC::EncodedJSValue constructJSDOMURL2(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -183,7 +183,7 @@ static inline EncodedJSValue constructJSDOMURL2(JSGlobalObject* lexicalGlobalObj
     return JSValue::encode(jsValue);
 }
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -287,7 +287,7 @@ void JSDOMURL::destroy(JSC::JSCell* cell)
     thisObject->JSDOMURL::~JSDOMURL();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURLConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURLConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -305,7 +305,7 @@ static inline JSValue jsDOMURL_hrefGetter(JSGlobalObject& lexicalGlobalObject, J
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.href())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_href, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_href, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_hrefGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -323,7 +323,7 @@ static inline bool setJSDOMURL_hrefSetter(JSGlobalObject& lexicalGlobalObject, J
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_href, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_href, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_hrefSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -336,7 +336,7 @@ static inline JSValue jsDOMURL_originGetter(JSGlobalObject& lexicalGlobalObject,
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.origin())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_origin, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_origin, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_originGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -349,7 +349,7 @@ static inline JSValue jsDOMURL_protocolGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.protocol())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_protocol, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_protocol, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_protocolGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -367,7 +367,7 @@ static inline bool setJSDOMURL_protocolSetter(JSGlobalObject& lexicalGlobalObjec
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_protocol, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_protocol, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_protocolSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -380,7 +380,7 @@ static inline JSValue jsDOMURL_usernameGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.username())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_username, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_username, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_usernameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -398,7 +398,7 @@ static inline bool setJSDOMURL_usernameSetter(JSGlobalObject& lexicalGlobalObjec
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_username, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_username, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_usernameSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -411,7 +411,7 @@ static inline JSValue jsDOMURL_passwordGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.password())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_password, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_password, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_passwordGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -429,7 +429,7 @@ static inline bool setJSDOMURL_passwordSetter(JSGlobalObject& lexicalGlobalObjec
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_password, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_password, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_passwordSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -442,7 +442,7 @@ static inline JSValue jsDOMURL_hostGetter(JSGlobalObject& lexicalGlobalObject, J
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.host())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_host, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_host, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_hostGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -460,7 +460,7 @@ static inline bool setJSDOMURL_hostSetter(JSGlobalObject& lexicalGlobalObject, J
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_host, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_host, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_hostSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -473,7 +473,7 @@ static inline JSValue jsDOMURL_hostnameGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.hostname())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_hostname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_hostname, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_hostnameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -491,7 +491,7 @@ static inline bool setJSDOMURL_hostnameSetter(JSGlobalObject& lexicalGlobalObjec
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_hostname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_hostname, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_hostnameSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -504,7 +504,7 @@ static inline JSValue jsDOMURL_portGetter(JSGlobalObject& lexicalGlobalObject, J
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.port())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_port, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_port, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_portGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -522,7 +522,7 @@ static inline bool setJSDOMURL_portSetter(JSGlobalObject& lexicalGlobalObject, J
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_port, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_port, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_portSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -535,7 +535,7 @@ static inline JSValue jsDOMURL_pathnameGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.pathname())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_pathname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_pathname, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_pathnameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -553,7 +553,7 @@ static inline bool setJSDOMURL_pathnameSetter(JSGlobalObject& lexicalGlobalObjec
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_pathname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_pathname, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_pathnameSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -566,7 +566,7 @@ static inline JSValue jsDOMURL_hashGetter(JSGlobalObject& lexicalGlobalObject, J
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.hash())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_hash, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_hash, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_hashGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -584,7 +584,7 @@ static inline bool setJSDOMURL_hashSetter(JSGlobalObject& lexicalGlobalObject, J
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_hash, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_hash, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_hashSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -597,7 +597,7 @@ static inline JSValue jsDOMURL_searchGetter(JSGlobalObject& lexicalGlobalObject,
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.search())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_search, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_search, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_searchGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -615,7 +615,7 @@ static inline bool setJSDOMURL_searchSetter(JSGlobalObject& lexicalGlobalObject,
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_search, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_search, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::set<setJSDOMURL_searchSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -633,7 +633,7 @@ static inline JSValue jsDOMURL_searchParamsGetter(JSGlobalObject& lexicalGlobalO
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_searchParams, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_searchParams, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMURL>::get<jsDOMURL_searchParamsGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }

@@ -47,6 +47,12 @@ To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
 $ bun test --test-name-pattern addition
 ```
 
+To run a specific file in the test runner, make sure the path starts with `./` or `/` to distinguish it from a filter name.
+
+```bash
+$ bun test ./test/specific-file.test.ts
+```
+
 The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
 
 ## Timeouts

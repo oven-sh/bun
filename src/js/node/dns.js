@@ -1,6 +1,7 @@
 // Hardcoded module "node:dns"
 // only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
+const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 
 function getServers() {
   return dns.getServers();
@@ -681,6 +682,28 @@ const promises = {
 };
 for (const key of ["resolveAny"]) {
   promises[key] = () => Promise.resolve(undefined);
+}
+
+// Compatibility with util.promisify(dns[method])
+for (const [method, pMethod] of [
+  [lookup, promises.lookup],
+  [lookupService, promises.lookupService],
+  [resolve, promises.resolve],
+  [reverse, promises.reverse],
+  [resolve4, promises.resolve4],
+  [resolve6, promises.resolve6],
+  [resolveAny, promises.resolveAny],
+  [resolveCname, promises.resolveCname],
+  [resolveCaa, promises.resolveCaa],
+  [resolveMx, promises.resolveMx],
+  [resolveNs, promises.resolveNs],
+  [resolvePtr, promises.resolvePtr],
+  [resolveSoa, promises.resolveSoa],
+  [resolveSrv, promises.resolveSrv],
+  [resolveTxt, promises.resolveTxt],
+  [resolveNaptr, promises.resolveNaptr],
+]) {
+  method[utilPromisifyCustomSymbol] = pMethod;
 }
 
 export default {

@@ -64,7 +64,7 @@ Some methods are not optimized yet.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
-🔴 Not implemented.
+🟡 Client is supported, but server isn't yet.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -148,7 +148,7 @@ Some methods are not optimized yet.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `parseArgs` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
+🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -156,7 +156,7 @@ Some methods are not optimized yet.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
-🟡 Core functionality works, but VM modules are not implemented. Missing `createScript`. `ShadowRealm` can be used.
+🟡 Core functionality works, but experimental VM ES modules are not implemented, including `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`,`importModuleDynamically`, and `vm.measureMemory`. Options like `timeout`, `breakOnSigint`, `cachedData` are not implemented yet. There is a bug with `this` value for contextified options not having the correct prototype.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 

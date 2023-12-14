@@ -13,7 +13,7 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("root").bun.HTTP.AsyncHTTP;
+const HTTP = @import("root").bun.http.AsyncHTTP;
 const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
@@ -62,9 +62,9 @@ pub const CrashReportWriter = struct {
 
         var base_dir: []const u8 = ".";
         if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
-            base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (bun.getenvZ("HOME")) |home_dir| {
-            base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
+            base_dir = strings.withoutTrailingSlash(install_dir);
+        } else if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+            base_dir = strings.withoutTrailingSlash(home_dir);
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
@@ -72,8 +72,12 @@ pub const CrashReportWriter = struct {
             .{ base_dir, Global.package_json_version, @as(u64, @intCast(@max(std.time.milliTimestamp(), 0))) },
         ) catch return;
 
-        std.fs.cwd().makeDir(std.fs.path.dirname(bun.asByteSlice(file_path)).?) catch {};
-        var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
+        if (bun.path.nextDirname(file_path)) |dirname| {
+            _ = bun.sys.mkdirA(dirname, 0);
+        }
+
+        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
+        var file = std.fs.File{ .handle = bun.fdcast(call) };
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -85,7 +89,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;
@@ -107,8 +111,8 @@ pub fn printMetadata() void {
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
-    const platform = if (Environment.isMac) "macOS" else "Linux";
-    const arch = if (Environment.isAarch64)
+    const platform = comptime Environment.os.displayString();
+    const arch = comptime if (Environment.isAarch64)
         if (Environment.isMac) "Silicon" else "arm64"
     else
         "x64";
@@ -308,7 +312,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     if (error_return_trace) |trace| {
         std.debug.dumpStackTrace(trace.*);
     }
-
+    Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
 }
 
@@ -604,9 +608,6 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 }
             }
 
-            Global.exit(1);
-        },
-        error.MissingValue => {
             Global.exit(1);
         },
         else => {},

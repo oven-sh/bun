@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { dirname } from "node:path";
+import { dirname, resolve, relative } from "node:path";
+import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
@@ -55,6 +56,13 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("Dirent.name setter", () => {
+  const dirent = Object.create(Dirent.prototype);
+  expect(dirent.name).toBeUndefined();
+  dirent.name = "hello";
+  expect(dirent.name).toBe("hello");
+});
 
 it("writeFileSync in append should not truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
@@ -321,7 +329,7 @@ it("promises.readFile", async () => {
   for (let i = 0; i < 20; i++) {
     try {
       await fs.promises.readFile("/i-dont-exist", "utf-8");
-      expect(false).toBeTrue();
+      expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("No such file or directory");
@@ -932,7 +940,7 @@ it("realpath async", async () => {
     err ? reject(err) : resolve(path);
   });
   expect(await promise).toBe(realpathSync(import.meta.path));
-});
+}, 30_000);
 
 describe("stat", () => {
   it("file metadata is correct", () => {
@@ -1713,6 +1721,102 @@ describe("fs/promises", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
+  it("readdir(path, {recursive: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        console.time("readdir(path, {recursive: true})");
+        const files = await promises.readdir(full, { recursive: true });
+        files.sort();
+        console.timeEnd("readdir(path, {recursive: true})");
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { recursive: true }).sort()), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun).toEqual(node as string[]);
+  }, 100000);
+
+  for (let withFileTypes of [false, true] as const) {
+    const doIt = async () => {
+      const maxFD = openSync("/dev/null", "r");
+      closeSync(maxFD);
+      const full = resolve(import.meta.dir, "../");
+
+      const pending = new Array(100);
+      for (let i = 0; i < 100; i++) {
+        pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
+      }
+
+      const results = await Promise.all(pending);
+      for (let i = 0; i < 100; i++) {
+        results[i].sort();
+      }
+      expect(results[0].length).toBeGreaterThan(0);
+      for (let i = 1; i < 100; i++) {
+        expect(results[i]).toEqual(results[0]);
+      }
+
+      if (!withFileTypes) {
+        expect(results[0]).toContain(relative(full, import.meta.path));
+      }
+
+      const newMaxFD = openSync("/dev/null", "r");
+      closeSync(newMaxFD);
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
+    const fail = async () => {
+      const maxFD = openSync("/dev/null", "r");
+      closeSync(maxFD);
+
+      const pending = new Array(100);
+      for (let i = 0; i < 100; i++) {
+        pending[i] = promises.readdir("/notfound/i/dont/exist/for/sure/" + i, { recursive: true, withFileTypes });
+      }
+
+      const results = await Promise.allSettled(pending);
+      for (let i = 0; i < 100; i++) {
+        expect(results[i].status).toBe("rejected");
+        expect(results[i].reason!.code).toBe("ENOENT");
+        expect(results[i].reason!.path).toBe("/notfound/i/dont/exist/for/sure/" + i);
+      }
+
+      const newMaxFD = openSync("/dev/null", "r");
+      closeSync(newMaxFD);
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
+    if (withFileTypes) {
+      describe("withFileTypes", () => {
+        it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
+        it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+      });
+    } else {
+      it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+    }
+  }
+
   it("readdir() no args doesnt segfault", async () => {
     const fizz = [
       [],
@@ -1766,6 +1870,10 @@ describe("fs/promises", () => {
       await rmdir(join(path, "../../"), { recursive: true });
       expect(await exists(path)).toBe(false);
     });
+  });
+
+  it("opendir should have a path property, issue#4995", async () => {
+    expect((await fs.promises.opendir(".")).path).toBe(".");
   });
 });
 
@@ -1955,6 +2063,102 @@ it("createReadStream on a large file emits readable event correctly", () => {
   });
 });
 
+describe("fs.write", () => {
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-1-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const buffer = Buffer.from("bun");
+    fs.write(fd, buffer, 0, buffer.length, 0, err => {
+      try {
+        expect(err).toBeNull();
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, buffer, offset, length, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-2-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const buffer = Buffer.from("bun");
+    fs.write(fd, buffer, 0, buffer.length, (err, written, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(buffer.slice(0, written).toString()).toStrictEqual("bun");
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, string, position, encoding, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-3-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    fs.write(fd, string, 0, "utf8", (err, written, string) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(string.slice(0, written).toString()).toStrictEqual("bun");
+        expect(string).toBeTypeOf("string");
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, string, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    fs.write(fd, string, 0, (err, written, string) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(string.slice(0, written).toString()).toStrictEqual("bun");
+        expect(string).toBeTypeOf("string");
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with util.promisify", async () => {
+    const path = `${tmpdir()}/bun-fs-write-5-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    const fswrite = promisify(fs.write);
+    const ret = await fswrite(fd, string, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesWritten === 3).toBeTrue();
+    expect(ret.buffer === string).toBeTrue();
+    expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+    fs.closeSync(fd);
+  });
+});
+
 describe("fs.read", () => {
   it("should work with (fd, callback)", done => {
     const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
@@ -1970,6 +2174,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1989,6 +2194,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2008,6 +2214,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2027,6 +2234,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2046,6 +2254,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2065,9 +2274,24 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
+  });
+  it("should work with util.promisify", async () => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun bun bun bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(15);
+    const fsread = promisify(fs.read);
+
+    const ret = await fsread(fd, buffer, 0, 15, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesRead === 15).toBeTrue();
+    expect(buffer.slice().toString() === "bun bun bun bun").toBeTrue();
+    fs.closeSync(fd);
   });
 });
 

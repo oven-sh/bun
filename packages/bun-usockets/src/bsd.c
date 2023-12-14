@@ -397,6 +397,32 @@ int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     return recv(fd, buf, length, flags);
 }
 
+#if !defined(_WIN32)
+#include <sys/uio.h>
+
+int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    struct iovec chunks[2];
+
+    chunks[0].iov_base = (char *)header;
+    chunks[0].iov_len = header_length;
+    chunks[1].iov_base = (char *)payload;
+    chunks[1].iov_len = payload_length;
+
+    return writev(fd, chunks, 2);
+}
+#else
+int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    int written = bsd_send(fd, header, header_length, 0);
+    if (written == header_length) {
+        int second_write = bsd_send(fd, payload, payload_length, 0);
+        if (second_write > 0) {
+            written += second_write;
+        }
+    }
+    return written;
+}
+#endif
+
 int bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
 
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
@@ -427,43 +453,12 @@ int bsd_would_block() {
 #endif
 }
 
-// return LIBUS_SOCKET_ERROR or the fd that represents listen socket
-// listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options) {
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-
-    hints.ai_flags = AI_PASSIVE;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    if (getaddrinfo(host, port_string, &hints, &result)) {
-        return LIBUS_SOCKET_ERROR;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
-        if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-            listenAddr = a;
-        }
-    }
-
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
-        if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-            listenAddr = a;
-        }
-    }
-
-    if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
-    }
+inline LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
+    LIBUS_SOCKET_DESCRIPTOR listenFd,
+    struct addrinfo *listenAddr,
+    int port,
+    int options
+) {
 
     if (port != 0) {
         /* Otherwise, always enable SO_REUSEPORT and SO_REUSEADDR _unless_ options specify otherwise */
@@ -487,20 +482,74 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #endif
 
     }
-    
+
 #ifdef IPV6_V6ONLY
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
 
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, 512)) {
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
-    freeaddrinfo(result);
     return listenFd;
+}
+
+// return LIBUS_SOCKET_ERROR or the fd that represents listen socket
+// listen both on ipv6 and ipv4
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options) {
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    if (getaddrinfo(host, port_string, &hints, &result)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
+    struct addrinfo *listenAddr;
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+        if (a->ai_family == AF_INET6) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            if (listenFd == LIBUS_SOCKET_ERROR) {
+                continue;
+            }
+
+            listenAddr = a;
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+                freeaddrinfo(result);
+                return listenFd;
+            }
+
+            bsd_close_socket(listenFd);
+        }
+    }
+
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+        if (a->ai_family == AF_INET) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            if (listenFd == LIBUS_SOCKET_ERROR) {
+                continue;
+            }
+
+            listenAddr = a;
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+                freeaddrinfo(result);
+                return listenFd;
+            }
+
+            bsd_close_socket(listenFd);
+        }
+    }
+
+    freeaddrinfo(result);
+    return LIBUS_SOCKET_ERROR;
 }
 
 #ifndef _WIN32

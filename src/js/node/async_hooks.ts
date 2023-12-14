@@ -72,7 +72,7 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
 }
 
 class AsyncLocalStorage {
-  #disableCalled = false;
+  #disabled = false;
 
   constructor() {
     setAsyncHooksEnabled(true);
@@ -109,6 +109,8 @@ class AsyncLocalStorage {
 
   enterWith(store) {
     cleanupLater();
+    // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
+    this.#disabled = false;
     var context = get();
     if (!context) {
       set([this, store]);
@@ -143,6 +145,9 @@ class AsyncLocalStorage {
     var previous_value;
     var i = 0;
     var contextWasAlreadyInit = !context;
+    // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
+    const wasDisabled = this.#disabled;
+    this.#disabled = false;
     if (contextWasAlreadyInit) {
       set((context = [this, store_value]));
     } else {
@@ -171,7 +176,7 @@ class AsyncLocalStorage {
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
-      if (!this.#disableCalled) {
+      if (!wasDisabled) {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
           $assert(context2.length === 2, "context was mutated without copy");
@@ -203,24 +208,25 @@ class AsyncLocalStorage {
   disable() {
     $debug("disable " + (this as any).__id__);
     // In this case, we actually do want to mutate the context state
-    if (!this.#disableCalled) {
-      var context = get() as any[];
-      if (context) {
-        var { length } = context;
-        for (var i = 0; i < length; i += 2) {
-          if (context[i] === this) {
-            context.splice(i, 2);
-            set(context.length ? context : undefined);
-            break;
-          }
+    if (this.#disabled) return;
+    this.#disabled = true;
+    var context = get() as any[];
+    if (context) {
+      var { length } = context;
+      for (var i = 0; i < length; i += 2) {
+        if (context[i] === this) {
+          context.splice(i, 2);
+          set(context.length ? context : undefined);
+          break;
         }
       }
-      this.#disableCalled = true;
     }
   }
 
   getStore() {
     $debug("getStore " + (this as any).__id__);
+    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
+    if (this.#disabled) return;
     var context = get();
     if (!context) return;
     var { length } = context;

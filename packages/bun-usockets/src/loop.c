@@ -18,7 +18,9 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
+#ifndef WIN32
 #include <sys/ioctl.h>
+#endif
 
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
@@ -114,12 +116,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                context->on_socket_timeout(s);
+                if (context->on_socket_timeout != NULL) context->on_socket_timeout(s);
             }
 
             if (context->iterator == s && long_ticks == s->long_timeout) {
                 s->long_timeout = 255;
-                context->on_socket_long_timeout(s);
+                if (context->on_socket_long_timeout != NULL) context->on_socket_long_timeout(s);
             }   
 
             /* Check for unlink / link (if the event handler did not modify the chain, we step 1) */

@@ -10,6 +10,7 @@ const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
+const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
 const uws = @import("root").bun.uws;
@@ -29,13 +30,13 @@ hot_map: ?HotMap = null,
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
 
-file_polls_: ?*JSC.FilePoll.Store = null,
+file_polls_: ?*Async.FilePoll.Store = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
-mime_types: ?bun.HTTP.MimeType.Map = null,
+mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
@@ -73,9 +74,9 @@ pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     return &this.hot_map.?;
 }
 
-pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.HTTP.MimeType {
+pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.http.MimeType {
     if (this.mime_types == null) {
-        this.mime_types = bun.HTTP.MimeType.createHashTable(
+        this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
         ) catch @panic("Out of memory");
     }
@@ -135,10 +136,10 @@ pub const HotMap = struct {
     }
 };
 
-pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.Store {
+pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
-        this.file_polls_ = vm.allocator.create(JSC.FilePoll.Store) catch unreachable;
-        this.file_polls_.?.* = JSC.FilePoll.Store.init(vm.allocator);
+        this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
+        this.file_polls_.?.* = Async.FilePoll.Store.init(vm.allocator);
         return this.file_polls_.?;
     };
 }

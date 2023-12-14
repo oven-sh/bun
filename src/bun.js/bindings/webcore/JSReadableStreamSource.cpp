@@ -150,7 +150,7 @@ static inline JSValue jsReadableStreamSource_controllerGetter(JSGlobalObject& le
     return thisObject.controller(lexicalGlobalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamSource_controller, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamSource_controller, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSReadableStreamSource>::get<jsReadableStreamSource_controllerGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }

@@ -29,9 +29,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "root.h"
 
 #include "Exception.h"
-#include "wtf/CrossThreadCopier.h"
-#include "wtf/Expected.h"
-#include "wtf/StdLibExtras.h"
+#include <wtf/CrossThreadCopier.h>
+#include <wtf/Expected.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {
 

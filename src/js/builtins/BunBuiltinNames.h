@@ -9,8 +9,11 @@
 #endif
 #endif
 
-#include "JavaScriptCore/BuiltinUtils.h"
 #include "root.h"
+
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/BuiltinUtils.h>
 
 namespace WebCore {
 

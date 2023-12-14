@@ -31,8 +31,508 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
+pub const resolver = @import("./resolver//resolver.zig");
+pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = struct {
     pub usingnamespace std.fmt;
+
+    pub fn fmtJavaScript(text: []const u8, enable_ansi_colors: bool) QuickAndDirtyJavaScriptSyntaxHighlighter {
+        return QuickAndDirtyJavaScriptSyntaxHighlighter{
+            .text = text,
+            .enable_colors = enable_ansi_colors,
+        };
+    }
+
+    pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
+        text: []const u8,
+        enable_colors: bool = false,
+        limited: bool = true,
+
+        const ColorCode = enum {
+            magenta,
+            blue,
+            orange,
+            red,
+            pink,
+
+            pub fn color(this: ColorCode) []const u8 {
+                return switch (this) {
+                    .magenta => "\x1b[35m",
+                    .blue => "\x1b[34m",
+                    .orange => "\x1b[33m",
+                    .red => "\x1b[31m",
+                    // light pink
+                    .pink => "\x1b[38;5;206m",
+                };
+            }
+        };
+
+        pub const Keyword = enum {
+            abstract,
+            as,
+            @"async",
+            @"await",
+            case,
+            @"catch",
+            class,
+            @"const",
+            @"continue",
+            debugger,
+            default,
+            delete,
+            do,
+            @"else",
+            @"enum",
+            @"export",
+            extends,
+            false,
+            finally,
+            @"for",
+            function,
+            @"if",
+            implements,
+            import,
+            in,
+            instanceof,
+            interface,
+            let,
+            new,
+            null,
+            package,
+            private,
+            protected,
+            public,
+            @"return",
+            static,
+            super,
+            @"switch",
+            this,
+            throw,
+            @"break",
+            true,
+            @"try",
+            type,
+            typeof,
+            @"var",
+            void,
+            @"while",
+            with,
+            yield,
+            string,
+            number,
+            boolean,
+            symbol,
+            any,
+            object,
+            unknown,
+            never,
+            namespace,
+            declare,
+            readonly,
+            undefined,
+
+            pub fn colorCode(this: Keyword) ColorCode {
+                return switch (this) {
+                    Keyword.abstract => ColorCode.blue,
+                    Keyword.as => ColorCode.blue,
+                    Keyword.@"async" => ColorCode.magenta,
+                    Keyword.@"await" => ColorCode.magenta,
+                    Keyword.case => ColorCode.magenta,
+                    Keyword.@"catch" => ColorCode.magenta,
+                    Keyword.class => ColorCode.magenta,
+                    Keyword.@"const" => ColorCode.magenta,
+                    Keyword.@"continue" => ColorCode.magenta,
+                    Keyword.debugger => ColorCode.magenta,
+                    Keyword.default => ColorCode.magenta,
+                    Keyword.delete => ColorCode.red,
+                    Keyword.do => ColorCode.magenta,
+                    Keyword.@"else" => ColorCode.magenta,
+                    Keyword.@"break" => ColorCode.magenta,
+                    Keyword.undefined => ColorCode.orange,
+                    Keyword.@"enum" => ColorCode.blue,
+                    Keyword.@"export" => ColorCode.magenta,
+                    Keyword.extends => ColorCode.magenta,
+                    Keyword.false => ColorCode.orange,
+                    Keyword.finally => ColorCode.magenta,
+                    Keyword.@"for" => ColorCode.magenta,
+                    Keyword.function => ColorCode.magenta,
+                    Keyword.@"if" => ColorCode.magenta,
+                    Keyword.implements => ColorCode.blue,
+                    Keyword.import => ColorCode.magenta,
+                    Keyword.in => ColorCode.magenta,
+                    Keyword.instanceof => ColorCode.magenta,
+                    Keyword.interface => ColorCode.blue,
+                    Keyword.let => ColorCode.magenta,
+                    Keyword.new => ColorCode.magenta,
+                    Keyword.null => ColorCode.orange,
+                    Keyword.package => ColorCode.magenta,
+                    Keyword.private => ColorCode.blue,
+                    Keyword.protected => ColorCode.blue,
+                    Keyword.public => ColorCode.blue,
+                    Keyword.@"return" => ColorCode.magenta,
+                    Keyword.static => ColorCode.magenta,
+                    Keyword.super => ColorCode.magenta,
+                    Keyword.@"switch" => ColorCode.magenta,
+                    Keyword.this => ColorCode.orange,
+                    Keyword.throw => ColorCode.magenta,
+                    Keyword.true => ColorCode.orange,
+                    Keyword.@"try" => ColorCode.magenta,
+                    Keyword.type => ColorCode.blue,
+                    Keyword.typeof => ColorCode.magenta,
+                    Keyword.@"var" => ColorCode.magenta,
+                    Keyword.void => ColorCode.magenta,
+                    Keyword.@"while" => ColorCode.magenta,
+                    Keyword.with => ColorCode.magenta,
+                    Keyword.yield => ColorCode.magenta,
+                    Keyword.string => ColorCode.blue,
+                    Keyword.number => ColorCode.blue,
+                    Keyword.boolean => ColorCode.blue,
+                    Keyword.symbol => ColorCode.blue,
+                    Keyword.any => ColorCode.blue,
+                    Keyword.object => ColorCode.blue,
+                    Keyword.unknown => ColorCode.blue,
+                    Keyword.never => ColorCode.blue,
+                    Keyword.namespace => ColorCode.blue,
+                    Keyword.declare => ColorCode.blue,
+                    Keyword.readonly => ColorCode.blue,
+                };
+            }
+        };
+
+        pub const Keywords = ComptimeStringMap(Keyword, .{
+            .{ "abstract", Keyword.abstract },
+            .{ "any", Keyword.any },
+            .{ "as", Keyword.as },
+            .{ "async", Keyword.@"async" },
+            .{ "await", Keyword.@"await" },
+            .{ "boolean", Keyword.boolean },
+            .{ "break", Keyword.@"break" },
+            .{ "case", Keyword.case },
+            .{ "catch", Keyword.@"catch" },
+            .{ "class", Keyword.class },
+            .{ "const", Keyword.@"const" },
+            .{ "continue", Keyword.@"continue" },
+            .{ "debugger", Keyword.debugger },
+            .{ "declare", Keyword.declare },
+            .{ "default", Keyword.default },
+            .{ "delete", Keyword.delete },
+            .{ "do", Keyword.do },
+            .{ "else", Keyword.@"else" },
+            .{ "enum", Keyword.@"enum" },
+            .{ "export", Keyword.@"export" },
+            .{ "extends", Keyword.extends },
+            .{ "false", Keyword.false },
+            .{ "finally", Keyword.finally },
+            .{ "for", Keyword.@"for" },
+            .{ "function", Keyword.function },
+            .{ "if", Keyword.@"if" },
+            .{ "implements", Keyword.implements },
+            .{ "import", Keyword.import },
+            .{ "in", Keyword.in },
+            .{ "instanceof", Keyword.instanceof },
+            .{ "interface", Keyword.interface },
+            .{ "let", Keyword.let },
+            .{ "namespace", Keyword.namespace },
+            .{ "never", Keyword.never },
+            .{ "new", Keyword.new },
+            .{ "null", Keyword.null },
+            .{ "number", Keyword.number },
+            .{ "object", Keyword.object },
+            .{ "package", Keyword.package },
+            .{ "private", Keyword.private },
+            .{ "protected", Keyword.protected },
+            .{ "public", Keyword.public },
+            .{ "readonly", Keyword.readonly },
+            .{ "return", Keyword.@"return" },
+            .{ "static", Keyword.static },
+            .{ "string", Keyword.string },
+            .{ "super", Keyword.super },
+            .{ "switch", Keyword.@"switch" },
+            .{ "symbol", Keyword.symbol },
+            .{ "this", Keyword.this },
+            .{ "throw", Keyword.throw },
+            .{ "true", Keyword.true },
+            .{ "try", Keyword.@"try" },
+            .{ "type", Keyword.type },
+            .{ "typeof", Keyword.typeof },
+            .{ "undefined", Keyword.undefined },
+            .{ "unknown", Keyword.unknown },
+            .{ "var", Keyword.@"var" },
+            .{ "void", Keyword.void },
+            .{ "while", Keyword.@"while" },
+            .{ "with", Keyword.with },
+            .{ "yield", Keyword.yield },
+        });
+
+        pub fn format(this: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            const text = this.text;
+
+            if (this.limited) {
+                if (!this.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
+                    try writer.writeAll(text);
+                    return;
+                }
+            }
+
+            var remain = text;
+            var prev_keyword: ?Keyword = null;
+
+            outer: while (remain.len > 0) {
+                if (js_lexer.isIdentifierStart(remain[0])) {
+                    var i: usize = 1;
+
+                    while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                        i += 1;
+                    }
+
+                    if (Keywords.get(remain[0..i])) |keyword| {
+                        prev_keyword = keyword;
+                        const code = keyword.colorCode();
+                        try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                    } else {
+                        write: {
+                            if (prev_keyword) |prev| {
+                                switch (prev) {
+                                    .@"const", .let, .@"var", .function, .class => {
+                                        try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
+                                        prev_keyword = null;
+                                        break :write;
+                                    },
+                                    .new => {
+                                        prev_keyword = null;
+
+                                        if (i < remain.len and remain[i] == '(') {
+                                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
+                                            break :write;
+                                        }
+                                    },
+                                    .abstract, .namespace, .declare, .type, .interface => {
+                                        try writer.print(Output.prettyFmt("<r><b><blue>{s}<r>", true), .{remain[0..i]});
+                                        prev_keyword = null;
+                                        break :write;
+                                    },
+                                    else => {},
+                                }
+                            } else if (i < remain.len and remain[i] == '(') {
+                                try writer.print(Output.prettyFmt("<r><b><i>{s}<r>", true), .{remain[0..i]});
+                                break :write;
+                            }
+
+                            try writer.writeAll(remain[0..i]);
+                        }
+                    }
+                    remain = remain[i..];
+                } else {
+                    switch (remain[0]) {
+                        '0'...'9' => {
+                            prev_keyword = null;
+                            var i: usize = 1;
+                            if (remain.len > 1 and remain[0] == '0' and remain[1] == 'x') {
+                                i += 1;
+                                while (i < remain.len and switch (remain[i]) {
+                                    '0'...'9', 'a'...'f', 'A'...'F' => true,
+                                    else => false,
+                                }) {
+                                    i += 1;
+                                }
+                            } else {
+                                while (i < remain.len and switch (remain[i]) {
+                                    '0'...'9', '.', 'e', 'E', 'x', 'X', 'b', 'B', 'o', 'O' => true,
+                                    else => false,
+                                }) {
+                                    i += 1;
+                                }
+                            }
+
+                            try writer.print(Output.prettyFmt("<r><yellow>{s}<r>", true), .{remain[0..i]});
+                            remain = remain[i..];
+                        },
+                        inline '`', '"', '\'' => |char| {
+                            prev_keyword = null;
+
+                            var i: usize = 1;
+                            while (i < remain.len and remain[i] != char) {
+                                if (comptime char == '`') {
+                                    if (remain[i] == '$' and i + 1 < remain.len and remain[i + 1] == '{') {
+                                        const curly_start = i;
+                                        i += 2;
+
+                                        while (i < remain.len and remain[i] != '}') {
+                                            if (remain[i] == '\\') {
+                                                i += 1;
+                                            }
+                                            i += 1;
+                                        }
+
+                                        try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..curly_start]});
+                                        try writer.writeAll("${");
+                                        const curly_remain = QuickAndDirtyJavaScriptSyntaxHighlighter{
+                                            .text = remain[curly_start + 2 .. i],
+                                            .enable_colors = this.enable_colors,
+                                            .limited = false,
+                                        };
+
+                                        if (curly_remain.text.len > 0) {
+                                            try curly_remain.format("", .{}, writer);
+                                        }
+
+                                        if (i < remain.len and remain[i] == '}') {
+                                            i += 1;
+                                        }
+                                        try writer.writeAll("}");
+                                        remain = remain[i..];
+                                        i = 0;
+                                        if (remain.len > 0 and remain[0] == char) {
+                                            try writer.writeAll(Output.prettyFmt("<r><green>`<r>", true));
+                                            remain = remain[1..];
+                                            continue :outer;
+                                        }
+                                        continue;
+                                    }
+                                }
+
+                                if (i + 1 < remain.len and remain[i] == '\\') {
+                                    i += 1;
+                                }
+
+                                i += 1;
+                            }
+
+                            // Include the trailing quote, if any
+                            i += @as(usize, @intFromBool(i > 1 and i < remain.len and remain[i] == char));
+
+                            try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..i]});
+                            remain = remain[i..];
+                        },
+                        '/' => {
+                            prev_keyword = null;
+                            var i: usize = 1;
+
+                            // the start of a line comment
+                            if (i < remain.len and remain[i] == '/') {
+                                while (i < remain.len and remain[i] != '\n') {
+                                    i += 1;
+                                }
+
+                                const remain_to_print = remain[0..i];
+                                if (i < remain.len and remain[i] == '\n') {
+                                    i += 1;
+                                }
+
+                                if (i < remain.len and remain[i] == '\r') {
+                                    i += 1;
+                                }
+
+                                try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
+                                remain = remain[i..];
+                                continue;
+                            }
+
+                            as_multiline_comment: {
+                                if (i < remain.len and remain[i] == '*') {
+                                    i += 1;
+
+                                    while (i + 2 < remain.len and !strings.eqlComptime(remain[i..][0..2], "*/")) {
+                                        i += 1;
+                                    }
+
+                                    if (i + 2 < remain.len and strings.eqlComptime(remain[i..][0..2], "*/")) {
+                                        i += 2;
+                                    } else {
+                                        i = 1;
+                                        break :as_multiline_comment;
+                                    }
+
+                                    try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain[0..i]});
+                                    remain = remain[i..];
+                                    continue;
+                                }
+                            }
+
+                            try writer.writeAll(remain[0..i]);
+                            remain = remain[i..];
+                        },
+                        '}', '[', ']', '{' => {
+                            prev_keyword = null;
+                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..1]});
+                            remain = remain[1..];
+                        },
+                        ';' => {
+                            prev_keyword = null;
+                            try writer.print(Output.prettyFmt("<r><d>;<r>", true), .{});
+                            remain = remain[1..];
+                        },
+                        '.' => {
+                            prev_keyword = null;
+                            var i: usize = 1;
+                            if (remain.len > 1 and (js_lexer.isIdentifierStart(remain[1]) or remain[1] == '#')) {
+                                i = 2;
+
+                                while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                                    i += 1;
+                                }
+
+                                if (i < remain.len and (remain[i] == '(')) {
+                                    try writer.print(Output.prettyFmt("<r><i><b>{s}<r>", true), .{remain[0..i]});
+                                    remain = remain[i..];
+                                    continue;
+                                }
+                                i = 1;
+                            }
+
+                            try writer.writeAll(remain[0..1]);
+                            remain = remain[1..];
+                        },
+
+                        '<' => {
+                            var i: usize = 1;
+
+                            // JSX
+                            jsx: {
+                                if (remain.len > 1 and remain[0] == '/') {
+                                    i = 2;
+                                }
+                                prev_keyword = null;
+
+                                while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                                    i += 1;
+                                } else {
+                                    i = 1;
+                                    break :jsx;
+                                }
+
+                                while (i < remain.len and remain[i] != '>') {
+                                    i += 1;
+
+                                    if (i < remain.len and remain[i] == '<') {
+                                        i = 1;
+                                        break :jsx;
+                                    }
+                                }
+
+                                if (i < remain.len and remain[i] == '>') {
+                                    i += 1;
+                                    try writer.print(Output.prettyFmt("<r><cyan>{s}<r>", true), .{remain[0..i]});
+                                    remain = remain[i..];
+                                    continue;
+                                }
+
+                                i = 1;
+                            }
+
+                            try writer.print(Output.prettyFmt("<r>{s}<r>", true), .{remain[0..i]});
+                            remain = remain[i..];
+                        },
+
+                        else => {
+                            try writer.writeAll(remain[0..1]);
+                            remain = remain[1..];
+                        },
+                    }
+                }
+            }
+        }
+    };
 
     pub fn quote(self: string) strings.QuotedFormatter {
         return strings.QuotedFormatter{
@@ -374,7 +874,7 @@ fn Span(comptime T: type) type {
             new_ptr_info.size = .Slice;
             return @Type(.{ .Pointer = new_ptr_info });
         },
-        else => @compileError("invalid type given to std.mem.Span"),
+        else => @compileError("invalid type given to std.mem.Span: " ++ @typeName(T)),
     }
 }
 // fn Span(comptime T: type) type {
@@ -448,15 +948,15 @@ pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.allow_assert) {
         return Type;
     }
 
     return void;
 }
 
-pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
-    if (comptime Environment.isDebug) {
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @TypeOf(val) else void {
+    if (comptime Environment.allow_assert) {
         return val;
     }
 
@@ -653,8 +1153,13 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     }
 }
 
+/// Do not use this function, call std.debug.panic directly.
+///
+/// This function used to panic in debug, and be `unreachable` in release
+/// however, if something is possibly reachable, it should not be marked unreachable.
+/// It now panics in all release modes.
 pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
-    if (comptime !Environment.allow_assert) unreachable;
+    // if (comptime !Environment.allow_assert) unreachable;
     std.debug.panic(fmts, args);
 }
 
@@ -664,7 +1169,8 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const HTTPThread = @import("./http_client_async.zig").HTTPThread;
+pub const HTTPThread = @import("./http.zig").HTTPThread;
+pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -716,7 +1222,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 
 pub const invalid_fd = if (Environment.isWindows)
     // on windows, max usize is the process handle, a very valid fd
-    std.math.maxInt(i32) + 1
+    std.math.maxInt(usize)
 else
     std.math.maxInt(FileDescriptor);
 
@@ -728,8 +1234,8 @@ pub const JSC = @import("root").JavaScriptCore;
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
-pub const HTTP = @import("./http_client_async.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
+pub const default_thread_stack_size = ThreadPool.default_thread_stack_size;
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
@@ -740,9 +1246,61 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 
+pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
+    var flags: Mode = 0;
+    switch (open_flags.mode) {
+        .read_only => flags |= std.os.O.RDONLY,
+        .write_only => flags |= std.os.O.WRONLY,
+        .read_write => flags |= std.os.O.RDWR,
+    }
+
+    const res = try sys.open(pathZ, flags, 0).unwrap();
+    return std.fs.File{ .handle = fdcast(res) };
+}
+
+pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
+    if (comptime Environment.isWindows) {
+        var flags: Mode = 0;
+        switch (open_flags.mode) {
+            .read_only => flags |= std.os.O.RDONLY,
+            .write_only => flags |= std.os.O.WRONLY,
+            .read_write => flags |= std.os.O.RDWR,
+        }
+
+        return std.fs.File{ .handle = fdcast(try sys.openA(path_, flags, 0).unwrap()) };
+    }
+
+    return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
+}
+
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
-    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
-    return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
+    } else {
+        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    }
+}
+
+pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.IterableDir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
+    } else {
+        const fd = try sys.openatA(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    }
+}
+
+pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
+        return std.fs.Dir{ .fd = fdcast(res) };
+    } else {
+        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return std.fs.Dir{ .fd = fd };
+    }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
@@ -750,6 +1308,20 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
     if (comptime !Environment.isNative) {
+        return null;
+    }
+
+    if (comptime Environment.isWindows) {
+        // Windows UCRT will fill this in for us
+        for (std.os.environ) |lineZ| {
+            const line = sliceTo(lineZ, 0);
+            const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
+            const key = line[0..key_end];
+            if (strings.eqlLong(key, path_, true)) {
+                return line[@min(key_end + 1, line.len)..];
+            }
+        }
+
         return null;
     }
 
@@ -781,6 +1353,34 @@ pub const FDHashMapContext = struct {
         }
 
         pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
+            return a == b;
+        }
+    };
+};
+
+pub const U32HashMapContext = struct {
+    pub fn hash(_: @This(), value: u32) u64 {
+        return @intCast(value);
+    }
+    pub fn eql(_: @This(), a: u32, b: u32) bool {
+        return a == b;
+    }
+    pub fn pre(input: u32) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u64,
+        input: u32,
+        pub fn hash(this: @This(), value: u32) u64 {
+            if (value == this.input) return this.value;
+            return @intCast(value);
+        }
+
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
             return a == b;
         }
     };
@@ -891,9 +1491,16 @@ pub fn FDHashMap(comptime Type: type) type {
     return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
 }
 
+pub fn U32HashMap(comptime Type: type) type {
+    return std.HashMap(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
+}
+
 const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
+pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
+pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
+pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
 
 pub fn parseDouble(input: []const u8) !f64 {
@@ -980,13 +1587,14 @@ pub fn isMissingIOUring() bool {
 
 pub const CLI = @import("./cli.zig");
 
-pub const PackageManager = @import("./install/install.zig").PackageManager;
+pub const install = @import("./install/install.zig");
+pub const PackageManager = install.PackageManager;
+pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
-pub const is_executable_fileZ = @import("./which.zig").is_executable_file;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
@@ -1054,12 +1662,35 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
+pub fn getcwd(buf_: []u8) ![]u8 {
+    if (comptime !Environment.isWindows) {
+        return std.os.getcwd(buf_);
+    }
+
+    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp_slice = try std.os.getcwd(&temp);
+    return path.normalizeBuf(temp_slice, buf_, .loose);
+}
+
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp_slice = try getcwd(&temp);
+    return allocator.dupe(u8, temp_slice);
+}
+
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
+
+    if (comptime Environment.isWindows) {
+        var temp: [MAX_PATH_BYTES]u8 = undefined;
+        var temp_slice = try std.os.getFdPath(fd, &temp);
+        return path.normalizeBuf(temp_slice, buf, .loose);
+    }
+
     if (comptime !Environment.isLinux) {
-        return std.os.getFdPath(fd, buf);
+        return try std.os.getFdPath(fd, buf);
     }
 
     if (needs_proc_self_workaround) {
@@ -1315,7 +1946,7 @@ pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
 ) void {
-    const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+    const PosixSpawn = posix.spawn;
     const bun = @This();
     var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
@@ -1678,6 +2309,10 @@ const WindowsStat = extern struct {
     mtim: std.c.timespec,
     ctim: std.c.timespec,
 
+    pub fn birthtime(_: *const WindowsStat) std.c.timespec {
+        return std.c.timespec{ .tv_nsec = 0, .tv_sec = 0 };
+    }
+
     pub fn mtime(this: *const WindowsStat) std.c.timespec {
         return this.mtim;
     }
@@ -1712,21 +2347,21 @@ pub const posix = struct {
             else => @panic("Invalid stdio fd"),
         };
     }
+
+    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 };
 
 pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
-    var argv_: [][*:0]u8 = undefined;
-    var args_buf: [255][*:0]u8 = undefined;
 
     pub inline fn argv() [][*:0]u8 {
-        return argv_;
+        return std.os.argv;
     }
 
     pub inline fn setArgv(new_ptr: [][*:0]u8) void {
-        argv_ = new_ptr;
+        std.os.argv = new_ptr;
     }
 
     pub fn stdio(i: anytype) FileDescriptor {
@@ -1736,47 +2371,6 @@ pub const win32 = struct {
             2 => STDERR_FD,
             else => @panic("Invalid stdio fd"),
         };
-    }
-
-    pub fn populateArgv() void {
-        const kernel32 = windows;
-
-        var wargv_all = kernel32.GetCommandLineW();
-        var num_args: c_int = 0;
-        var start = kernel32.CommandLineToArgvW(wargv_all, &num_args);
-        defer _ = kernel32.LocalFree(@ptrCast(start));
-        var wargv = start[0..@as(usize, @intCast(num_args))];
-        var argv_list = std.ArrayList([*:0]u8).init(default_allocator);
-        argv_list.items = &args_buf;
-        argv_list.capacity = args_buf.len;
-
-        if (wargv.len > args_buf.len) {
-            var ptrs = default_allocator.alloc(?[*]u8, wargv.len + 1) catch unreachable;
-            ptrs[ptrs.len - 1] = null;
-            argv_list.items = @ptrCast(ptrs[0 .. ptrs.len - 1]);
-            argv_list.capacity = argv_list.items.len + 1;
-        }
-
-        const probably_overestimated_length = strings.elementLengthUTF16IntoUTF8([]const u16, sliceTo(wargv_all, 0)) + argv_list.items.len;
-        var buf = default_allocator.alloc(u8, probably_overestimated_length) catch unreachable;
-        var builder = StringBuilder{
-            .cap = probably_overestimated_length,
-            .ptr = buf.ptr,
-            .len = 0,
-        };
-
-        for (wargv) |warg_| {
-            var warg = sliceTo(warg_, 0);
-            argv_list.appendAssumeCapacity(
-                (builder.append16(warg) orelse brk: {
-                    var list = strings.convertUTF16ToUTF8(std.ArrayList(u8).init(default_allocator), []const u16, warg) catch unreachable;
-                    list.append(0) catch unreachable;
-                    break :brk list.items.ptr[0..list.items.len :0];
-                }).ptr,
-            );
-        }
-
-        argv_ = argv_list.items.ptr[0..argv_list.items.len];
     }
 };
 
@@ -1910,6 +2504,9 @@ pub inline fn serializableInto(comptime T: type, init: anytype) T {
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
 /// symlink, it deletes the symlink and tries again.
 pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
+    if (comptime Environment.isWindows) {
+        @panic("TODO: Windows makePath");
+    }
     var it = try std.fs.path.componentIterator(sub_path);
     var component = it.last() orelse return;
     while (true) {
@@ -1920,9 +2517,8 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
 
                 path_buf2[component.path.len] = 0;
                 var path_to_use = path_buf2[0..component.path.len :0];
-                const result = sys.lstat(path_to_use);
-                try result.throw();
-                const is_dir = std.os.S.ISDIR(result.result.mode);
+                const result = try sys.lstat(path_to_use).unwrap();
+                const is_dir = std.os.S.ISDIR(result.mode);
                 // dangling symlink
                 if (!is_dir) {
                     dir.deleteTree(component.path) catch {};
@@ -1938,3 +2534,41 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
         component = it.next() orelse return;
     }
 }
+
+pub const Async = @import("async");
+
+/// This is a helper for writing path string literals that are compatible with Windows.
+/// Returns the string as-is on linux, on windows replace `/` with `\`
+pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
+    if (!Environment.isWindows) return literal;
+    return comptime {
+        var buf: [literal.len:0]u8 = undefined;
+        for (literal, 0..) |c, i| {
+            buf[i] = if (c == '/') '\\' else c;
+        }
+        buf[buf.len] = 0;
+        return &buf;
+    };
+}
+
+pub fn exitThread() noreturn {
+    const exiter = struct {
+        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
+    };
+
+    if (comptime Environment.isWindows) {
+        exiter.ExitThread(0);
+    } else if (comptime Environment.isPosix) {
+        exiter.pthread_exit(null);
+    } else {
+        @panic("Unsupported platform");
+    }
+}
+
+pub fn outOfMemory() noreturn {
+    @panic("Out of memory");
+}
+
+pub const Tmpfile = @import("./tmp.zig").Tmpfile;
+pub const io = @import("./io/io.zig");

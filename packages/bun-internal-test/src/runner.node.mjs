@@ -33,9 +33,10 @@ function isTest(path) {
   if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
     return false;
   }
-  if (testList) {
+  if (testList.length > 0) {
     return testList.some(testPattern => name.includes(testPattern));
   }
+  return true;
 }
 
 function* findTests(dir, query) {
@@ -67,7 +68,7 @@ async function runTest(path) {
       stderr,
       status: exitCode,
       error: timedOut,
-    } = spawnSync(bunExe, ["test", path.replaceAll("/", "\\")], {
+    } = spawnSync(bunExe, ["test", resolve(path)], {
       stdio: "inherit",
       timeout: 1000 * 60 * 3,
       env: {

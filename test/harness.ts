@@ -122,26 +122,6 @@ export function bunRun(file: string, env?: Record<string, string>) {
   };
 }
 
-export async function bunRunAssertNoHang(file: string, env?: Record<string, string>) {
-  var path = require("path");
-
-  const result = Bun.spawn([bunExe(), file], {
-    cwd: path.dirname(file),
-    env: {
-      ...bunEnv,
-      NODE_ENV: undefined,
-      ...env,
-    },
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-
-  await result.exited;
-  if (!result.exitCode) throw new Error(`Exited with ${result.exitCode}`);
-  return {
-    stdout: Bun.readableStreamToText(result.stdout),
-  };
-}
-
 export function bunTest(file: string, env?: Record<string, string>) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), "test", path.basename(file)], {

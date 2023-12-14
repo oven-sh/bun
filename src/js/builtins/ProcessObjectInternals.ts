@@ -67,7 +67,10 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
+  // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
+  // but we need to extend TTY/FS ReadStream
+
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   var readerRef;
 

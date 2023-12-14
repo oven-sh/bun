@@ -4673,8 +4673,8 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     entries.append(.{
-                        .name = bun.String.create(std.fs.path.basename(name_to_copy)),
-                        .path = bun.String.create(std.fs.path.dirname(name_to_copy) orelse name_to_copy),
+                        .name = bun.String.create(utf8_name),
+                        .path = bun.String.create(name_to_copy),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4693,6 +4693,7 @@ pub const NodeFS = struct {
 
     fn readdirWithEntriesRecursiveSync(
         buf: *[bun.MAX_PATH_BYTES]u8,
+        path_buf: *[bun.MAX_PATH_BYTES]u8,
         args: Arguments.Readdir,
         root_basename: [:0]const u8,
         comptime ExpectedType: type,
@@ -4784,6 +4785,15 @@ pub const NodeFS = struct {
                     break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
                 };
 
+                const dirent_path_to_copy = brk: {
+                    if (root_basename.ptr == basename.ptr) {
+                        break :brk args.path.slice();
+                    }
+
+                    const path_parts = [_]string{ args.path.slice(), name_to_copy };
+                    break :brk std.fs.path.dirname(bun.path.joinZBuf(path_buf, &path_parts, .auto)) orelse args.path.slice();
+                };
+
                 enqueue: {
                     switch (current.kind) {
                         // a symlink might be a directory or might not be
@@ -4803,8 +4813,8 @@ pub const NodeFS = struct {
                 switch (comptime ExpectedType) {
                     Dirent => {
                         entries.append(.{
-                            .name = bun.String.create(std.fs.path.basename(name_to_copy)),
-                            .path = bun.String.create(std.fs.path.dirname(name_to_copy) orelse name_to_copy),
+                            .name = bun.String.create(utf8_name),
+                            .path = bun.String.create(dirent_path_to_copy),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -4839,9 +4849,10 @@ pub const NodeFS = struct {
         var path = args.path.sliceZ(buf);
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-            return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
+            return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, &path_buf_to_pass, args, path, ExpectedType, &entries)) {
                 .err => |err| {
                     for (entries.items) |*result| {
                         switch (comptime ExpectedType) {

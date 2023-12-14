@@ -17,9 +17,10 @@ const target = process.argv[2];
 // path is always identical to the argument except for recursive entries
 // For recursed entries, a leading `./` is not included
 
-fs.mkdirSync(target + '/subfolder/childfolder', { recursive: true });
+fs.mkdirSync(target + '/subfolder/childfolder/grandchildfolder', { recursive: true });
 fs.writeFileSync(target + '/file.txt', 'test');
 fs.writeFileSync(target + '/subfolder/childfile.txt', 'test');
+fs.writeFileSync(target + '/subfolder/childfolder/grandchildfile.txt', 'test');
 
 let results = {};
 function mapFiles(files) {

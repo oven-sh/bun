@@ -1702,14 +1702,18 @@ pub const Expect = struct {
 
         const value: JSValue = this.getValue(globalObject, thisValue, "toThrow", "<green>expected<r>") orelse return .zero;
 
-        if (!value.jsType().isFunction()) {
-            globalObject.throw("Expected value must be a function", .{});
-            return .zero;
-        }
-
         const not = this.flags.not;
 
         const result_: ?JSValue = brk: {
+            if (!value.jsType().isFunction()) {
+                if (this.flags.promise != .none) {
+                    break :brk value;
+                }
+
+                globalObject.throw("Expected value must be a function", .{});
+                return .zero;
+            }
+
             var vm = globalObject.bunVM();
             var return_value: JSValue = .zero;
 

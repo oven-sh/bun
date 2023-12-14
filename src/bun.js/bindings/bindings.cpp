@@ -4658,10 +4658,8 @@ restart:
 
             bool isPrivate = prop->isSymbol() && Identifier::fromUid(vm, prop).isPrivateName();
 
-#if !BUN_DEBUG
-            if (isPrivate)
+            if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
                 return true;
-#endif
 
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             return true;
@@ -4754,10 +4752,8 @@ restart:
 
                 bool isPrivate = property.isPrivateName();
 
-#if !BUN_DEBUG
-                if (isPrivate)
+                if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
                     continue;
-#endif
 
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
             }

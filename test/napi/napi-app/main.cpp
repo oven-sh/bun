@@ -1,7 +1,7 @@
-/* cppsrc/main.cpp */
+#include "node.h"
+
 #include <napi.h>
 #include <iostream>
-
 
 
 napi_value fail(napi_env env, const char *msg)
@@ -59,6 +59,13 @@ napi_value test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo 
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports)
 {
+    // check that these symbols are defined
+    auto *isolate = v8::Isolate::GetCurrent();
+    node::AddEnvironmentCleanupHook(
+        isolate, [](void *) { }, isolate);
+    node::RemoveEnvironmentCleanupHook(
+        isolate, [](void *) { }, isolate);
+
     exports.Set(
         "test_napi_get_value_string_utf8_with_buffer", Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));
     return exports;

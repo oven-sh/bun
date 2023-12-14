@@ -2487,6 +2487,8 @@ pub const PackageManager = struct {
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
+        try PATH.appendSlice(this.temp_dir_name);
+        try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
     }
@@ -9376,22 +9378,20 @@ pub const PackageManager = struct {
 
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
         var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch null;
-        var last_dir_with_node_modules: ?*DirInfo = null;
+        std.debug.assert(current_dir != null);
         while (current_dir) |dir| {
-            if (dir.hasNodeModules()) {
-                last_dir_with_node_modules = dir;
-                if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
-                    try PATH.appendSlice(":");
-                }
-                try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
-                try PATH.appendSlice(this.options.bin_path);
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
             }
+            try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
+            try PATH.append(std.fs.path.sep);
+            try PATH.appendSlice(this.options.bin_path);
             current_dir = dir.getParent();
         }
 
         if (original_path.len > 0) {
-            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != ':') {
-                try PATH.append(':');
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
             }
 
             try PATH.appendSlice(original_path);

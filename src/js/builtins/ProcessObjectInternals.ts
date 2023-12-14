@@ -70,6 +70,7 @@ export function getStdinStream(fd) {
   // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
   // but we need to extend TTY/FS ReadStream
+  const native = Bun.stdin.stream();
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   var readerRef;
@@ -78,7 +79,7 @@ export function getStdinStream(fd) {
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
-    reader ??= Bun.stdin.stream().getReader();
+    reader ??= native.getReader();
     // TODO: remove this. likely we are dereferencing the stream
     // when there is still more data to be read.
     readerRef ??= setInterval(() => {}, 1 << 30);
@@ -104,6 +105,21 @@ export function getStdinStream(fd) {
         // Releasing the lock is not possible as there are active reads
         // we will instead pretend we are unref'd, and release the lock once the reads are finished.
         shouldUnref = true;
+
+        // unref the native part of the stream
+        try {
+          $getByIdDirectPrivate(
+            $getByIdDirectPrivate(native, "readableStreamController"),
+            "underlyingByteSource",
+          ).$resume(false);
+        } catch (e) {
+          if (IS_BUN_DEVELOPMENT) {
+            // we assume this isn't possible, but because we aren't sure
+            // we will ignore if error during release, but make a big deal in debug
+            console.error(e);
+            $assert(!"reachable");
+          }
+        }
       }
     }
   }

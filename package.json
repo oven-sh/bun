@@ -26,7 +26,6 @@
     "lint:fix": "eslint './**/*.d.ts' --cache --fix"
   },
   "devDependencies": {
-    "@types/node": "^20.10.4",
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0"

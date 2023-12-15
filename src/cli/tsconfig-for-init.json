@@ -14,6 +14,9 @@
     "jsx": "react-jsx",
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "allowJs": true
+    "allowJs": true,
+    "types": [
+      "bun-types" // add Bun global
+    ]
   }
 }

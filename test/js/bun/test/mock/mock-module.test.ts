@@ -43,6 +43,24 @@ test("mocking a module that points to a file which does not resolve successfully
   expect(bar).toBe(42);
 });
 
+test("mocking a non-existant relative file", async () => {
+  // @ts-expect-error
+  expect(() => require.resolve("./hey-hey-you-you.ts")).toThrow();
+  mock.module("./hey-hey-you-you.ts", () => {
+    return {
+      bar: 42,
+    };
+  });
+
+  // @ts-expect-error
+  const { bar } = await import("./hey-hey-you-you.ts");
+  expect(bar).toBe(42);
+
+  expect(require("./hey-hey-you-you.ts").bar).toBe(42);
+  expect(require.resolve("./hey-hey-you-you.ts")).toBe(import.meta.resolveSync("./hey-hey-you-you.ts"));
+  expect(require.resolve("./hey-hey-you-you.ts")).toBe(await import.meta.resolve("./hey-hey-you-you.ts"));
+});
+
 test("mocking a local file", async () => {
   expect(fn()).toEqual(42);
   expect(variable).toEqual(7);

@@ -542,13 +542,23 @@ extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGloba
         return {};
     }
 
-    if (specifier.startsWith("file:"_s)) {
-        URL url = URL(URL(), specifier);
-        specifier = url.fileSystemPath();
-        specifierString = jsString(vm, specifier);
-    } else {
+    auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         const URL& url = sourceOrigin.url();
+
+        if (specifier.startsWith("file:"_s)) {
+            URL fileURL = URL(url, specifier);
+            if (fileURL.isValid()) {
+                specifier = fileURL.fileSystemPath();
+                specifierString = jsString(vm, specifier);
+                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+                return;
+            } else {
+                scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
+                return;
+            }
+        }
+
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
@@ -564,7 +574,7 @@ extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGloba
                     specifierString = specifierStr;
                     specifier = specifierString->value(globalObject);
                 }
-            } else if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("."_s)) {
+            } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
                 // If module resolution fails, we try to resolve it relative to the current file
                 auto relativeURL = URL(url, specifier);
 
@@ -579,10 +589,11 @@ extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGloba
                     specifierString = jsString(vm, specifier);
                 }
             }
-
-            RETURN_IF_EXCEPTION(scope, {});
         }
-    }
+    };
+
+    resolveSpecifier();
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue callbackValue = callframe->argument(1);
     if (!callbackValue.isCell() || !callbackValue.isCallable()) {
@@ -775,11 +786,10 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     if (this->mustDoExpensiveRelativeLookup) {
         String joinedPath = path;
 
-        if (path.startsWith("./"_s) || path.startsWith("../"_s) || path.startsWith("."_s)) {
+        if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
-            if (url.isValid()) {
-                joinedPath = URL(url, path).fileSystemPath();
-            }
+            ASSERT(url.isValid());
+            joinedPath = URL(url, path).fileSystemPath();
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

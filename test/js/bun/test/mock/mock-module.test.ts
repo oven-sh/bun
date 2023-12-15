@@ -43,8 +43,24 @@ test("mocking a module that points to a file which does not resolve successfully
   expect(bar).toBe(42);
 });
 
-test("mocking a non-existant relative file", async () => {
+test("mocking a non-existant relative file with a file URL", async () => {
+  expect(() => require.resolve("./hey-hey-you-you2.ts")).toThrow();
+  mock.module("file:./hey-hey-you-you2.ts", () => {
+    return {
+      bar: 42,
+    };
+  });
+
   // @ts-expect-error
+  const { bar } = await import("./hey-hey-you-you2.ts");
+  expect(bar).toBe(42);
+
+  expect(require("./hey-hey-you-you2.ts").bar).toBe(42);
+  expect(require.resolve("./hey-hey-you-you2.ts")).toBe(import.meta.resolveSync("./hey-hey-you-you2.ts"));
+  expect(require.resolve("./hey-hey-you-you2.ts")).toBe(await import.meta.resolve("./hey-hey-you-you2.ts"));
+});
+
+test("mocking a non-existant relative file", async () => {
   expect(() => require.resolve("./hey-hey-you-you.ts")).toThrow();
   mock.module("./hey-hey-you-you.ts", () => {
     return {
@@ -77,7 +93,6 @@ test("mocking a local file", async () => {
   });
   expect(fn()).toEqual(1);
   expect(variable).toEqual(8);
-  // @ts-expect-error
   // expect(defaultValue).toEqual(42);
   expect(rexported).toEqual(43);
   expect(rexportedAs).toEqual(43);

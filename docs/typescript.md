@@ -1,24 +1,29 @@
-To install the TypeScript definitions for Bun's built-in APIs, install `bun-types`.
+To install the TypeScript definitions for Bun's built-in APIs, install `@types/bun`.
 
 ```sh
-$ bun add -d bun-types # dev dependency
+$ bun add -D @types/bun # dev dependency
 ```
 
-Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json`:
-
-```json-diff
-  {
-    "compilerOptions": {
-+     "types": ["bun-types"]
-    }
-  }
-```
-
-At this point, you should be able to reference the `Bun` global in your TypeScript files without seeing errors in your editor.
+That's it—you should be able to reference the `Bun` global in your TypeScript files without seeing errors in your editor.
 
 ```ts
 console.log(Bun.version);
 ```
+
+{% callout %}
+If you're still getting a `Cannot find name 'Bun'` error, try restarting the TypeScript server in your editor: Command Palette > TypeScript: Restart TS server.
+
+If you have the `"types"` array defined in your `tsconfig.json` compiler options, you will need to add `"bun"` to the array.
+
+```json#tsconfig.json
+{
+  "compilerOptions": {
+    "types": ["bun"]
+  }
+}
+```
+
+{% endcallout %}
 
 ## Suggested `compilerOptions`
 
@@ -27,9 +32,6 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 ```jsonc
 {
   "compilerOptions": {
-    // add Bun type definitions
-    "types": ["bun-types"],
-
     // enable latest features
     "lib": ["ESNext"],
     "module": "esnext",

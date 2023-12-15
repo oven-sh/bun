@@ -45,22 +45,13 @@ console.log(`Listening on http://localhost:${server.port} ...`);
 {% details summary="Seeing TypeScript errors on `Bun`?" %}
 If you used `bun init`, Bun will have automatically installed Bun's TypeScript declarations and configured your `tsconfig.json`. If you're trying out Bun in an existing project, you may see a type error on the `Bun` global.
 
-To fix this, first install `bun-types` as a dev dependency.
+To fix this, install `@types/bun` as a dev dependency.
 
 ```sh
-$ bun add -d bun-types
+$ bun add -D @types/bun
 ```
 
-Then add the following line to your `compilerOptions` in `tsconfig.json`.
-
-```json-diff#tsconfig.json
-{
-  "compilerOptions": {
-+   "types": ["bun-types"]
-  }
-}
-```
-
+If you're still seeing `Cannot find name 'Bun'`, refer to the [TypeScript page](/docs/typescript) for troubleshooting steps.
 {% /details %}
 
 Run the file from your shell.
@@ -85,7 +76,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 +     "start": "bun run index.ts"
 +   },
     "devDependencies": {
-      "bun-types": "^0.7.0"
+      "@types/bun": "^1.0.0"
     }
   }
 ```

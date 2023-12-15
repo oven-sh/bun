@@ -2,31 +2,26 @@
 name: Install TypeScript declarations for Bun
 ---
 
-To install TypeScript definitions for Bun's built-in APIs in your project, install `bun-types`.
+To install TypeScript definitions for Bun's built-in APIs in your project, install `@types/bun`.
 
 ```sh
-$ bun add -d bun-types # dev dependency
+$ bun add -D @types/bun # dev dependency
 ```
 
 ---
 
-Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json`:
+If you're still getting a `Cannot find name 'Bun'` error, try restarting the TypeScript server in your editor: Command Palette > TypeScript: Restart TS server.
 
-```json-diff
-  {
-    "compilerOptions": {
-+     "types": ["bun-types"]
-    }
+---
+
+If you have the `"types"` array defined in your `tsconfig.json` compiler options, you will need to add `"bun"` to the array.
+
+```json#tsconfig.json
+{
+  "compilerOptions": {
+    "types": ["bun"]
   }
-```
-
----
-
-Unfortunately, setting a value for `"types"` means that TypeScript will ignore other global type definitions, including `lib: ["dom"]`. If you need to add DOM types into your project, add the following [triple-slash directives](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) at the top of any TypeScript file in your project.
-
-```ts
-/// <reference lib="dom" />
-/// <reference lib="dom.iterable" />
+}
 ```
 
 ---
@@ -36,9 +31,6 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 ```jsonc
 {
   "compilerOptions": {
-    // add Bun type definitions
-    "types": ["bun-types"],
-
     // enable latest features
     "lib": ["esnext"],
     "module": "esnext",

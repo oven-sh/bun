@@ -1,12 +1,11 @@
 import { expectType } from "./utilities.test";
 
-// doesn't work anymore
-// declare module "bun" {
-//   interface Env {
-//     FOO: "FOO";
-//   }
-// }
-// expectType<"FOO">(process.env.FOO);
+declare module "bun" {
+  interface Env {
+    FOO: "FOO";
+  }
+}
+expectType<"FOO">(process.env.FOO);
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace

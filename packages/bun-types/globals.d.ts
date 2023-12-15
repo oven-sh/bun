@@ -309,6 +309,14 @@ interface ImportMeta {
    */
   readonly file: string;
   /**
+   * The environment variables of the process
+   *
+   * ```ts
+   * import.meta.env === process.env
+   * ```
+   */
+  readonly env: NodeJS.ProcessEnv;
+  /**
    * Resolve a module ID the same as if you imported it
    *
    * On failure, throws a `ResolveMessage`
@@ -1622,7 +1630,7 @@ interface ReadableStreamDefaultReader<R = any>
   read(): Promise<BunJS.ReadableStreamDefaultReadResult<R>>;
   /**
    * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
-   * Will only return a promise if the data is not immediatly available.
+   * Will only return a promise if the data is not immediately available.
    */
   readMany():
     | Promise<BunJS.ReadableStreamDefaultReadManyResult<R>>

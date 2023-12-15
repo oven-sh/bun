@@ -312,7 +312,3 @@ clearInterval(1);
 clearTimeout(1);
 setImmediate(() => {});
 clearImmediate(1);
-
-{
-  declare var a: Socket;
-}

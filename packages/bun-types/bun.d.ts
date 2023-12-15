@@ -2,13 +2,6 @@ interface VoidFunction {
   (): void;
 }
 
-declare namespace NodeJS {
-  interface Env {
-    NODE_ENV?: string;
-    TZ?: string;
-  }
-}
-
 /**
  * Bun.js runtime APIs
  *
@@ -36,6 +29,10 @@ declare module "bun" {
   type StringOrBuffer = BunJS.StringOrBuffer;
   type PathLike = BunJS.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
+  interface Env {
+    NODE_ENV?: string;
+    TZ?: string;
+  }
 
   /**
    * The environment variables of the process
@@ -145,7 +142,7 @@ declare module "bun" {
   /**
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
-   * If `destination` exists, it must be a regular file or symlink to a file.
+   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
    *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
@@ -163,6 +160,14 @@ declare module "bun" {
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
       mode?: number;
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
     },
   ): Promise<number>;
 
@@ -176,7 +181,20 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  function write(destination: BunFile, input: Response): Promise<number>;
+  export function write(
+    destination: BunFile,
+    input: Response,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    * Persist a {@link Response} body to disk.
@@ -189,7 +207,20 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  function write(destinationPath: PathLike, input: Response): Promise<number>;
+  function write(
+    destinationPath: PathLike,
+    input: Response,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    * Use the fastest syscalls available to copy from `input` into `destination`.
@@ -210,7 +241,20 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  function write(destination: BunFile, input: BunFile): Promise<number>;
+  function write(
+    destination: BunFile,
+    input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   /**
    * Use the fastest syscalls available to copy from `input` into `destination`.
@@ -231,7 +275,20 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  function write(destinationPath: PathLike, input: BunFile): Promise<number>;
+  function write(
+    destinationPath: PathLike,
+    input: BunFile,
+    options?: {
+      /**
+       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       *
+       * If `false`, this will throw an error if the directory doesn't exist.
+       *
+       * @default true
+       */
+      createPath?: boolean;
+    },
+  ): Promise<number>;
 
   interface SystemError extends Error {
     errno?: number | undefined;
@@ -935,6 +992,11 @@ declare module "bun" {
      * it in some cases. Do your own benchmarks!
      */
     inline?: boolean;
+
+    /**
+     * @default "warn"
+     */
+    logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
   }
 
   /**
@@ -2005,7 +2067,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2562,7 +2624,7 @@ declare module "bun" {
 
   type StringLike = string | { toString(): string };
 
-  interface semver {
+  interface Semver {
     /**
      * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
      */
@@ -2574,9 +2636,9 @@ declare module "bun" {
      */
     order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
   }
-  const semver: semver;
+  var semver: Semver;
 
-  interface unsafe {
+  interface Unsafe {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
      *
@@ -2616,7 +2678,7 @@ declare module "bun" {
      */
     gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
   }
-  const unsafe: unsafe;
+  const unsafe: Unsafe;
 
   type DigestEncoding = "hex" | "base64";
 
@@ -4282,6 +4344,165 @@ declare module "bun" {
     buffer: ArrayBufferView | ArrayBufferLike,
     offset?: number,
   ): number;
+
+  /**
+   * Provides a higher level API for command-line argument parsing than interacting
+   * with `process.argv` directly. Takes a specification for the expected arguments
+   * and returns a structured object with the parsed options and positionals.
+   *
+   * ```js
+   * const args = ['-f', '--bar', 'b'];
+   * const options = {
+   *   foo: {
+   *     type: 'boolean',
+   *     short: 'f',
+   *   },
+   *   bar: {
+   *     type: 'string',
+   *   },
+   * };
+   * const {
+   *   values,
+   *   positionals,
+   * } = Bun.parseArgs({ args, options });
+   * console.log(values, positionals);
+   * // Prints: { foo: true, bar: 'b' } []
+   * ```
+   * @param config Used to provide arguments for parsing and to configure the parser.
+   * @return The parsed command line arguments
+   */
+  export const parseArgs: typeof import("util").parseArgs;
+
+  export interface GlobScanOptions {
+    /**
+     * The root directory to start matching from. Defaults to `process.cwd()`
+     */
+    cwd?: string;
+
+    /**
+     * Allow patterns to match entries that begin with a period (`.`).
+     *
+     * @default false
+     */
+    dot?: boolean;
+
+    /**
+     * Return the absolute path for entries.
+     *
+     * @default false
+     */
+    absolute?: boolean;
+
+    /**
+     * Indicates whether to traverse descendants of symbolic link directories.
+     *
+     * @default false
+     */
+    followSymlinks?: boolean;
+
+    /**
+     * Throw an error when symbolic link is broken
+     *
+     * @default false
+     */
+    throwErrorOnBrokenSymlink?: boolean;
+
+    /**
+     * Return only files.
+     *
+     * @default true
+     */
+    onlyFiles?: boolean;
+  }
+
+  /**
+   * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
+   *
+   * The supported pattern syntax for is:
+   *
+   * - `?`
+   *     Matches any single character.
+   * - `*`
+   *     Matches zero or more characters, except for path separators ('/' or '\').
+   * - `**`
+   *     Matches zero or more characters, including path separators.
+   *     Must match a complete path segment, i.e. followed by a path separator or
+   *     at the end of the pattern.
+   * - `[ab]`
+   *     Matches one of the characters contained in the brackets.
+   *     Character ranges (e.g. "[a-z]") are also supported.
+   *     Use "[!ab]" or "[^ab]" to match any character *except* those contained
+   *     in the brackets.
+   * - `{a,b}`
+   *     Match one of the patterns contained in the braces.
+   *     Any of the wildcards listed above can be used in the sub patterns.
+   *     Braces may be nested up to 10 levels deep.
+   * - `!`
+   *     Negates the result when at the start of the pattern.
+   *     Multiple "!" characters negate the pattern multiple times.
+   * - `\`
+   *     Used to escape any of the special characters above.
+   *
+   * @example
+   * ```js
+   * const glob = new Glob("*.{ts,tsx}");
+   * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+   * ```
+   */
+  export class Glob {
+    constructor(pattern: string);
+
+    /**
+     * Scan for files that match this glob pattern. Returns an async iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for await (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scan(
+      optionsOrCwd?: string | GlobScanOptions,
+    ): AsyncIterableIterator<string>;
+
+    /**
+     * Scan for files that match this glob pattern. Returns an iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = Array.from(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scanSync(optionsOrCwd?: string | GlobScanOptions): IterableIterator<string>;
+
+    /**
+     * Match the glob against a string
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * expect(glob.match('foo.ts')).toBeTrue();
+     * ```
+     */
+    match(str: string): boolean;
+  }
 }
 
 type TypedArray = NodeJS.TypedArray;

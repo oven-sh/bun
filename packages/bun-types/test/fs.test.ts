@@ -1,4 +1,4 @@
-import { constants, watch } from "node:fs";
+import { constants, watch, readdir } from "node:fs";
 
 constants.O_APPEND;
 
@@ -18,3 +18,5 @@ watch(".", (eventType, filename) => {
 });
 
 await Bun.file("sdf").exists();
+
+readdir(".", { recursive: true }, (err, files) => {});

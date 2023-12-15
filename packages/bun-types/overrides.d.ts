@@ -1,14 +1,16 @@
 declare namespace NodeJS {
+  type _BunEnv = import("bun").Env;
   interface ProcessVersions extends Dict<string> {
     bun: string;
   }
-  interface ProcessEnv extends Dict<string> {
+  interface ProcessEnv extends Dict<string>, _BunEnv {
     /**
      * Can be used to change the default timezone at runtime
      */
     NODE_ENV?: string;
   }
 }
+
 declare module "fs/promises" {
   import { PathLike } from "bun";
   function exists(path: PathLike): Promise<boolean>;

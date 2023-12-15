@@ -140,6 +140,22 @@ Bun.serve({
   tls: {},
 });
 
+Bun.serve({
+  fetch(req, server) {
+    server.upgrade(req);
+  },
+  websocket: {
+    open(ws) {
+      console.log("WebSocket opened");
+      ws.subscribe("test-channel");
+    },
+
+    message(ws, message) {
+      ws.publish("test-channel", `${message.toString()}`);
+    },
+    perMessageDeflate: true,
+  },
+});
 // Bun.serve({
 //   unix: "/tmp/bun.sock",
 //   // @ts-expect-error

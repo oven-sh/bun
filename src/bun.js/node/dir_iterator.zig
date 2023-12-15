@@ -128,7 +128,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             pub fn next(self: *Self) Result {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
-                        const rc = linux.getdents64(self.fd, &self.buf, self.buf.len);
+                        const rc = linux.getdents64(self.dir.fd, &self.buf, self.buf.len);
                         if (Result.errnoSys(rc, .getdents64)) |err| return err;
                         if (rc == 0) return .{ .result = null };
                         self.index = 0;

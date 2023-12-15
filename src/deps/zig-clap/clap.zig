@@ -468,7 +468,7 @@ pub fn simpleHelp(
     const max_spacing = blk: {
         var res: usize = 2;
         for (params) |param| {
-            var flags_len = if (param.names.long) |l| l.len else 0;
+            const flags_len = if (param.names.long) |l| l.len else 0;
             if (res < flags_len)
                 res = flags_len;
         }
@@ -508,7 +508,7 @@ pub fn simpleHelpBunTopLevel(
     const computed_max_spacing = comptime blk: {
         var res: usize = 2;
         for (params) |param| {
-            var flags_len = if (param.names.long) |l| l.len else 0;
+            const flags_len = if (param.names.long) |l| l.len else 0;
             if (res < flags_len)
                 res = flags_len;
         }

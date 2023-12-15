@@ -303,9 +303,9 @@ pub const JSBundler = struct {
 
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
-            //     this.dir.appendSliceExact(slice.slice()) catch unreachable;
+            //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
-            //     this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
@@ -638,7 +638,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
                 completion.deref();
                 this.deinit();
                 return;
@@ -794,7 +794,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
                 completion.deref();
                 this.deinit();
                 return;
@@ -827,7 +827,7 @@ pub const JSBundler = struct {
                     return;
                 }
             } else {
-                var buffer_or_string: JSC.Node.SliceOrBuffer = JSC.Node.SliceOrBuffer.fromJS(completion.globalThis, bun.default_allocator, source_code_value) orelse
+                const buffer_or_string: JSC.Node.SliceOrBuffer = JSC.Node.SliceOrBuffer.fromJS(completion.globalThis, bun.default_allocator, source_code_value) orelse
                     @panic("expected buffer or string");
 
                 const source_code = switch (buffer_or_string) {
@@ -855,7 +855,7 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());
-            var plugin = JSBundlerPlugin__create(globalObject, target);
+            const plugin = JSBundlerPlugin__create(globalObject, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
         }

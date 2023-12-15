@@ -1,4 +1,4 @@
-// This is copied from std.fs.IterableDir.Iterator
+// This is copied from std.fs.Dir.Iterator
 // The differences are:
 // - it returns errors in the expected format
 // - doesn't mark BADF as unreachable
@@ -128,7 +128,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             pub fn next(self: *Self) Result {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
-                        const rc = linux.getdents64(self.dir.fd, &self.buf, self.buf.len);
+                        const rc = linux.getdents64(self.fd, &self.buf, self.buf.len);
                         if (Result.errnoSys(rc, .getdents64)) |err| return err;
                         if (rc == 0) return .{ .result = null };
                         self.index = 0;
@@ -187,7 +187,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         var io: w.IO_STATUS_BLOCK = undefined;
 
                         const rc = w.ntdll.NtQueryDirectoryFile(
-                            self.dir.fd,
+                            self.fd,
                             null,
                             null,
                             null,
@@ -297,7 +297,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
                         var bufused: usize = undefined;
-                        switch (w.fd_readdir(self.dir.fd, &self.buf, self.buf.len, self.cookie, &bufused)) {
+                        switch (w.fd_readdir(self.fd, &self.buf, self.buf.len, self.cookie, &bufused)) {
                             .SUCCESS => {},
                             .BADF => unreachable, // Dir is invalid or was opened without iteration ability
                             .FAULT => unreachable,

@@ -104,7 +104,7 @@ test "leapyear" {
 
 // Number of days before Jan 1st of year
 pub fn daysBeforeYear(year: u32) u32 {
-    var y: u32 = year - 1;
+    const y: u32 = year - 1;
     return y * 365 + @divFloor(y, 4) - @divFloor(y, 100) + @divFloor(y, 400);
 }
 
@@ -279,7 +279,7 @@ pub const Date = struct {
 
         // Now the year is correct, and n is the offset from January 1.  We find
         // the month via an estimate that's either exact or one too large.
-        var leapyear = (n1 == 3) and (n4 != 24 or n100 == 3);
+        const leapyear = (n1 == 3) and (n4 != 24 or n100 == 3);
         assert(leapyear == isLeapYear(year));
         var month = (n + 50) >> 5;
         if (month == 0) month = 12; // Loop around
@@ -352,7 +352,7 @@ pub const Date = struct {
         }
         const days_between = today - first_monday;
         var week = @divFloor(days_between, 7);
-        var day = @mod(days_between, 7);
+        const day = @mod(days_between, 7);
         if (week >= 52 and today >= daysBeforeFirstMonday(y + 1)) {
             y += 1;
             week = 0;
@@ -437,7 +437,7 @@ pub const Date = struct {
 
     // Return day of year starting with 1
     pub fn dayOfYear(self: Date) u16 {
-        var d = self.toOrdinal() - daysBeforeYear(self.year);
+        const d = self.toOrdinal() - daysBeforeYear(self.year);
         assert(d >= 1 and d <= 366);
         return @as(u16, @intCast(d));
     }
@@ -541,7 +541,7 @@ test "date-now" {
 
 test "date-compare" {
     var d1 = try Date.create(2019, 7, 3);
-    var d2 = try Date.create(2019, 7, 3);
+    const d2 = try Date.create(2019, 7, 3);
     var d3 = try Date.create(2019, 6, 3);
     var d4 = try Date.create(2020, 7, 3);
     try testing.expect(d1.eql(d2));
@@ -683,7 +683,7 @@ test "date-create" {
 
 test "date-copy" {
     var d1 = try Date.create(2020, 1, 1);
-    var d2 = try d1.copy();
+    const d2 = try d1.copy();
     try testing.expect(d1.eql(d2));
 }
 
@@ -696,7 +696,7 @@ test "date-parse-iso" {
 }
 
 test "date-format-iso" {
-    var date_strs = [_][]const u8{
+    const date_strs = [_][]const u8{
         "0959-02-05",
         "2018-12-15",
     };
@@ -710,7 +710,7 @@ test "date-format-iso" {
 }
 
 test "date-format-iso-buf" {
-    var date_strs = [_][]const u8{
+    const date_strs = [_][]const u8{
         "0959-02-05",
         "2018-12-15",
     };
@@ -723,7 +723,7 @@ test "date-format-iso-buf" {
 }
 
 test "date-write-iso" {
-    var date_strs = [_][]const u8{
+    const date_strs = [_][]const u8{
         "0959-02-05",
         "2018-12-15",
     };
@@ -1015,7 +1015,7 @@ test "time-from-seconds" {
 
 test "time-copy" {
     var t1 = try Time.create(8, 30, 0, 0);
-    var t2 = try t1.copy();
+    const t2 = try t1.copy();
     try testing.expect(t1.eql(t2));
 }
 
@@ -1023,7 +1023,7 @@ test "time-compare" {
     var t1 = try Time.create(8, 30, 0, 0);
     var t2 = try Time.create(9, 30, 0, 0);
     var t3 = try Time.create(8, 0, 0, 0);
-    var t4 = try Time.create(9, 30, 17, 0);
+    const t4 = try Time.create(9, 30, 17, 0);
 
     try testing.expect(t1.lt(t2));
     try testing.expect(t1.gt(t3));
@@ -1517,7 +1517,7 @@ test "datetime-compare" {
     var dt3 = Datetime.now();
     try testing.expect(dt3.gt(dt2));
 
-    var dt4 = try dt3.copy();
+    const dt4 = try dt3.copy();
     try testing.expect(dt3.eql(dt4));
 
     var dt5 = dt1.shiftTimezone(&timezones.America.Louisville);
@@ -1548,9 +1548,9 @@ test "datetime-parse-modified-since" {
 
 test "file-modified-date" {
     var f = try std.fs.cwd().openFile("README.md", .{});
-    var stat = try f.stat();
+    const stat = try f.stat();
     var buf: [32]u8 = undefined;
-    var str = try Datetime.formatHttpFromModifiedDate(&buf, stat.mtime);
+    const str = try Datetime.formatHttpFromModifiedDate(&buf, stat.mtime);
     std.log.warn("Modtime: {s}\n", .{str});
 }
 

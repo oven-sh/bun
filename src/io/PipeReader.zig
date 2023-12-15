@@ -24,7 +24,7 @@ pub fn PipeReader(
         };
 
         pub fn read(this: *This) void {
-            var buffer = @call(.always_inline, vtable.getBuffer, .{this});
+            const buffer = @call(.always_inline, vtable.getBuffer, .{this});
             const fd = @call(.always_inline, vtable.getFd, .{this});
             switch (bun.isReadable(fd)) {
                 .ready, .hup => {
@@ -39,7 +39,7 @@ pub fn PipeReader(
         }
 
         pub fn onPoll(parent: *This, size_hint: isize) void {
-            var resizable_buffer = vtable.getBuffer(parent);
+            const resizable_buffer = vtable.getBuffer(parent);
             const fd = @call(.always_inline, vtable.getFd, .{parent});
 
             readFromBlockingPipeWithoutBlocking(parent, resizable_buffer, fd, size_hint);

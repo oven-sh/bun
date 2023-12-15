@@ -369,7 +369,7 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exit(1);
+                Global.raiseIgnoringPanicHandler(signal);
             },
             .Stopped => |signal| {
                 if (!silent) {
@@ -377,7 +377,7 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exit(1);
+                Global.raiseIgnoringPanicHandler(signal);
             },
 
             else => {},

@@ -9401,7 +9401,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
     }
 };
 

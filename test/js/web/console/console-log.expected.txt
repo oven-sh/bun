@@ -255,3 +255,7 @@ NaN
 1
 1
 0
+undefined
+NaN
+NaN
+NaN

@@ -200,3 +200,8 @@ console.log("%i", 1);
 console.log("%i", new Number(1));
 console.log("%i", "1");
 console.log("%i", 0.5);
+
+console.log("%s", undefined);
+console.log("%f", undefined);
+console.log("%d", undefined);
+console.log("%i", undefined);

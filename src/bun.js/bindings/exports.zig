@@ -2130,7 +2130,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Integer => {
-                    if (value.isSymbol()) {
+                    if (value.isSymbol() or value.isUndefined()) {
                         this.addForNewLine("NaN".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
                         return;
@@ -2160,7 +2160,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    if (value.isSymbol()) {
+                    if (value.isSymbol() or value.isUndefined()) {
                         this.addForNewLine("NaN".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
                         return;

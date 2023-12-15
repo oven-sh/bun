@@ -169,7 +169,7 @@ declare module "bun:sqlite" {
       sqlQuery: string,
       ...bindings: ParamsType[]
     ): void;
-    /** 
+    /**
         This is an alias of {@link Database.prototype.run}
      */
     exec<ParamsType extends SQLQueryBindings[]>(
@@ -200,14 +200,11 @@ declare module "bun:sqlite" {
      * @returns `Statment` instance
      *
      * Under the hood, this calls `sqlite3_prepare_v3`.
-     *
      */
     query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
       sqlQuery: string,
-    ): Statement<
-      ReturnType,
-      ParamsType extends Array<any> ? ParamsType : [ParamsType]
-    >;
+    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
@@ -228,7 +225,6 @@ declare module "bun:sqlite" {
      * @returns `Statment` instance
      *
      * Under the hood, this calls `sqlite3_prepare_v3`.
-     *
      */
     prepare<
       ReturnType,
@@ -236,10 +232,8 @@ declare module "bun:sqlite" {
     >(
       sqlQuery: string,
       params?: ParamsType,
-    ): Statement<
-      ReturnType,
-      ParamsType extends Array<any> ? ParamsType : [ParamsType]
-    >;
+    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Is the database in a transaction?
@@ -316,7 +310,6 @@ declare module "bun:sqlite" {
      * the SQLite library into the process.
      *
      * @param path The path to the SQLite library
-     *
      */
     static setCustomSQLite(path: string): boolean;
 
@@ -366,7 +359,6 @@ declare module "bun:sqlite" {
     };
 
     /**
-     *
      * Save the database to an in-memory {@link Buffer} object.
      *
      * Internally, this calls `sqlite3_serialize`.
@@ -377,7 +369,6 @@ declare module "bun:sqlite" {
     serialize(name?: string): Buffer;
 
     /**
-     *
      * Load a serialized SQLite3 database
      *
      * Internally, this calls `sqlite3_deserialize`.
@@ -540,7 +531,6 @@ declare module "bun:sqlite" {
      * | `Buffer` | `BLOB` |
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
-     *
      */
     get(...params: ParamsType): ReturnType | null;
 
@@ -573,7 +563,6 @@ declare module "bun:sqlite" {
      * | `Buffer` | `BLOB` |
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
-     *
      */
     run(...params: ParamsType): void;
 
@@ -614,7 +603,6 @@ declare module "bun:sqlite" {
      * | `Buffer` | `BLOB` |
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
-     *
      */
     values(
       ...params: ParamsType
@@ -646,7 +634,6 @@ declare module "bun:sqlite" {
      * console.log(stmt.paramsCount);
      * // => 2
      * ```
-     *
      */
     readonly paramsCount: number;
 
@@ -695,127 +682,105 @@ declare module "bun:sqlite" {
   export const constants: {
     /**
      * Open the database as read-only (no write operations, no create).
-     * @value 0x00000001
+     * @constant 0x00000001
      */
     SQLITE_OPEN_READONLY: number;
     /**
      * Open the database for reading and writing
-     * @value 0x00000002
+     * @constant 0x00000002
      */
     SQLITE_OPEN_READWRITE: number;
     /**
      * Allow creating a new database
-     * @value 0x00000004
+     * @constant 0x00000004
      */
     SQLITE_OPEN_CREATE: number;
     /**
-     *
-     * @value 0x00000008
+     * @constant 0x00000008
      */
     SQLITE_OPEN_DELETEONCLOSE: number;
     /**
-     *
-     * @value 0x00000010
+     * @constant 0x00000010
      */
     SQLITE_OPEN_EXCLUSIVE: number;
     /**
-     *
-     * @value 0x00000020
+     * @constant 0x00000020
      */
     SQLITE_OPEN_AUTOPROXY: number;
     /**
-     *
-     * @value 0x00000040
+     * @constant 0x00000040
      */
     SQLITE_OPEN_URI: number;
     /**
-     *
-     * @value 0x00000080
+     * @constant 0x00000080
      */
     SQLITE_OPEN_MEMORY: number;
     /**
-     *
-     * @value 0x00000100
+     * @constant 0x00000100
      */
     SQLITE_OPEN_MAIN_DB: number;
     /**
-     *
-     * @value 0x00000200
+     * @constant 0x00000200
      */
     SQLITE_OPEN_TEMP_DB: number;
     /**
-     *
-     * @value 0x00000400
+     * @constant 0x00000400
      */
     SQLITE_OPEN_TRANSIENT_DB: number;
     /**
-     *
-     * @value 0x00000800
+     * @constant 0x00000800
      */
     SQLITE_OPEN_MAIN_JOURNAL: number;
     /**
-     *
-     * @value 0x00001000
+     * @constant 0x00001000
      */
     SQLITE_OPEN_TEMP_JOURNAL: number;
     /**
-     *
-     * @value 0x00002000
+     * @constant 0x00002000
      */
     SQLITE_OPEN_SUBJOURNAL: number;
     /**
-     *
-     * @value 0x00004000
+     * @constant 0x00004000
      */
     SQLITE_OPEN_SUPER_JOURNAL: number;
     /**
-     *
-     * @value 0x00008000
+     * @constant 0x00008000
      */
     SQLITE_OPEN_NOMUTEX: number;
     /**
-     *
-     * @value 0x00010000
+     * @constant 0x00010000
      */
     SQLITE_OPEN_FULLMUTEX: number;
     /**
-     *
-     * @value 0x00020000
+     * @constant 0x00020000
      */
     SQLITE_OPEN_SHAREDCACHE: number;
     /**
-     *
-     * @value 0x00040000
+     * @constant 0x00040000
      */
     SQLITE_OPEN_PRIVATECACHE: number;
     /**
-     *
-     * @value 0x00080000
+     * @constant 0x00080000
      */
     SQLITE_OPEN_WAL: number;
     /**
-     *
-     * @value 0x01000000
+     * @constant 0x01000000
      */
     SQLITE_OPEN_NOFOLLOW: number;
     /**
-     *
-     * @value 0x02000000
+     * @constant 0x02000000
      */
     SQLITE_OPEN_EXRESCODE: number;
     /**
-     *
-     * @value 0x01
+     * @constant 0x01
      */
     SQLITE_PREPARE_PERSISTENT: number;
     /**
-     *
-     * @value 0x02
+     * @constant 0x02
      */
     SQLITE_PREPARE_NORMALIZE: number;
     /**
-     *
-     * @value 0x04
+     * @constant 0x04
      */
     SQLITE_PREPARE_NO_VTAB: number;
   };
@@ -831,7 +796,6 @@ declare module "bun:sqlite" {
    *
    * If you need to use it directly for some reason, please let us know because
    * that probably points to a deficiency in this API.
-   *
    */
   export var native: any;
 

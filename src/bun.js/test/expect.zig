@@ -658,7 +658,13 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        if (value.isIterable(globalObject)) {
+        const ExpectedEntry = struct {
+            globalObject: *JSC.JSGlobalObject,
+            expected: JSValue,
+            pass: *bool,
+        };
+
+        if (value.jsTypeLoose().isArrayLike()) {
             var itr = value.arrayIterator(globalObject);
             while (itr.next()) |item| {
                 if (item.isSameValue(expected, globalObject)) {
@@ -674,6 +680,26 @@ pub const Expect = struct {
             } else if (value_string.len == 0 and expected_string.len == 0) { // edge case two empty strings are true
                 pass = true;
             }
+        } else if (value.isIterable(globalObject)) {
+            var expected_entry = ExpectedEntry{
+                .globalObject = globalObject,
+                .expected = expected,
+                .pass = &pass,
+            };
+            value.forEach(globalObject, &expected_entry, struct {
+                pub fn sameValueIterator(
+                    _: *JSC.VM,
+                    _: *JSGlobalObject,
+                    entry_: ?*anyopaque,
+                    item: JSValue,
+                ) callconv(.C) void {
+                    const entry = bun.cast(*ExpectedEntry, entry_.?);
+                    if (item.isSameValue(entry.expected, entry.globalObject)) {
+                        entry.pass.* = true;
+                        // TODO(perf): break out of the `forEach` when a match is found
+                    }
+                }
+            }.sameValueIterator);
         } else {
             globalObject.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
             return .zero;
@@ -703,6 +729,98 @@ pub const Expect = struct {
         }
 
         globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainEqual(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainEqual() takes 1 argument", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainEqual", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const ExpectedEntry = struct {
+            globalObject: *JSC.JSGlobalObject,
+            expected: JSValue,
+            pass: *bool,
+        };
+
+        if (value.jsTypeLoose().isArrayLike()) {
+            var itr = value.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                if (item.jestDeepEquals(expected, globalObject)) {
+                    pass = true;
+                    break;
+                }
+            }
+        } else if (value.isString() and expected.isString()) {
+            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+            if (strings.contains(value_string, expected_string)) {
+                pass = true;
+            } else if (value_string.len == 0 and expected_string.len == 0) { // edge case two empty strings are true
+                pass = true;
+            }
+        } else if (value.isIterable(globalObject)) {
+            var expected_entry = ExpectedEntry{
+                .globalObject = globalObject,
+                .expected = expected,
+                .pass = &pass,
+            };
+            value.forEach(globalObject, &expected_entry, struct {
+                pub fn deepEqualsIterator(
+                    _: *JSC.VM,
+                    _: *JSGlobalObject,
+                    entry_: ?*anyopaque,
+                    item: JSValue,
+                ) callconv(.C) void {
+                    const entry = bun.cast(*ExpectedEntry, entry_.?);
+                    if (item.jestDeepEquals(entry.expected, entry.globalObject)) {
+                        entry.pass.* = true;
+                        // TODO(perf): break out of the `forEach` when a match is found
+                    }
+                }
+            }.deepEqualsIterator);
+        } else {
+            globalObject.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
+            return .zero;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const expected_line = "Expected to not contain: <green>{any}<r>\n";
+            const fmt = comptime getSignature("toContainEqual", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{expected_fmt});
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toContainEqual", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -2875,6 +2993,34 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeValidDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeValidDate", "") orelse return .zero;
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = (value.isDate() and !std.math.isNan(value.getUnixTimestamp()));
+        if (not) pass = !pass;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeValidDate", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeValidDate", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
     pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalThis);
 
@@ -3725,7 +3871,6 @@ pub const Expect = struct {
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
-    pub const toContainEqual = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;

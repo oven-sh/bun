@@ -279,7 +279,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     // Now that we've extracted the archive, we rename.
-    switch (bun.sys.renameat(tmpdir.fd, bun.sliceTo(tmpname, 0), cache_dir.fd, folder_name)) {
+    switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
         .err => |err| {
             this.package_manager.log.addErrorFmt(
                 null,

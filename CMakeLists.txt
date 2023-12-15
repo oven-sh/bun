@@ -3,7 +3,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.18")
-set(WEBKIT_TAG 0aa1f6dfc9b48be1e89b8f709fd44e3c88feaf33)
+set(WEBKIT_TAG 26e91b104f19cad04baf873ff70ffc63b77ac376)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -33,6 +33,10 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(WIN32)
         # lld-link will strip it for you, so we can build directly to bun.exe
         set(bun "bun")
+
+        # TODO(@paperdave): Remove this
+        # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
+        set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
         set(bun "bun-profile")
     endif()
@@ -222,6 +226,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEFAULT_USE_DEBUG_JSC ON)
 endif()
 
+if(WIN32)
+    set(DEFAULT_USE_DEBUG_JSC OFF)
+endif()
+
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
 
@@ -320,7 +328,7 @@ function(validate_zig validator_result_var item)
     endif()
 endfunction()
 
-if (WIN32 OR ZIG_COMPILER)
+if (ZIG_COMPILER)
     if(ZIG_COMPILER STREQUAL "system")
         message(STATUS "Using system Zig compiler")
         unset(ZIG_COMPILER_)
@@ -333,10 +341,14 @@ elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
         COMMAND "${SHELL}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
     )
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+    set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+    if(WIN32)
+        set(ZIG_COMPILER "${ZIG_COMPILER}.exe")
+    endif()
+    if(NOT EXISTS "${ZIG_COMPILER}")
+        unset(ZIG_COMPILER)
         message(FATAL_ERROR "Auto-installation of Zig failed. Please pass -DZIG_COMPILER=system or a path to the Zig")
     endif()
-    set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
     message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 endif()
@@ -940,7 +952,7 @@ if(WIN32)
 
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
-    target_link_options(${bun} PUBLIC "/STACK:4194304,2097152")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
 else()
     target_compile_options(${bun} PUBLIC
         -fPIC
@@ -1273,6 +1285,10 @@ else()
         userenv
         dbghelp
     )
+endif()
+
+if(WIN32)
+# delayimp -delayload:shell32.dll -delayload:ole32.dll
 endif()
 
 if(BUN_LINK_ONLY)

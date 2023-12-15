@@ -109,7 +109,7 @@ const KQueueGenerationNumber = if (Environment.isMac and Environment.allow_asser
 pub const FilePoll = struct {
     var max_generation_number: KQueueGenerationNumber = 0;
 
-    fd: bun.UFileDescriptor = invalid_fd,
+    fd: bun.FileDescriptor = invalid_fd,
     flags: Flags.Set = Flags.Set{},
     owner: Owner = undefined,
 
@@ -513,7 +513,7 @@ pub const FilePoll = struct {
 
     pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
-        poll.fd = @intCast(fd);
+        poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         poll.next_to_free = null;
@@ -610,7 +610,7 @@ pub const FilePoll = struct {
     const linux = std.os.linux;
 
     pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
-        return registerWithFd(this, loop, flag, one_shot, this.fd);
+        return registerWithFd(this, loop, flag, one_shot, @intCast(this.fd));
     }
     pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
@@ -739,7 +739,7 @@ pub const FilePoll = struct {
                 };
             }
         } else {
-            bun.todo(@src(), {});
+            @compileError("unsupported platform");
         }
         this.activate(loop);
         this.flags.insert(switch (flag) {
@@ -764,7 +764,10 @@ pub const FilePoll = struct {
         return this.unregisterWithFd(loop, this.fd, force_unregister);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.UFileDescriptor, force_unregister: bool) JSC.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
+        if (Environment.allow_assert) {
+            std.debug.assert(fd >= 0 and fd != bun.invalid_fd);
+        }
         defer this.deactivate(loop);
 
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
@@ -885,7 +888,7 @@ pub const FilePoll = struct {
                 else => {},
             }
         } else {
-            bun.todo(@src(), {});
+            @compileError("unsupported platform");
         }
 
         this.flags.remove(.needs_rearm);

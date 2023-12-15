@@ -731,6 +731,12 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
+/// Print a yellow warning message, only in debug mode
+pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
+    if (Environment.isDebug)
+        prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
+}
+
 /// Print a red error message. The first argument takes an `error_name` value, which can be either
 /// be a Zig error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"

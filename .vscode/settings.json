@@ -3,7 +3,12 @@
   "search.quickOpen.includeSymbols": false,
   "search.seedWithNearestWord": true,
   "search.smartCase": true,
-  "search.exclude": {},
+  "search.exclude": {
+    "node_modules": true,
+    "src/bun.js/WebKit": true,
+    ".git": true,
+    "src/deps/*/**": true
+  },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
@@ -219,5 +224,6 @@
   },
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
-  "typescript.tsdk": "node_modules/typescript/lib"
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "cmake.configureOnOpen": false
 }

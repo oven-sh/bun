@@ -741,6 +741,9 @@ declare module "bun" {
          * On macOS, it shouldn't be necessary to use "`getaddrinfo`" because
          * `"system"` uses the same API underneath (except non-blocking).
          *
+         * On windows, libuv's non-blocking DNS resolver is used by default, and
+         * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
+         * backend isn't currently supported on windows.
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
@@ -4085,6 +4088,11 @@ declare module "bun" {
          */
         subprocess: Subprocess<In, Out, Err>,
       ): void;
+
+      /**
+       * If true, the subprocess will have a hidden window.
+       */
+      // windowsHide?: boolean;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =

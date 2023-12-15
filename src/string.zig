@@ -113,7 +113,7 @@ pub const WTFStringImplStruct = extern struct {
 
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
-            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch null) |utf8| {
+            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return ZigString.Slice.init(allocator, utf8.items);
             }
 
@@ -121,43 +121,40 @@ pub const WTFStringImplStruct = extern struct {
             return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
         }
 
-        if (bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch null) |utf8| {
-            return ZigString.Slice.init(allocator, utf8);
-        }
-
-        return .{};
+        return ZigString.Slice.init(
+            allocator,
+            bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
+        );
     }
 
     pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
-            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch null) |utf8| {
+            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return ZigString.Slice.init(allocator, utf8.items);
             }
 
             return ZigString.Slice.fromUTF8NeverFree(this.latin1Slice());
         }
 
-        if (bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch null) |utf8| {
-            return ZigString.Slice.init(allocator, utf8);
-        }
-
-        return .{};
+        return ZigString.Slice.init(
+            allocator,
+            bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
+        );
     }
 
     pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?ZigString.Slice {
         if (this.is8Bit()) {
-            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch null) |utf8| {
+            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
                 return ZigString.Slice.init(allocator, utf8.items);
             }
 
             return null;
         }
 
-        if (bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch null) |utf8| {
-            return ZigString.Slice.init(allocator, utf8);
-        }
-
-        return null;
+        return ZigString.Slice.init(
+            allocator,
+            bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
+        );
     }
 
     /// Avoid using this in code paths that are about to get the string as a UTF-8
@@ -227,8 +224,8 @@ pub const StringImplAllocator = struct {
         _: usize,
     ) void {
         var this = bun.cast(WTFStringImpl, ptr);
-        std.debug.assert(this.byteSlice().ptr == buf.ptr);
-        std.debug.assert(this.byteSlice().len == buf.len);
+        std.debug.assert(this.latin1Slice().ptr == buf.ptr);
+        std.debug.assert(this.latin1Slice().len == buf.len);
         this.deref();
     }
 
@@ -273,6 +270,7 @@ pub const String = extern struct {
 
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
+    extern fn BunString__fromUTF16(bytes: [*]const u16, len: usize) String;
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
@@ -332,6 +330,18 @@ pub const String = extern struct {
     pub fn create(bytes: []const u8) String {
         JSC.markBinding(@src());
         return BunString__fromBytes(bytes.ptr, bytes.len);
+    }
+
+    pub fn createUTF16(bytes: []const u16) String {
+        return BunString__fromUTF16(bytes.ptr, bytes.len);
+    }
+
+    pub fn createFromOSPath(os_path: bun.OSPathSliceWithoutSentinel) String {
+        return switch (@TypeOf(os_path)) {
+            []const u8 => create(os_path),
+            []const u16 => createUTF16(os_path),
+            else => comptime unreachable,
+        };
     }
 
     pub fn isEmpty(this: String) bool {

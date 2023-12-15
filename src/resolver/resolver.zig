@@ -2621,7 +2621,7 @@ pub const Resolver = struct {
                 else if (comptime Environment.isWindows) open_req: {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
                     if (dirfd_result.unwrap()) |result| {
-                        break :open_req std.fs.Dir{ .dir = .{ .fd = bun.fdcast(result) } };
+                        break :open_req std.fs.Dir{ .fd = bun.fdcast(result) };
                     } else |err| {
                         break :open_req err;
                     }

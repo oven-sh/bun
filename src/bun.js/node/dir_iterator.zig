@@ -187,7 +187,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         var io: w.IO_STATUS_BLOCK = undefined;
 
                         const rc = w.ntdll.NtQueryDirectoryFile(
-                            self.fd,
+                            self.dir.fd,
                             null,
                             null,
                             null,

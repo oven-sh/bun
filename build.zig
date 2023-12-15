@@ -209,7 +209,7 @@ pub fn build_(b: *Build) !void {
     var cpuArchName = triplet_buf[osname.len + 1 ..][0..@tagName(target.getCpuArch()).len];
     std.mem.replaceScalar(u8, cpuArchName, '_', '-');
     if (std.mem.eql(u8, cpuArchName, "x86-64")) {
-        @memcpy(cpuArchName, "x64");
+        @memcpy(cpuArchName.ptr, "x64");
         cpuArchName = cpuArchName[0..3];
     }
 

@@ -2753,4 +2753,10 @@ declare var AbortSignal: typeof globalThis extends {
       timeout(milliseconds: number): AbortSignal;
     };
 
+declare namespace Bun {
+  type ArrayBufferView = TypedArray | DataView;
+  type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
+  type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
+}
+
 declare var Bun: typeof import("bun");

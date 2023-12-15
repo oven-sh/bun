@@ -1,7 +1,3 @@
-interface VoidFunction {
-  (): void;
-}
-
 /**
  * Bun.js runtime APIs
  *
@@ -17,13 +13,6 @@ interface VoidFunction {
  *
  * This module aliases `globalThis.Bun`.
  */
-declare namespace Bun {
-  type ArrayBufferView = TypedArray | DataView;
-  type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
-}
-
-// eslint-disable-next-line @definitelytyped/no-declare-current-package
 declare module "bun" {
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
@@ -4502,7 +4491,7 @@ declare module "bun" {
 
 type TypedArray = NodeJS.TypedArray;
 
-// extend lib.dom.d.ts
+// extends lib.dom.d.ts
 interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }

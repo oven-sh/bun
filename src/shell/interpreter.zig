@@ -3498,6 +3498,10 @@ pub const Builtin = struct {
     };
 
     pub const Rm = struct {
+        const rm_impl = @import("./rm_impl.zig");
+        const RmDirImpl = rm_impl.RmdirShell(RmTask);
+        const Opts = rm_impl.Opts;
+
         bltn: *Builtin,
         opts: Opts,
         state: union(enum) {
@@ -3571,7 +3575,7 @@ pub const Builtin = struct {
                                 const arg_raw = parse_opts.args_slice[idx];
                                 const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                                switch (this.opts.parseFlag(this.bltn, arg)) {
+                                switch (parseFlag(&this.opts, this.bltn, arg)) {
                                     .continue_parsing => {
                                         parse_opts.idx += 1;
                                         continue;
@@ -3709,148 +3713,88 @@ pub const Builtin = struct {
             _ = this;
         }
 
-        pub const Opts = struct {
-            /// `--no-preserve-root` / `--preserve-root`
-            ///
-            /// If set to false, then allow the recursive removal of the root directory.
-            /// Safety feature to prevent accidental deletion of the root directory.
-            preserve_root: bool = true,
-
-            /// `-f`, `--force`
-            ///
-            /// Ignore nonexistent files and arguments, never prompt.
-            force: bool = false,
-
-            /// Configures how the user should be prompted on removal of files.
-            prompt_behaviour: PromptBehaviour = .never,
-
-            /// `-r`, `-R`, `--recursive`
-            ///
-            /// Remove directories and their contents recursively.
-            recursive: bool = false,
-
-            /// `-v`, `--verbose`
-            ///
-            /// Explain what is being done (prints which files/dirs are being deleted).
-            verbose: bool = false,
-
-            /// `-d`, `--dir`
-            ///
-            /// Remove empty directories. This option permits you to remove a directory
-            /// without specifying `-r`/`-R`/`--recursive`, provided that the directory is
-            /// empty.
-            remove_empty_dirs: bool = false,
-
-            const PromptBehaviour = union(enum) {
-                /// `--interactive=never`
-                ///
-                /// Default
-                never,
-
-                /// `-I`, `--interactive=once`
-                ///
-                /// Once before removing more than three files, or when removing recursively.
-                once: struct {
-                    removed_count: u32 = 0,
-                },
-
-                /// `-i`, `--interactive=always`
-                ///
-                /// Prompt before every removal.
-                always,
-            };
-
-            const ParseFlagsResult = enum {
-                continue_parsing,
-                done,
-                illegal_option,
-                illegal_option_with_flag,
-            };
-
-            fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) ParseFlagsResult {
-                _ = bltn;
-                if (flag.len == 0) return .done;
-                if (flag[0] != '-') return .done;
-                if (flag.len > 2 and flag[1] == '-') {
-                    if (bun.strings.eqlComptime(flag, "--preserve-root")) {
-                        this.preserve_root = true;
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--no-preserve-root")) {
-                        this.preserve_root = false;
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--recursive")) {
-                        this.recursive = true;
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--verbose")) {
-                        this.verbose = true;
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--dir")) {
-                        this.remove_empty_dirs = true;
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--interactive=never")) {
-                        this.prompt_behaviour = .never;
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--interactive=once")) {
-                        this.prompt_behaviour = .{ .once = .{} };
-                        return .continue_parsing;
-                    } else if (bun.strings.eqlComptime(flag, "--interactive=always")) {
-                        this.prompt_behaviour = .always;
-                        return .continue_parsing;
-                    }
-
-                    // try bltn.write_err(&bltn.stderr, .rm, "illegal option -- -\n", .{});
-                    return .illegal_option;
-                }
-
-                const small_flags = flag[1..];
-                for (small_flags) |char| {
-                    switch (char) {
-                        'f' => {
-                            this.force = true;
-                            this.prompt_behaviour = .never;
-                        },
-                        'r', 'R' => {
-                            this.recursive = true;
-                        },
-                        'v' => {
-                            this.verbose = true;
-                        },
-                        'd' => {
-                            this.remove_empty_dirs = true;
-                        },
-                        'i' => {
-                            this.prompt_behaviour = .{ .once = .{} };
-                        },
-                        'I' => {
-                            this.prompt_behaviour = .always;
-                        },
-                        else => {
-                            // try bltn.write_err(&bltn.stderr, .rm, "illegal option -- {s}\n", .{flag[1..]});
-                            return .illegal_option_with_flag;
-                        },
-                    }
-                }
-
-                return .continue_parsing;
-            }
+        const ParseFlagsResult = enum {
+            continue_parsing,
+            done,
+            illegal_option,
+            illegal_option_with_flag,
         };
+
+        fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) ParseFlagsResult {
+            _ = bltn;
+            if (flag.len == 0) return .done;
+            if (flag[0] != '-') return .done;
+            if (flag.len > 2 and flag[1] == '-') {
+                if (bun.strings.eqlComptime(flag, "--preserve-root")) {
+                    this.preserve_root = true;
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--no-preserve-root")) {
+                    this.preserve_root = false;
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--recursive")) {
+                    this.recursive = true;
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--verbose")) {
+                    this.verbose = true;
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--dir")) {
+                    this.remove_empty_dirs = true;
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--interactive=never")) {
+                    this.prompt_behaviour = .never;
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--interactive=once")) {
+                    this.prompt_behaviour = .{ .once = .{} };
+                    return .continue_parsing;
+                } else if (bun.strings.eqlComptime(flag, "--interactive=always")) {
+                    this.prompt_behaviour = .always;
+                    return .continue_parsing;
+                }
+
+                // try bltn.write_err(&bltn.stderr, .rm, "illegal option -- -\n", .{});
+                return .illegal_option;
+            }
+
+            const small_flags = flag[1..];
+            for (small_flags) |char| {
+                switch (char) {
+                    'f' => {
+                        this.force = true;
+                        this.prompt_behaviour = .never;
+                    },
+                    'r', 'R' => {
+                        this.recursive = true;
+                    },
+                    'v' => {
+                        this.verbose = true;
+                    },
+                    'd' => {
+                        this.remove_empty_dirs = true;
+                    },
+                    'i' => {
+                        this.prompt_behaviour = .{ .once = .{} };
+                    },
+                    'I' => {
+                        this.prompt_behaviour = .always;
+                    },
+                    else => {
+                        // try bltn.write_err(&bltn.stderr, .rm, "illegal option -- {s}\n", .{flag[1..]});
+                        return .illegal_option_with_flag;
+                    },
+                }
+            }
+
+            return .continue_parsing;
+        }
 
         pub const RmTask = struct {
             const print = bun.Output.scoped(.RmTask, false);
 
             rm: *Rm,
             cwd: bun.FileDescriptor,
-            absolute: bool = false,
             entries_to_delete: []const [*:0]const u8,
-            task: ShellTask(
-                RmTask,
-                runFromThreadPool,
-                runFromJs,
-                print,
-            ),
-            dir_path_buffer: ?*[bun.MAX_PATH_BYTES]u8 = null,
-            dir_path_len: usize = 0,
             err: ?Syscall.Error = null,
+            task: ShellTask(@This(), runFromThreadPool, runFromJs, print),
 
             // pub const RmWorkTask = @TypeOf(@field(RmTask, "rm"));
 
@@ -3874,632 +3818,34 @@ pub const Builtin = struct {
 
             const Dir = std.fs.Dir;
 
-            pub fn run(this: *RmTask) void {
-                var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd_path_no_sentinel = switch (bun.sys.getcwd(&pathbuf)) {
-                    .result => |p| p,
-                    .err => |e| {
-                        this.rm.state = .{ .err = e };
-                        return;
-                    },
-                };
-                pathbuf[cwd_path_no_sentinel.len] = 0;
-                const cwd_path = pathbuf[0..cwd_path_no_sentinel.len :0];
-                for (this.entries_to_delete) |entry_raw| {
-                    const entry = entry_raw[0..std.mem.len(entry_raw) :0];
-                    if (this.rm.opts.recursive) {
-                        switch (this.deleteTree(this.cwd, cwd_path, entry)) {
-                            .result => {},
-                            .err => |e| {
-
-                                // this.rm.state = .{ .err = e };
-                                this.err = e;
-                                // _ = this.rm.next();
-                                return;
-                            },
-                        }
-                    }
-                }
-            }
-
-            /// Modified version of `std.fs.deleteTree`:
-            /// - nonsense instances of `unreachable` removed
-            /// - uses Bun's syscall functions
-            /// - can pass a Context which allows you to inspect which files/directories have been deleted (needed for shell's implementation of rm with verbose flag)
-            /// - throws errors if ENOENT is encountered, unless rm -v option is used
-            ///
-            /// Whether `full_path` describes a symlink, file, or directory, this function
-            /// removes it. If it cannot be removed because it is a non-empty directory,
-            /// this function recursively removes its entries and then tries again.
-            /// This operation is not atomic on most file systems.
-            pub fn deleteTree(this: *RmTask, self: bun.FileDescriptor, self_path: [:0]const u8, sub_path: [:0]const u8) Maybe(void) {
-                const is_absolute = ResolvePath.Platform.auto.isAbsolute(sub_path);
-                this.absolute = is_absolute;
-                if (!is_absolute) {
-                    const slice = this.arena().alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
-                    this.dir_path_buffer = @ptrCast(slice.ptr);
+            pub fn writeToStdout(this: *RmTask, comptime fmt: []const u8, args: anytype) Maybe(void) {
+                const buf = this.rm.bltn.fmtErrorArena(null, fmt, args);
+                if (!this.rm.bltn.stdout.needsIO()) {
+                    return switch (this.rm.bltn.writeNoIO(.stdout, buf)) {
+                        .result => Maybe(void).success,
+                        .err => |e| Maybe(void).initErr(e),
+                    };
                 }
 
-                const resolved_sub_path = if (is_absolute)
-                    sub_path
-                else
-                    ResolvePath.joinZ(&[_][:0]const u8{ self_path, sub_path }, .auto);
-
-                // Avoiding processing root directort if preserve root option is set
-                // FIXME supoprt windows (std.fs.diskdesignator() something something)
-                if (this.rm.opts.preserve_root and std.mem.eql(u8, resolved_sub_path[0..resolved_sub_path.len], "/"))
-                    return Maybe(void).success;
-
-                var initial_iterable = switch (this.deleteTreeOpenInitialSubpath(self, sub_path, .file)) {
-                    .result => |r| r orelse return Maybe(void).success,
-                    .err => |e| return .{ .err = e },
-                };
-
-                const StackItem = struct {
-                    name: [:0]const u8,
-                    parent_dir: bun.FileDescriptor,
-                    dir_path_len: usize,
-                    iter: DirIterator.WrappedIterator,
-                };
-
-                // DirIterator.WrappedIterator is quite large so just two of these equals ~16.496 kB
-                var stack = std.BoundedArray(StackItem, 2){};
-                defer {
-                    for (stack.slice()) |*item| {
-                        item.iter.iter.dir.close();
-                    }
-                }
-
-                stack.appendAssumeCapacity(StackItem{
-                    .name = sub_path,
-                    .dir_path_len = 0,
-                    .parent_dir = self,
-                    .iter = initial_iterable,
-                });
-
-                process_stack: while (stack.len != 0) {
-                    var top: *StackItem = &(stack.slice()[stack.len - 1]);
-                    const parent_dir_path_len = top.dir_path_len;
-                    var dir_path_len: usize = 0;
-                    if (!this.absolute) {
-                        dir_path_len = top.dir_path_len + top.name.len;
-                        @memcpy(this.dir_path_buffer.?[top.dir_path_len..dir_path_len], top.name[0..top.name.len]);
-                    }
-                    defer {
-                        if (!this.absolute) {
-                            this.dir_path_buffer.?[parent_dir_path_len] = 0;
-                        }
-                    }
-
-                    var entry_ = top.iter.next();
-                    while (switch (entry_) {
-                        .err => @panic("FIXME TODO errors"),
-                        .result => |ent| ent,
-                        // gotta be careful not to pop otherwise this won't work
-                    }) |entry| : (entry_ = top.iter.next()) {
-                        var treat_as_dir = entry.kind == .directory;
-                        handle_entry: while (true) {
-                            if (treat_as_dir) {
-                                if (stack.ensureUnusedCapacity(1)) {
-                                    var iterable_dir = switch (this.openIterableDir(top.iter.iter.dir.fd, entry.name.sliceAssumeZ())) {
-                                        .result => |iter| iter,
-                                        .err => |e| {
-                                            const errno = errnocast(e.errno);
-                                            switch (errno) {
-                                                @as(u16, @intFromEnum(bun.C.E.NOTDIR)) => {
-                                                    treat_as_dir = false;
-                                                    continue :handle_entry;
-                                                },
-                                                @as(u16, @intFromEnum(bun.C.E.NOENT)) => {
-                                                    if (this.rm.opts.force) {
-                                                        switch (this.verboseDeleted(entry.name.sliceAssumeZ(), dir_path_len)) {
-                                                            .result => {},
-                                                            .err => |e2| return Maybe(void).initErr(e2),
-                                                        }
-                                                        break :handle_entry;
-                                                    }
-                                                    return .{ .err = e };
-                                                },
-                                                else => return .{ .err = e },
-                                            }
-                                        },
-                                    };
-
-                                    stack.appendAssumeCapacity(StackItem{
-                                        .name = entry.name.sliceAssumeZ(),
-                                        .parent_dir = top.iter.iter.dir.fd,
-                                        .iter = iterable_dir,
-                                    });
-
-                                    continue :process_stack;
-                                } else |_| {
-                                    switch (this.deleteTreeMinStackSizeWithKindHint(top.iter.iter.dir.fd, entry.name.sliceAssumeZ(), entry.kind)) {
-                                        .result => {},
-                                        .err => |e| return .{ .err = e },
-                                    }
-                                    // try top.iter.dir.deleteTreeMinStackSizeWithKindHint(entry.name, entry.kind);
-                                    break :handle_entry;
-                                }
-                            } else {
-                                switch (this.deleteFile(bun.toFD(top.iter.iter.dir.fd), entry.name.sliceAssumeZ(), dir_path_len)) {
-                                    .result => |try_as_dir| {
-                                        if (try_as_dir) {
-                                            treat_as_dir = true;
-                                            continue :handle_entry;
-                                        }
-                                        break :handle_entry;
-                                    },
-                                    .err => |e| {
-                                        switch (e.getErrno()) {
-                                            bun.C.E.NOENT => {
-                                                if (this.rm.opts.force) {
-                                                    switch (this.verboseDeleted(entry.name.sliceAssumeZ(), dir_path_len)) {
-                                                        .result => {},
-                                                        .err => |e2| return Maybe(void).initErr(e2),
-                                                    }
-                                                    break :handle_entry;
-                                                }
-                                                return .{ .err = e };
-                                            },
-                                            bun.C.E.ISDIR, bun.C.E.NOTEMPTY => {
-                                                treat_as_dir = true;
-                                                continue :handle_entry;
-                                            },
-                                            else => return .{ .err = e },
-                                        }
-                                    },
-                                }
-                            }
-                        }
-                    }
-
-                    // On Windows, we can't delete until the dir's handle has been closed, so
-                    // close it before we try to delete.
-                    _ = Syscall.close(top.iter.iter.dir.fd);
-                    // top.iter.dir.close();
-
-                    // In order to avoid double-closing the directory when cleaning up
-                    // the stack in the case of an error, we save the relevant portions and
-                    // pop the value from the stack.
-                    const parent_dir = top.parent_dir;
-                    const name = top.name;
-                    _ = stack.pop();
-
-                    var need_to_retry: bool = false;
-
-                    switch (this.deleteDir(parent_dir, name)) {
-                        .result => {},
-                        .err => |e| {
-                            switch (errnocast(e.errno)) {
-                                @intFromEnum(bun.C.E.NOTEMPTY) => need_to_retry = true,
-                                else => return .{ .err = e },
-                            }
-                        },
-                    }
-
-                    if (need_to_retry) {
-                        // Since we closed the handle that the previous iterator used, we
-                        // need to re-open the dir and re-create the iterator.
-                        var iterable_dir = iterable_dir: {
-                            var treat_as_dir = true;
-                            handle_entry: while (true) {
-                                if (treat_as_dir) {
-                                    break :iterable_dir switch (this.openIterableDir(parent_dir, name)) {
-                                        .result => |iter| iter,
-                                        .err => |e| {
-                                            switch (errnocast(e.errno)) {
-                                                @intFromEnum(bun.C.E.NOTDIR) => {
-                                                    treat_as_dir = false;
-                                                    continue :handle_entry;
-                                                },
-                                                @intFromEnum(bun.C.E.NOENT) => {
-                                                    if (this.rm.opts.force) {
-                                                        switch (this.verboseDeleted(name, parent_dir_path_len)) {
-                                                            .err => |e2| return .{ .err = e2 },
-                                                            else => {},
-                                                        }
-                                                        continue :process_stack;
-                                                    }
-
-                                                    return .{ .err = e };
-                                                },
-                                                else => return .{ .err = e },
-                                            }
-                                        },
-                                    };
-                                } else {
-                                    switch (this.deleteFile(bun.toFD(top.iter.iter.dir.fd), name, parent_dir_path_len)) {
-                                        .result => |try_as_dir| {
-                                            if (try_as_dir) {
-                                                treat_as_dir = true;
-                                                continue :handle_entry;
-                                            }
-                                            continue :process_stack;
-                                        },
-                                        .err => |e| {
-                                            const errno = errnocast(e.errno);
-
-                                            switch (errno) {
-                                                @intFromEnum(bun.C.E.NOENT) => {
-                                                    if (this.rm.opts.force) {
-                                                        switch (this.verboseDeleted(name, parent_dir_path_len)) {
-                                                            .result => {},
-                                                            .err => |e2| return Maybe(void).initErr(e2),
-                                                        }
-                                                        continue :process_stack;
-                                                    }
-                                                    return .{ .err = e };
-                                                },
-                                                @intFromEnum(bun.C.E.ISDIR) => {
-                                                    treat_as_dir = true;
-                                                    continue :handle_entry;
-                                                },
-                                                else => return .{ .err = e },
-                                            }
-                                        },
-                                    }
-                                }
-                            }
-                        };
-
-                        // We know there is room on the stack since we are just re-adding
-                        // the StackItem that we previously popped.
-                        stack.appendAssumeCapacity(StackItem{
-                            .name = name,
-                            .parent_dir = parent_dir,
-                            .iter = iterable_dir,
-                        });
-
-                        continue :process_stack;
-                    }
-                }
+                var written: usize = 0;
+                while (written < buf.len) : (written += switch (Syscall.write(this.rm.bltn.stdout.fd, buf)) {
+                    .err => |e| return Maybe(void).initErr(e),
+                    .result => |n| n,
+                }) {}
 
                 return Maybe(void).success;
             }
 
-            /// Like `deleteTree`, but only keeps one `Iterator` active at a time to minimize the function's stack size.
-            /// This is slower than `deleteTree` but uses less stack space.
-            fn deleteTreeMinStackSizeWithKindHint(
-                this: *RmTask,
-                self: bun.FileDescriptor,
-                sub_path: [:0]const u8,
-                kind_hint: std.fs.File.Kind,
-                parent_dir_path_len: usize,
-            ) Maybe(void) {
-                _ = parent_dir_path_len;
-                start_over: while (true) {
-                    var iterable_dir = switch (this.deleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) {
-                        .result => |r| r orelse return Maybe(void).success,
-                        .err => |e| return .{ .err = e },
-                    };
-
-                    var cleanup_dir_parent: ?DirIterator.WrappedIterator = null;
-                    defer {
-                        if (cleanup_dir_parent) |*d| {
-                            _ = Syscall.close(d.iter.dir.fd);
-                        }
-                    }
-
-                    var cleanup_dir = true;
-                    defer {
-                        if (cleanup_dir) {
-                            _ = Syscall.close(iterable_dir.iter.dir.fd);
-                        }
-                    }
-
-                    // Valid use of MAX_PATH_BYTES because dir_name_buf will only
-                    // ever store a single path component that was returned from the
-                    // filesystem.
-                    var dir_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var dir_name: [:0]const u8 = sub_path;
-
-                    // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
-                    // Go through each entry and if it is not a directory, delete it. If it is a directory,
-                    // open it, and close the original directory. Repeat. Then start the entire operation over.
-
-                    scan_dir: while (true) {
-                        var dir_it = iterable_dir;
-                        var entry_ = dir_it.next();
-                        dir_it: while (switch (entry_) {
-                            .err => @panic("FIXME TODO ERRORS"),
-                            .result => |ent| ent,
-                        }) |entry__| : (entry_ = dir_it.next()) {
-                            var entry: DirIterator.IteratorResult = entry__;
-                            var treat_as_dir = entry.kind == .directory;
-                            handle_entry: while (true) {
-                                if (treat_as_dir) {
-                                    const new_dir = switch (this.openIterableDir(iterable_dir.iter.dir.fd, entry.name.sliceAssumeZ())) {
-                                        .result => |iter| iter,
-                                        .err => |e| {
-                                            const errno = errnocast(e.errno);
-                                            switch (errno) {
-                                                @intFromEnum(bun.C.E.NOTDIR) => {
-                                                    treat_as_dir = false;
-                                                    continue :handle_entry;
-                                                },
-                                                @intFromEnum(bun.C.E.NOENT) => {
-                                                    if (this.rm.opts.force) {
-                                                        switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
-                                                            .result => {},
-                                                            .err => |e2| return Maybe(void).initErr(e2),
-                                                        }
-                                                        continue :dir_it;
-                                                    }
-                                                },
-                                                else => {},
-                                            }
-                                            return .{ .err = e };
-                                        },
-                                    };
-
-                                    if (cleanup_dir_parent) |*d| {
-                                        _ = Syscall.close(d.iter.dir.fd);
-                                    }
-
-                                    cleanup_dir_parent = iterable_dir;
-                                    iterable_dir = new_dir;
-                                    dir_name_buf[entry.name.len] = 0;
-                                    const result = dir_name_buf[0..entry.name.len];
-                                    @memcpy(result, entry.name.slice());
-                                    dir_name = dir_name_buf[0..entry.name.len :0];
-                                    continue :scan_dir;
-                                } else {
-                                    switch (this.deleteFile(iterable_dir.iter.dir.fd, entry.name.sliceAssumeZ())) {
-                                        .result => |should_treat_as_dir| {
-                                            if (should_treat_as_dir) {
-                                                treat_as_dir = true;
-                                                continue :handle_entry;
-                                            }
-                                            continue :dir_it;
-                                        },
-                                        .err => |e| {
-                                            switch (e.getErrno()) {
-                                                bun.C.E.NOENT => {
-                                                    if (this.rm.opts.force) {
-                                                        switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
-                                                            .result => {},
-                                                            .err => |e2| return Maybe(void).initErr(e2),
-                                                        }
-                                                        continue :dir_it;
-                                                    }
-                                                    return .{ .err = e };
-                                                },
-                                                bun.C.E.NOTDIR, bun.C.E.NOTEMPTY => {
-                                                    treat_as_dir = true;
-                                                    continue :handle_entry;
-                                                },
-
-                                                else => return .{ .err = e },
-                                            }
-                                        },
-                                    }
-                                }
-                            }
-                        }
-
-                        // Reached the end of the directory entries, which means we successfully deleted all of them.
-                        // Now to remove the directory itself.
-                        // iterable_dir.close();
-                        _ = Syscall.close(iterable_dir.iter.dir.fd);
-                        cleanup_dir = false;
-
-                        if (cleanup_dir_parent) |d| {
-                            switch (this.deleteDir(bun.toFD(d.iter.dir.fd), dir_name)) {
-                                .result => {},
-                                .err => |e| {
-                                    switch (errnocast(e.errno)) {
-                                        // These two things can happen due to file system race conditions.
-                                        @intFromEnum(bun.C.E.NOENT), @intFromEnum(bun.C.E.NOTEMPTY) => continue :start_over,
-                                        else => return .{ .err = e },
-                                    }
-                                },
-                            }
-                            continue :start_over;
-                        } else {
-                            switch (this.deleteDir(self, sub_path)) {
-                                .result => {},
-                                .err => |e| {
-                                    switch (errnocast(e.errno)) {
-                                        @intFromEnum(bun.C.E.NOENT) => {
-                                            if (this.rm.opts.force) {
-                                                switch (this.verboseDeleted(sub_path)) {
-                                                    .err => |e2| return .{ .err = e2 },
-                                                    .result => {},
-                                                }
-                                                return Maybe(void).success;
-                                            }
-                                        },
-                                        @intFromEnum(bun.C.E.NOTEMPTY) => continue :start_over,
-                                        else => return .{ .err = e },
-                                    }
-                                },
-                            }
-                            return Maybe(void).success;
-                        }
-                    }
-                }
-            }
-
-            /// If the --preserve-root option is set, will return true if the
-            /// file descriptor points to root directory. Otherwise will always
-            /// return false
-            fn preserveRootCheck(this: *RmTask, fd: anytype) Maybe(bool) {
-                if (this.rm.opts.preserve_root) {
-                    var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const path = bun.getFdPath(fd, &pathbuf) catch |err| {
-                        const errno = switch (err) {
-                            .FileNotFound => bun.C.E.NOENT,
-                            .AccessDenied => bun.C.E.ACCES,
-                            .NameTooLong => bun.C.E.NAMETOOLONG,
-                            .NotSupported => bun.C.E.NOTSUP,
-                            .NotDir => bun.C.E.NOTDIR,
-                            .SymLinkLoop => bun.C.E.LOOP,
-                            .InputOutput => bun.C.E.IO,
-                            .FileTooBig => bun.C.E.FBIG,
-                            .IsDir => bun.C.E.ISDIR,
-                            .ProcessFdQuotaExceeded => bun.C.E.MFILE,
-                            .SystemFdQuotaExceeded => bun.C.E.NFILE,
-                            .NoDevice => bun.C.E.NODEV,
-                            .SystemResources => bun.C.E.NOSYS, // or EAGAIN if it's a temporary lack of resources
-                            .NoSpaceLeft => bun.C.E.NOSPC,
-                            .FileSystem => bun.C.E.IO, // or another appropriate error if there's a more specific cause
-                            .BadPathName => bun.C.E.NOENT, // ENOENT or EINVAL, depending on the situation
-                            .DeviceBusy => bun.C.E.BUSY,
-                            .SharingViolation => bun.C.E.ACCES, // For POSIX, EACCES might be the closest match
-                            .PipeBusy => bun.C.E.BUSY,
-                            .InvalidHandle => bun.C.E.BADF,
-                            .InvalidUtf8 => bun.C.E.INVAL,
-                            .NetworkNotFound => bun.C.E.NOENT, // or ENETUNREACH depending on context
-                            .PathAlreadyExists => bun.C.E.EXIST,
-                            .Unexpected => bun.C.E.INVAL, // or another error that makes sense in the context
-                        };
-
-                        return Maybe(bool).errno(errno);
-                    };
-                    // FIXME windows
-                    return .{ .result = std.mem.eql(u8, path, "/") };
-                }
-
-                return .{ .result = false };
-            }
-
-            fn openIterableDir(this: *RmTask, self: bun.FileDescriptor, sub_path: [:0]const u8) Maybe(DirIterator.WrappedIterator) {
-                _ = this;
-                const fd = switch (Syscall.openat(self, sub_path, os.O.DIRECTORY | os.O.RDONLY | os.O.CLOEXEC, 0)) {
-                    .err => |e| {
-                        return .{ .err = e };
-                    },
-                    .result => |fd| fd,
+            pub fn run(this: *RmTask) void {
+                var rmimpl = RmDirImpl{
+                    .ctx = this,
+                    .allocator = this.rm.bltn.arena.allocator(),
+                    .opts = this.rm.opts,
+                    .cwd = this.cwd,
+                    .entries_to_delete = this.entries_to_delete,
                 };
-
-                var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                var iterator = DirIterator.iterate(dir);
-                return .{ .result = iterator };
-            }
-
-            /// On successful delete, returns null.
-            fn deleteTreeOpenInitialSubpath(this: *RmTask, self: bun.FileDescriptor, sub_path: [:0]const u8, kind_hint: std.fs.File.Kind) Maybe(?DirIterator.WrappedIterator) {
-                return iterable_dir: {
-                    // Treat as a file by default
-                    var treat_as_dir = kind_hint == .directory;
-
-                    handle_entry: while (true) {
-                        if (treat_as_dir) {
-                            const fd = switch (Syscall.openat(self, sub_path, os.O.DIRECTORY | os.O.RDONLY | os.O.CLOEXEC, 0)) {
-                                .err => |e| {
-                                    switch (errnocast(e.errno)) {
-                                        @as(u16, @intFromEnum(bun.C.E.NOTDIR)) => {
-                                            treat_as_dir = false;
-                                            continue :handle_entry;
-                                        },
-                                        @as(u16, @intFromEnum(bun.C.E.NOENT)) => {
-                                            if (this.rm.opts.force) {
-                                                // That's fine, we were trying to remove this directory anyway.
-                                                break :handle_entry;
-                                            }
-                                            return .{ .err = e };
-                                        },
-                                        else => return Maybe(?DirIterator.WrappedIterator).initErr(e),
-                                    }
-                                },
-                                .result => |fd| fd,
-                            };
-                            var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                            var iterator = DirIterator.iterate(dir);
-                            break :iterable_dir .{ .result = iterator };
-                        } else {
-                            switch (this.deleteFile(self, sub_path)) {
-                                .result => |try_as_dir| {
-                                    if (try_as_dir) {
-                                        treat_as_dir = true;
-                                        continue :handle_entry;
-                                    }
-                                    return .{ .result = null };
-                                },
-                                .err => |e| {
-                                    switch (e.getErrno()) {
-                                        bun.C.E.NOENT => return if (this.rm.opts.force) .{ .result = null } else .{ .err = e },
-                                        // Is a dir
-                                        bun.C.E.ISDIR, bun.C.E.NOTEMPTY => {
-                                            treat_as_dir = true;
-                                            continue :handle_entry;
-                                        },
-                                        else => return Maybe(?DirIterator.WrappedIterator).initErr(e),
-                                    }
-                                },
-                            }
-                        }
-                    }
-                };
-            }
-
-            pub fn deleteDir(
-                this: *RmTask,
-                parentfd: bun.FileDescriptor,
-                subpath: [:0]const u8,
-                dir_path_len: usize,
-            ) Maybe(void) {
-                switch (Syscall.unlinkatWithFlags(parentfd, subpath, std.os.AT.REMOVEDIR)) {
-                    .result => return this.verboseDeleted(subpath, dir_path_len),
-                    .err => |e| {
-                        const errno = errnocast(e.errno);
-                        if (@intFromEnum(bun.C.E.NOENT) == errno and this.rm.opts.force) {
-                            return this.verboseDeleted(subpath, dir_path_len);
-                        }
-                        return .{ .err = e };
-                    },
-                }
-            }
-
-            /// Returns true if path actually pointed to a directory, and the caller should process that.
-            pub fn deleteFile(
-                this: *RmTask,
-                dirfd: bun.FileDescriptor,
-                subpath: [:0]const u8,
-                dir_path_len: usize,
-            ) Maybe(bool) {
-                switch (Syscall.unlinkat(dirfd, subpath)) {
-                    .result => return switch (this.verboseDeleted(subpath, dir_path_len)) {
-                        .result => .{ .result = false },
-                        .err => |e| .{ .err = e },
-                    },
-                    .err => |e| {
-                        switch (e.getErrno()) {
-                            bun.C.E.ISDIR => {
-                                return .{ .result = true };
-                            },
-                            // non-Linux POSIX systems return EPERM when trying to delete a directory, so
-                            // we need to handle that case specifically
-                            bun.C.E.PERM => {
-                                switch (builtin.os.tag) {
-                                    // The entry could be a directory, or this is a regular permissions error, so we
-                                    // call unlinktat with AT_REMOVEDIR flag. This will tell us if it is a directory, or it is a permissions error.
-                                    .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris, .illumos => {
-                                        if (this.rm.opts.remove_empty_dirs) {
-                                            return switch (Syscall.unlinkatWithFlags(dirfd, subpath, std.os.AT.REMOVEDIR)) {
-                                                .result => switch (this.verboseDeleted(subpath, dir_path_len)) {
-                                                    .result => .{ .result = false },
-                                                    .err => |e2| Maybe(bool).initErr(e2),
-                                                },
-                                                .err => |e2| {
-                                                    const errno = e2.getErrno();
-                                                    return switch (errno) {
-                                                        bun.C.E.NOTEMPTY => .{ .result = true },
-                                                        // It was a regular permissions error, return the original error
-                                                        bun.C.E.NOTDIR => .{ .err = e },
-                                                        else => .{ .err = e2 },
-                                                    };
-                                                },
-                                            };
-                                        }
-                                        return .{ .result = true };
-                                    },
-                                    else => return .{ .err = e },
-                                }
-                            },
-                            else => return .{ .err = e },
-                        }
-                    },
+                if (rmimpl.run()) |err| {
+                    this.err = err;
                 }
             }
 

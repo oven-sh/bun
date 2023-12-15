@@ -2322,26 +2322,24 @@ pub fn ShellTask(
         }
 
         pub fn onFinish(this: *@This()) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+            print("onFinish", .{});
+            var ctx = @fieldParentPtr(Ctx, "task", this);
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(ctx, .manual_deinit));
         }
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
+            print("runFromThreadPool", .{});
             var this = @fieldParentPtr(@This(), "task", task);
             var ctx = @fieldParentPtr(Ctx, "task", this);
             runFromThreadPool_(ctx);
+            this.onFinish();
         }
 
         pub fn runFromJS(this: *@This()) void {
             print("runFromJS", .{});
-            var ctx = @fieldParentPtr(this, "task", &this);
-            runFromJS_(ctx);
+            var ctx = @fieldParentPtr(Ctx, "task", this);
             this.ref.unref(this.event_loop.virtual_machine);
-        }
-
-        /// Normally, this would deallocate the task but because the task is a
-        /// field on a heap allocated struct we do nothing here.
-        pub fn deinit(this: *@This()) void {
-            _ = this;
+            runFromJS_(ctx);
         }
     };
 }
@@ -3527,7 +3525,7 @@ pub const Builtin = struct {
             return this.next();
         }
 
-        pub fn next(this: *Rm) Maybe(void) {
+        pub noinline fn next(this: *Rm) Maybe(void) {
             while (this.state != .done and this.state != .err) {
                 switch (this.state) {
                     .idle => {
@@ -3579,6 +3577,9 @@ pub const Builtin = struct {
                                         continue;
                                     },
                                     .done => {
+                                        if (this.opts.recursive) {
+                                            this.opts.remove_empty_dirs = true;
+                                        }
                                         const filepath_args_start = idx;
                                         const filepath_args = parse_opts.args_slice[filepath_args_start..];
                                         const cwd_fd = switch (Syscall.open(".", os.O.DIRECTORY | os.O.RDONLY, 0)) {
@@ -3599,7 +3600,8 @@ pub const Builtin = struct {
                                             },
                                         };
                                         // this.state.exec.task.schedule();
-                                        return Maybe(void).success;
+                                        // return Maybe(void).success;
+                                        continue;
                                     },
                                     .illegal_option => {
                                         const error_string = "rm: illegal option -- -\n";
@@ -3758,22 +3760,6 @@ pub const Builtin = struct {
                 always,
             };
 
-            pub fn parse(opts: *Opts, bltn: *Builtin, args: []const [*:0]const u8) !?usize {
-                for (args, 0..) |arg_raw, i| {
-                    const arg = arg_raw[0..std.mem.len(arg_raw)];
-
-                    const ret = try opts.parseFlag(bltn, arg);
-                    switch (ret) {
-                        0 => {},
-                        1 => {
-                            return i;
-                        },
-                        else => return null,
-                    }
-                }
-                return null;
-            }
-
             const ParseFlagsResult = enum {
                 continue_parsing,
                 done,
@@ -3849,7 +3835,7 @@ pub const Builtin = struct {
             }
         };
 
-        const RmTask = struct {
+        pub const RmTask = struct {
             const print = bun.Output.scoped(.RmTask, false);
 
             rm: *Rm,
@@ -3861,13 +3847,21 @@ pub const Builtin = struct {
                 runFromJs,
                 print,
             ),
+            err: ?Syscall.Error = null,
+
+            // pub const RmWorkTask = @TypeOf(@field(RmTask, "rm"));
 
             pub fn runFromThreadPool(this: *RmTask) void {
                 return this.run();
             }
 
             pub fn runFromJs(this: *RmTask) void {
-                // FIXME handle error properly
+                if (this.err) |e| {
+                    const stdout = std.io.getStdOut().writer();
+                    e.format("HO NO", .{}, stdout) catch @panic("FUCK");
+                    this.rm.bltn.done(e.errno);
+                    return;
+                }
                 this.rm.bltn.done(0);
             }
 
@@ -3875,21 +3869,25 @@ pub const Builtin = struct {
 
             pub fn run(this: *RmTask) void {
                 var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd_path = switch (bun.sys.getcwd(&pathbuf)) {
+                const cwd_path_no_sentinel = switch (bun.sys.getcwd(&pathbuf)) {
                     .result => |p| p,
                     .err => |e| {
                         this.rm.state = .{ .err = e };
                         return;
                     },
                 };
-                pathbuf[cwd_path.len] = 0;
+                pathbuf[cwd_path_no_sentinel.len] = 0;
+                const cwd_path = pathbuf[0..cwd_path_no_sentinel.len :0];
                 for (this.entries_to_delete) |entry_raw| {
                     const entry = entry_raw[0..std.mem.len(entry_raw) :0];
                     if (this.rm.opts.recursive) {
-                        switch (this.deleteTree(std.fs.Dir{ .fd = bun.fdcast(this.cwd) }, cwd_path[0..cwd_path.len :0], entry)) {
+                        switch (this.deleteTree(std.fs.Dir{ .fd = bun.fdcast(this.cwd) }, cwd_path, entry)) {
                             .result => {},
                             .err => |e| {
-                                this.rm.state = .{ .err = e };
+
+                                // this.rm.state = .{ .err = e };
+                                this.err = e;
+                                // _ = this.rm.next();
                                 return;
                             },
                         }
@@ -3917,7 +3915,7 @@ pub const Builtin = struct {
                 if (this.rm.opts.preserve_root and std.mem.eql(u8, resolved_sub_path[0..resolved_sub_path.len], "/"))
                     return Maybe(void).success;
 
-                var initial_iterable = switch (this.deleteTreeOpenInitialSubpath(self, resolved_sub_path, .file)) {
+                var initial_iterable = switch (this.deleteTreeOpenInitialSubpath(self, sub_path, .file)) {
                     .result => |r| r orelse return Maybe(void).success,
                     .err => |e| return .{ .err = e },
                 };
@@ -3994,12 +3992,16 @@ pub const Builtin = struct {
                                 }
                             } else {
                                 switch (this.deleteFile(bun.toFD(top.iter.iter.dir.fd), entry.name.sliceAssumeZ())) {
-                                    .result => break :handle_entry,
+                                    .result => |try_as_dir| {
+                                        if (try_as_dir) {
+                                            treat_as_dir = true;
+                                            continue :handle_entry;
+                                        }
+                                        break :handle_entry;
+                                    },
                                     .err => |e| {
-                                        const errno = errnocast(e.errno);
-
-                                        switch (errno) {
-                                            @intFromEnum(bun.C.E.NOENT) => {
+                                        switch (e.getErrno()) {
+                                            bun.C.E.NOENT => {
                                                 if (this.rm.opts.force) {
                                                     switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
                                                         .result => {},
@@ -4009,7 +4011,7 @@ pub const Builtin = struct {
                                                 }
                                                 return .{ .err = e };
                                             },
-                                            @intFromEnum(bun.C.E.ISDIR) => {
+                                            bun.C.E.ISDIR, bun.C.E.NOTEMPTY => {
                                                 treat_as_dir = true;
                                                 continue :handle_entry;
                                             },
@@ -4077,7 +4079,13 @@ pub const Builtin = struct {
                                     };
                                 } else {
                                     switch (this.deleteFile(bun.toFD(top.iter.iter.dir.fd), name)) {
-                                        .result => continue :process_stack,
+                                        .result => |try_as_dir| {
+                                            if (try_as_dir) {
+                                                treat_as_dir = true;
+                                                continue :handle_entry;
+                                            }
+                                            continue :process_stack;
+                                        },
                                         .err => |e| {
                                             const errno = errnocast(e.errno);
 
@@ -4200,12 +4208,16 @@ pub const Builtin = struct {
                                     continue :scan_dir;
                                 } else {
                                     switch (this.deleteFile(bun.toFD(iterable_dir.iter.dir.fd), entry.name.sliceAssumeZ())) {
-                                        .result => continue :dir_it,
+                                        .result => |should_treat_as_dir| {
+                                            if (should_treat_as_dir) {
+                                                treat_as_dir = true;
+                                                continue :handle_entry;
+                                            }
+                                            continue :dir_it;
+                                        },
                                         .err => |e| {
-                                            const errno = errnocast(e.errno);
-
-                                            switch (errno) {
-                                                @intFromEnum(bun.C.E.NOENT) => {
+                                            switch (e.getErrno()) {
+                                                bun.C.E.NOENT => {
                                                     if (this.rm.opts.force) {
                                                         switch (this.verboseDeleted(entry.name.sliceAssumeZ())) {
                                                             .result => {},
@@ -4214,6 +4226,10 @@ pub const Builtin = struct {
                                                         continue :dir_it;
                                                     }
                                                     return .{ .err = e };
+                                                },
+                                                bun.C.E.NOTDIR, bun.C.E.NOTEMPTY => {
+                                                    treat_as_dir = true;
+                                                    continue :handle_entry;
                                                 },
 
                                                 else => return .{ .err = e },
@@ -4314,11 +4330,7 @@ pub const Builtin = struct {
                 _ = this;
                 const fd = switch (Syscall.openat(self.fd, sub_path, os.O.DIRECTORY | os.O.RDONLY | os.O.CLOEXEC, 0)) {
                     .err => |e| {
-                        _ = e;
-                        @panic("FIXME TODO errors with path");
-                        // return .{
-                        // .err = e.withPath(path: anytype)
-                        // };
+                        return .{ .err = e };
                     },
                     .result => |fd| fd,
                 };
@@ -4344,8 +4356,11 @@ pub const Builtin = struct {
                                             continue :handle_entry;
                                         },
                                         @as(u16, @intFromEnum(bun.C.E.NOENT)) => {
-                                            // That's fine, we were trying to remove this directory anyway.
-                                            break :handle_entry;
+                                            if (this.rm.opts.force) {
+                                                // That's fine, we were trying to remove this directory anyway.
+                                                break :handle_entry;
+                                            }
+                                            return .{ .err = e };
                                         },
                                         else => return Maybe(?DirIterator.WrappedIterator).initErr(e),
                                     }
@@ -4357,11 +4372,18 @@ pub const Builtin = struct {
                             break :iterable_dir .{ .result = iterator };
                         } else {
                             switch (this.deleteFile(self.fd, sub_path)) {
-                                .result => return .{ .result = null },
+                                .result => |try_as_dir| {
+                                    if (try_as_dir) {
+                                        treat_as_dir = true;
+                                        continue :handle_entry;
+                                    }
+                                    return .{ .result = null };
+                                },
                                 .err => |e| {
-                                    switch (errnocast(e.errno)) {
-                                        @as(u16, @intFromEnum(bun.C.E.NOENT)) => return .{ .result = null },
-                                        @as(u16, @intFromEnum(bun.C.E.ISDIR)) => {
+                                    switch (e.getErrno()) {
+                                        bun.C.E.NOENT => return if (this.rm.opts.force) .{ .result = null } else .{ .err = e },
+                                        // Is a dir
+                                        bun.C.E.ISDIR, bun.C.E.NOTEMPTY => {
                                             treat_as_dir = true;
                                             continue :handle_entry;
                                         },
@@ -4379,8 +4401,8 @@ pub const Builtin = struct {
                 parentfd: bun.FileDescriptor,
                 subpath: [:0]const u8,
             ) Maybe(void) {
-                switch (Syscall.rmdirat(parentfd, subpath)) {
-                    .result => return Maybe(void).success,
+                switch (Syscall.unlinkatWithFlags(parentfd, subpath, std.os.AT.REMOVEDIR)) {
+                    .result => return this.verboseDeleted(subpath),
                     .err => |e| {
                         const errno = errnocast(e.errno);
                         if (@intFromEnum(bun.C.E.NOENT) == errno and this.rm.opts.force) {
@@ -4391,26 +4413,68 @@ pub const Builtin = struct {
                 }
             }
 
-            pub fn deleteFile(this: *RmTask, dirfd: bun.FileDescriptor, subpath: [:0]const u8) Maybe(void) {
+            /// Returns true if path actually pointed to a directory, and the caller should process that.
+            pub fn deleteFile(this: *RmTask, dirfd: bun.FileDescriptor, subpath: [:0]const u8) Maybe(bool) {
                 switch (Syscall.unlinkat(dirfd, subpath)) {
-                    .result => {},
+                    .result => return switch (this.verboseDeleted(subpath)) {
+                        .result => .{ .result = false },
+                        .err => |e| .{ .err = e },
+                    },
                     .err => |e| {
-                        _ = e;
-
-                        if (!this.rm.opts.force) {
-                            @panic("FIXME TODO errors with path");
+                        switch (e.getErrno()) {
+                            bun.C.E.ISDIR => {
+                                return .{ .result = true };
+                            },
+                            // non-Linux POSIX systems return EPERM when trying to delete a directory, so
+                            // we need to handle that case specifically
+                            bun.C.E.PERM => {
+                                switch (builtin.os.tag) {
+                                    // The entry could be a directory, or this is a regular permissions error, so we
+                                    // call unlinktat with AT_REMOVEDIR flag. This will tell us if it is a directory, or it is a permissions error.
+                                    .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris, .illumos => {
+                                        if (this.rm.opts.remove_empty_dirs) {
+                                            return switch (Syscall.unlinkatWithFlags(dirfd, subpath, std.os.AT.REMOVEDIR)) {
+                                                .result => switch (this.verboseDeleted(subpath)) {
+                                                    .result => .{ .result = false },
+                                                    .err => |e2| Maybe(bool).initErr(e2),
+                                                },
+                                                .err => |e2| {
+                                                    const errno = e2.getErrno();
+                                                    return switch (errno) {
+                                                        bun.C.E.NOTEMPTY => .{ .result = true },
+                                                        // It was a regular permissions error, return the original error
+                                                        bun.C.E.NOTDIR => .{ .err = e },
+                                                        else => .{ .err = e2 },
+                                                    };
+                                                },
+                                            };
+                                        }
+                                        return .{ .result = true };
+                                    },
+                                    else => return .{ .err = e },
+                                }
+                            },
+                            else => return .{ .err = e },
                         }
                     },
                 }
-
-                return this.verboseDeleted(subpath);
             }
 
             pub fn verboseDeleted(this: *RmTask, path: [:0]const u8) Maybe(void) {
-                _ = path;
-
                 if (this.rm.opts.verbose) {
-                    @panic("FIXME TODO");
+                    print("deleted: {s}", .{path});
+                    const buf = this.rm.bltn.fmtErrorArena(null, "{s}\n", .{path});
+                    if (!this.rm.bltn.stdout.needsIO()) {
+                        return switch (this.rm.bltn.writeNoIO(.stdout, buf)) {
+                            .result => Maybe(void).success,
+                            .err => |e| Maybe(void).initErr(e),
+                        };
+                    }
+                    var written: usize = 0;
+                    while (written < buf.len) : (written += switch (Syscall.write(this.rm.bltn.stdout.fd, buf)) {
+                        .err => |e| return Maybe(void).initErr(e),
+                        .result => |n| n,
+                    }) {}
                 }
 
                 return Maybe(void).success;

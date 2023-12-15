@@ -1167,7 +1167,18 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .rmdir)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1177,14 +1188,7 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 }
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
-    while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
-            if (err.getErrno() == .INTR) continue;
-            return err;
-        }
-        return Maybe(void).success;
-    }
-    unreachable;
+    return unlinkatWithFlags(dirfd, to, 0);
 }
 
 pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {

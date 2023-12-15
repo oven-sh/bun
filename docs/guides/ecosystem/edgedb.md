@@ -129,7 +129,7 @@ import { createClient } from "edgedb";
 const client = createClient();
 
 const INSERT_MOVIE = `
-  with movies = <array<tuple<title: str, year: int64>>>$movies
+  with movies := <array<tuple<title: str, year: int64>>>$movies
   for movie in array_unpack(movies) union (
     insert Movie {
       title := movie.title,

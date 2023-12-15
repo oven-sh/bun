@@ -516,6 +516,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -541,16 +542,30 @@ extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGloba
         return {};
     }
 
-    if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier == "."_s) {
+    if (specifier.startsWith("file:"_s)) {
+        URL url = URL(URL(), specifier);
+        specifier = url.fileSystemPath();
+        specifierString = jsString(vm, specifier);
+    } else {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         const URL& url = sourceOrigin.url();
         if (url.protocolIsFile()) {
-            URL joinedURL = URL(url, specifier);
-            specifier = joinedURL.fileSystemPath();
-            specifierString = jsString(vm, specifier);
-        } else {
-            scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) cannot mock relative paths in non-files"_s));
-            return {};
+            auto fromString = url.fileSystemPath();
+            BunString from = Bun::toString(fromString);
+            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true));
+
+            if (result && result.isString()) {
+                auto* specifierStr = result.toString(globalObject);
+                if (specifierStr->length() > 0) {
+                    specifierString = specifierStr;
+                    specifier = specifierString->value(globalObject);
+                }
+            } else {
+                // If module resolution fails, we leave the specifier as-is
+                // You might not have the module installed in the first place
+            }
+
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

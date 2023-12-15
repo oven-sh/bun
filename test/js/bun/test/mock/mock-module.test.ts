@@ -7,7 +7,7 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { expect, mock, spyOn, test, describe } from "bun:test";
 import { fn, iCallFn, variable, default as defaultValue, rexported, rexportedAs } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -30,13 +30,26 @@ test("spyOn", () => {
   expect(spyFixture.iSpy).toHaveBeenCalled();
 });
 
+test("mocking a module that points to a file which does not resolve successfully still works", async () => {
+  mock.module("i-never-existed-and-i-never-will", () => {
+    return {
+      bar: 42,
+    };
+  });
+
+  // @ts-expect-error
+  const { bar } = await import("i-never-existed-and-i-never-will");
+
+  expect(bar).toBe(42);
+});
+
 test("mocking a local file", async () => {
   expect(fn()).toEqual(42);
   expect(variable).toEqual(7);
   expect(defaultValue).toEqual("original");
   expect(rexported).toEqual(42);
 
-  mock.module("./mock-module-fixture.ts", () => {
+  mock.module("./mock-module-fixture", () => {
     return {
       fn: () => 1,
       variable: 8,
@@ -51,7 +64,7 @@ test("mocking a local file", async () => {
   expect(rexported).toEqual(43);
   expect(rexportedAs).toEqual(43);
   expect((await import("./re-export-fixture")).rexported).toEqual(43);
-  mock.module("./mock-module-fixture.ts", () => {
+  mock.module("./mock-module-fixture", () => {
     return {
       fn: () => 2,
       variable: 9,
@@ -59,7 +72,7 @@ test("mocking a local file", async () => {
   });
   expect(fn()).toEqual(2);
   expect(variable).toEqual(9);
-  mock.module("./mock-module-fixture.ts", () => {
+  mock.module("./mock-module-fixture", () => {
     return {
       fn: () => 3,
       variable: 10,

@@ -719,8 +719,23 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
     while (href.len > 1 and (switch (href[href.len - 1]) {
-        '/' => true,
-        '\\' => true,
+        '/', '\\' => true,
+        else => false,
+    })) {
+        href.len -= 1;
+    }
+
+    return href;
+}
+
+/// Does not strip the C:\
+pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
+    if (this.len < 3 or
+        this[1] != ':') return withoutTrailingSlash(this);
+
+    var href = this;
+    while (href.len > 3 and (switch (href[href.len - 1]) {
+        '/', '\\' => true,
         else => false,
     })) {
         href.len -= 1;
@@ -1004,14 +1019,14 @@ pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, 
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
 }
 
-pub fn eqlCaseInsensitiveASCIIIgnoreLength(
+pub inline fn eqlCaseInsensitiveASCIIIgnoreLength(
     a: string,
     b: string,
 ) bool {
     return eqlCaseInsensitiveASCII(a, b, false);
 }
 
-pub fn eqlCaseInsensitiveASCIIICheckLength(
+pub inline fn eqlCaseInsensitiveASCIIICheckLength(
     a: string,
     b: string,
 ) bool {
@@ -1021,7 +1036,6 @@ pub fn eqlCaseInsensitiveASCIIICheckLength(
 pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) bool {
     if (comptime check_len) {
         if (a.len != b.len) return false;
-
         if (a.len == 0) return true;
     }
 
@@ -1620,6 +1634,13 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
+fn windowsPathIsPosixAbsolute(utf8: []const u8) bool {
+    if (utf8.len == 0) return false;
+    if (!charIsAnySlash(utf8[0])) return false;
+    if (utf8.len > 1 and charIsAnySlash(utf8[1])) return false;
+    return true;
+}
+
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     std.debug.assert(buf.len > 0);
     const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
@@ -1701,8 +1722,26 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
 
+pub fn assertIsValidWindowsPath(utf8: []const u8) void {
+    if (Environment.allow_assert and Environment.isWindows) {
+        if (windowsPathIsPosixAbsolute(utf8)) {
+            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
+                utf8,
+            });
+        }
+        if (startsWith(utf8, ":/")) {
+            std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
+                utf8,
+            });
+        }
+    }
+}
+
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
     std.debug.assert(wbuf.len > 0);
+
+    assertIsValidWindowsPath(utf8);
+
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
@@ -4404,8 +4443,21 @@ pub const FormatUTF16 = struct {
     }
 };
 
+pub const FormatUTF8 = struct {
+    buf: []const u8,
+    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        try writer.writeAll(self.buf);
+    }
+};
+
 pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
     return FormatUTF16{ .buf = buf };
+}
+
+pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
+
+pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
+    return FormatOSPath{ .buf = buf };
 }
 
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
@@ -5340,6 +5392,47 @@ pub const URLFormatter = struct {
         }
     }
 };
+
+pub fn convertUTF8toUTF16InBuffer(
+    buf: []u16,
+    input: []const u8,
+) []const u16 {
+    if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
+
+    const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(input, buf);
+    switch (result.status) {
+        .success => return buf[0..result.count],
+        // TODO(@paperdave): handle surrogate
+        .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
+        else => @panic("TODO: handle error in convertUTF8toUTF16"),
+    }
+}
+
+pub fn convertUTF16toUTF8InBuffer(
+    buf: []u8,
+    input: []const u16,
+) ![]const u8 {
+    if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
+
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(input, buf);
+    switch (result.status) {
+        .success => return buf[0..result.count],
+        // TODO(@paperdave): handle surrogate
+        .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
+        else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
+    }
+}
+
+pub inline fn charIsAnySlash(char: u8) bool {
+    return char == '/' or char == '\\';
+}
+
+pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
+    return s.len >= 2 and s[0] == ':' and switch (s[1]) {
+        'a'...'z', 'A'...'Z' => true,
+        else => false,
+    };
+}
 
 pub fn mustEscapeYAMLString(contents: []const u8) bool {
     if (contents.len == 0) return true;

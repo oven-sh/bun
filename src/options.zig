@@ -2016,7 +2016,6 @@ pub const OutputFile = struct {
             .move, .pending => @panic("Unexpected pending output file"),
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
-                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
                 var file_blob = JSC.WebCore.Blob.Store.initFile(
                     if (copy.fd != 0)
                         JSC.Node.PathOrFileDescriptor{
@@ -2032,13 +2031,13 @@ pub const OutputFile = struct {
                     Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
                 };
 
-                build_output.* = JSC.API.BuildArtifact{
+                var build_output = bun.new(JSC.API.BuildArtifact, .{
                     .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
                     .hash = this.hash,
                     .loader = this.input_loader,
                     .output_kind = this.output_kind,
                     .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
-                };
+                });
 
                 break :brk build_output.toJS(globalObject);
             },

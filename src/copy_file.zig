@@ -74,6 +74,10 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
         return;
     }
 
+    if (comptime bun.Environment.isWindows) {
+        @panic("TODO on Windows");
+    }
+
     // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
     // fallback code will copy the contents chunk by chunk.
     const empty_iovec = [0]os.iovec_const{};

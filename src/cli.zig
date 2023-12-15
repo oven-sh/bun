@@ -1144,19 +1144,19 @@ pub const Command = struct {
         }
     };
 
+    pub fn isBunX(argv0: []const u8) bool {
+        const suffix = if (Environment.isWindows) ".exe" else "";
+
+        return strings.endsWithComptime(argv0, "bunx" ++ suffix) or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
+    }
+
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = bun.argv() };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
         // symlink is argv[0]
-        if (strings.endsWithComptime(argv0, "bunx"))
-            return .BunxCommand;
-
-        if (comptime Environment.isDebug) {
-            if (strings.endsWithComptime(argv0, "bunx-debug"))
-                return .BunxCommand;
-        }
+        if (isBunX(argv0)) return .BunxCommand;
 
         if (strings.endsWithComptime(argv0, "node")) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
@@ -1764,7 +1764,11 @@ pub const Command = struct {
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
+                var winResolver = resolve_path.PosixToWinNormalizer{};
+                break :brk bun.openFile(
+                    winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"),
+                    .{ .mode = .read_only },
+                );
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                 const file_pathZ = brk2: {
                     @memcpy(script_name_buf[0..file_path.len], file_path);
@@ -1816,6 +1820,9 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
             Global.exit(1);
         };
         return true;

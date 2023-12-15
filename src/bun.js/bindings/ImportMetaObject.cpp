@@ -43,6 +43,47 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "CommonJSModuleRecord.h"
 
+#if OS(WINDOWS)
+#define PLATFORM_SEP_s "\\"_s
+#define PLATFORM_SEP '\\'
+#else
+#define PLATFORM_SEP_s "/"_s
+#define PLATFORM_SEP '/'
+#endif
+
+ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
+{
+#if OS(WINDOWS)
+    if (input.is8Bit()) {
+        auto len = input.length();
+        if (len < 1)
+            return false;
+        auto bytes = input.characters8();
+        if (bytes[0] == '/' || bytes[0] == '\\')
+            return true;
+        if (len < 2)
+            return false;
+        if (bytes[1] == ':' && (bytes[2] == '/' || bytes[2] == '\\'))
+            return true;
+        return false;
+    } else {
+        auto len = input.length();
+        if (len < 1)
+            return false;
+        auto bytes = input.characters16();
+        if (bytes[0] == '/' || bytes[0] == '\\')
+            return true;
+        if (len < 2)
+            return false;
+        if (bytes[1] == ':' && (bytes[2] == '/' || bytes[2] == '\\'))
+            return true;
+        return false;
+    }
+#else // OS(WINDOWS)
+    return input.startsWith('/');
+#endif
+}
+
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
@@ -495,12 +536,12 @@ void ImportMetaObject::finishCreation(VM& vm)
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSFunction>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::String path;
 
         if (url.isValid()) {
 
-            if (url.protocolIs("file"_s)) {
+            if (url.protocolIsFile()) {
                 path = url.fileSystemPath();
             } else {
                 path = url.path().toString();
@@ -514,28 +555,28 @@ void ImportMetaObject::finishCreation(VM& vm)
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
-        WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
 
         init.set(jsString(init.vm, url.string()));
     });
     this->dirProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::String dirname;
 
         if (url.isValid()) {
-            if (url.protocolIs("file"_s)) {
+            if (url.protocolIsFile()) {
                 dirname = url.fileSystemPath();
             } else {
                 dirname = url.path().toString();
             }
         }
 
-        if (dirname.endsWith("/"_s)) {
+        if (dirname.endsWith(PLATFORM_SEP_s)) {
             dirname = dirname.substring(0, dirname.length() - 1);
-        } else if (dirname.contains('/')) {
-            dirname = dirname.substring(0, dirname.reverseFind('/'));
+        } else if (dirname.contains(PLATFORM_SEP)) {
+            dirname = dirname.substring(0, dirname.reverseFind(PLATFORM_SEP));
         }
 
         init.set(jsString(init.vm, dirname));
@@ -543,13 +584,13 @@ void ImportMetaObject::finishCreation(VM& vm)
     this->fileProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::String path;
 
         if (!url.isValid()) {
             path = meta->url;
         } else {
-            if (url.protocolIs("file"_s)) {
+            if (url.protocolIsFile()) {
                 path = url.fileSystemPath();
             } else {
                 path = url.path().toString();
@@ -558,10 +599,10 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::String filename;
 
-        if (path.endsWith("/"_s)) {
-            filename = path.substring(path.reverseFind('/', path.length() - 2) + 1);
+        if (path.endsWith(PLATFORM_SEP_s)) {
+            filename = path.substring(path.reverseFind(PLATFORM_SEP, path.length() - 2) + 1);
         } else {
-            filename = path.substring(path.reverseFind('/') + 1);
+            filename = path.substring(path.reverseFind(PLATFORM_SEP) + 1);
         }
 
         init.set(jsString(init.vm, filename));
@@ -569,11 +610,11 @@ void ImportMetaObject::finishCreation(VM& vm)
     this->pathProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
 
         if (!url.isValid()) {
             init.set(jsString(init.vm, meta->url));
-        } else if (url.protocolIs("file"_s)) {
+        } else if (url.protocolIsFile()) {
             init.set(jsString(init.vm, url.fileSystemPath()));
         } else {
             init.set(jsString(init.vm, url.path()));

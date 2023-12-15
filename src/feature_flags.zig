@@ -2,10 +2,6 @@ const env = @import("env.zig");
 pub const strong_etags_for_built_files = true;
 pub const keep_alive = false;
 
-// it just doesn't work well.
-pub const use_std_path_relative = false;
-pub const use_std_path_join = false;
-
 // Debug helpers
 pub const print_ast = false;
 pub const disable_printing_null = false;
@@ -175,11 +171,11 @@ pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
 
-pub const concurrent_transpiler = true;
-
-pub const disable_on_windows_due_to_bugs = env.isWindows;
+// TODO: fix concurrent transpiler on Windows
+pub const concurrent_transpiler = !env.isWindows;
 
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const disable_auto_js_to_ts_in_node_modules = true;
 
-pub const runtime_transpiler_cache = true;
+// TODO: implement the IO for rtc for windows
+pub const runtime_transpiler_cache = !env.isWindows;

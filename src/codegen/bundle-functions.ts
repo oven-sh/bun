@@ -98,7 +98,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     } else if (match[1] === "interface") {
       contents = sliceSourceCode(contents, false).rest;
     } else if (match[1] === "$") {
-      const directive = contents.match(/^\$([a-zA-Z0-9]+)(?:\s*=\s*([^\n]+?))?\s*;?\n/);
+      const directive = contents.match(/^\$([a-zA-Z0-9]+)(?:\s*=\s*([^\r\n]+?))?\s*;?\r?\n/);
       if (!directive) {
         throw new SyntaxError("Could not parse directive:\n" + contents.slice(0, contents.indexOf("\n")));
       }

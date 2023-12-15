@@ -332,8 +332,7 @@ pub const Bin = extern struct {
 
         fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-                return;
+                @panic("TODO on Windows");
             }
             std.os.symlinkatZ(target_path, this.package_installed_node_modules, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
@@ -429,8 +428,7 @@ pub const Bin = extern struct {
 
             if (comptime Environment.isWindows) {
                 // TODO: Bin.Linker.link() needs to be updated to generate .cmd files on Windows
-                bun.todo(@src(), {});
-                return;
+                @panic("TODO on Windows");
             }
 
             switch (this.bin.tag) {

@@ -479,6 +479,10 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
+        if (Environment.isWindows) {
+            @panic("TODO: sort out the file descriptor issues here.");
+        }
+
         var entry: *lib.archive_entry = undefined;
 
         var stream: BufferReadStream = undefined;
@@ -557,20 +561,19 @@ pub const Archive = struct {
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (comptime Environment.isWindows) {
-                                bun.todo(@src(), {});
-                            } else {
-                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                    switch (err) {
-                                        error.AccessDenied, error.FileNotFound => {
-                                            dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
-                                        },
-                                        else => {
-                                            return err;
-                                        },
-                                    }
-                                };
+                                @panic("TODO on Windows");
                             }
+                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                switch (err) {
+                                    error.AccessDenied, error.FileNotFound => {
+                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                    },
+                                    else => {
+                                        return err;
+                                    },
+                                }
+                            };
                         },
                         Kind.file => {
                             const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));
@@ -630,7 +633,7 @@ pub const Archive = struct {
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (lib.archive_read_data_into_fd(archive, bun.fdi32(file.handle))) {
+                                    switch (lib.archive_read_data_into_fd(archive, bun.uvfdcast(file.handle))) {
                                         lib.ARCHIVE_EOF => break :loop,
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {

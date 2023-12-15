@@ -4,7 +4,6 @@ const bun = @import("root").bun;
 const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
-const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -516,6 +515,7 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                                .syscall = .write,
                             },
                         };
                     }
@@ -533,26 +533,28 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
-                            },
-                        };
-                    }
-                    const fd = fd_value.toInt64();
-                    if (fd < 0) {
-                        return .{
-                            .err = Syscall.Error{
-                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .syscall = .write,
                             },
                         };
                     }
 
-                    return .{
-                        .FileSink = .{
-                            .chunk_size = chunk_size,
-                            .input_path = .{
-                                .fd = @as(bun.FileDescriptor, @intCast(fd)),
+                    if (bun.FDImpl.fromJS(fd_value)) |fd| {
+                        return .{
+                            .FileSink = .{
+                                .chunk_size = chunk_size,
+                                .input_path = .{
+                                    .fd = fd.encode(),
+                                },
                             },
-                        },
-                    };
+                        };
+                    } else {
+                        return .{
+                            .err = Syscall.Error{
+                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .syscall = .write,
+                            },
+                        };
+                    }
                 }
 
                 return .{
@@ -1284,7 +1286,7 @@ pub const FileSink = struct {
                 },
             };
 
-            this.mode = stat.mode;
+            this.mode = @intCast(stat.mode);
             this.auto_truncate = this.auto_truncate and (bun.isRegularFile(this.mode));
         } else {
             this.auto_truncate = false;
@@ -4060,12 +4062,6 @@ pub const FIFO = struct {
         /// provided via kqueue(), only on macOS
         kqueue_read_amt: ?u32,
     ) ReadResult {
-        if (comptime Environment.isWindows) {
-            return ReadResult{
-                .err = Syscall.Error.todo,
-            };
-        }
-
         const available_to_read = this.getAvailableToRead(
             if (kqueue_read_amt != null)
                 @as(i64, @intCast(kqueue_read_amt.?))
@@ -4219,10 +4215,10 @@ pub const File = struct {
 
         var fd = if (file.pathlike != .path)
             // We will always need to close the file descriptor.
-            switch (Syscall.dup(@intCast(file.pathlike.fd))) {
+            switch (Syscall.dup(file.pathlike.fd)) {
                 .result => |_fd| _fd,
                 .err => |err| {
-                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
+                    return .{ .err = err.withFd(file.pathlike.fd) };
                 },
             }
         else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
@@ -4232,8 +4228,8 @@ pub const File = struct {
             },
         };
 
-        if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(bun.fdcast(fd)))) {
-            if (comptime Environment.isPosix) {
+        if (comptime Environment.isPosix) {
+            if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
                 var termios = std.mem.zeroes(std.os.termios);
                 _ = std.c.tcgetattr(fd, &termios);
                 bun.C.cfmakeraw(&termios);
@@ -4243,27 +4239,27 @@ pub const File = struct {
 
         if (file.pathlike != .path and !(file.is_atty orelse false)) {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-            } else {
-                // ensure we have non-blocking IO set
-                switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                    .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
-                    .result => |flags| {
-                        // if we do not, clone the descriptor and set non-blocking
-                        // it is important for us to clone it so we don't cause Weird Things to happen
-                        if ((flags & std.os.O.NONBLOCK) == 0) {
-                            fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                                .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
-                                .err => |err| return .{ .err = err },
-                            };
+                @panic("TODO on Windows");
+            }
 
-                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                                .err => |err| return .{ .err = err },
-                                .result => |_| {},
-                            }
+            // ensure we have non-blocking IO set
+            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
+                .result => |flags| {
+                    // if we do not, clone the descriptor and set non-blocking
+                    // it is important for us to clone it so we don't cause Weird Things to happen
+                    if ((flags & std.os.O.NONBLOCK) == 0) {
+                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                            .err => |err| return .{ .err = err },
+                        };
+
+                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                            .err => |err| return .{ .err = err },
+                            .result => |_| {},
                         }
-                    },
-                }
+                    }
+                },
             }
         }
         var size: Blob.SizeType = 0;
@@ -4276,12 +4272,12 @@ pub const File = struct {
                 },
             };
 
-            if (std.os.S.ISDIR(stat.mode)) {
+            if (bun.S.ISDIR(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
             }
 
-            if (std.os.S.ISSOCK(stat.mode)) {
+            if (bun.S.ISSOCK(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
@@ -4301,6 +4297,8 @@ pub const File = struct {
                 break :outer;
             });
             this.seekable = true;
+        } else {
+            @compileError("Not Implemented");
         }
 
         if (this.seekable) {
@@ -4680,11 +4678,7 @@ pub const FileReader = struct {
                         return result;
                     }
 
-                    const is_fifo = if (comptime Environment.isPosix)
-                        std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)
-                    else
-                        // TODO: windows
-                        bun.todo(@src(), false);
+                    const is_fifo = bun.S.ISFIFO(readable_file.mode) or bun.S.ISCHR(readable_file.mode);
 
                     // for our purposes, ISCHR and ISFIFO are the same
                     if (is_fifo) {
@@ -4832,11 +4826,7 @@ pub fn NewReadyWatcher(
             }
 
             if (comptime @hasField(Context, "mode")) {
-                if (comptime Environment.isWindows) {
-                    return bun.todo(@src(), false);
-                }
-
-                return std.os.S.ISFIFO(this.mode);
+                return bun.S.ISFIFO(this.mode);
             }
 
             return false;
@@ -4849,8 +4839,7 @@ pub fn NewReadyWatcher(
 
         pub fn unwatch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-                return;
+                @panic("TODO on Windows");
             }
 
             const fd = @as(c_int, @intCast(fd_));
@@ -4884,7 +4873,7 @@ pub fn NewReadyWatcher(
 
         pub fn watch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                return;
+                @panic("Do not call watch() on windows");
             }
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {

@@ -48,11 +48,8 @@ update_repo_if_needed() {
     files=(
       build.zig
       Dockerfile
-
+      scripts/download-zig.ps1
       .github/workflows/*
-
-      docs/project/contributing.md
-      docs/project/building-windows.md
     );
 
     zig_version_previous=$(grep 'recommended_zig_version = "' "build.zig" | cut -d'"' -f2)

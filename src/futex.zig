@@ -88,9 +88,8 @@ const UnsupportedFutex = struct {
     }
 
     fn unsupported(unused: anytype) noreturn {
-        @compileLog("Unsupported operating system", target.os.tag);
         _ = unused;
-        unreachable;
+        @compileError("Unsupported operating system: " ++ @tagName(target.os.tag));
     }
 };
 

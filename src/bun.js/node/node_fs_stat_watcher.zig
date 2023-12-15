@@ -197,12 +197,6 @@ pub const StatWatcher = struct {
         global_this: JSC.C.JSContextRef,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
-            if (comptime Environment.isWindows) {
-                bun.todo(@src(), void{});
-                ctx.throwTODO("Windows support not implemented yet! Sorry!!");
-                return null;
-            }
-
             const vm = ctx.vm();
             const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {

@@ -261,7 +261,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
         var mode: bun.Mode = 0;
         switch (Syscall.fstat(bun.STDERR_FD)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -291,7 +291,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
         var mode: bun.Mode = 0;
         switch (Syscall.fstat(bun.STDOUT_FD)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -319,7 +319,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         var mode: bun.Mode = 0;
         switch (Syscall.fstat(bun.STDIN_FD)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }

@@ -46,8 +46,7 @@ pub const InstallCompletionsCommand = struct {
 
     fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
         if (comptime Environment.isWindows) {
-            bun.todo(@src(), {});
-            return;
+            @panic("TODO on Windows");
         }
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;

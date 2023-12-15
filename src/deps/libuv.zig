@@ -24,6 +24,10 @@ const sockaddr_in6 = std.os.sockaddr_in6;
 const sockaddr_storage = std.os.sockaddr_storage;
 const sockaddr_un = std.os.sockaddr_un;
 const BOOL = windows.BOOL;
+const Env = bun.Environment;
+
+const log = bun.Output.scoped(.uv, false);
+
 pub const CHAR = u8;
 pub const SHORT = c_short;
 pub const LONG = c_long;
@@ -254,7 +258,7 @@ pub const uv_getaddrinfo_s = struct_uv_getaddrinfo_s;
 pub const uv_getnameinfo_s = struct_uv_getnameinfo_s;
 pub const uv_connect_s = struct_uv_connect_s;
 pub const uv_udp_send_s = struct_uv_udp_send_s;
-pub const uv_fs_s = struct_uv_fs_s;
+pub const uv_fs_s = fs_t;
 pub const uv_work_s = struct_uv_work_s;
 pub const uv_random_s = struct_uv_random_s;
 pub const uv_env_item_s = struct_uv_env_item_s;
@@ -270,7 +274,7 @@ pub const uv_tcp_flags = enum_uv_tcp_flags;
 pub const uv_udp_flags = enum_uv_udp_flags;
 pub const uv_poll_event = enum_uv_poll_event;
 pub const uv_stdio_container_s = struct_uv_stdio_container_s;
-pub const uv_process_options_s = struct_uv_process_options_s;
+pub const uv_process_options_s = uv_process_options_t;
 pub const uv_process_flags = enum_uv_process_flags;
 pub const uv_fs_event = enum_uv_fs_event;
 pub const uv_fs_event_flags = enum_uv_fs_event_flags;
@@ -526,23 +530,50 @@ pub const Loop = extern struct {
         this.active_handles -= 1;
     }
 
-    pub fn init() *Loop {
-        var this = get();
-        uv_replace_allocator(
-            this,
-            @ptrCast(&bun.Mimalloc.mi_malloc),
-            @ptrCast(&bun.Mimalloc.mi_realloc),
-            @ptrCast(&bun.Mimalloc.mi_calloc),
-            @ptrCast(&bun.Mimalloc.mi_free),
-        );
-    }
-
     pub fn isActive(this: *const Loop) bool {
         return uv_loop_alive(this) != 0;
     }
 
+    pub fn init(ptr: *Loop) ?bun.C.E {
+        if (uv_loop_init(ptr).errEnum()) |err| return err;
+        return null;
+    }
+
+    pub fn close(ptr: *Loop) void {
+        uv_loop_close(ptr);
+    }
+
+    pub fn new() ?bun.C.E {
+        var ptr = bun.default_allocator.create(Loop);
+        if (init(ptr)) |e| return e;
+        return ptr;
+    }
+
+    pub fn delete(ptr: *Loop) void {
+        close(ptr);
+        bun.default_allocator.destroy(ptr);
+    }
+
+    // threadlocal var threadlocal_loop_data: Loop = undefined;
+    // threadlocal var threadlocal_loop: ?*Loop = null;
+
+    /// UV loop is not thread local.
     pub fn get() *Loop {
+        // TODO(@paperdave):
+        // This should not work. UV is not threadsafe. Repeat, UV is NOT THREADSAFE.
+        // but... this on average seems to be more stable than having a threadlocal loop ._.
+        // really, the solution is to fix many other places like node_fs to not use
+        // the `bun.sys.sys_uv` wrapper api, as i think there is issue doing these
+        // cross-thread sync calls.
         return uv_default_loop();
+
+        // the correct code looks more like?:
+        // if (threadlocal_loop) |loop| return loop;
+        // if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
+        //     std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
+        // }
+        // threadlocal_loop = &threadlocal_loop_data;
+        // return &threadlocal_loop_data;
     }
 
     pub fn tick(this: *Loop) void {
@@ -596,15 +627,19 @@ pub const struct__AFD_POLL_INFO = extern struct {
 };
 pub const AFD_POLL_INFO = struct__AFD_POLL_INFO;
 pub const PAFD_POLL_INFO = [*c]struct__AFD_POLL_INFO;
-pub const struct_uv_buf_t = extern struct {
+pub const uv_buf_t = extern struct {
     len: ULONG,
     base: [*]u8,
+
+    pub fn init(input: []const u8) uv_buf_t {
+        std.debug.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
+        return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
+    }
 
     pub fn slice(this: *const @This()) []u8 {
         return this.base[0..this.len];
     }
 };
-pub const uv_buf_t = struct_uv_buf_t;
 pub const uv_file = c_int;
 pub const uv_os_sock_t = SOCKET;
 pub const uv_os_fd_t = HANDLE;
@@ -1215,7 +1250,7 @@ const union_unnamed_424 = extern union {
     reserved: [4]?*anyopaque,
 };
 pub const uv_process_t = struct_uv_process_s;
-pub const uv_exit_cb = ?*const fn ([*c]uv_process_t, i64, c_int) callconv(.C) void;
+pub const uv_exit_cb = ?*const fn (*uv_process_t, i64, c_int) callconv(.C) void;
 const struct_unnamed_426 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -1246,7 +1281,7 @@ pub const struct_uv_process_s = extern struct {
     u: union_unnamed_424,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    exit_cb: uv_exit_cb,
+    exit_cb: ?*const fn ([*c]struct_uv_process_s, i64, c_int) callconv(.C) void,
     pid: c_int,
     exit_req: struct_uv_process_exit_s,
     unused: ?*anyopaque,
@@ -1359,7 +1394,7 @@ const union_unnamed_435 = extern union {
     connect: struct_unnamed_437,
 };
 pub const uv_getaddrinfo_t = struct_uv_getaddrinfo_s;
-pub const uv_getaddrinfo_cb = ?*const fn ([*c]uv_getaddrinfo_t, c_int, ?*anyopaque) callconv(.C) void;
+pub const uv_getaddrinfo_cb = ?*const fn (*uv_getaddrinfo_t, c_int, ?*addrinfo) callconv(.C) void;
 pub const struct_uv_getaddrinfo_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1373,8 +1408,8 @@ pub const struct_uv_getaddrinfo_s = extern struct {
     node: [*]WCHAR,
     service: [*]WCHAR,
     addrinfow: ?*anyopaque,
-    addrinfo: ?*anyopaque,
-    retcode: c_int,
+    addrinfo: ?*addrinfo,
+    retcode: ReturnCode,
 };
 const struct_unnamed_439 = extern struct {
     overlapped: OVERLAPPED,
@@ -1471,8 +1506,8 @@ const union_unnamed_447 = extern union {
     io: struct_unnamed_448,
     connect: struct_unnamed_449,
 };
-pub const uv_fs_t = struct_uv_fs_s;
-pub const uv_fs_cb = ?*const fn ([*c]uv_fs_t) callconv(.C) void;
+pub const uv_fs_cb = ?*const FSCallback;
+pub const FSCallback = fn (req: *fs_t) callconv(.C) void;
 const union_unnamed_450 = extern union {
     pathw: [*]WCHAR,
     fd: c_int,
@@ -1495,7 +1530,7 @@ const union_unnamed_451 = extern union {
     info: struct_unnamed_452,
     time: struct_unnamed_453,
 };
-pub const struct_uv_fs_s = extern struct {
+pub const fs_t = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
     reserved: [6]?*anyopaque,
@@ -1504,15 +1539,45 @@ pub const struct_uv_fs_s = extern struct {
     fs_type: uv_fs_type,
     loop: *uv_loop_t,
     cb: uv_fs_cb,
-    result: isize,
+    result: ReturnCodeI64,
     ptr: ?*anyopaque,
-    path: [*]const u8,
+    path: [*:0]const u8,
     statbuf: uv_stat_t,
     work_req: struct_uv__work,
     flags: c_int,
     sys_errno_: DWORD,
     file: union_unnamed_450,
     fs: union_unnamed_451,
+
+    pub inline fn deinit(this: *fs_t) void {
+        this.assert();
+        uv_fs_req_cleanup(this);
+    }
+
+    pub inline fn assert(this: *fs_t) void {
+        if (bun.Environment.allow_assert) {
+            if (@intFromPtr(this.loop) == 0xAAAAAAAAAAAA0000) {
+                @panic("uv_fs_t was not initialized");
+            }
+        }
+    }
+
+    pub inline fn ptrAs(this: *fs_t, comptime T: type) T {
+        this.assert();
+        return @ptrCast(this.ptr);
+    }
+
+    /// This value is designed to to be used as the initial value for libuv fs actions.
+    /// In a release build it is uninitialized memory, but in a debug it is guaranteed
+    /// to panic if passed to deinit(). If that assertion fails, then it means the uv
+    /// function did not overwrite the memory before returning.
+    ///
+    /// It is assumed that if UV overwrites the .loop, it probably overwrote the rest of the struct.
+    pub const uninitialized: fs_t = if (bun.Environment.allow_assert) value: {
+        comptime var value = std.mem.zeroes(fs_t);
+        value.loop = @ptrFromInt(0xAAAAAAAAAAAA0000);
+        break :value value;
+    } else undefined;
 };
 const struct_unnamed_455 = extern struct {
     overlapped: OVERLAPPED,
@@ -1669,7 +1734,7 @@ pub const uv_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
 pub extern fn uv_library_shutdown() void;
 pub extern fn uv_replace_allocator(malloc_func: uv_malloc_func, realloc_func: uv_realloc_func, calloc_func: uv_calloc_func, free_func: uv_free_func) c_int;
 pub extern fn uv_default_loop() *uv_loop_t;
-pub extern fn uv_loop_init(loop: *uv_loop_t) c_int;
+pub extern fn uv_loop_init(loop: *uv_loop_t) ReturnCode;
 pub extern fn uv_loop_close(loop: *uv_loop_t) c_int;
 pub extern fn uv_loop_new() *uv_loop_t;
 pub extern fn uv_loop_delete(*uv_loop_t) void;
@@ -1707,22 +1772,38 @@ pub const uv_timeval64_t = extern struct {
     tv_usec: i32,
 };
 pub const uv_stat_t = extern struct {
-    st_dev: u64,
-    st_mode: u64,
-    st_nlink: u64,
-    st_uid: u64,
-    st_gid: u64,
-    st_rdev: u64,
-    st_ino: u64,
-    st_size: u64,
-    st_blksize: u64,
-    st_blocks: u64,
-    st_flags: u64,
-    st_gen: u64,
-    st_atim: uv_timespec_t,
-    st_mtim: uv_timespec_t,
-    st_ctim: uv_timespec_t,
-    st_birthtim: uv_timespec_t,
+    dev: u64,
+    mode: u64,
+    nlink: u64,
+    uid: u64,
+    gid: u64,
+    rdev: u64,
+    ino: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
+    flags: u64,
+    gen: u64,
+    atim: uv_timespec_t,
+    mtim: uv_timespec_t,
+    ctim: uv_timespec_t,
+    birthtim: uv_timespec_t,
+
+    pub fn atime(self: @This()) uv_timespec_t {
+        return self.atim;
+    }
+
+    pub fn mtime(self: @This()) uv_timespec_t {
+        return self.mtim;
+    }
+
+    pub fn ctime(self: @This()) uv_timespec_t {
+        return self.ctim;
+    }
+
+    pub fn birthtime(self: @This()) uv_timespec_t {
+        return self.birthtim;
+    }
 };
 pub const uv_fs_poll_cb = ?*const fn ([*c]uv_fs_poll_t, c_int, [*c]const uv_stat_t, [*c]const uv_stat_t) callconv(.C) void;
 pub const UV_LEAVE_GROUP: c_int = 0;
@@ -1754,7 +1835,7 @@ pub extern fn uv_send_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_recv_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_fileno(handle: *const uv_handle_t, fd: [*c]uv_os_fd_t) c_int;
 pub extern fn uv_buf_init(base: [*]u8, len: c_uint) uv_buf_t;
-pub extern fn uv_pipe(fds: [*c]uv_file, read_flags: c_int, write_flags: c_int) c_int;
+pub extern fn uv_pipe(fds: *[2]uv_file, read_flags: c_int, write_flags: c_int) ReturnCode;
 pub extern fn uv_socketpair(@"type": c_int, protocol: c_int, socket_vector: [*c]uv_os_sock_t, flags0: c_int, flags1: c_int) c_int;
 pub extern fn uv_stream_get_write_queue_size(stream: [*c]const uv_stream_t) usize;
 pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connection_cb) c_int;
@@ -1866,9 +1947,9 @@ pub extern fn uv_timer_again(handle: *uv_timer_t) c_int;
 pub extern fn uv_timer_set_repeat(handle: *uv_timer_t, repeat: u64) void;
 pub extern fn uv_timer_get_repeat(handle: *const uv_timer_t) u64;
 pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
-// pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: [*c]uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*]const u8, service: [*]const u8, hints: [*c]const struct_addrinfo) c_int;
-// pub extern fn uv_freeaddrinfo(ai: [*c]struct_addrinfo) void;
-// pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
+pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: *uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*:0]const u8, service: [*:0]const u8, hints: ?*const anyopaque) ReturnCode;
+pub extern fn uv_freeaddrinfo(ai: *anyopaque) void;
+pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
 pub const UV_IGNORE: c_int = 0;
 pub const UV_CREATE_PIPE: c_int = 1;
 pub const UV_INHERIT_FD: c_int = 2;
@@ -1887,19 +1968,18 @@ pub const struct_uv_stdio_container_s = extern struct {
     data: union_unnamed_463,
 };
 pub const uv_stdio_container_t = struct_uv_stdio_container_s;
-pub const struct_uv_process_options_s = extern struct {
+pub const uv_process_options_t = extern struct {
     exit_cb: uv_exit_cb,
-    file: [*]const u8,
-    args: [*c][*]u8,
-    env: [*c][*]u8,
-    cwd: [*]const u8,
+    file: [*:0]const u8,
+    args: [*:null]?[*:0]u8,
+    env: [*:null]?[*:0]const u8,
+    cwd: [*:0]const u8,
     flags: c_uint,
     stdio_count: c_int,
-    stdio: [*c]uv_stdio_container_t,
+    stdio: [*]uv_stdio_container_t,
     uid: uv_uid_t,
     gid: uv_gid_t,
 };
-pub const uv_process_options_t = struct_uv_process_options_s;
 pub const UV_PROCESS_SETUID: c_int = 1;
 pub const UV_PROCESS_SETGID: c_int = 2;
 pub const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS: c_int = 4;
@@ -1908,9 +1988,9 @@ pub const UV_PROCESS_WINDOWS_HIDE: c_int = 16;
 pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_int = 32;
 pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_int = 64;
 pub const enum_uv_process_flags = c_uint;
-pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: [*c]const uv_process_options_t) c_int;
-pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) c_int;
-pub extern fn uv_kill(pid: c_int, signum: c_int) c_int;
+pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: *const uv_process_options_t) ReturnCode;
+pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) ReturnCode;
+pub extern fn uv_kill(pid: c_int, signum: c_int) ReturnCode;
 pub extern fn uv_process_get_pid([*c]const uv_process_t) uv_pid_t;
 pub extern fn uv_queue_work(loop: *uv_loop_t, req: [*c]uv_work_t, work_cb: uv_work_cb, after_work_cb: uv_after_work_cb) c_int;
 pub extern fn uv_cancel(req: [*c]uv_req_t) c_int;
@@ -2014,55 +2094,55 @@ pub const UV_FS_STATFS: c_int = 34;
 pub const UV_FS_MKSTEMP: c_int = 35;
 pub const UV_FS_LUTIME: c_int = 36;
 pub const uv_fs_type = c_int;
-pub extern fn uv_fs_get_type([*c]const uv_fs_t) uv_fs_type;
-pub extern fn uv_fs_get_result([*c]const uv_fs_t) isize;
-pub extern fn uv_fs_get_system_error([*c]const uv_fs_t) c_int;
-pub extern fn uv_fs_get_ptr([*c]const uv_fs_t) ?*anyopaque;
-pub extern fn uv_fs_get_path([*c]const uv_fs_t) [*]const u8;
-pub extern fn uv_fs_get_statbuf([*c]uv_fs_t) [*c]uv_stat_t;
-pub extern fn uv_fs_req_cleanup(req: *uv_fs_t) void;
-pub extern fn uv_fs_close(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_open(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, flags: c_int, mode: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_read(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, bufs: [*]const uv_buf_t, nbufs: c_uint, offset: i64, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_unlink(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_write(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, bufs: [*]const uv_buf_t, nbufs: c_uint, offset: i64, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_copyfile(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, new_path: [*]const u8, flags: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_mkdir(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, mode: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_mkdtemp(loop: *uv_loop_t, req: *uv_fs_t, tpl: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_mkstemp(loop: *uv_loop_t, req: *uv_fs_t, tpl: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_rmdir(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_scandir(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, flags: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_scandir_next(req: *uv_fs_t, ent: *uv_dirent_t) c_int;
-pub extern fn uv_fs_opendir(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_readdir(loop: *uv_loop_t, req: *uv_fs_t, dir: [*c]uv_dir_t, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_closedir(loop: *uv_loop_t, req: *uv_fs_t, dir: [*c]uv_dir_t, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_stat(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_fstat(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_rename(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, new_path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_fsync(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_fdatasync(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_ftruncate(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, offset: i64, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_sendfile(loop: *uv_loop_t, req: *uv_fs_t, out_fd: uv_file, in_fd: uv_file, in_offset: i64, length: usize, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_access(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, mode: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_chmod(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, mode: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_utime(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, atime: f64, mtime: f64, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_futime(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, atime: f64, mtime: f64, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_lutime(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, atime: f64, mtime: f64, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_lstat(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_link(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, new_path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_symlink(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, new_path: [*]const u8, flags: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_readlink(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_realpath(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_fchmod(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, mode: c_int, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_chown(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, uid: uv_uid_t, gid: uv_gid_t, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_fchown(loop: *uv_loop_t, req: *uv_fs_t, file: uv_file, uid: uv_uid_t, gid: uv_gid_t, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_lchown(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, uid: uv_uid_t, gid: uv_gid_t, cb: uv_fs_cb) c_int;
-pub extern fn uv_fs_statfs(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, cb: uv_fs_cb) c_int;
+pub extern fn uv_fs_get_type(*const fs_t) uv_fs_type;
+pub extern fn uv_fs_get_result(*const fs_t) isize;
+pub extern fn uv_fs_get_system_error(*const fs_t) c_int;
+pub extern fn uv_fs_get_ptr(*const fs_t) ?*anyopaque;
+pub extern fn uv_fs_get_path(*const fs_t) [*:0]const u8;
+pub extern fn uv_fs_get_statbuf(*fs_t) *uv_stat_t;
+pub extern fn uv_fs_req_cleanup(req: *fs_t) void;
+pub extern fn uv_fs_close(loop: *uv_loop_t, req: *fs_t, file: uv_file, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_open(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, flags: c_int, mode: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_read(loop: *uv_loop_t, req: *fs_t, file: uv_file, bufs: [*]const uv_buf_t, nbufs: c_uint, offset: i64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_unlink(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_write(loop: *uv_loop_t, req: *fs_t, file: uv_file, bufs: [*]const uv_buf_t, nbufs: c_uint, offset: i64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_copyfile(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, new_path: [*:0]const u8, flags: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_mkdir(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, mode: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_mkdtemp(loop: *uv_loop_t, req: *fs_t, tpl: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_mkstemp(loop: *uv_loop_t, req: *fs_t, tpl: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_rmdir(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_scandir(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, flags: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_scandir_next(req: *fs_t, ent: *uv_dirent_t) ReturnCode;
+pub extern fn uv_fs_opendir(loop: *uv_loop_t, req: *fs_t, path: [*]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_readdir(loop: *uv_loop_t, req: *fs_t, dir: *uv_dir_t, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_closedir(loop: *uv_loop_t, req: *fs_t, dir: *uv_dir_t, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_stat(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_fstat(loop: *uv_loop_t, req: *fs_t, file: uv_file, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_rename(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, new_path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_fsync(loop: *uv_loop_t, req: *fs_t, file: uv_file, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_fdatasync(loop: *uv_loop_t, req: *fs_t, file: uv_file, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_ftruncate(loop: *uv_loop_t, req: *fs_t, file: uv_file, offset: i64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_sendfile(loop: *uv_loop_t, req: *fs_t, out_fd: uv_file, in_fd: uv_file, in_offset: i64, length: usize, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_access(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, mode: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_chmod(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, mode: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_utime(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, atime: f64, mtime: f64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_futime(loop: *uv_loop_t, req: *fs_t, file: uv_file, atime: f64, mtime: f64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_lutime(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, atime: f64, mtime: f64, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_lstat(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_link(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, new_path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_symlink(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, new_path: [*:0]const u8, flags: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_readlink(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_realpath(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_fchmod(loop: *uv_loop_t, req: *fs_t, file: uv_file, mode: c_int, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_chown(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, uid: uv_uid_t, gid: uv_gid_t, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_fchown(loop: *uv_loop_t, req: *fs_t, file: uv_file, uid: uv_uid_t, gid: uv_gid_t, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_lchown(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, uid: uv_uid_t, gid: uv_gid_t, cb: uv_fs_cb) ReturnCode;
+pub extern fn uv_fs_statfs(loop: *uv_loop_t, req: *fs_t, path: [*:0]const u8, cb: uv_fs_cb) ReturnCode;
 pub const UV_RENAME: c_int = 1;
 pub const UV_CHANGE: c_int = 2;
 pub const enum_uv_fs_event = c_uint;
 pub extern fn uv_fs_poll_init(loop: *uv_loop_t, handle: *uv_fs_poll_t) c_int;
-pub extern fn uv_fs_poll_start(handle: *uv_fs_poll_t, poll_cb: uv_fs_poll_cb, path: [*]const u8, interval: c_uint) c_int;
+pub extern fn uv_fs_poll_start(handle: *uv_fs_poll_t, poll_cb: uv_fs_poll_cb, path: [*:0]const u8, interval: c_uint) c_int;
 pub extern fn uv_fs_poll_stop(handle: *uv_fs_poll_t) c_int;
 pub extern fn uv_fs_poll_getpath(handle: *uv_fs_poll_t, buffer: [*]u8, size: [*c]usize) c_int;
 pub extern fn uv_signal_init(loop: *uv_loop_t, handle: *uv_signal_t) c_int;
@@ -2178,7 +2258,7 @@ pub const union_uv_any_req = extern union {
     write: uv_write_t,
     shutdown: uv_shutdown_t,
     udp_send: uv_udp_send_t,
-    fs: uv_fs_t,
+    fs: fs_t,
     work: uv_work_t,
     getaddrinfo: uv_getaddrinfo_t,
     getnameinfo: uv_getnameinfo_t,
@@ -2186,3 +2266,181 @@ pub const union_uv_any_req = extern union {
 };
 pub extern fn uv_loop_get_data([*c]const uv_loop_t) ?*anyopaque;
 pub extern fn uv_loop_set_data(*uv_loop_t, data: ?*anyopaque) void;
+
+pub fn translateUVErrorToE(code: anytype) bun.C.E {
+    return switch (code) {
+        UV_EPERM => bun.C.E.PERM,
+        UV_ENOENT => bun.C.E.NOENT,
+        UV_ESRCH => bun.C.E.SRCH,
+        UV_EINTR => bun.C.E.INTR,
+        UV_EIO => bun.C.E.IO,
+        UV_ENXIO => bun.C.E.NXIO,
+        UV_E2BIG => bun.C.E.@"2BIG",
+        UV_EBADF => bun.C.E.BADF,
+        UV_EAGAIN => bun.C.E.AGAIN,
+        UV_ENOMEM => bun.C.E.NOMEM,
+        UV_EACCES => bun.C.E.ACCES,
+        UV_EFAULT => bun.C.E.FAULT,
+        UV_EBUSY => bun.C.E.BUSY,
+        UV_EEXIST => bun.C.E.EXIST,
+        UV_EXDEV => bun.C.E.XDEV,
+        UV_ENODEV => bun.C.E.NODEV,
+        UV_ENOTDIR => bun.C.E.NOTDIR,
+        UV_EISDIR => bun.C.E.ISDIR,
+        UV_EINVAL => bun.C.E.INVAL,
+        UV_ENFILE => bun.C.E.NFILE,
+        UV_EMFILE => bun.C.E.MFILE,
+        UV_ENOTTY => bun.C.E.NOTTY,
+        UV_ETXTBSY => bun.C.E.TXTBSY,
+        UV_EFBIG => bun.C.E.FBIG,
+        UV_ENOSPC => bun.C.E.NOSPC,
+        UV_ESPIPE => bun.C.E.SPIPE,
+        UV_EROFS => bun.C.E.ROFS,
+        UV_EMLINK => bun.C.E.MLINK,
+        UV_EPIPE => bun.C.E.PIPE,
+        UV_ERANGE => bun.C.E.RANGE,
+        UV_ENAMETOOLONG => bun.C.E.NAMETOOLONG,
+        UV_ENOSYS => bun.C.E.NOSYS,
+        UV_ENOTEMPTY => bun.C.E.NOTEMPTY,
+        UV_ELOOP => bun.C.E.LOOP,
+        UV_EUNATCH => bun.C.E.UNATCH,
+        UV_ENODATA => bun.C.E.NODATA,
+        UV_ENONET => bun.C.E.NONET,
+        UV_EPROTO => bun.C.E.PROTO,
+        UV_EOVERFLOW => bun.C.E.OVERFLOW,
+        UV_EILSEQ => bun.C.E.ILSEQ,
+        UV_ENOTSOCK => bun.C.E.NOTSOCK,
+        UV_EDESTADDRREQ => bun.C.E.DESTADDRREQ,
+        UV_EMSGSIZE => bun.C.E.MSGSIZE,
+        UV_EPROTOTYPE => bun.C.E.PROTOTYPE,
+        UV_ENOPROTOOPT => bun.C.E.NOPROTOOPT,
+        UV_EPROTONOSUPPORT => bun.C.E.PROTONOSUPPORT,
+        UV_ESOCKTNOSUPPORT => bun.C.E.SOCKTNOSUPPORT,
+        UV_ENOTSUP => bun.C.E.NOTSUP,
+        UV_EAFNOSUPPORT => bun.C.E.AFNOSUPPORT,
+        UV_EADDRINUSE => bun.C.E.ADDRINUSE,
+        UV_EADDRNOTAVAIL => bun.C.E.ADDRNOTAVAIL,
+        UV_ENETDOWN => bun.C.E.NETDOWN,
+        UV_ENETUNREACH => bun.C.E.NETUNREACH,
+        UV_ECONNABORTED => bun.C.E.CONNABORTED,
+        UV_ECONNRESET => bun.C.E.CONNRESET,
+        UV_ENOBUFS => bun.C.E.NOBUFS,
+        UV_EISCONN => bun.C.E.ISCONN,
+        UV_ENOTCONN => bun.C.E.NOTCONN,
+        UV_ESHUTDOWN => bun.C.E.SHUTDOWN,
+        UV_ETIMEDOUT => bun.C.E.TIMEDOUT,
+        UV_ECONNREFUSED => bun.C.E.CONNREFUSED,
+        UV_EHOSTDOWN => bun.C.E.HOSTDOWN,
+        UV_EHOSTUNREACH => bun.C.E.HOSTUNREACH,
+        UV_EALREADY => bun.C.E.ALREADY,
+        UV_EREMOTEIO => bun.C.E.REMOTEIO,
+        UV_ECANCELED => bun.C.E.CANCELED,
+        UV_ECHARSET => bun.C.E.CHARSET,
+        UV_EOF => bun.C.E.OF,
+        else => @enumFromInt(-code),
+    };
+}
+
+pub const ReturnCode = extern struct {
+    value: c_int,
+
+    pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
+        return if (this.value < 0)
+            // @intFromEnum(translateUVErrorToE(this.value))
+            @as(u16, @intCast(-this.value))
+        else
+            null;
+    }
+
+    pub inline fn errEnum(this: ReturnCode) ?bun.C.E {
+        return if (this.value < 0)
+            (translateUVErrorToE(this.value))
+        else
+            null;
+    }
+
+    comptime {
+        std.debug.assert(@as(c_int, @bitCast(ReturnCode{ .value = 4021 })) == 4021);
+    }
+};
+
+pub const ReturnCodeI64 = extern struct {
+    value: i64,
+
+    pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
+        return if (this.value < 0)
+            // @intFromEnum(translateUVErrorToE(this.value))
+            @as(u16, @intCast(-this.value))
+        else
+            null;
+    }
+
+    pub inline fn errEnum(this: ReturnCodeI64) ?bun.C.E {
+        return if (this.value < 0)
+            (translateUVErrorToE(this.value))
+        else
+            null;
+    }
+
+    comptime {
+        std.debug.assert(@as(i64, @bitCast(ReturnCodeI64{ .value = 4021000000000 })) == 4021000000000);
+    }
+};
+
+pub const S = struct {
+    pub const IFMT = 0o170000;
+
+    pub const IFDIR = 0o040000;
+    pub const IFCHR = 0o020000;
+    pub const IFBLK = 0o060000;
+    pub const IFREG = 0o100000;
+    pub const IFIFO = 0o010000;
+    pub const IFLNK = 0o120000;
+    pub const IFSOCK = 0o140000;
+
+    pub const ISUID = 0o4000;
+    pub const ISGID = 0o2000;
+    pub const ISVTX = 0o1000;
+    pub const IRUSR = 0o400;
+    pub const IWUSR = 0o200;
+    pub const IXUSR = 0o100;
+    pub const IRWXU = 0o700;
+    pub const IRGRP = 0o040;
+    pub const IWGRP = 0o020;
+    pub const IXGRP = 0o010;
+    pub const IRWXG = 0o070;
+    pub const IROTH = 0o004;
+    pub const IWOTH = 0o002;
+    pub const IXOTH = 0o001;
+    pub const IRWXO = 0o007;
+
+    pub inline fn ISREG(m: i32) bool {
+        return m & IFMT == IFREG;
+    }
+
+    pub inline fn ISDIR(m: i32) bool {
+        return m & IFMT == IFDIR;
+    }
+
+    pub inline fn ISCHR(m: i32) bool {
+        return m & IFMT == IFCHR;
+    }
+
+    pub inline fn ISBLK(m: i32) bool {
+        return m & IFMT == IFBLK;
+    }
+
+    pub inline fn ISFIFO(m: i32) bool {
+        return m & IFMT == IFIFO;
+    }
+
+    pub inline fn ISLNK(m: i32) bool {
+        return m & IFMT == IFLNK;
+    }
+
+    pub inline fn ISSOCK(m: i32) bool {
+        return m & IFMT == IFSOCK;
+    }
+};
+
+pub const addrinfo = std.os.windows.ws2_32.addrinfo;

@@ -53,6 +53,8 @@ const PosixSpawn = bun.posix.spawn;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
         "bash",
@@ -261,6 +263,26 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
+    pub fn spawnPackageScripts(
+        manager: *PackageManager,
+        list: Lockfile.Package.Scripts.List,
+        envp: [:null]?[*:0]u8,
+    ) !void {
+        var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
+        lifecycle_subprocess.scripts = list.items;
+        lifecycle_subprocess.manager = manager;
+        lifecycle_subprocess.envp = envp;
+
+        lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                Lockfile.Scripts.names[list.first_index],
+                @errorName(err),
+            });
+        };
+
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
+    }
+
     pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,
@@ -410,6 +432,9 @@ pub const RunCommand = struct {
                         if (std.os.S.ISDIR(stat.mode)) {
                             if (!silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpStackTrace(trace.*);
+                            }
                             Global.exit(1);
                         }
                     }
@@ -459,20 +484,21 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    pub const bun_node_dir = switch (@import("builtin").target.os.tag) {
+    pub const bun_node_dir = switch (Environment.os) {
         // TODO:
         .windows => "TMPDIR",
 
-        .macos => "/private/tmp",
+        .mac => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node" ++ (if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "");
+        "/bun-debug-node";
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (Environment.isWindows) return bun.todo(@src(), {});
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
@@ -795,6 +821,9 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
+                                if (Environment.isWindows) {
+                                    @panic("TODO");
+                                }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
@@ -1010,6 +1039,9 @@ pub const RunCommand = struct {
                     script_name_to_search,
                     @errorName(err),
                 });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
                 Global.exit(1);
             };
             return true;
@@ -1039,6 +1071,7 @@ pub const RunCommand = struct {
                     var must_normalize = false;
                     const file_: anyerror!std.fs.File = brk: {
                         if (std.fs.path.isAbsolute(script_name_to_search)) {
+                            // TODO(@paperdave): i dont think this is correct
                             must_normalize = Environment.isWindows;
                             break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
                         } else {
@@ -1113,6 +1146,9 @@ pub const RunCommand = struct {
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
                         Global.exit(1);
                     };
 
@@ -1197,6 +1233,9 @@ pub const RunCommand = struct {
                                     std.fs.path.basename(script_name_to_search),
                                     @errorName(err),
                                 });
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
                                 Global.exit(1);
                             };
                         }

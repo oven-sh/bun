@@ -1789,17 +1789,16 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-const AsyncIO = bun.AsyncIO;
-const Waker = if (Environment.isPosix) bun.AsyncIO.Waker else *bun.uws.UVLoop;
+const Waker = if (Environment.isPosix) bun.Async.Waker else *bun.uws.UVLoop;
 
 const Waiter = struct {
-    onWait: *const fn (this: *anyopaque) AsyncIO.Errno!usize,
+    onWait: *const fn (this: *anyopaque) anyerror!usize,
     onWake: *const fn (this: *anyopaque) void,
     ctx: *anyopaque,
 
     pub fn init(
         ctx: anytype,
-        comptime onWait: *const fn (this: @TypeOf(ctx)) AsyncIO.Errno!usize,
+        comptime onWait: *const fn (this: @TypeOf(ctx)) anyerror!usize,
         comptime onWake: *const fn (this: @TypeOf(ctx)) void,
     ) Waiter {
         return Waiter{
@@ -1809,7 +1808,7 @@ const Waiter = struct {
         };
     }
 
-    pub fn wait(this: *Waiter) AsyncIO.Errno!usize {
+    pub fn wait(this: *Waiter) !usize {
         return this.onWait(this.ctx);
     }
 
@@ -1819,7 +1818,7 @@ const Waiter = struct {
 
     pub fn fromUWSLoop(loop: *uws.Loop) Waiter {
         const Handlers = struct {
-            fn onWait(uws_loop: *uws.Loop) AsyncIO.Errno!usize {
+            fn onWait(uws_loop: *uws.Loop) !usize {
                 uws_loop.run();
                 return 0;
             }
@@ -5950,6 +5949,9 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
+        if (Environment.isWindows and !Environment.isDebug) {
+            @panic("Windows support for bun install is not implemented yet");
+        }
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
 
@@ -7180,6 +7182,10 @@ pub const PackageManager = struct {
         comptime op: Lockfile.Package.Diff.Op,
         comptime subcommand: Subcommand,
     ) !void {
+        if (Environment.isWindows and !Environment.isDebug) {
+            @panic("Windows support for bun install is not implemented yet");
+        }
+
         var manager = init(ctx, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (op) {
@@ -8063,7 +8069,7 @@ pub const PackageManager = struct {
                                 var node_modules_is_ok = false;
                             };
                             if (!Singleton.node_modules_is_ok) {
-                                const stat = std.os.fstat(this.node_modules_folder.dir.fd) catch |err| {
+                                const stat = bun.sys.fstat(bun.toFD(this.node_modules_folder.dir.fd)).unwrap() catch |err| {
                                     Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                         this.names[package_id].slice(buf),
                                     });
@@ -8073,12 +8079,12 @@ pub const PackageManager = struct {
                                     Global.exit(1);
                                 };
 
-                                const is_writable = if (stat.uid == bun.C.getuid())
-                                    stat.mode & std.os.S.IWUSR > 0
+                                const is_writable = if (Environment.isWindows or stat.uid == bun.C.getuid())
+                                    stat.mode & bun.S.IWUSR > 0
                                 else if (stat.gid == bun.C.getgid())
-                                    stat.mode & std.os.S.IWGRP > 0
+                                    stat.mode & bun.S.IWGRP > 0
                                 else
-                                    stat.mode & std.os.S.IWOTH > 0;
+                                    stat.mode & bun.S.IWOTH > 0;
 
                                 if (!is_writable) {
                                     Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});

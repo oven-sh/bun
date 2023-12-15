@@ -55,7 +55,7 @@ pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
-        @compileError("Not implemented yet");
+        @compileError("Not implemented yet, conside using bun.sys.lstat()");
     }
 
     var st = zeroes(libc_stat);
@@ -105,29 +105,31 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
+// TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
-                _ = bun.sys.rmdirat(to_dir, destination.ptr);
+                _ = bun.sys.rmdirat(bun.toFD(to_dir), destination.ptr);
 
-                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
+                try (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination).unwrap());
                 return;
             }
 
             if (err.getErrno() == .XDEV) {
                 try moveFileZSlow(from_dir, filename, to_dir, destination);
             } else {
-                return bun.AsyncIO.asError(err.errno);
+                return bun.errnoToZigErr(err.errno);
             }
         },
         .result => {},
     }
 }
 
+// TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
@@ -142,7 +144,7 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
                 _ = bun.sys.unlinkat(from_dir, filename);
             }
 
-            return bun.AsyncIO.asError(err.errno);
+            return bun.errnoToZigErr(err.errno);
         },
         .result => {},
     }
@@ -151,13 +153,15 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+    _ = to_dir;
+    const dirfd = bun.toFD(from_dir);
+    const in_handle = try bun.sys.openat(dirfd, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
     defer _ = bun.sys.close(in_handle);
-    _ = bun.sys.unlinkat(from_dir, filename);
-    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
+    _ = bun.sys.unlinkat(dirfd, filename);
+    try copyFileZSlowWithHandle(in_handle, dirfd, destination);
 }
 
-pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
+pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
 
     // Attempt to delete incase it already existed.
@@ -176,7 +180,7 @@ pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
         _ = std.os.linux.fallocate(out_handle, 0, 0, @intCast(stat_.size));
     }
 
-    try bun.copyFile(in_handle, out_handle);
+    try bun.copyFile(bun.fdcast(in_handle), bun.fdcast(out_handle));
 
     if (comptime Environment.isPosix) {
         _ = fchmod(out_handle, stat_.mode);
@@ -186,7 +190,7 @@ pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
 
 pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
     if (comptime Environment.isWindows) {
-        return bun.todo(@src(), std.fs.File.Kind.unknown);
+        @panic("TODO on Windows");
     }
     return switch (mode & os.S.IFMT) {
         os.S.IFBLK => std.fs.File.Kind.block_device,
@@ -384,7 +388,7 @@ fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
         return std.c.dlsym(handle, name.ptr);
     }
 
-    return bun.todo(@src(), null);
+    @compileError("dlsym unimplemented for this target");
 }
 
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {

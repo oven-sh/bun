@@ -61,22 +61,15 @@ using namespace Zig;
 
 #define NAPI_VERBOSE 0
 
-#if !OS(WINDOWS)
 #if NAPI_VERBOSE
 #include <stdio.h>
-
 #define NAPI_PREMABLE \
     printf("[napi] %s:%d:%s\n", __FILE__, __LINE__, __PRETTY_FUNCTION__);
 #else
 
-#endif
-
+#endif // NAPI_VERBOSE
 #ifndef NAPI_PREMABLE
-
 #define NAPI_PREMABLE
-
-#endif
-
 #endif
 
 namespace Napi {

@@ -37,7 +37,7 @@ mkdir -p "$tar_dir"
 
 if [ -f "$OUTDIR/.tag" ]; then
   read_tag="$(cat "$OUTDIR/.tag")"
-  if [ "$read_tag" == "$PKG" ]; then
+  if [ "$read_tag" == "$TAG-$PKG" ]; then
     exit 0
   fi
 fi
@@ -54,4 +54,4 @@ fi
 
 tar -xzf "$tar" -C "$(dirname "$OUTDIR")" || (rm "$tar" && exit 1)
 
-echo "$PKG" > "$OUTDIR/.tag"
+echo "$TAG-$PKG" > "$OUTDIR/.tag"

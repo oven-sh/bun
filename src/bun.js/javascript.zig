@@ -15,7 +15,6 @@ const ErrorableString = bun.JSC.ErrorableString;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
 
-const IO = @import("root").bun.AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
@@ -591,16 +590,28 @@ pub const VirtualMachine = struct {
     has_started_debugger: bool = false,
     has_terminated: bool = false,
 
+    debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
+            if (Environment.allow_assert) {
+                return this.event_loop_handle orelse @panic("uws event_loop_handle is null");
+            }
             return this.event_loop_handle.?;
         }
 
         return uws.Loop.get();
+    }
+
+    pub fn uvLoop(this: *const VirtualMachine) *bun.Async.Loop {
+        if (Environment.allow_assert) {
+            return this.event_loop_handle orelse @panic("libuv event_loop_handle is null");
+        }
+        return this.event_loop_handle.?;
     }
 
     pub fn isMainThread(this: *const VirtualMachine) bool {
@@ -817,9 +828,9 @@ pub const VirtualMachine = struct {
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
 
-    pub fn io(this: *VirtualMachine) *IO {
+    pub fn io(this: *VirtualMachine) *bun.AsyncIO {
         if (this.io_ == null) {
-            this.io_ = IO.init(this) catch @panic("Failed to initialize IO");
+            this.io_ = bun.AsyncIO.init(this) catch @panic("Failed to initialize AsyncIO");
         }
 
         return &this.io_.?;
@@ -1174,6 +1185,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1282,6 +1294,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1337,6 +1350,14 @@ pub const VirtualMachine = struct {
         vm.configureDebugger(opts.debugger);
 
         return vm;
+    }
+
+    pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
+        if (Environment.allow_assert) {
+            if (vm.debug_thread_id != std.Thread.getCurrentId()) {
+                std.debug.panic("Expected to be on the JS thread.", .{});
+            }
+        }
     }
 
     fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
@@ -1420,6 +1441,7 @@ pub const VirtualMachine = struct {
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2903,23 +2925,12 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (show.path) {
+        if (show.errno) {
             if (show.syscall) {
                 try writer.writeAll("  ");
-            } else if (show.errno) {
-                try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.path});
-        }
-
-        if (show.fd) {
-            if (show.syscall) {
-                try writer.writeAll("   ");
-            } else if (show.errno) {
-                try writer.writeAll("  ");
-            }
-
-            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><cyan>\"{d}\"<r>\n", allow_ansi_color), .{exception.fd});
+            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
+            add_extra_line = true;
         }
 
         if (show.system_code) {
@@ -2937,12 +2948,22 @@ pub const VirtualMachine = struct {
             add_extra_line = true;
         }
 
-        if (show.errno) {
+        if (show.path) {
             if (show.syscall) {
                 try writer.writeAll("  ");
+            } else if (show.errno) {
+                try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
-            add_extra_line = true;
+            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.path});
+        }
+
+        if (show.fd) {
+            if (show.syscall) {
+                try writer.writeAll("     ");
+            } else if (show.errno) {
+                try writer.writeAll("  ");
+            }
+            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.fd});
         }
 
         if (add_extra_line) try writer.writeAll("\n");

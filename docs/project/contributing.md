@@ -130,7 +130,7 @@ These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
 $ ./scripts/setup.sh
-$ cmake -S . -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
@@ -287,12 +287,13 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Arch Linux / Cannot find `libatomic.a`
+## Cannot find `libatomic.a`
 
-Bun requires `libatomic` to be statically linked. On Arch Linux, it is only given as a shared library, but as a workaround you can symlink it to get the build working locally.
+Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ sudo ln -s /lib/libatomic.so /lib/libatomic.a
+$ cmake -Bbuild -GNinja -DUSE_STATIC_LIBATOMIC=ON
+$ ninja -Cbuild
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

@@ -222,7 +222,7 @@ pub const RuntimeTranspilerCache = struct {
                 std.debug.assert(end_position == @as(i64, @intCast(vecs[0].iov_len + vecs[1].iov_len + vecs[2].iov_len)));
                 std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
-                bun.C.preallocate_file(tmpfile.fd, 0, @intCast(end_position)) catch {};
+                bun.C.preallocate_file(bun.fdcast(tmpfile.fd), 0, @intCast(end_position)) catch {};
                 var current_vecs: []std.os.iovec = vecs[0..];
                 while (position < end_position) {
                     const written = try bun.sys.pwritev(tmpfile.fd, current_vecs, position).unwrap();
@@ -620,6 +620,9 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     pub fn put(this: *RuntimeTranspilerCache, output_code_bytes: []const u8, sourcemap: []const u8) void {
+        if (comptime !bun.FeatureFlags.runtime_transpiler_cache)
+            @compileError("RuntimeTranspilerCache is disabled");
+
         if (this.input_hash == null or is_disabled) {
             return;
         }

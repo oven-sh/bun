@@ -505,7 +505,7 @@ pub const CreateCommand = struct {
                                 const stat = infile.stat() catch continue;
                                 _ = C.fchmod(outfile.handle, stat.mode);
                             } else {
-                                bun.todo(@src(), void{});
+                                @panic("TODO on Windows");
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {

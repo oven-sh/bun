@@ -581,6 +581,15 @@ describe("--env-file", () => {
   });
 });
 
+test.if(process.platform === "win32")("environment variables are case-insensitive on Windows", () => {
+  const dir = tempDirWithFiles("dotenv", {
+    ".env": "FOO=bar\n",
+    "index.ts": "console.log(process.env.FOO, process.env.foo, process.env.fOo);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("bar bar bar");
+});
+
 describe("process.env is not inlined", () => {
   test("basic case", () => {
     const tmp = tempDirWithFiles("env-inlining", {

@@ -76,6 +76,7 @@ $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
 if ($LASTEXITCODE -ne 0) {
   Write-Output "Install Failed - could not verify bun.exe"
   Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
+  # TODO check for lastexitcode -1073741795 and print a better message
   exit 1
 }
 $DisplayVersion = if ($BunRevision -like "*-canary.*") {
@@ -86,6 +87,13 @@ $DisplayVersion = if ($BunRevision -like "*-canary.*") {
 
 $C_RESET = [char]27 + "[0m"
 $C_GREEN = [char]27 + "[1;32m"
+
+try {
+  $null = New-Item -ItemType HardLink -Path "${BunBin}\bunx.exe" -Target "${BunBin}\bun.exe" -Force
+} catch {
+  Write-Warning "Could not create a hard link for bunx, falling back to a cmd script`n"
+  Set-Content -Path "${BunBin}\bunx.cmd" -Value "@%~dp0bun.exe x %*"
+}
 
 Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
 Write-Output "The binary is located at ${BunBin}\bun.exe`n"
@@ -104,14 +112,17 @@ try {
 $User = [System.EnvironmentVariableTarget]::User
 $Path = [System.Environment]::GetEnvironmentVariable('Path', $User) -split ';'
 if ($Path -notcontains $BunBin) {
-  $env:Path = ($Path -join ';') + ";${BunBin}"
-  [System.Environment]::SetEnvironmentVariable('Path', "${env:Path}", $User)
+  $Path += $BunBin
+  [System.Environment]::SetEnvironmentVariable('Path', $Path -join ';', $User)
+}
+if ($env:PATH -notcontains ";${BunBin}") {
+  $env:PATH = "${env:Path};${BunBin}"
 }
 
 if(!$hasExistingOther) {
   if((Get-Command -ErrorAction SilentlyContinue bun) -eq $null) {
-    Write-Output "To get started, restart your terminal session, then type ``bun```n"
+    Write-Output "To get started, restart your terminal session, then type `"bun`"`n"
   } else {
-    Write-Output "Type ``bun`` in your terminal to get started`n"
+    Write-Output "Type `"bun`" in your terminal to get started`n"
   }
 }

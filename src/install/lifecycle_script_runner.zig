@@ -141,6 +141,10 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: usize) !void {
+        if (Environment.isWindows) {
+            @panic("TODO");
+        }
+
         _ = alive_count.fetchAdd(1, .Monotonic);
         errdefer _ = alive_count.fetchSub(1, .Monotonic);
 

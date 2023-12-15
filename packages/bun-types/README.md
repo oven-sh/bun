@@ -8,7 +8,7 @@ These are the type definitions for Bun's JavaScript runtime APIs.
 
 # Installation
 
-Install the `bun-types` npm package:
+Install the `@types/bun` npm package:
 
 ```bash
 # yarn/npm/pnpm work too

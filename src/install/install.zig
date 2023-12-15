@@ -8466,8 +8466,10 @@ pub const PackageManager = struct {
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
         const cwd = std.fs.cwd();
-        const node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch brk: {
+        var node_modules_existed = true;
+        var node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
+            node_modules_existed = false;
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
                     Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
@@ -8479,6 +8481,111 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
+        var old_node_modules: enum { none, npm, yarn, pnpm } = .none;
+        var temp_old_node_modules_dir_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var temp_old_node_modules_dir_name: [*:0]u8 = undefined;
+        var root_name_hash: u64 = 0;
+
+        if (node_modules_existed) {
+            // node_modules exists. What package manager created it? If npm, pnpm, or yarn created this
+            // node_modules, temporarily move it to another location while bun installs all the packages.
+            // After installation, move it back into node_modules under a new
+            // name (.old_<package manager name>_node_modules-hash).
+
+            // npm
+            if (bun.sys.existsAt(node_modules_folder.dir.fd, ".package-lock.json")) {
+                old_node_modules = .npm;
+            }
+
+            // yarn 1
+            if (old_node_modules == .none and bun.sys.existsAt(node_modules_folder.dir.fd, ".yarn-integrity")) {
+                old_node_modules = .yarn;
+            }
+
+            // yarn 2/3/4
+            if (old_node_modules == .none and bun.sys.existsAt(node_modules_folder.dir.fd, ".yarn-state.yml")) {
+                old_node_modules = .yarn;
+            }
+
+            // pnpm
+            if (old_node_modules == .none and bun.sys.existsAt(node_modules_folder.dir.fd, ".modules.yaml")) {
+                old_node_modules = .pnpm;
+            }
+
+            if (old_node_modules != .none) {
+                node_modules_folder.close();
+                var tmpdir = Fs.FileSystem.instance.tmpdir();
+                root_name_hash = brk: {
+                    if (lockfile.rootPackage()) |root_package| {
+                        break :brk String.Builder.stringHash(root_package.name.slice(this.lockfile.buffers.string_bytes.items));
+                    }
+
+                    break :brk String.Builder.stringHash("impossible");
+                };
+                temp_old_node_modules_dir_name = Fs.FileSystem.instance.tmpname(
+                    "old_node_modules",
+                    &temp_old_node_modules_dir_name_buf,
+                    root_name_hash,
+                ) catch unreachable;
+                debug("Moving {s} node_modules to tempdir: {s}", .{ @tagName(old_node_modules), temp_old_node_modules_dir_name });
+                switch (bun.sys.renameat(bun.toFD(cwd.fd), "node_modules", bun.toFD(tmpdir.fd), std.mem.sliceTo(temp_old_node_modules_dir_name, 0))) {
+                    .result => {},
+                    .err => |err| {
+                        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> Failed to move node_modules directory to temp directory", .{
+                            @tagName(err.getErrno()),
+                        });
+                        Global.crash();
+                    },
+                }
+
+                // create a new node_modules
+                bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> Failed to create new node_modules folder", .{
+                        @errorName(err),
+                    });
+                    Global.crash();
+                };
+
+                node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> Error opening new node_modules folder", .{
+                        @errorName(err),
+                    });
+                    Global.crash();
+                };
+            }
+        }
+
+        defer {
+            if (old_node_modules != .none) {
+                var tmpdir = Fs.FileSystem.instance.tmpdir();
+                const hex_formatter = bun.fmt.hexIntLower(root_name_hash);
+                // max package manager name + hex fmt length + sentinel
+                var new_name_buf: [".old__node_modules-".len + 4 + 16 + 1]u8 = undefined;
+
+                const destination_name = std.fmt.bufPrintZ(&new_name_buf, ".old_{s}_modules-{}", .{
+                    @tagName(old_node_modules),
+                    hex_formatter,
+                }) catch unreachable;
+
+                debug("Moving {s} node_modules from tempdir \"{s}\" to \"{s}\"", .{ @tagName(old_node_modules), temp_old_node_modules_dir_name, destination_name });
+                node_modules_folder.dir.makeDir(destination_name) catch unreachable;
+                switch (bun.sys.renameat(
+                    bun.toFD(tmpdir.fd),
+                    std.mem.sliceTo(temp_old_node_modules_dir_name, 0),
+                    bun.toFD(node_modules_folder.dir.fd),
+                    destination_name,
+                )) {
+                    .result => {},
+                    .err => |err| {
+                        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> Failed to move node_modules directory from temp directory", .{
+                            @tagName(err.getErrno()),
+                        });
+                        Global.crash();
+                    },
+                }
+            }
+        }
+
         var skip_delete = skip_verify_installed_version_number;
 
         if (options.enable.force_install) {
@@ -8494,6 +8601,10 @@ pub const PackageManager = struct {
             //     }
             // }
         }
+
+        // don't need to delete if node_modules is fresh
+        if (old_node_modules != .none) skip_delete = true;
+
         var summary = PackageInstall.Summary{};
 
         {

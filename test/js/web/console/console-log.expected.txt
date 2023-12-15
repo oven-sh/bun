@@ -244,7 +244,14 @@ myCustomName {
 0.9
 NaN
 NaN
-1
+NaN
 NaN
 1
+1
+1
+0
 NaN
+1
+1
+1
+0

@@ -182,9 +182,21 @@ console.log("%f", {
     return "abc";
   },
 });
+console.log("%f", {
+  [Symbol.toPrimitive]() {
+    throw 1;
+  },
+});
 console.log("%f", Symbol(0.1));
 
-console.log("%d", 1);
 console.log("%d", Symbol(1));
-console.log("%i", 1);
+console.log("%d", 1);
+console.log("%d", new Number(1));
+console.log("%d", "1");
+console.log("%d", 0.5);
+
 console.log("%i", Symbol(1));
+console.log("%i", 1);
+console.log("%i", new Number(1));
+console.log("%i", "1");
+console.log("%i", 0.5);

@@ -372,6 +372,7 @@ pub const BunxCommand = struct {
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
+                    null,
                 );
                 // we are done!
                 Global.exit(0);
@@ -406,6 +407,7 @@ pub const BunxCommand = struct {
                             this_bundler.fs.top_level_dir,
                             this_bundler.env,
                             passthrough,
+                            null,
                         );
                         // we are done!
                         Global.exit(0);
@@ -493,6 +495,7 @@ pub const BunxCommand = struct {
                 this_bundler.fs.top_level_dir,
                 this_bundler.env,
                 passthrough,
+                null,
             );
             // we are done!
             Global.exit(0);
@@ -516,6 +519,7 @@ pub const BunxCommand = struct {
                         this_bundler.fs.top_level_dir,
                         this_bundler.env,
                         passthrough,
+                        null,
                     );
                     // we are done!
                     Global.exit(0);

@@ -110,6 +110,17 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(1);
       });
 
+      it("exit code message works above 128", async () => {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "run", "bash", "-c", "kill -9 $$"],
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toStartWith('error: "bash" exited from signal SIGKILL ()');
+        expect(exitCode).toBe(200);
+      });
+
       for (let withLogLevel of [true, false]) {
         it(
           "valid tsconfig.json with invalid extends doesn't crash" + (withLogLevel ? " (log level debug)" : ""),

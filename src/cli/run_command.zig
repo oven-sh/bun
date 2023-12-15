@@ -356,7 +356,7 @@ pub const RunCommand = struct {
             .Exited => |code| {
                 if (code > 0) {
                     if (code > 2 and !silent) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, bun.SignalCode.from(code) });
                         Output.flush();
                     }
 
@@ -365,7 +365,7 @@ pub const RunCommand = struct {
             },
             .Signal => |signal| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
 
@@ -373,7 +373,7 @@ pub const RunCommand = struct {
             },
             .Stopped => |signal| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {}<r>", .{ name, bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
 
@@ -402,6 +402,7 @@ pub const RunCommand = struct {
         cwd: string,
         env: *DotEnv.Loader,
         passthrough: []const string,
+        original_script_for_bun_run: ?[]const u8,
     ) !bool {
         var argv_ = [_]string{executable};
         var argv: []const string = &argv_;
@@ -444,27 +445,62 @@ pub const RunCommand = struct {
             Global.exit(1);
         };
         switch (result) {
-            .Exited => |sig| {
-                // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2 and !silent)
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
-                Global.exit(sig);
+            .Exited => |code| {
+                if (!silent) {
+                    const is_probably_trying_to_run_a_pkg_script =
+                        original_script_for_bun_run != null and
+                        ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
+                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                        "install",
+                        "kill",
+                        "link",
+                    }) and ctx.positionals.len == 1));
+
+                    if (is_probably_trying_to_run_a_pkg_script) {
+                        // if you run something like `bun run test`, you get a confusing message because
+                        // you don't usually think about your global path, let alone "/bin/test"
+                        //
+                        // test exits with code 1, the other ones i listed exit with code 2
+                        //
+                        // so for these script names, print the entire exe name.
+                        Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ executable, code });
+                        Output.note("a package.json script \"{s}\" was not found", .{original_script_for_bun_run.?});
+                    }
+                    // 128 + 2 is the exit code of a process killed by SIGINT, which is caused by CTRL + C
+                    else if (code > 0 and code != 130) {
+                        Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
+                    }
+                }
+                Global.exit(code);
             },
             .Signal => |sig| {
+                if (Environment.allow_assert and sig == 0) {
+                    std.debug.panic("\"{s}\" stopped from signal code 0, which isn't supposed to be possible", .{executable});
+                }
+
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
                 if (sig > 0 and sig != 2 and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
+                    Output.errGeneric("\"<b>{s}<r>\" terminated by signal {}", .{ basenameOrBun(executable), bun.SignalCode.from(sig).fmt(Output.enable_ansi_colors_stderr) });
                 }
-                Global.exit(std.mem.asBytes(&sig)[0]);
+
+                // TODO(@paperdave): how does windows do weird exit situations
+                Output.flush();
+                Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
             },
             .Stopped => |sig| {
-                if (sig > 0 and !silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
-                Global.exit(std.mem.asBytes(&sig)[0]);
+                if (Environment.allow_assert and sig == 0) {
+                    std.debug.panic("\"{s}\" stopped from signal code 0, which isn't supposed to be possible", .{executable});
+                }
+                if (sig > 0 and !silent) {
+                    Output.errGeneric("\"<b>{s}<r>\" stopped by signal {}", .{ basenameOrBun(executable), bun.SignalCode.from(sig).fmt(Output.enable_ansi_colors_stderr) });
+                }
+                Output.flush();
+                Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
             },
             .Unknown => |sig| {
-                if (!silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ basenameOrBun(executable), sig });
+                if (!silent) {
+                    Output.errGeneric("\"<b>{s}<r>\" stopped with unknown state <b>{d}<r>", .{ basenameOrBun(executable), sig });
+                }
                 Global.exit(1);
             },
         }
@@ -1288,6 +1324,7 @@ pub const RunCommand = struct {
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
+                    script_name_to_search,
                 );
             }
         }

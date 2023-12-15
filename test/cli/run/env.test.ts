@@ -688,3 +688,22 @@ test("my test", () => {
     );
   });
 });
+
+test("NODE_ENV has a default value", () => {
+  const tmp = tempDirWithFiles("default-node-env", {
+    "index.ts": `const dynamic = () => require('process')['e' + String('nv')];
+console.log(process.env.NODE_ENV);
+console.log(dynamic().NODE_ENV);
+process.env.NODE_ENV = "production";
+console.log(dynamic().NODE_ENV);
+`,
+  });
+  expect(bunRun(path.join(tmp, "index.ts"), {}).stdout).toBe("development\ndevelopment\nproduction");
+});
+
+test("NODE_ENV default is not propogated in bun run", () => {
+  const tmp = tempDirWithFiles("default-node-env", {
+    "package.json": '{"scripts":{"show-env":"env | grep NODE_ENV && exit 1 || true"}}',
+  });
+  expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
+});

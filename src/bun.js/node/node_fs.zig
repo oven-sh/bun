@@ -4972,6 +4972,8 @@ pub const NodeFS = struct {
             .result => |fd_| fd_,
         };
 
+        defer _ = Syscall.close(fd);
+
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
         return switch (readdirWithEntries(args, fd, ExpectedType, &entries)) {
             .err => |err| return .{

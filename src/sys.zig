@@ -1167,7 +1167,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .rmdir)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, std.os.AT.REMOVEDIR), .rmdir)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }

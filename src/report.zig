@@ -354,13 +354,6 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             );
             Global.exit(1);
         },
-        error.BundleFailed => {
-            Output.prettyError(
-                "\n<r><red>BundleFailed<r>",
-                .{},
-            );
-            Global.exit(1);
-        },
         error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
             Global.exit(1);
         },

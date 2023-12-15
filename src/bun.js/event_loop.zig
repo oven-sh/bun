@@ -19,6 +19,8 @@ const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
+const Waker = bun.Async.Waker;
+
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
@@ -442,8 +444,6 @@ pub const ConcurrentTask = struct {
     }
 };
 
-const AsyncIO = @import("root").bun.AsyncIO;
-
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
     gc_timer: *uws.Timer = undefined,
@@ -599,7 +599,6 @@ comptime {
 }
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
-const Waker = AsyncIO.Waker;
 pub const EventLoop = struct {
     tasks: if (JSC.is_bindgen) void else Queue = undefined,
 
@@ -750,6 +749,8 @@ pub const EventLoop = struct {
                     this.virtual_machine.modules.onPoll();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
+                    if (Environment.os == .windows) @panic("This should not be reachable on Windows");
+
                     var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
                     any.runFromJS();
                     any.deinit();
@@ -1238,13 +1239,8 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
-        if (comptime Environment.isWindows) {
-            bun.todo(@src(), {});
-            return;
-        }
-
         // TODO: make this more efficient!
-        var loop = this.virtual_machine.event_loop_handle orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
+        var loop = this.virtual_machine.uwsLoop();
         var timer = uws.Timer.createFallthrough(loop, task.ptr());
         timer.set(task.ptr(), callTask, timeout, 0);
     }
@@ -1259,10 +1255,16 @@ pub const EventLoop = struct {
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
         if (this.virtual_machine.event_loop_handle == null) {
-            // Ensure the uWS loop is created first on windows
             if (comptime Environment.isWindows) {
-                this.uws_loop = bun.uws.Loop.get();
-                this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
+                this.uws_loop = bun.uws.Loop.init();
+                this.virtual_machine.event_loop_handle = Async.Loop.get();
+
+                _ = bun.windows.libuv.uv_replace_allocator(
+                    @ptrCast(&bun.Mimalloc.mi_malloc),
+                    @ptrCast(&bun.Mimalloc.mi_realloc),
+                    @ptrCast(&bun.Mimalloc.mi_calloc),
+                    @ptrCast(&bun.Mimalloc.mi_free),
+                );
             } else {
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
             }

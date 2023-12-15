@@ -2659,7 +2659,7 @@ pub const JSGlobalObject = extern struct {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
             var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
             return str.toErrorInstance(this);
@@ -2946,6 +2946,10 @@ pub const JSGlobalObject = extern struct {
     pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
         if (comptime is_bindgen) unreachable;
         return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
+    }
+
+    pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
+        if(bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
     pub const Extern = [_][]const u8{

@@ -2433,6 +2433,12 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
+    pub fn init() *UVLoop {
+        return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
+    }
+
+    extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+
     pub fn iterationNumber(this: *const UVLoop) c_longlong {
         return this.internal_loop_data.iteration_nr;
     }

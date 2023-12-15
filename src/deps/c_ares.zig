@@ -13,6 +13,7 @@ pub const ares_socket_t = c_int;
 pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_int) callconv(.C) void;
 pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
+const libuv = bun.windows.libuv;
 
 pub const NSClass = enum(c_int) {
     /// Cookie.
@@ -1310,7 +1311,25 @@ pub const Error = enum(i32) {
 
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
-            return bun.todo(@src(), Error.ENOTIMP);
+            // TODO: revisit this
+            return switch (rc) {
+                0 => null,
+                libuv.UV_EAI_AGAIN => Error.ETIMEOUT,
+                libuv.UV_EAI_ADDRFAMILY => Error.EBADFAMILY,
+                libuv.UV_EAI_BADFLAGS => Error.EBADFLAGS,
+                libuv.UV_EAI_BADHINTS => Error.EBADHINTS,
+                libuv.UV_EAI_CANCELED => Error.ECANCELLED,
+                libuv.UV_EAI_FAIL => Error.ENOTFOUND,
+                libuv.UV_EAI_FAMILY => Error.EBADFAMILY,
+                libuv.UV_EAI_MEMORY => Error.ENOMEM,
+                libuv.UV_EAI_NODATA => Error.ENODATA,
+                libuv.UV_EAI_NONAME => Error.ENONAME,
+                libuv.UV_EAI_OVERFLOW => Error.ENOMEM,
+                libuv.UV_EAI_PROTOCOL => Error.EBADQUERY,
+                libuv.UV_EAI_SERVICE => Error.ESERVICE,
+                libuv.UV_EAI_SOCKTYPE => Error.ECONNREFUSED,
+                else => Error.ENOTFOUND, //UV_ENOENT and non documented errors
+            };
         }
 
         return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {

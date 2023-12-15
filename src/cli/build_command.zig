@@ -168,7 +168,7 @@ pub const BuildCommand = struct {
             };
             defer dir.close();
 
-            break :brk1 bun.getFdPath(dir.fd, &src_root_dir_buf) catch |err| {
+            break :brk1 bun.getFdPath(bun.toFD(dir.fd), &src_root_dir_buf) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };

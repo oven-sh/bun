@@ -1550,158 +1550,44 @@ pub const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
 pub const SRC_NODE_API_TYPES_H_ = "";
 pub const NAPI_MODULE_VERSION = @as(c_int, 1);
 
-// v8:: C++ symbols
-extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
-extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
-extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
-extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
-extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+/// v8:: C++ symbols defined in v8.cpp
+///
+/// Do not call these at runtime, as they do not contain type and callconv info. They are simply
+/// used for DCE suppression and asserting that the symbols exist at link-time.
+///
+// TODO: write a script to generate this struct. ideally it wouldn't even need to be committed to source.
+const V8API = if (!bun.Environment.isWindows) struct {
+    extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
+    extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
+    extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
+    extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+    extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+} else struct {
+    // MSVC name mangling is different than it is on unix.
+    // To make this easier to deal with, I have provided a script to generate the list of functions.
+    //
+    // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
+    //
+    // Bug @paperdave if you get stuck here
+    extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VJSGlobalObject@JSC@@@2@XZ"() *anyopaque;
+    extern fn @"?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+    extern fn @"?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+};
 
 pub fn fixDeadCodeElimination() void {
     JSC.markBinding(@src());
 
-    std.mem.doNotOptimizeAway(&napi_acquire_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_add_async_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_add_env_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_add_finalizer);
-    std.mem.doNotOptimizeAway(&napi_adjust_external_memory);
-    std.mem.doNotOptimizeAway(&napi_async_destroy);
-    std.mem.doNotOptimizeAway(&napi_async_init);
-    std.mem.doNotOptimizeAway(&napi_call_function);
-    std.mem.doNotOptimizeAway(&napi_call_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_cancel_async_work);
-    std.mem.doNotOptimizeAway(&napi_check_object_type_tag);
-    std.mem.doNotOptimizeAway(&napi_close_callback_scope);
-    std.mem.doNotOptimizeAway(&napi_close_escapable_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_close_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_coerce_to_bool);
-    std.mem.doNotOptimizeAway(&napi_coerce_to_number);
-    std.mem.doNotOptimizeAway(&napi_coerce_to_object);
-    std.mem.doNotOptimizeAway(&napi_create_array);
-    std.mem.doNotOptimizeAway(&napi_create_array_with_length);
-    std.mem.doNotOptimizeAway(&napi_create_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_create_async_work);
-    std.mem.doNotOptimizeAway(&napi_create_bigint_int64);
-    std.mem.doNotOptimizeAway(&napi_create_bigint_uint64);
-    std.mem.doNotOptimizeAway(&napi_create_bigint_words);
-    std.mem.doNotOptimizeAway(&napi_create_buffer);
-    std.mem.doNotOptimizeAway(&napi_create_buffer_copy);
-    std.mem.doNotOptimizeAway(&napi_create_dataview);
-    std.mem.doNotOptimizeAway(&napi_create_date);
-    std.mem.doNotOptimizeAway(&napi_create_double);
-    std.mem.doNotOptimizeAway(&napi_create_error);
-    std.mem.doNotOptimizeAway(&napi_create_external);
-    std.mem.doNotOptimizeAway(&napi_create_external_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_create_external_buffer);
-    std.mem.doNotOptimizeAway(&napi_create_int32);
-    std.mem.doNotOptimizeAway(&napi_create_int64);
-    std.mem.doNotOptimizeAway(&napi_create_object);
-    std.mem.doNotOptimizeAway(&napi_create_promise);
-    std.mem.doNotOptimizeAway(&napi_create_range_error);
-    std.mem.doNotOptimizeAway(&napi_create_reference);
-    std.mem.doNotOptimizeAway(&napi_create_string_latin1);
-    std.mem.doNotOptimizeAway(&napi_create_string_utf16);
-    std.mem.doNotOptimizeAway(&napi_create_string_utf8);
-    std.mem.doNotOptimizeAway(&napi_create_symbol);
-    std.mem.doNotOptimizeAway(&napi_create_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_create_type_error);
-    std.mem.doNotOptimizeAway(&napi_create_typedarray);
-    std.mem.doNotOptimizeAway(&napi_create_uint32);
-    std.mem.doNotOptimizeAway(&napi_define_class);
-    std.mem.doNotOptimizeAway(&napi_define_properties);
-    std.mem.doNotOptimizeAway(&napi_delete_async_work);
-    std.mem.doNotOptimizeAway(&napi_delete_reference);
-    std.mem.doNotOptimizeAway(&napi_detach_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_escape_handle);
-    std.mem.doNotOptimizeAway(&napi_fatal_error);
-    std.mem.doNotOptimizeAway(&napi_fatal_exception);
-    std.mem.doNotOptimizeAway(&napi_get_all_property_names);
-    std.mem.doNotOptimizeAway(&napi_get_and_clear_last_exception);
-    std.mem.doNotOptimizeAway(&napi_get_array_length);
-    std.mem.doNotOptimizeAway(&napi_get_arraybuffer_info);
-    std.mem.doNotOptimizeAway(&napi_get_boolean);
-    std.mem.doNotOptimizeAway(&napi_get_buffer_info);
-    std.mem.doNotOptimizeAway(&napi_get_cb_info);
-    std.mem.doNotOptimizeAway(&napi_get_dataview_info);
-    std.mem.doNotOptimizeAway(&napi_get_date_value);
-    std.mem.doNotOptimizeAway(&napi_get_element);
-    std.mem.doNotOptimizeAway(&napi_get_global);
-    std.mem.doNotOptimizeAway(&napi_get_instance_data);
-    std.mem.doNotOptimizeAway(&napi_get_last_error_info);
-    std.mem.doNotOptimizeAway(&napi_get_new_target);
-    std.mem.doNotOptimizeAway(&napi_get_node_version);
-    std.mem.doNotOptimizeAway(&napi_get_null);
-    std.mem.doNotOptimizeAway(&napi_get_prototype);
-    std.mem.doNotOptimizeAway(&napi_get_reference_value);
-    std.mem.doNotOptimizeAway(&napi_get_reference_value_internal);
-    std.mem.doNotOptimizeAway(&napi_get_threadsafe_function_context);
-    std.mem.doNotOptimizeAway(&napi_get_typedarray_info);
-    std.mem.doNotOptimizeAway(&napi_get_undefined);
-    std.mem.doNotOptimizeAway(&napi_get_uv_event_loop);
-    std.mem.doNotOptimizeAway(&napi_get_value_bigint_int64);
-    std.mem.doNotOptimizeAway(&napi_get_value_bigint_uint64);
-    std.mem.doNotOptimizeAway(&napi_get_value_bigint_words);
-    std.mem.doNotOptimizeAway(&napi_get_value_bool);
-    std.mem.doNotOptimizeAway(&napi_get_value_double);
-    std.mem.doNotOptimizeAway(&napi_get_value_external);
-    std.mem.doNotOptimizeAway(&napi_get_value_int32);
-    std.mem.doNotOptimizeAway(&napi_get_value_int64);
-    std.mem.doNotOptimizeAway(&napi_get_value_string_latin1);
-    std.mem.doNotOptimizeAway(&napi_get_value_string_utf16);
-    std.mem.doNotOptimizeAway(&napi_get_value_string_utf8);
-    std.mem.doNotOptimizeAway(&napi_get_value_uint32);
-    std.mem.doNotOptimizeAway(&napi_get_version);
-    std.mem.doNotOptimizeAway(&napi_has_element);
-    std.mem.doNotOptimizeAway(&napi_instanceof);
-    std.mem.doNotOptimizeAway(&napi_is_array);
-    std.mem.doNotOptimizeAway(&napi_is_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_is_buffer);
-    std.mem.doNotOptimizeAway(&napi_is_dataview);
-    std.mem.doNotOptimizeAway(&napi_is_date);
-    std.mem.doNotOptimizeAway(&napi_is_detached_arraybuffer);
-    std.mem.doNotOptimizeAway(&napi_is_error);
-    std.mem.doNotOptimizeAway(&napi_is_exception_pending);
-    std.mem.doNotOptimizeAway(&napi_is_promise);
-    std.mem.doNotOptimizeAway(&napi_is_typedarray);
-    std.mem.doNotOptimizeAway(&napi_make_callback);
-    std.mem.doNotOptimizeAway(&napi_new_instance);
-    std.mem.doNotOptimizeAway(&napi_open_callback_scope);
-    std.mem.doNotOptimizeAway(&napi_open_escapable_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_open_handle_scope);
-    std.mem.doNotOptimizeAway(&napi_queue_async_work);
-    std.mem.doNotOptimizeAway(&napi_ref_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_reference_ref);
-    std.mem.doNotOptimizeAway(&napi_reference_unref);
-    std.mem.doNotOptimizeAway(&napi_reject_deferred);
-    std.mem.doNotOptimizeAway(&napi_release_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_remove_async_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_remove_env_cleanup_hook);
-    std.mem.doNotOptimizeAway(&napi_remove_wrap);
-    std.mem.doNotOptimizeAway(&napi_resolve_deferred);
-    std.mem.doNotOptimizeAway(&napi_run_script);
-    std.mem.doNotOptimizeAway(&napi_set_element);
-    std.mem.doNotOptimizeAway(&napi_set_instance_data);
-    std.mem.doNotOptimizeAway(&napi_strict_equals);
-    std.mem.doNotOptimizeAway(&napi_throw);
-    std.mem.doNotOptimizeAway(&napi_throw_error);
-    std.mem.doNotOptimizeAway(&napi_throw_range_error);
-    std.mem.doNotOptimizeAway(&napi_throw_type_error);
-    std.mem.doNotOptimizeAway(&napi_type_tag_object);
-    std.mem.doNotOptimizeAway(&napi_typeof);
-    std.mem.doNotOptimizeAway(&napi_unref_threadsafe_function);
-    std.mem.doNotOptimizeAway(&napi_unwrap);
-    std.mem.doNotOptimizeAway(&napi_wrap);
-    std.mem.doNotOptimizeAway(&node_api_create_syntax_error);
-    std.mem.doNotOptimizeAway(&node_api_symbol_for);
-    std.mem.doNotOptimizeAway(&node_api_throw_syntax_error);
-    std.mem.doNotOptimizeAway(&node_api_create_external_string_latin1);
-    std.mem.doNotOptimizeAway(&node_api_create_external_string_utf16);
-    std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
+    inline for (comptime std.meta.declarations(@This())) |decl| {
+        if (std.mem.startsWith(u8, decl.name, "node_api_") or std.mem.startsWith(u8, decl.name, "napi_")) {
+            std.mem.doNotOptimizeAway(&@field(@This(), decl.name));
+        }
+    }
 
-    // v8:: C++ symbols
-    std.mem.doNotOptimizeAway(&_ZN2v87Isolate10GetCurrentEv);
-    std.mem.doNotOptimizeAway(&_ZN2v87Isolate13TryGetCurrentEv);
-    std.mem.doNotOptimizeAway(&_ZN2v87Isolate17GetCurrentContextEv);
-    std.mem.doNotOptimizeAway(&_ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_);
-    std.mem.doNotOptimizeAway(&_ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_);
+    inline for (comptime std.meta.declarations(V8API)) |decl| {
+        std.mem.doNotOptimizeAway(&@field(V8API, decl.name));
+    }
+
+    std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

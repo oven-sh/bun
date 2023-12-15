@@ -289,6 +289,12 @@ pub const FilePoll = struct {
         return this.flags.contains(.has_incremented_poll_count);
     }
 
+    pub fn onEnded(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.insert(.closed);
+        this.deactivate(vm.event_loop_handle.?);
+    }
+
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         if (!this.canUnref())
@@ -361,4 +367,30 @@ pub const FilePoll = struct {
             vm.after_event_loop_callback_ctx = this;
         }
     };
+};
+
+pub const Waker = struct {
+    loop: *bun.uws.UVLoop,
+
+    pub fn init(_: std.mem.Allocator) !Waker {
+        return .{ .loop = bun.uws.UVLoop.init() };
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        _ = this;
+
+        @compileError("Waker.getFd is unsupported on Windows");
+    }
+
+    pub fn initWithFileDescriptor(_: std.mem.Allocator, _: bun.FileDescriptor) Waker {
+        @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
+    }
+
+    pub fn wait(this: Waker) void {
+        this.loop.wait();
+    }
+
+    pub fn wake(this: *const Waker) void {
+        this.loop.wakeup();
+    }
 };

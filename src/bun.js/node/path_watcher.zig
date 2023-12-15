@@ -87,7 +87,10 @@ pub const PathWatcherManager = struct {
         const cloned_path = try bun.default_allocator.dupeZ(u8, path);
         errdefer bun.default_allocator.free(cloned_path);
 
-        if (std.fs.openDirAbsoluteZ(cloned_path, .{ .access_sub_paths = true })) |iterable_dir| {
+        if (std.fs.openDirAbsoluteZ(cloned_path, .{
+            .access_sub_paths = true,
+            .iterate = true,
+        })) |iterable_dir| {
             const result = PathInfo{
                 .fd = iterable_dir.fd,
                 .is_file = false,

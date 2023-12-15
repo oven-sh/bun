@@ -2811,8 +2811,13 @@ declare var ReadableStreamDefaultController: {
 interface ReadableStreamDefaultReader<R = any>
   extends ReadableStreamGenericReader {
   read(): Promise<ReadableStreamDefaultReadResult<R>>;
-  /** Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time. */
-  readMany(): Promise<ReadableStreamDefaultReadManyResult<R>>;
+  /**
+   * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
+   * Will only return a promise if the data is not immediatly available.
+   */
+  readMany():
+    | Promise<ReadableStreamDefaultReadManyResult<R>>
+    | ReadableStreamDefaultReadManyResult<R>;
   releaseLock(): void;
 }
 

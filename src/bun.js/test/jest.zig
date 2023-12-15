@@ -507,15 +507,15 @@ pub const Jest = struct {
 
         if (arguments.len < 1 or !arguments[0].isString()) {
             globalObject.throw("Bun.jest() expects a string filename", .{});
-            return .undefined;
+            return .zero;
         }
         var str = arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         var slice = str.slice();
 
-        if (str.len == 0 or slice[0] != '/') {
-            globalObject.throw("Bun.jest() expects an absolute file path", .{});
-            return .undefined;
+        if (!std.fs.path.isAbsolute(slice)) {
+            globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
+            return .zero;
         }
 
         var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
@@ -1871,6 +1871,18 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     const owned_slice = try str.toOwnedSlice(allocator);
                     defer allocator.free(owned_slice);
                     try list.appendSlice(allocator, owned_slice);
+                    idx += 1;
+                    args_idx += 1;
+                },
+                'p' => {
+                    var formatter = JSC.ZigConsoleClient.Formatter{
+                        .globalThis = globalThis,
+                        .quote_strings = true,
+                    };
+                    const value_fmt = current_arg.toFmt(globalThis, &formatter);
+                    const test_index_str = try std.fmt.allocPrint(allocator, "{any}", .{value_fmt});
+                    defer allocator.free(test_index_str);
+                    try list.appendSlice(allocator, test_index_str);
                     idx += 1;
                     args_idx += 1;
                 },

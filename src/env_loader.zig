@@ -57,7 +57,7 @@ pub const Loader = struct {
         return strings.eqlComptime(env, "production");
     }
 
-    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
+    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
@@ -168,9 +168,52 @@ pub const Loader = struct {
         }
         return http_proxy;
     }
+
+    var did_load_ccache_path: bool = false;
+
+    pub fn loadCCachePath(this: *Loader, fs: *Fs.FileSystem) void {
+        if (did_load_ccache_path) {
+            return;
+        }
+        did_load_ccache_path = true;
+        loadCCachePathImpl(this, fs) catch {};
+    }
+
+    fn loadCCachePathImpl(this: *Loader, fs: *Fs.FileSystem) !void {
+
+        // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
+        // cmake can use it to hopefully speed things up
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const ccache_path = bun.which(
+            &buf,
+            this.map.get("PATH") orelse return,
+            fs.top_level_dir,
+            "ccache",
+        ) orelse "";
+
+        if (ccache_path.len > 0) {
+            var cxx_gop = try this.map.getOrPutWithoutValue("CMAKE_CXX_COMPILER_LAUNCHER");
+            if (!cxx_gop.found_existing) {
+                cxx_gop.key_ptr.* = try this.allocator.dupe(u8, cxx_gop.key_ptr.*);
+                cxx_gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, ccache_path),
+                    .conditional = false,
+                };
+            }
+            var c_gop = try this.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
+            if (!c_gop.found_existing) {
+                c_gop.key_ptr.* = try this.allocator.dupe(u8, c_gop.key_ptr.*);
+                c_gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, ccache_path),
+                    .conditional = false,
+                };
+            }
+        }
+    }
+
     var node_path_to_use_set_once: []const u8 = "";
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
-        var buf: Fs.PathBuffer = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         var node_path_to_use = override_node;
         if (node_path_to_use.len == 0) {
@@ -179,9 +222,9 @@ pub const Loader = struct {
             } else {
                 var node = this.getNodePath(fs, &buf) orelse return false;
                 node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
-                node_path_to_use_set_once = node_path_to_use;
             }
         }
+        node_path_to_use_set_once = node_path_to_use;
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);
         return true;
@@ -1017,7 +1060,11 @@ pub const Map = struct {
         value: string,
         conditional: bool,
     };
-    const HashTable = bun.StringArrayHashMap(HashTableValue);
+    // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
+    // An issue with this exact implementation is unicode characters can technically appear in these
+    // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
+    // some strings collide.
+    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
 
     const GetOrPutResult = HashTable.GetOrPutResult;
 

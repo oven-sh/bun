@@ -193,7 +193,7 @@ pub const Fs = struct {
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
             if (will_close) {
-                debug("close({d})", .{file_handle.handle});
+                debug("readFileWithAllocator close({d})", .{file_handle.handle});
                 file_handle.close();
             }
         }

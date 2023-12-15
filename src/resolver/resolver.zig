@@ -47,8 +47,26 @@ const Semver = @import("../install/semver.zig");
 const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
-    // this could probably be flattened into something more optimized
-    return path.len > 0 and path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
+    // Always check for posix absolute paths (starts with "/")
+    // But don't check window's style on posix
+    // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
+    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+}
+
+pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
+    if (Environment.allow_assert) {
+        std.debug.assert(!std.fs.path.isAbsolute(non_absolute_path));
+        std.debug.assert(!strings.startsWith(non_absolute_path, "/"));
+    }
+
+    return !strings.startsWith(non_absolute_path, "./") and
+        !strings.startsWith(non_absolute_path, "../") and
+        !strings.eql(non_absolute_path, ".") and
+        !strings.eql(non_absolute_path, "..") and if (Environment.isWindows)
+        (!strings.startsWith(non_absolute_path, ".\\") and
+            !strings.startsWith(non_absolute_path, "..\\"))
+    else
+        true;
 }
 
 pub const SideEffectsData = struct {
@@ -70,6 +88,7 @@ const bufs = struct {
     pub threadlocal var extension_path: [512]u8 = undefined;
     pub threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub threadlocal var esm_subpath: [512]u8 = undefined;
     pub threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -558,6 +577,9 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
+        // TODO: enable auto-install on Windows
+        if (Environment.isWindows) return false;
+
         // TODO(@paperdave): make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
@@ -1094,7 +1116,9 @@ pub const Resolver = struct {
         // experience unexpected build failures later on other operating systems.
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
-        if (strings.startsWith(import_path, "/") or std.fs.path.isAbsolutePosix(import_path)) {
+        if (std.fs.path.isAbsolutePosix(import_path) or
+            (if (Environment.isWindows) std.fs.path.isAbsoluteWindows(import_path) else false))
+        {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
             }
@@ -1140,7 +1164,8 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            if (r.loadAsFileOrDirectory(import_path, kind)) |entry| {
+            var normalizer = ResolvePath.PosixToWinNormalizer{};
+            if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
                 return .{
                     .success = Result{
                         .dirname_fd = entry.dirname_fd,
@@ -1158,7 +1183,7 @@ pub const Resolver = struct {
 
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
-        const is_package_path = isPackagePath(import_path);
+        const is_package_path = isPackagePathNotAbsolute(import_path);
         var check_relative = !is_package_path or kind == .url;
         var check_package = is_package_path;
 
@@ -2458,11 +2483,18 @@ pub const Resolver = struct {
         return r.dir_cache.get(path);
     }
 
+    inline fn isDotSlash(path: string) bool {
+        return switch (Environment.os) {
+            else => strings.eqlComptime(path, "./"),
+            .windows => path.len == 2 and path[0] == '.' and strings.charIsAnySlash(path[1]),
+        };
+    }
+
     fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
         var _path = __path;
-        if (strings.eqlComptime(_path, "./") or strings.eqlComptime(_path, "."))
+        if (isDotSlash(_path) or strings.eqlComptime(_path, "."))
             _path = r.fs.top_level_dir;
 
         const top_result = try r.dir_cache.getOrPut(_path);
@@ -2485,8 +2517,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (comptime Environment.isWindows)
-            // std.fs.path.diskDesignator(path)
-            path[0..3]
+            ResolvePath.windowsFilesystemRoot(path)
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2846,6 +2877,15 @@ pub const Resolver = struct {
                 const total_length: ?u32 = strings.indexOfChar(original_path, '*');
                 var prefix_parts = [_]string{ abs_base_url, original_path[0 .. total_length orelse original_path.len] };
 
+                // Concatenate the matched text with the suffix from the wildcard path
+                var matched_text_with_suffix = bufs(.tsconfig_match_full_buf3);
+                var matched_text_with_suffix_len: usize = 0;
+                if (total_length != null) {
+                    const suffix = std.mem.trimLeft(u8, original_path[total_length orelse original_path.len ..], "*");
+                    matched_text_with_suffix_len = matched_text.len + suffix.len;
+                    bun.concat(u8, matched_text_with_suffix, &.{ matched_text, suffix });
+                }
+
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
                 var prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
@@ -2854,7 +2894,7 @@ pub const Resolver = struct {
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
                 var parts = [_]string{
                     prefix,
-                    if (total_length != null) std.mem.trimLeft(u8, matched_text, "/") else "",
+                    if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
                     std.mem.trimLeft(u8, longest_match.suffix, "/"),
                 };
                 var absolute_original_path = r.fs.absBuf(
@@ -3993,27 +4033,18 @@ pub const Resolver = struct {
 };
 
 pub const Dirname = struct {
-    pub fn dirname(path_: string) string {
-        var path = path_;
+    pub fn dirname(path: string) string {
+        if (path.len == 0)
+            return std.fs.path.sep_str;
+
         const root = brk: {
             if (Environment.isWindows) {
-                if (path.len > 1 and path[1] == ':' and switch (path[0]) {
-                    'A'...'Z', 'a'...'z' => true,
-                    else => false,
-                }) {
-                    break :brk path[0..2];
-                }
-
-                // TODO: UNC paths
-                // TODO: NT paths
-                break :brk "/c/";
+                const root = ResolvePath.windowsFilesystemRoot(path);
+                std.debug.assert(root.len > 0);
+                break :brk root;
             }
-
             break :brk "/";
         };
-
-        if (path.len == 0)
-            return root;
 
         var end_index: usize = path.len - 1;
         while (bun.path.isSepAny(path[end_index])) {

@@ -952,6 +952,19 @@ declare module "bun:test" {
      */
     toContain(expected: unknown): void;
     /**
+     * Asserts that a value contains and equals what is expected.
+     *
+     * This matcher will perform a deep equality check for members
+     * of arrays, rather than checking for object identity.
+     *
+     * @example
+     * expect([{ a: 1 }]).toContainEqual({ a: 1 });
+     * expect([{ a: 1 }]).not.toContainEqual({ a: 2 });
+     *
+     * @param expected the expected value
+     */
+    toContainEqual(expected: unknown): void;
+    /**
      * Asserts that a value has a `.length` property
      * that is equal to the expected length.
      *

@@ -3913,6 +3913,12 @@ declare module "crypto" {
     candidate: LargeNumberLike,
     options?: CheckPrimeOptions,
   ): boolean;
+  /**
+   * An implementation of the Web Crypto API standard.
+   *
+   * See the {@link https://nodejs.org/docs/latest/api/webcrypto.html Web Crypto API documentation} for details.
+   */
+  export const webcrypto: Crypto;
 }
 declare module "node:crypto" {
   export * from "crypto";

@@ -267,6 +267,12 @@ pub const BunxCommand = struct {
             force_using_bun,
         );
 
+        const ignore_cwd = this_bundler.env.map.get("BUN_WHICH_IGNORE_CWD") orelse "";
+
+        if (ignore_cwd.len > 0) {
+            _ = this_bundler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
+        }
+
         var PATH = this_bundler.env.map.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
@@ -288,25 +294,52 @@ pub const BunxCommand = struct {
             );
         };
 
-        const PATH_FOR_BIN_DIRS = PATH;
+        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+
+        const PATH_FOR_BIN_DIRS = brk: {
+            if (ignore_cwd.len == 0) break :brk PATH;
+
+            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
+            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+            var path_iter = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
+            if (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.appendSlice(segment);
+                }
+            }
+            while (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.append(std.fs.path.delimiter);
+                    try new_path.appendSlice(segment);
+                }
+            }
+
+            break :brk new_path.items;
+        };
+
+        defer {
+            if (ignore_cwd.len > 0) {
+                ctx.allocator.free(PATH_FOR_BIN_DIRS);
+            }
+        }
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin:{s}",
-                .{ package_fmt, PATH },
+                "{s}/{s}--bunx/node_modules/.bin:{s}",
+                .{ temp_dir, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin",
-                .{package_fmt},
+                "{s}/{s}--bunx/node_modules/.bin",
+                .{ temp_dir, package_fmt },
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
@@ -318,7 +351,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -329,7 +362,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
-                this_bundler.fs.top_level_dir,
+                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -355,7 +388,7 @@ pub const BunxCommand = struct {
                         destination_ = bun.which(
                             &path_buf,
                             PATH_FOR_BIN_DIRS,
-                            this_bundler.fs.top_level_dir,
+                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -363,7 +396,7 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
-                        this_bundler.fs.top_level_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
@@ -388,8 +421,8 @@ pub const BunxCommand = struct {
 
         var bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
-            .{package_fmt},
+            "{s}/{s}--bunx",
+            .{ temp_dir, package_fmt },
         );
 
         // TODO: fix this after zig upgrade
@@ -450,7 +483,7 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
-            this_bundler.fs.top_level_dir,
+            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
@@ -473,7 +506,7 @@ pub const BunxCommand = struct {
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);

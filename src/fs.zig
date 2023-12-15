@@ -20,8 +20,10 @@ const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = @import("./allocators.zig");
 
-pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const PathBuffer = bun.PathBuffer;
+const WPathBuffer = bun.WPathBuffer;
+
 pub const debug = Output.scoped(.fs, true);
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
@@ -529,30 +531,28 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var tmpdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        pub var win_tempdir_cache: ?[]const u8 = undefined;
 
-        pub const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
-            .windows => "TMPDIR",
-            .macos => "/private/tmp",
-            else => "/tmp",
-        };
-
-        fn platformTempDir() []const u8 {
-            if (comptime Environment.isWindows) {
+        pub fn platformTempDir() []const u8 {
+            return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                return bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
-                    if (bun.getenvZ("USERPROFILE")) |profile| {
-                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        var parts = [_]string{"AppData/Local/Temp"};
-                        var out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                        break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
-                    }
+                .windows => win_tempdir_cache orelse {
+                    const value = bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
+                        if (bun.getenvZ("USERPROFILE")) |profile| {
+                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var parts = [_]string{"AppData\\Local\\Temp"};
+                            var out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                            break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
+                        }
 
-                    return "C:/Windows/Temp";
-                };
-            }
-
-            return PLATFORM_TMP_DIR;
+                        break :brk "C:/Windows/Temp";
+                    };
+                    win_tempdir_cache = value;
+                    return value;
+                },
+                .mac => "/private/tmp",
+                else => "/tmp",
+            };
         }
 
         pub const Tmpfile = switch (Environment.os) {
@@ -613,7 +613,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
         }
 
         pub fn setTempdir(path: ?string) void {
@@ -703,8 +703,8 @@ pub const FileSystem = struct {
 
             pub fn promoteToCWD(this: *TmpfileWindows, from_name: [*:0]const u8, name: [:0]const u8) !void {
                 _ = from_name;
-                var existing_buf: bun.MAX_WPATH = undefined;
-                var new_buf: bun.MAX_WPATH = undefined;
+                var existing_buf: bun.WPathBuffer = undefined;
+                var new_buf: bun.WPathBuffer = undefined;
                 this.close();
                 const existing = bun.strings.toExtendedPathNormalized(&new_buf, this.existing_path);
                 const new = if (std.fs.path.isAbsoluteWindows(name))
@@ -934,6 +934,8 @@ pub const FileSystem = struct {
             }
 
             while (try iter.next()) |_entry| {
+                debug("readdir entry {s}", .{_entry.name});
+
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
 
@@ -1034,11 +1036,11 @@ pub const FileSystem = struct {
             ) catch |err| {
                 if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
 
-                return fs.readDirectoryError(dir, err) catch unreachable;
+                return fs.readDirectoryError(dir, err) catch bun.outOfMemory();
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                var entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch unreachable;
+                var entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
@@ -1340,17 +1342,19 @@ pub const NodeJSPathName = struct {
     ext: string,
     filename: string,
 
-    pub fn init(_path: string, sep: u8) NodeJSPathName {
+    pub fn init(_path: string, comptime isWindows: bool) NodeJSPathName {
+        const platform: path_handler.Platform = if (isWindows) .windows else .posix;
+        const getLastSep = comptime platform.getLastSeparatorFunc();
+
         var path = _path;
         var base = path;
         // ext must be empty if not detected
         var ext: string = "";
         var dir = path;
         var is_absolute = true;
-        var _i = strings.lastIndexOfChar(path, sep);
+        var _i = getLastSep(path);
         var first = true;
         while (_i) |i| {
-
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len >= i + 1) {
                 base = path[i + 1 ..];
@@ -1371,11 +1375,11 @@ pub const NodeJSPathName = struct {
 
             path = path[0..i];
 
-            _i = strings.lastIndexOfChar(path, sep);
+            _i = getLastSep(path);
         }
 
         // clean trailing slashs
-        if (base.len > 1 and base[base.len - 1] == sep) {
+        if (base.len > 1 and platform.isSeparator(base[base.len - 1])) {
             base = base[0 .. base.len - 1];
         }
 

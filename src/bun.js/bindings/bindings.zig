@@ -2659,7 +2659,7 @@ pub const JSGlobalObject = extern struct {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
             var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
             return str.toErrorInstance(this);
@@ -2946,6 +2946,10 @@ pub const JSGlobalObject = extern struct {
     pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
         if (comptime is_bindgen) unreachable;
         return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
+    }
+
+    pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
+        if(bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
     pub const Extern = [_][]const u8{
@@ -3426,7 +3430,11 @@ pub const JSValue = enum(JSValueReprInt) {
         key: [*c]ZigString,
         value: JSValue,
         is_symbol: bool,
+        is_private_symbol: bool,
     ) callconv(.C) void;
+
+    pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, [*c]ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, [*c]ZigString, JSValue, bool, bool) callconv(.C) void) void;
 
     pub fn forEachProperty(
         this: JSValue,
@@ -3434,7 +3442,7 @@ pub const JSValue = enum(JSValueReprInt) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) void {
-        cppFn("forEachProperty", .{ this, globalThis, ctx, callback });
+        JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
     }
 
     pub fn forEachPropertyOrdered(
@@ -3443,7 +3451,7 @@ pub const JSValue = enum(JSValueReprInt) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) void {
-        cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
+        JSC__JSValue__forEachPropertyOrdered(this, globalObject, ctx, callback);
     }
 
     pub fn coerceToDouble(

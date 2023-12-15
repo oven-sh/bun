@@ -15,9 +15,11 @@ const JSC = bun.JSC;
 const WaiterThread = JSC.Subprocess.WaiterThread;
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
-const clap = @import("root").bun.clap;
-const Arguments = @import("../cli.zig").Arguments;
+const logger = bun.logger;
+const clap = bun.clap;
+const CLI = bun.CLI;
+const Arguments = CLI.Arguments;
+const Command = CLI.Command;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -30,7 +32,6 @@ const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
 
 const DotEnv = @import("../env_loader.zig");
@@ -51,6 +52,8 @@ const PosixSpawn = bun.posix.spawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
+
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -260,6 +263,26 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
+    pub fn spawnPackageScripts(
+        manager: *PackageManager,
+        list: Lockfile.Package.Scripts.List,
+        envp: [:null]?[*:0]u8,
+    ) !void {
+        var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
+        lifecycle_subprocess.scripts = list.items;
+        lifecycle_subprocess.manager = manager;
+        lifecycle_subprocess.envp = envp;
+
+        lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                Lockfile.Scripts.names[list.first_index],
+                @errorName(err),
+            });
+        };
+
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
+    }
+
     pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,
@@ -363,6 +386,16 @@ pub const RunCommand = struct {
         return true;
     }
 
+    /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
+    /// This prevents '"node" exited with ...' when it was actually bun.
+    /// As of writing this is only used for 'runBinary'
+    fn basenameOrBun(str: []const u8) []const u8 {
+        if (strings.eqlComptime(str, bun_node_dir ++ "/node")) {
+            return "bun";
+        }
+        return std.fs.path.basename(str);
+    }
+
     pub fn runBinary(
         ctx: Command.Context,
         executable: []const u8,
@@ -399,36 +432,39 @@ pub const RunCommand = struct {
                         if (std.os.S.ISDIR(stat.mode)) {
                             if (!silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpStackTrace(trace.*);
+                            }
                             Global.exit(1);
                         }
                     }
                 }
             }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
             Global.exit(1);
         };
         switch (result) {
             .Exited => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
                 if (sig > 0 and sig != 2 and !silent)
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
                 Global.exit(sig);
             },
             .Signal => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
                 if (sig > 0 and sig != 2 and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
                 }
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Stopped => |sig| {
                 if (sig > 0 and !silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Unknown => |sig| {
                 if (!silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ basenameOrBun(executable), sig });
                 Global.exit(1);
             },
         }
@@ -448,70 +484,70 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    const bun_node_dir = switch (@import("builtin").target.os.tag) {
+    pub const bun_node_dir = switch (Environment.os) {
         // TODO:
         .windows => "TMPDIR",
 
-        .macos => "/private/tmp",
+        .mac => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
-        "/bun-node"
+        "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
         "/bun-debug-node";
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-    fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
-        if (comptime Environment.isWindows) {
-            bun.todo(@src(), {});
-            return;
+
+    pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (Environment.isWindows) return bun.todo(@src(), {});
+        // If we are already running as "node", the path should exist
+        if (CLI.pretend_to_be_node) return;
+
+        var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
+
+        // if we are already an absolute path, use that
+        // if the user started the application via a shebang, it's likely that the path is absolute already
+        if (bun.argv()[0][0] == '/') {
+            optional_bun_path.* = bun.span(bun.argv()[0]);
+            argv0 = bun.argv()[0];
+        } else if (optional_bun_path.len == 0) {
+            // otherwise, ask the OS for the absolute path
+            var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+            if (self.len > 0) {
+                self.ptr[self.len] = 0;
+                argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                optional_bun_path.* = self;
+            }
+        }
+
+        if (optional_bun_path.len == 0) {
+            argv0 = bun.argv()[0];
         }
 
         var retried = false;
+        while (true) {
+            inner: {
+                std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
+                    if (err == error.PathAlreadyExists) break :inner;
+                    if (retried)
+                        return;
 
-        if (!strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
-            var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
+                    std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
 
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (bun.argv()[0][0] == '/') {
-                optional_bun_path.* = bun.span(bun.argv()[0]);
-                argv0 = bun.argv()[0];
-            } else if (optional_bun_path.len == 0) {
-                // otherwise, ask the OS for the absolute path
-                var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
-                if (self.len > 0) {
-                    self.ptr[self.len] = 0;
-                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
-                    optional_bun_path.* = self;
-                }
+                    retried = true;
+                    continue;
+                };
             }
-
-            if (optional_bun_path.len == 0) {
-                argv0 = bun.argv()[0];
-            }
-
-            while (true) {
-                inner: {
-                    std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
-                        if (err == error.PathAlreadyExists) break :inner;
-                        if (retried)
-                            return;
-
-                        std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
-
-                        retried = true;
-                        continue;
-                    };
-                }
-                break;
-            }
+            break;
         }
 
-        if (PATH.items.len > 0) {
-            try PATH.append(':');
+        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+            try PATH.append(std.fs.path.delimiter);
         }
 
-        try PATH.appendSlice(bun_node_dir ++ ":");
+        // The reason for the extra delim is because we are going to append the system PATH
+        // later on. this is done by the caller, and explains why we are adding bun_node_dir
+        // to the end of the path slice rather than the start.
+        try PATH.appendSlice(bun_node_dir ++ .{std.fs.path.delimiter});
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
@@ -785,6 +821,9 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
+                                if (Environment.isWindows) {
+                                    @panic("TODO");
+                                }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
@@ -1000,6 +1039,9 @@ pub const RunCommand = struct {
                     script_name_to_search,
                     @errorName(err),
                 });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
                 Global.exit(1);
             };
             return true;
@@ -1029,6 +1071,7 @@ pub const RunCommand = struct {
                     var must_normalize = false;
                     const file_: anyerror!std.fs.File = brk: {
                         if (std.fs.path.isAbsolute(script_name_to_search)) {
+                            // TODO(@paperdave): i dont think this is correct
                             must_normalize = Environment.isWindows;
                             break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
                         } else {
@@ -1056,7 +1099,7 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
                             }
 
                             if (ctx.preloads.len == 0)
@@ -1103,6 +1146,9 @@ pub const RunCommand = struct {
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
                         Global.exit(1);
                     };
 
@@ -1187,6 +1233,9 @@ pub const RunCommand = struct {
                                     std.fs.path.basename(script_name_to_search),
                                     @errorName(err),
                                 });
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
                                 Global.exit(1);
                             };
                         }
@@ -1253,6 +1302,52 @@ pub const RunCommand = struct {
         }
 
         return false;
+    }
+
+    pub fn execAsIfNode(ctx: Command.Context) !void {
+        std.debug.assert(CLI.pretend_to_be_node);
+
+        if (ctx.runtime_options.eval_script.len > 0) {
+            const trigger = bun.pathLiteral("/[eval]");
+            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            const cwd = try std.os.getcwd(&entry_point_buf);
+            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
+            return;
+        }
+
+        if (ctx.positionals.len == 0) {
+            Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});
+            Global.exit(1);
+        }
+
+        // TODO(@paperdave): merge windows branch
+        // var win_resolver = resolve_path.PosixToWinNormalizer{};
+
+        const filename = ctx.positionals[0];
+
+        const normalized_filename = if (std.fs.path.isAbsolute(filename))
+            // TODO(@paperdave): merge windows branch
+            // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
+            filename
+        else brk: {
+            const cwd = try bun.getcwd(&path_buf);
+            path_buf[cwd.len] = std.fs.path.sep_posix;
+            var parts = [_]string{filename};
+            break :brk resolve_path.joinAbsStringBuf(
+                path_buf[0 .. cwd.len + 1],
+                &path_buf2,
+                &parts,
+                .loose,
+            );
+        };
+
+        Run.boot(ctx, normalized_filename) catch |err| {
+            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+
+            Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
+            Global.exit(1);
+        };
     }
 };
 

@@ -246,6 +246,11 @@ extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
     return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
 }
 
+extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
+{
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
+}
+
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
 {
     if (simdutf::validate_ascii(bytes, length)) {

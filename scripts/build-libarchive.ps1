@@ -9,7 +9,7 @@ try {
   Run cmake  --build . --clean-first --config Release
 
   Copy-Item libarchive\archive_static.lib $BUN_DEPS_OUT_DIR\archive.lib
-  Write-Host "-> libarchive.lib"
+  Write-Host "-> archive.lib"
 }
 finally {
   Pop-Location

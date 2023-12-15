@@ -13,10 +13,12 @@ it.each([
   ["localhost:9898", "ws://localhost:9898/random"],
   ["localhost:9898/prefix", "ws://localhost:9898/prefix"],
   ["localhost:9898/", "ws://localhost:9898/random"],
+  ["ws://localhost:9898/", "ws://localhost:9898/random"],
   ["0.0.0.0", "ws://0.0.0.0:6499/random"],
   ["127.0.0.1:9898", "ws://127.0.0.1:9898/random"],
   ["127.0.0.1:9898/prefix", "ws://127.0.0.1:9898/prefix"],
   ["127.0.0.1:9898/", "ws://127.0.0.1:9898/random"],
+  ["ws://127.0.0.1:9898/", "ws://127.0.0.1:9898/random"],
   ["[::1]", "ws://[::1]:6499/random"],
   ["[::1]:9898", "ws://[::1]:9898/random"],
   ["[::1]:9898/prefix", "ws://[::1]:9898/prefix"],
@@ -38,9 +40,8 @@ it.each([
     expect(exitCode).toBe(0);
     expect(stderr).toBeDefined();
     expect(stdout).toBeDefined();
-    expect(stderr.toString("utf-8")).toBe("");
 
-    const line = stdout
+    const line = stderr
       .toString("utf-8")
       .split(os.EOL)
       .map(line => line.trim())

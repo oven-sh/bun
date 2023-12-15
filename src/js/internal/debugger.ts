@@ -25,7 +25,7 @@ export default function (
     if (protocol.includes("ws")) {
       Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
     }
-    Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------")+ reset() + "\n");
+    Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
   }
 
   const unix = process.env["BUN_INSPECT_NOTIFY"];
@@ -273,7 +273,7 @@ function parseUrl(url: string): URL {
     } else if (/^\d+$/.test(url)) {
       return new URL(randomId(), `ws://${defaultHostname}:${url}/`);
     } else {
-      const base = new URL(`ws://${url}`);
+      const base = !url.startsWith("ws://") ? new URL(`ws://${url}`) : new URL(url);
       if (base.port === "") {
         base.port = defaultPort.toString();
       }

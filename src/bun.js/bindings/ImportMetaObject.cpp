@@ -42,6 +42,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "CommonJSModuleRecord.h"
+#include <JavaScriptCore/JSPromise.h>
 
 #if OS(WINDOWS)
 #define PLATFORM_SEP_s "\\"_s
@@ -105,9 +106,13 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
-            if (auto* virtualModules = jsCast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.virtualModules) {
-                if (virtualModules->contains(fromStr)) {
-                    return JSC::JSValue::encode(jsString(vm, fromStr));
+            Zig::GlobalObject* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+            if (zigGlobalObject->onLoadPlugins.hasVirtualModules()) {
+                if (auto result = zigGlobalObject->onLoadPlugins.resolveVirtualModule(fromStr, String())) {
+                    if (fromStr == result.value())
+                        return JSC::JSValue::encode(moduleName);
+
+                    return JSC::JSValue::encode(jsString(vm, result.value()));
                 }
             }
 
@@ -189,8 +194,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * global
     return functionRequireResolve(globalObject, callFrame, fromStr);
 }
 
-extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -206,14 +212,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
     JSC__JSValue from;
     bool isESM = true;
-
-    if (auto* virtualModules = jsCast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.virtualModules) {
-        if (moduleName.isString()) {
-            if (virtualModules->contains(moduleName.toWTFString(globalObject))) {
-                return JSC::JSValue::encode(moduleName);
-            }
-        }
-    }
 
     if (callFrame->argumentCount() > 1) {
 
@@ -266,6 +264,17 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             from = JSC::JSValue::encode(pathProperty);
     }
 
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        if (moduleName.isString()) {
+            auto moduleString = moduleName.toWTFString(globalObject);
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, JSValue::decode(from).toWTFString(globalObject))) {
+                if (moduleString == resolvedString.value())
+                    return JSC::JSValue::encode(moduleName);
+                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
+            }
+        }
+    }
+
     auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -277,49 +286,52 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
-extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto* global = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
     bool isESM = callFrame->argument(2).asBoolean();
 
     if (moduleName.isUndefinedOrNull()) {
-        JSC::throwTypeError(globalObject, scope, "expected module name as a string"_s);
+        JSC::throwTypeError(lexicalGlobalObject, scope, "expected module name as a string"_s);
         scope.release();
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
 
-    if (auto* virtualModules = global->onLoadPlugins.virtualModules) {
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
-            if (virtualModules->contains(moduleName.toWTFString(globalObject))) {
-                return JSC::JSValue::encode(moduleName);
+            auto moduleString = moduleName.toWTFString(globalObject);
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, from.toWTFString(globalObject))) {
+                if (moduleString == resolvedString.value())
+                    return JSC::JSValue::encode(moduleName);
+                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
             }
         }
     }
 
     if (!isESM) {
-        if (LIKELY(global)) {
-            auto overrideHandler = global->m_nodeModuleOverriddenResolveFilename.get();
+        if (LIKELY(globalObject)) {
+            auto overrideHandler = globalObject->m_nodeModuleOverriddenResolveFilename.get();
             if (UNLIKELY(overrideHandler)) {
                 ASSERT(overrideHandler->isCallable());
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
                 args.append(from);
-                return JSValue::encode(JSC::call(globalObject, overrideHandler, JSC::getCallData(overrideHandler), JSC::jsUndefined(), args));
+                return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), JSC::jsUndefined(), args));
             }
         }
     }
 
-    auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
+    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
 
     if (!JSC::JSValue::decode(result).isString()) {
-        JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
+        JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -328,13 +340,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         // not "requires" because "require" could be confusing
         JSC::throwTypeError(globalObject, scope, "import.meta.resolve needs 1 argument (a string)"_s);
         scope.release();
@@ -352,14 +365,6 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
         JSC__JSValue from;
 
-        if (auto* virtualModules = jsCast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.virtualModules) {
-            if (moduleName.isString()) {
-                if (virtualModules->contains(moduleName.toWTFString(globalObject))) {
-                    return JSC::JSValue::encode(moduleName);
-                }
-            }
-        }
-
         if (callFrame->argumentCount() > 1 && callFrame->argument(1).isString()) {
             from = JSC::JSValue::encode(callFrame->argument(1));
         } else {
@@ -373,6 +378,18 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             auto clientData = WebCore::clientData(vm);
 
             from = JSC::JSValue::encode(thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName()));
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        }
+
+        if (globalObject->onLoadPlugins.hasVirtualModules()) {
+            if (moduleName.isString()) {
+                auto moduleString = moduleName.toWTFString(globalObject);
+                if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, JSValue::decode(from).toWTFString(globalObject))) {
+                    if (moduleString == resolvedString.value())
+                        return JSC::JSValue::encode(JSPromise::resolvedPromise(globalObject, moduleName));
+                    return JSC::JSValue::encode(JSPromise::resolvedPromise(globalObject, jsString(vm, resolvedString.value())));
+                }
+            }
         }
 
         return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from, true);

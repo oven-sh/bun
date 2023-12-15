@@ -1,8 +1,8 @@
 /*
  * @types/node uses the existence of `onmessage` to detect if lib.dom.d.ts is loaded
- * and defers to the DOM types if it is. declare this here lets us override the
+ * and defers to the DOM types if it is. Declaring onmessage here lets us override the
  * definitions in @types/node by the same mechanism. the following global vars/interfaces
- * MUST be declared in Bun's types, or they will be ill-defined/empty
+ * MUST be declared in Bun's types, or they will be ill-defined/empty.
  *
  * - Blob
  * - Event
@@ -22,7 +22,6 @@
  * - BroadcastChannel
  * - MessageChannel
  * - MessagePort
- *
  */
 declare var onmessage: typeof globalThis extends {
   onerror: any;
@@ -31,8 +30,7 @@ declare var onmessage: typeof globalThis extends {
   ? T
   : any;
 
-//
-declare namespace BunJS {
+declare namespace Bun {
   type _ReadableStreamDefaultReader<T> = typeof globalThis extends {
     onerror: any;
     ReadableStreamDefaultReader: infer T;
@@ -46,7 +44,7 @@ declare namespace BunJS {
     ? T
     : import("stream/web").ReadableStreamDefaultController<T>;
 }
-declare namespace BunJS {
+declare namespace Bun {
   type _ReadableStream<T> = typeof globalThis extends {
     onerror: any;
     ReadableStream: infer T;
@@ -60,7 +58,7 @@ declare namespace BunJS {
     ? T
     : import("stream/web").WritableStream<T>;
 }
-interface ReadableStream<R = any> extends BunJS._ReadableStream<R> {}
+interface ReadableStream<R = any> extends Bun._ReadableStream<R> {}
 declare var ReadableStream: typeof globalThis extends {
   onerror: any;
   ReadableStream: infer T;
@@ -69,16 +67,16 @@ declare var ReadableStream: typeof globalThis extends {
   : {
       prototype: ReadableStream;
       new <R = any>(
-        underlyingSource?: BunJS.UnderlyingSource<R>,
+        underlyingSource?: Bun.UnderlyingSource<R>,
         strategy?: QueuingStrategy<R>,
       ): ReadableStream<R>;
       new <R = any>(
-        underlyingSource?: BunJS.DirectUnderlyingSource<R>,
+        underlyingSource?: Bun.DirectUnderlyingSource<R>,
         strategy?: QueuingStrategy<R>,
       ): ReadableStream<R>;
     };
 
-interface WritableStream<W = any> extends BunJS._WritableStream<W> {}
+interface WritableStream<W = any> extends Bun._WritableStream<W> {}
 declare var WritableStream: typeof globalThis extends {
   onerror: any;
   WritableStream: infer T;
@@ -87,12 +85,12 @@ declare var WritableStream: typeof globalThis extends {
   : {
       prototype: WritableStream;
       new <W = any>(
-        underlyingSink?: BunJS.UnderlyingSink<W>,
+        underlyingSink?: Bun.UnderlyingSink<W>,
         strategy?: QueuingStrategy<W>,
       ): WritableStream<W>;
     };
 
-declare namespace BunJS {
+declare namespace Bun {
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = undefined;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
@@ -386,9 +384,9 @@ declare var __filename: string;
 
 /** @deprecated Please use `import.meta.dir` instead. */
 declare var __dirname: string;
-declare namespace BunJS {
+declare namespace Bun {
   interface StructuredSerializeOptions {
-    transfer?: BunJS.Transferable[];
+    transfer?: Bun.Transferable[];
   }
 }
 /**
@@ -398,12 +396,12 @@ declare namespace BunJS {
  */
 declare function structuredClone<T>(
   value: T,
-  options?: BunJS.StructuredSerializeOptions,
+  options?: Bun.StructuredSerializeOptions,
 ): T;
 
 //
 
-declare namespace BunJS {
+declare namespace Bun {
   interface AbstractWorkerEventMap {
     error: ErrorEvent;
   }
@@ -472,7 +470,7 @@ declare namespace BunJS {
     /**
      * In Bun, this does nothing.
      */
-    type?: BunJS.WorkerType | undefined;
+    type?: Bun.WorkerType | undefined;
 
     /**
      * List of arguments which would be stringified and appended to
@@ -496,7 +494,7 @@ declare namespace BunJS {
     /**
      * In Bun, this does nothing.
      */
-    credentials?: BunJS.RequestCredentials | undefined;
+    credentials?: Bun.RequestCredentials | undefined;
 
     /**
      * @default true
@@ -569,12 +567,12 @@ declare namespace BunJS {
   }
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   type _Worker = typeof globalThis extends { onerror: any; Worker: infer T }
     ? T
-    : BunJS.Worker;
+    : Bun.Worker;
 }
-interface Worker extends BunJS._Worker {}
+interface Worker extends Bun._Worker {}
 declare var Worker: typeof globalThis extends {
   onerror: any;
   Worker: infer T;
@@ -584,7 +582,7 @@ declare var Worker: typeof globalThis extends {
       prototype: Worker;
       new (
         scriptURL: string | URL,
-        options?: BunJS.WorkerOptions | undefined,
+        options?: Bun.WorkerOptions | undefined,
       ): Worker;
       /**
        * This is the cloned value of the `data` property passed to `new Worker()`
@@ -662,7 +660,7 @@ interface Headers {
   getAll(name: "set-cookie" | "Set-Cookie"): string[];
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   type HeadersInit =
     | Headers
     | Record<string, string>
@@ -702,13 +700,13 @@ declare var File: typeof globalThis extends { onerror: any; File: infer T }
        * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
        */
       new (
-        parts: BunJS.BlobPart[],
+        parts: Bun.BlobPart[],
         name: string,
         options?: BlobPropertyBag & { lastModified?: Date | number },
       ): File;
     };
 
-declare namespace BunJS {
+declare namespace Bun {
   interface ResponseInit {
     headers?: HeadersInit;
     /** @default 200 */
@@ -719,7 +717,7 @@ declare namespace BunJS {
   }
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   //   type RequestCache = "default" | "force-cache" | "no-cache" | "no-store" | "only-if-cached" | "reload";
   //   type RequestCredentials = "include" | "omit" | "same-origin";
   //   type RequestDestination =
@@ -795,7 +793,7 @@ interface FetchRequestInit extends RequestInit {
   };
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   type _WebSocket = typeof globalThis extends {
     onerror: any;
     WebSocket: infer T;
@@ -803,15 +801,15 @@ declare namespace BunJS {
     ? T
     : import("ws").WebSocket;
 }
-interface WebSocket extends BunJS._WebSocket {}
+interface WebSocket extends Bun._WebSocket {}
 declare var WebSocket: typeof globalThis extends {
   onerror: any;
   WebSocket: infer T;
 }
   ? T
-  : BunJS._WebSocket;
+  : Bun._WebSocket;
 
-declare namespace BunJS {
+declare namespace Bun {
   type _Crypto = typeof globalThis extends {
     onerror: any;
     Crypto: infer T;
@@ -820,7 +818,7 @@ declare namespace BunJS {
     : import("crypto").webcrypto.Crypto;
 }
 
-interface Crypto extends BunJS._Crypto {}
+interface Crypto extends Bun._Crypto {}
 
 declare var Crypto: typeof globalThis extends {
   onerror: any;
@@ -848,7 +846,7 @@ declare var crypto: typeof globalThis extends {
  * const uint8array = encoder.encode('this is some data');
  * ```
  */
-declare namespace BunJS {
+declare namespace Bun {
   type NodeTextEncoder = import("util").TextEncoder;
   interface TextEncoder extends NodeTextEncoder {
     /**
@@ -866,7 +864,7 @@ declare namespace BunJS {
      */
     encodeInto(
       src?: string,
-      dest?: BunJS.BufferSource,
+      dest?: Bun.BufferSource,
     ): import("util").EncodeIntoResult;
   }
 
@@ -884,7 +882,7 @@ declare namespace BunJS {
     : import("util").TextDecoder;
 }
 
-interface TextEncoder extends BunJS._TextEncoder {}
+interface TextEncoder extends Bun._TextEncoder {}
 declare var TextEncoder: typeof globalThis extends {
   onerror: any;
   TextEncoder: infer T;
@@ -893,12 +891,12 @@ declare var TextEncoder: typeof globalThis extends {
   : {
       prototype: TextEncoder;
       new (
-        encoding?: BunJS.Encoding,
+        encoding?: Bun.Encoding,
         options?: { fatal?: boolean; ignoreBOM?: boolean },
       ): TextEncoder;
     };
 
-interface TextDecoder extends BunJS._TextDecoder {}
+interface TextDecoder extends Bun._TextDecoder {}
 declare var TextDecoder: typeof globalThis extends {
   onerror: any;
   TextDecoder: infer T;
@@ -907,7 +905,7 @@ declare var TextDecoder: typeof globalThis extends {
   : {
       prototype: TextDecoder;
       new (
-        encoding?: BunJS.Encoding,
+        encoding?: Bun.Encoding,
         options?: { fatal?: boolean; ignoreBOM?: boolean },
       ): TextDecoder;
     };
@@ -998,7 +996,7 @@ declare var ShadowRealm: {
   new (): ShadowRealm;
 };
 
-declare namespace BunJS {
+declare namespace Bun {
   type _Performance = typeof globalThis extends {
     onerror: any;
   }
@@ -1006,7 +1004,7 @@ declare namespace BunJS {
     : import("perf_hooks").Performance;
 }
 
-interface Performance extends BunJS._Performance {}
+interface Performance extends Bun._Performance {}
 declare var performance: typeof globalThis extends {
   onerror: any;
   performance: infer T;
@@ -1072,7 +1070,7 @@ declare function clearImmediate(id?: number | Timer): void;
  * @param handler function to call
  */
 declare function setImmediate(
-  handler: BunJS.TimerHandler,
+  handler: Bun.TimerHandler,
   ...arguments: any[]
 ): Timer;
 /**
@@ -1081,7 +1079,7 @@ declare function setImmediate(
  * @param interval milliseconds to wait between calls
  */
 declare function setInterval(
-  handler: BunJS.TimerHandler,
+  handler: Bun.TimerHandler,
   interval?: number,
   ...arguments: any[]
 ): Timer;
@@ -1091,12 +1089,12 @@ declare function setInterval(
  * @param timeout milliseconds to wait between calls
  */
 declare function setTimeout(
-  handler: BunJS.TimerHandler,
+  handler: Bun.TimerHandler,
   timeout?: number,
   ...arguments: any[]
 ): Timer;
 
-declare namespace BunJS {
+declare namespace Bun {
   type _Event = typeof globalThis extends { onerror: any; Event: any }
     ? {}
     : {
@@ -1210,14 +1208,14 @@ declare namespace BunJS {
   }
 }
 
-interface Event extends BunJS._Event {}
+interface Event extends Bun._Event {}
 declare var Event: typeof globalThis extends { onerror: any; Event: infer T }
   ? T
   : {
       prototype: Event;
-      new (type: string, eventInitDict?: BunJS.EventInit): Event;
+      new (type: string, eventInitDict?: Bun.EventInit): Event;
     };
-interface EventTarget extends BunJS._EventTarget {}
+interface EventTarget extends Bun._EventTarget {}
 declare var EventTarget: typeof globalThis extends {
   onerror: any;
   EventTarget: infer T;
@@ -1234,21 +1232,21 @@ declare function addEventListener<K extends keyof EventMap>(
 ): void;
 declare function addEventListener(
   type: string,
-  listener: BunJS.EventListenerOrEventListenerObject,
+  listener: Bun.EventListenerOrEventListenerObject,
   options?: boolean | AddEventListenerOptions,
 ): void;
 declare function removeEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,
-  options?: boolean | BunJS.EventListenerOptions,
+  options?: boolean | Bun.EventListenerOptions,
 ): void;
 declare function removeEventListener(
   type: string,
-  listener: BunJS.EventListenerOrEventListenerObject,
-  options?: boolean | BunJS.EventListenerOptions,
+  listener: Bun.EventListenerOrEventListenerObject,
+  options?: boolean | Bun.EventListenerOptions,
 ): void;
 
-declare namespace BunJS {
+declare namespace Bun {
   interface ErrorEventInit extends EventInit {
     colno?: number;
     error?: any;
@@ -1267,7 +1265,7 @@ declare namespace BunJS {
     data?: T;
     lastEventId?: string;
     origin?: string;
-    source?: BunJS.MessageEventSource | null;
+    source?: Bun.MessageEventSource | null;
   }
 
   interface EventInit {
@@ -1280,7 +1278,7 @@ declare namespace BunJS {
     capture?: boolean;
   }
 
-  interface CustomEventInit<T = any> extends BunJS.EventInit {
+  interface CustomEventInit<T = any> extends Bun.EventInit {
     detail?: T;
   }
 
@@ -1294,7 +1292,7 @@ declare namespace BunJS {
     readonly origin: string;
     /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
     readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
-    readonly source: BunJS.MessageEventSource | null;
+    readonly source: Bun.MessageEventSource | null;
     /** @deprecated */
     initMessageEvent(
       type: string,
@@ -1328,7 +1326,7 @@ interface ErrorEvent extends Event {
 
 declare var ErrorEvent: {
   prototype: ErrorEvent;
-  new (type: string, eventInitDict?: BunJS.ErrorEventInit): ErrorEvent;
+  new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
 };
 
 /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
@@ -1343,10 +1341,10 @@ interface CloseEvent extends Event {
 
 declare var CloseEvent: {
   prototype: CloseEvent;
-  new (type: string, eventInitDict?: BunJS.CloseEventInit): CloseEvent;
+  new (type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
 };
 
-interface MessageEvent<T = any> extends BunJS._MessageEvent<T> {}
+interface MessageEvent<T = any> extends Bun._MessageEvent<T> {}
 declare var MessageEvent: typeof globalThis extends {
   onerror: any;
   MessageEvent: infer T;
@@ -1356,7 +1354,7 @@ declare var MessageEvent: typeof globalThis extends {
       prototype: MessageEvent;
       new <T>(
         type: string,
-        eventInitDict?: BunJS.MessageEventInit<T>,
+        eventInitDict?: Bun.MessageEventInit<T>,
       ): MessageEvent<T>;
     };
 
@@ -1374,13 +1372,10 @@ interface CustomEvent<T = any> extends Event {
 
 declare var CustomEvent: {
   prototype: CustomEvent;
-  new <T>(
-    type: string,
-    eventInitDict?: BunJS.CustomEventInit<T>,
-  ): CustomEvent<T>;
+  new <T>(type: string, eventInitDict?: Bun.CustomEventInit<T>): CustomEvent<T>;
 };
 
-declare namespace BunJS {
+declare namespace Bun {
   type _URL = typeof globalThis extends { onerror: any; URL: infer T }
     ? T
     : import("url").URL;
@@ -1389,7 +1384,7 @@ declare namespace BunJS {
  * The URL interface represents an object providing static methods used for
  * creating object URLs.
  */
-interface URL extends BunJS._URL {}
+interface URL extends Bun._URL {}
 declare var URL: typeof globalThis extends {
   onerror: any;
   URL: infer T;
@@ -1412,7 +1407,7 @@ declare var URL: typeof globalThis extends {
       canParse(url: string, base?: string): boolean;
     };
 
-declare namespace BunJS {
+declare namespace Bun {
   type _URLSearchParams = typeof globalThis extends {
     onerror: any;
     URL: infer T;
@@ -1420,7 +1415,7 @@ declare namespace BunJS {
     ? T
     : import("url").URLSearchParams;
 }
-interface URLSearchParams extends BunJS._URLSearchParams {}
+interface URLSearchParams extends Bun._URLSearchParams {}
 declare var URLSearchParams: typeof globalThis extends {
   onerror: any;
   URLSearchParams: infer T;
@@ -1462,7 +1457,7 @@ interface EventMap {
   // exit: Event;
 }
 
-interface AddEventListenerOptions extends BunJS.EventListenerOptions {
+interface AddEventListenerOptions extends Bun.EventListenerOptions {
   once?: boolean;
   passive?: boolean;
   signal?: AbortSignal;
@@ -1613,7 +1608,7 @@ interface ReadableStreamDefaultController<R = any> {
 interface ReadableStreamDirectController {
   close(error?: Error): void;
   write(
-    data: BunJS.BufferSource | ArrayBuffer | string,
+    data: Bun.BufferSource | ArrayBuffer | string,
   ): number | Promise<number>;
   end(): number | Promise<number>;
   flush(): number | Promise<number>;
@@ -1627,14 +1622,14 @@ declare var ReadableStreamDefaultController: {
 
 interface ReadableStreamDefaultReader<R = any>
   extends ReadableStreamGenericReader {
-  read(): Promise<BunJS.ReadableStreamDefaultReadResult<R>>;
+  read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
   /**
    * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
    * Will only return a promise if the data is not immediately available.
    */
   readMany():
-    | Promise<BunJS.ReadableStreamDefaultReadManyResult<R>>
-    | BunJS.ReadableStreamDefaultReadManyResult<R>;
+    | Promise<Bun.ReadableStreamDefaultReadManyResult<R>>
+    | Bun.ReadableStreamDefaultReadManyResult<R>;
   releaseLock(): void;
 }
 
@@ -1696,7 +1691,7 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
-declare namespace BunJS {
+declare namespace Bun {
   //   interface ReadWriteStream extends ReadableStream, WritableStream {}
 
   interface TransformerFlushCallback<O> {
@@ -1843,10 +1838,10 @@ interface QueuingStrategySize<T = any> {
 }
 
 interface Transformer<I = any, O = any> {
-  flush?: BunJS.TransformerFlushCallback<O>;
+  flush?: Bun.TransformerFlushCallback<O>;
   readableType?: undefined;
-  start?: BunJS.TransformerStartCallback<O>;
-  transform?: BunJS.TransformerTransformCallback<I, O>;
+  start?: Bun.TransformerStartCallback<O>;
+  transform?: Bun.TransformerTransformCallback<I, O>;
   writableType?: undefined;
 }
 
@@ -1911,7 +1906,7 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-declare namespace BunJS {
+declare namespace Bun {
   type _SubtleCrypto = typeof globalThis extends {
     onerror: any;
     SubtleCrypto: infer T;
@@ -1925,14 +1920,14 @@ declare var SubtleCrypto: typeof globalThis extends {
 }
   ? T
   : {
-      prototype: BunJS._SubtleCrypto;
-      new (): BunJS._SubtleCrypto;
+      prototype: Bun._SubtleCrypto;
+      new (): Bun._SubtleCrypto;
     };
 
 /**
  * The CryptoKey dictionary of the Web Crypto API represents a cryptographic key.
  */
-declare namespace BunJS {
+declare namespace Bun {
   type _CryptoKey = typeof globalThis extends {
     onerror: any;
     CryptoKey: infer T;
@@ -1940,7 +1935,7 @@ declare namespace BunJS {
     ? T
     : import("crypto").webcrypto.CryptoKey;
 }
-interface CryptoKey extends BunJS._CryptoKey {}
+interface CryptoKey extends Bun._CryptoKey {}
 
 declare var CryptoKey: {
   prototype: CryptoKey;
@@ -2043,7 +2038,7 @@ interface SharedArrayBuffer {
   grow(size: number): SharedArrayBuffer;
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   namespace WebAssembly {
     type ImportExportKind = "function" | "global" | "memory" | "table";
     type TableKind = "anyfunc" | "externref";
@@ -2198,26 +2193,26 @@ declare namespace BunJS {
 }
 
 declare namespace WebAssembly {
-  interface ValueTypeMap extends BunJS.WebAssembly.ValueTypeMap {}
+  interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap {}
   interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-    extends BunJS.WebAssembly.GlobalDescriptor<T> {}
-  interface MemoryDescriptor extends BunJS.WebAssembly.MemoryDescriptor {}
+    extends Bun.WebAssembly.GlobalDescriptor<T> {}
+  interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor {}
   interface ModuleExportDescriptor
-    extends BunJS.WebAssembly.ModuleExportDescriptor {}
+    extends Bun.WebAssembly.ModuleExportDescriptor {}
   interface ModuleImportDescriptor
-    extends BunJS.WebAssembly.ModuleImportDescriptor {}
-  interface TableDescriptor extends BunJS.WebAssembly.TableDescriptor {}
+    extends Bun.WebAssembly.ModuleImportDescriptor {}
+  interface TableDescriptor extends Bun.WebAssembly.TableDescriptor {}
   interface WebAssemblyInstantiatedSource
-    extends BunJS.WebAssembly.WebAssemblyInstantiatedSource {}
+    extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
 
-  interface LinkError extends BunJS.WebAssembly._LinkError {}
+  interface LinkError extends Bun.WebAssembly._LinkError {}
   var LinkError: {
     prototype: LinkError;
     new (message?: string): LinkError;
     (message?: string): LinkError;
   };
 
-  interface CompileError extends BunJS.WebAssembly._CompileError {}
+  interface CompileError extends Bun.WebAssembly._CompileError {}
   var CompileError: typeof globalThis extends {
     onerror: any;
     WebAssembly: { CompileError: infer T };
@@ -2229,7 +2224,7 @@ declare namespace WebAssembly {
         (message?: string): CompileError;
       };
 
-  interface RuntimeError extends BunJS.WebAssembly._RuntimeError {}
+  interface RuntimeError extends Bun.WebAssembly._RuntimeError {}
   var RuntimeError: {
     prototype: RuntimeError;
     new (message?: string): RuntimeError;
@@ -2237,7 +2232,7 @@ declare namespace WebAssembly {
   };
 
   interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-    extends BunJS.WebAssembly._Global<T> {}
+    extends Bun.WebAssembly._Global<T> {}
   var Global: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Global: infer T };
@@ -2245,15 +2240,13 @@ declare namespace WebAssembly {
     ? T
     : {
         prototype: Global;
-        new <
-          T extends BunJS.WebAssembly.ValueType = BunJS.WebAssembly.ValueType,
-        >(
+        new <T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType>(
           descriptor: GlobalDescriptor<T>,
           v?: ValueTypeMap[T],
         ): Global<T>;
       };
 
-  interface Instance extends BunJS.WebAssembly._Instance {}
+  interface Instance extends Bun.WebAssembly._Instance {}
   var Instance: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Instance: infer T };
@@ -2261,19 +2254,16 @@ declare namespace WebAssembly {
     ? T
     : {
         prototype: Instance;
-        new (
-          module: Module,
-          importObject?: BunJS.WebAssembly.Imports,
-        ): Instance;
+        new (module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
       };
 
-  interface Memory extends BunJS.WebAssembly._Memory {}
+  interface Memory extends Bun.WebAssembly._Memory {}
   var Memory: {
     prototype: Memory;
     new (descriptor: MemoryDescriptor): Memory;
   };
 
-  interface Module extends BunJS.WebAssembly._Module {}
+  interface Module extends Bun.WebAssembly._Module {}
   var Module: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Module: infer T };
@@ -2281,7 +2271,7 @@ declare namespace WebAssembly {
     ? T
     : {
         prototype: Module;
-        new (bytes: BunJS.BufferSource): Module;
+        new (bytes: Bun.BufferSource): Module;
         /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
         customSections(
           moduleObject: Module,
@@ -2293,34 +2283,34 @@ declare namespace WebAssembly {
         imports(moduleObject: Module): ModuleImportDescriptor[];
       };
 
-  interface Table extends BunJS.WebAssembly._Table {}
+  interface Table extends Bun.WebAssembly._Table {}
   var Table: {
     prototype: Table;
     new (descriptor: TableDescriptor, value?: any): Table;
   };
 
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compile) */
-  function compile(bytes: BunJS.BufferSource): Promise<Module>;
+  function compile(bytes: Bun.BufferSource): Promise<Module>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compileStreaming) */
   function compileStreaming(
     source: Response | PromiseLike<Response>,
   ): Promise<Module>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/instantiate) */
   function instantiate(
-    bytes: BunJS.BufferSource,
-    importObject?: BunJS.WebAssembly.Imports,
+    bytes: Bun.BufferSource,
+    importObject?: Bun.WebAssembly.Imports,
   ): Promise<WebAssemblyInstantiatedSource>;
   function instantiate(
     moduleObject: Module,
-    importObject?: BunJS.WebAssembly.Imports,
+    importObject?: Bun.WebAssembly.Imports,
   ): Promise<Instance>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/instantiateStreaming) */
   function instantiateStreaming(
     source: Response | PromiseLike<Response>,
-    importObject?: BunJS.WebAssembly.Imports,
+    importObject?: Bun.WebAssembly.Imports,
   ): Promise<WebAssemblyInstantiatedSource>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/validate) */
-  function validate(bytes: BunJS.BufferSource): boolean;
+  function validate(bytes: Bun.BufferSource): boolean;
 }
 
 interface NodeModule {
@@ -2348,12 +2338,9 @@ declare module "*.toml" {
  *
  * Only useful in a worker thread; calling this from the main thread does nothing.
  */
-declare function postMessage(
-  message: any,
-  transfer?: BunJS.Transferable[],
-): void;
+declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
 
-declare namespace BunJS {
+declare namespace Bun {
   interface EventSourceEventMap {
     error: Event;
     message: MessageEvent;
@@ -2436,7 +2423,7 @@ interface EventSourceInit {
   withCredentials?: boolean;
 }
 
-interface EventSource extends BunJS._EventSource {}
+interface EventSource extends Bun._EventSource {}
 declare var EventSource: typeof globalThis extends {
   onerror: any;
   EventSource: infer T;
@@ -2496,7 +2483,7 @@ interface BlobPropertyBag {
   // endings?: "transparent" | "native";
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   type NodeBlob = import("buffer").Blob;
   interface Blob extends NodeBlob {
     /**
@@ -2525,7 +2512,8 @@ declare namespace BunJS {
     ? T
     : Blob;
 }
-interface Blob extends BunJS._Blob {}
+
+interface Blob extends Bun._Blob {}
 declare var Blob: typeof globalThis extends {
   onerror: any;
   Blob: infer T;
@@ -2539,10 +2527,10 @@ declare var Blob: typeof globalThis extends {
        * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
        * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
        */
-      new (parts?: BunJS.BlobPart[], options?: BlobPropertyBag): Blob;
+      new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
     };
 
-declare namespace BunJS {
+declare namespace Bun {
   type _RequestInit = typeof globalThis extends { onerror: any }
     ? {}
     : import("undici-types").RequestInit;
@@ -2556,9 +2544,9 @@ declare namespace BunJS {
     ? {}
     : import("undici-types").Response;
 }
-interface ResponseInit extends BunJS._ResponseInit {}
-interface RequestInit extends BunJS._RequestInit {}
-interface Request extends BunJS._Request {}
+interface ResponseInit extends Bun._ResponseInit {}
+interface RequestInit extends Bun._RequestInit {}
+interface Request extends Bun._Request {}
 declare var Request: typeof globalThis extends {
   onerror: any;
   Request: infer T;
@@ -2571,13 +2559,13 @@ declare var Request: typeof globalThis extends {
       prototype: Request;
     };
 
-declare namespace BunJS {
+declare namespace Bun {
   type _File = typeof globalThis extends { onerror: any }
     ? {}
     : import("node:buffer").File;
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   type _Body = typeof globalThis extends { onerror: any }
     ? {}
     : {
@@ -2590,8 +2578,8 @@ declare namespace BunJS {
         readonly text: () => Promise<string>;
       };
 }
-interface Body extends BunJS._Body {}
-interface Response extends BunJS._Response {}
+interface Body extends Bun._Body {}
+interface Response extends Bun._Response {}
 declare var Response: typeof globalThis extends {
   onerror: any;
   Response: infer T;
@@ -2600,8 +2588,8 @@ declare var Response: typeof globalThis extends {
   : {
       prototype: Response;
       new (
-        body?: BunJS.BodyInit | null | undefined,
-        init?: BunJS.ResponseInit | undefined,
+        body?: Bun.BodyInit | null | undefined,
+        init?: Bun.ResponseInit | undefined,
       ): Response;
 
       /**
@@ -2627,7 +2615,7 @@ declare var Response: typeof globalThis extends {
        * ```
        * @link https://github.com/whatwg/fetch/issues/1389
        */
-      json(body?: any, options?: BunJS.ResponseInit | number): Response;
+      json(body?: any, options?: Bun.ResponseInit | number): Response;
       /**
        * Create a new {@link Response} that redirects to url
        *
@@ -2644,7 +2632,7 @@ declare var Response: typeof globalThis extends {
        * @param options - options to pass to the response
        */
       // tslint:disable-next-line:unified-signatures
-      redirect(url: string, options?: BunJS.ResponseInit): Response;
+      redirect(url: string, options?: Bun.ResponseInit): Response;
 
       /**
        * Create a new {@link Response} that has a network error
@@ -2652,12 +2640,12 @@ declare var Response: typeof globalThis extends {
       error(): Response;
     };
 
-declare namespace BunJS {
+declare namespace Bun {
   type _FormData = typeof globalThis extends { onerror: any; FormData: infer T }
     ? T
     : import("undici-types").FormData;
 }
-interface FormData extends BunJS._FormData {}
+interface FormData extends Bun._FormData {}
 declare var FormData: typeof globalThis extends {
   onerror: any;
   FormData: infer T;
@@ -2665,12 +2653,12 @@ declare var FormData: typeof globalThis extends {
   ? T
   : typeof import("undici-types").FormData;
 
-declare namespace BunJS {
+declare namespace Bun {
   type _Headers = typeof globalThis extends { onerror: any; Headers: infer T }
     ? T
     : import("undici-types").Headers;
 }
-interface Headers extends BunJS._Headers {}
+interface Headers extends Bun._Headers {}
 declare var Headers: typeof globalThis extends {
   onerror: any;
   Headers: infer T;
@@ -2678,14 +2666,8 @@ declare var Headers: typeof globalThis extends {
   ? T
   : typeof import("undici-types").Headers;
 
-declare namespace BunJS {
+declare namespace Bun {
   type _MessagePort = typeof globalThis extends {
-    onerror: any;
-    MessagePort: infer T;
-  }
-    ? T
-    : import("worker_threads").MessagePort;
-  var _MessagePort: typeof globalThis extends {
     onerror: any;
     MessagePort: infer T;
   }
@@ -2704,7 +2686,7 @@ declare namespace BunJS {
     ? T
     : import("worker_threads").BroadcastChannel;
 }
-interface MessagePort extends BunJS._MessagePort {}
+interface MessagePort extends Bun._MessagePort {}
 declare var MessagePort: typeof globalThis extends {
   onerror: any;
   MessagePort: infer T;
@@ -2714,7 +2696,7 @@ declare var MessagePort: typeof globalThis extends {
       prototype: MessagePort;
       new (): MessagePort;
     };
-interface MessageChannel extends BunJS._MessageChannel {}
+interface MessageChannel extends Bun._MessageChannel {}
 declare var MessageChannel: typeof globalThis extends {
   onerror: any;
   MessageChannel: infer T;
@@ -2725,7 +2707,7 @@ declare var MessageChannel: typeof globalThis extends {
       new (): MessageChannel;
     };
 
-interface BroadcastChannel extends BunJS._BroadcastChannel {}
+interface BroadcastChannel extends Bun._BroadcastChannel {}
 declare var BroadcastChannel: typeof globalThis extends {
   onerror: any;
   BroadcastChannel: infer T;
@@ -2736,7 +2718,7 @@ declare var BroadcastChannel: typeof globalThis extends {
       new (name: string): BroadcastChannel;
     };
 
-// declare namespace BunJS {
+// declare namespace Bun {
 //   type _AbortSignal = typeof globalThis extends {
 //     onerror: any;
 //     AbortSignal: infer T;
@@ -2745,7 +2727,7 @@ declare var BroadcastChannel: typeof globalThis extends {
 //     : import("")
 // }
 /**
- * No `namespace BunJS` shenanigans is necessary here because AbortController and AbortSignal interfaces are
+ * No `namespace Bun` shenanigans is necessary here because AbortController and AbortSignal interfaces are
  * globals in `
  */
 
@@ -2770,3 +2752,5 @@ declare var AbortSignal: typeof globalThis extends {
       abort(reason?: any): AbortSignal;
       timeout(milliseconds: number): AbortSignal;
     };
+
+declare var Bun: typeof import("bun");

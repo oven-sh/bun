@@ -17,7 +17,7 @@ interface VoidFunction {
  *
  * This module aliases `globalThis.Bun`.
  */
-declare namespace BunJS {
+declare namespace Bun {
   type ArrayBufferView = TypedArray | DataView;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
@@ -25,9 +25,9 @@ declare namespace BunJS {
 
 // eslint-disable-next-line @definitelytyped/no-declare-current-package
 declare module "bun" {
-  type ArrayBufferView = BunJS.ArrayBufferView;
-  type StringOrBuffer = BunJS.StringOrBuffer;
-  type PathLike = BunJS.PathLike;
+  type ArrayBufferView = Bun.ArrayBufferView;
+  type StringOrBuffer = Bun.StringOrBuffer;
+  type PathLike = Bun.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
   interface Env {
     NODE_ENV?: string;
@@ -151,12 +151,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   function write(
     destination: BunFile | PathLike,
-    input:
-      | Blob
-      | NodeJS.TypedArray
-      | ArrayBufferLike
-      | string
-      | BunJS.BlobPart[],
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
       mode?: number;
@@ -181,7 +176,7 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(
+  function write(
     destination: BunFile,
     input: Response,
     options?: {
@@ -1461,7 +1456,7 @@ declare module "bun" {
      * ws.send(new Uint8Array([1, 2, 3, 4]));
      */
     send(
-      data: string | BunJS.BufferSource,
+      data: string | Bun.BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -1486,7 +1481,7 @@ declare module "bun" {
      * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      */
     sendBinary(
-      data: BunJS.BufferSource,
+      data: Bun.BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -1520,14 +1515,14 @@ declare module "bun" {
      *
      * @param data The data to send
      */
-    ping(data?: string | BunJS.BufferSource): ServerWebSocketSendStatus;
+    ping(data?: string | Bun.BufferSource): ServerWebSocketSendStatus;
 
     /**
      * Sends a pong.
      *
      * @param data The data to send
      */
-    pong(data?: string | BunJS.BufferSource): ServerWebSocketSendStatus;
+    pong(data?: string | Bun.BufferSource): ServerWebSocketSendStatus;
 
     /**
      * Sends a message to subscribers of the topic.
@@ -1542,7 +1537,7 @@ declare module "bun" {
      */
     publish(
       topic: string,
-      data: string | BunJS.BufferSource,
+      data: string | Bun.BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -1574,7 +1569,7 @@ declare module "bun" {
      */
     publishBinary(
       topic: string,
-      data: BunJS.BufferSource,
+      data: Bun.BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -2386,7 +2381,7 @@ declare module "bun" {
         /**
          * Send any additional headers while upgrading, like cookies
          */
-        headers?: BunJS.HeadersInit;
+        headers?: Bun.HeadersInit;
         /**
          * This value is passed to the {@link ServerWebSocket.data} property
          */
@@ -3520,7 +3515,7 @@ declare module "bun" {
      * end of the tick, when the event loop is idle, or sooner if the buffer is full.
      */
     write(
-      data: string | BunJS.BufferSource,
+      data: string | Bun.BufferSource,
       byteOffset?: number,
       byteLength?: number,
     ): number;
@@ -3536,7 +3531,7 @@ declare module "bun" {
      * Use it to send your last message and close the connection.
      */
     end(
-      data?: string | BunJS.BufferSource,
+      data?: string | Bun.BufferSource,
       byteOffset?: number,
       byteLength?: number,
     ): number;
@@ -4371,9 +4366,9 @@ declare module "bun" {
    * @param config Used to provide arguments for parsing and to configure the parser.
    * @return The parsed command line arguments
    */
-  export const parseArgs: typeof import("util").parseArgs;
+  const parseArgs: typeof import("util").parseArgs;
 
-  export interface GlobScanOptions {
+  interface GlobScanOptions {
     /**
      * The root directory to start matching from. Defaults to `process.cwd()`
      */
@@ -4511,5 +4506,3 @@ type TypedArray = NodeJS.TypedArray;
 interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }
-
-declare var Bun: typeof import("bun");

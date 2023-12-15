@@ -24,7 +24,7 @@ fs.writeFileSync(target + '/subfolder/childfolder/grandchildfile.txt', 'test');
 
 let results = {};
 function mapFiles(files) {
-  return files.map(f => ({ name: f.name, path: f.path }))
+  return files.map(f => ({ name: f.name, path: f.path, parentPath: f.parentPath }))
     .toSorted((a, b) => a.path+'/'+a.name < b.path+'/'+b.name);
 }
 

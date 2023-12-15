@@ -433,6 +433,10 @@ export default [
         getter: "getPath",
         cache: true,
       },
+      parentPath: {
+        getter: "getPath",
+        cache: true,
+      },
     },
   }),
   define({

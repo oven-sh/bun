@@ -1601,7 +1601,7 @@ pub const SignalCode = enum(u8) {
     SIGPIPE = 13,
     SIGALRM = 14,
     SIGTERM = 15,
-    // SIG16 = 16, // not used in kernel, could imply many things. we will print as "signal code 16"
+    SIG16 = 16,
     SIGCHLD = 17,
     SIGCONT = 18,
     SIGSTOP = 19,
@@ -1627,7 +1627,7 @@ pub const SignalCode = enum(u8) {
         return null;
     }
 
-    pub fn description(signal: SignalCode) []const u8 {
+    pub fn description(signal: SignalCode) ?[]const u8 {
         // Description names copied from fish
         // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
         return switch (signal) {
@@ -1661,7 +1661,7 @@ pub const SignalCode = enum(u8) {
             .SIGIO => "I/O on asynchronous file descriptor is possible",
             .SIGSYS => "Bad system call",
             .SIGPWR => "Power failure",
-            else => "Unknown",
+            else => null,
         };
     }
 
@@ -1677,11 +1677,11 @@ pub const SignalCode = enum(u8) {
             const signal = this.signal;
             switch (this.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
-                    if (signal.name()) |str| {
-                        try writer.print(Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors), .{ str, signal.description() });
-                    } else {
-                        try writer.print("code {d}", .{@intFromEnum(signal)});
-                    }
+                    if (signal.name()) |str| if (signal.description()) |desc| {
+                        try writer.print(Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors), .{ str, desc });
+                        return;
+                    };
+                    try writer.print("code {d}", .{@intFromEnum(signal)});
                 },
             }
         }
@@ -1690,18 +1690,6 @@ pub const SignalCode = enum(u8) {
     pub fn fmt(signal: SignalCode, enable_ansi_colors: bool) Fmt {
         return .{ .signal = signal, .enable_ansi_colors = enable_ansi_colors };
     }
-
-    // pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-    //     if (self.name()) |str| {
-    //         try std.fmt.format(writer, "code {d} ({s})", .{ @intFromEnum(self), str });
-    //     } else {
-    //         try std.fmt.format(writer, "code {d}", .{@intFromEnum(self)});
-    //     }
-    // }
-
-    //  pub fn printPretty(self: SignalCode, writer: anytype) !void {
-
-    // }
 };
 
 pub fn isMissingIOUring() bool {

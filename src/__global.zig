@@ -96,6 +96,23 @@ pub fn exit(code: u8) noreturn {
     std.c.exit(code);
 }
 
+pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
+    Output.flush();
+    @import("./crash_reporter.zig").on_error = null;
+    if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
+        const act = std.os.Sigaction{
+            .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
+            .mask = 0,
+            .flags = 0,
+        };
+        std.os.sigaction(@intCast(sig), &act, null) catch {};
+    }
+    // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
+    // after that is fixed we can make this function take i32
+    _ = std.c.raise(@intCast(sig));
+    std.c.abort();
+}
+
 pub const AllocatorConfiguration = struct {
     verbose: bool = false,
     long_running: bool = false,

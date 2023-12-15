@@ -459,8 +459,7 @@ pub const LifecycleScriptSubprocess = struct {
                 this.package_name,
                 bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
-            Output.flush();
-            Global.exit(1);
+            Global.raiseIgnoringPanicHandler(signal);
         }
         if (std.os.W.IFSTOPPED(result.status)) {
             const signal = std.os.W.STOPSIG(result.status);
@@ -475,8 +474,7 @@ pub const LifecycleScriptSubprocess = struct {
                 this.package_name,
                 bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
-            Output.flush();
-            Global.exit(1);
+            Global.raiseIgnoringPanicHandler(signal);
         }
 
         std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{ this.script_name, this.package_name, result.pid, result.status });

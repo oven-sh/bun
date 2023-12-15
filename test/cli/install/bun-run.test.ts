@@ -112,13 +112,50 @@ for (let withRun of [false, true]) {
 
       it("exit code message works above 128", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "bash", "-c", "kill -9 $$"],
+          cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toStartWith('error: "bash" exited from signal SIGKILL ()');
+        expect(stderr.toString()).toStartWith('error: "bash" exited with code 200');
         expect(exitCode).toBe(200);
+      });
+
+      it("exit signal works", async () => {
+        {
+          let signalCode: any;
+          let exitCode: any;
+          const { stdout, stderr } = spawnSync({
+            cmd: [bunExe(), "run", "bash", "-c", "kill -4 $$"],
+            cwd: run_dir,
+            env: bunEnv,
+            onExit(subprocess, exitCode2, signalCode2, error) {
+              exitCode = exitCode2;
+              signalCode = signalCode2;
+            },
+          });
+
+          expect(stderr.toString()).toBe("");
+          expect(signalCode).toBe("SIGILL");
+          expect(exitCode).toBe(null);
+        }
+        {
+          let signalCode: any;
+          let exitCode: any;
+          const { stdout, stderr } = spawnSync({
+            cmd: [bunExe(), "run", "bash", "-c", "kill -9 $$"],
+            cwd: run_dir,
+            env: bunEnv,
+            onExit(subprocess, exitCode2, signalCode2, error) {
+              exitCode = exitCode2;
+              signalCode = signalCode2;
+            },
+          });
+
+          expect(stderr.toString()).toBe("");
+          expect(signalCode).toBe("SIGKILL");
+          expect(exitCode).toBe(null);
+        }
       });
 
       for (let withLogLevel of [true, false]) {

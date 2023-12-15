@@ -473,28 +473,14 @@ pub const RunCommand = struct {
                 }
                 Global.exit(code);
             },
-            .Signal => |sig| {
-                if (Environment.allow_assert and sig == 0) {
-                    std.debug.panic("\"{s}\" stopped from signal code 0, which isn't supposed to be possible", .{executable});
+            .Signal, .Stopped => |sig| {
+                // forward the signal to the shell / parent process
+                if (sig != 0) {
+                    Output.flush();
+                    Global.raiseIgnoringPanicHandler(sig);
+                } else if (!silent) {
+                    std.debug.panic("\"{s}\" stopped by signal code 0, which isn't supposed to be possible", .{executable});
                 }
-
-                // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2 and !silent) {
-                    Output.errGeneric("\"<b>{s}<r>\" terminated by signal {}", .{ basenameOrBun(executable), bun.SignalCode.from(sig).fmt(Output.enable_ansi_colors_stderr) });
-                }
-
-                // TODO(@paperdave): how does windows do weird exit situations
-                Output.flush();
-                Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
-            },
-            .Stopped => |sig| {
-                if (Environment.allow_assert and sig == 0) {
-                    std.debug.panic("\"{s}\" stopped from signal code 0, which isn't supposed to be possible", .{executable});
-                }
-                if (sig > 0 and !silent) {
-                    Output.errGeneric("\"<b>{s}<r>\" stopped by signal {}", .{ basenameOrBun(executable), bun.SignalCode.from(sig).fmt(Output.enable_ansi_colors_stderr) });
-                }
-                Output.flush();
                 Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
             },
             .Unknown => |sig| {

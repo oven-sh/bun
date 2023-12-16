@@ -2598,8 +2598,14 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
+                const size = std.mem.replacementSize(u8, source.contents, "\\", "\\\\");
+                const escaped = allocator.alloc(u8, size) catch unreachable;
+                _ = std.mem.replace(u8, source.contents, "\\", "\\\\", escaped);
+
+                allocator.free(source.contents);
+
                 const root = Expr.init(E.String, E.String{
-                    .data = source.contents,
+                    .data = escaped,
                     .prefer_template = true,
                 }, Logger.Loc{ .start = 0 });
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);

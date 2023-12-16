@@ -1558,8 +1558,14 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
+                const size = std.mem.replacementSize(u8, source.contents, "\\", "\\\\");
+                const escaped = allocator.alloc(u8, size) catch unreachable;
+                _ = std.mem.replace(u8, source.contents, "\\", "\\\\", escaped);
+
+                allocator.free(source.contents);
+
                 const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
-                    .data = source.contents,
+                    .data = escaped,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },

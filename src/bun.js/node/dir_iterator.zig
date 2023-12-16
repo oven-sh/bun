@@ -1,4 +1,4 @@
-// This is copied from std.fs.IterableDir.Iterator
+// This is copied from std.fs.Dir.Iterator
 // The differences are:
 // - it returns errors in the expected format
 // - doesn't mark BADF as unreachable
@@ -297,7 +297,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
                         var bufused: usize = undefined;
-                        switch (w.fd_readdir(self.dir.fd, &self.buf, self.buf.len, self.cookie, &bufused)) {
+                        switch (w.fd_readdir(self.fd, &self.buf, self.buf.len, self.cookie, &bufused)) {
                             .SUCCESS => {},
                             .BADF => unreachable, // Dir is invalid or was opened without iteration ability
                             .FAULT => unreachable,

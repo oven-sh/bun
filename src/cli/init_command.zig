@@ -332,7 +332,7 @@ pub const InitCommand = struct {
             if (package_json_file == null) {
                 package_json_file = try std.fs.cwd().createFileZ("package.json", .{});
             }
-            var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+            const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
             const written = JSPrinter.printJSON(
                 @TypeOf(package_json_writer),

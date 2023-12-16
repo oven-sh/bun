@@ -189,7 +189,7 @@ pub inline fn indexEqualAny(in: anytype, target: string) ?usize {
 }
 
 pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) ![]u8 {
-    var buf = try allocator.alloc(u8, count);
+    const buf = try allocator.alloc(u8, count);
     repeatingBuf(buf, char);
     return buf;
 }
@@ -647,16 +647,16 @@ test "eqlComptimeUTF16" {
 
 test "copyLowercase" {
     {
-        var in = "Hello, World!";
+        const in = "Hello, World!";
         var out = std.mem.zeroes([in.len]u8);
-        var out_ = copyLowercase(in, &out);
+        const out_ = copyLowercase(in, &out);
         try std.testing.expectEqualStrings(out_, "hello, world!");
     }
 
     {
-        var in = "_ListCache";
+        const in = "_ListCache";
         var out = std.mem.zeroes([in.len]u8);
-        var out_ = copyLowercase(in, &out);
+        const out_ = copyLowercase(in, &out);
         try std.testing.expectEqualStrings(out_, "_listcache");
     }
 }
@@ -822,7 +822,7 @@ pub fn githubAction(self: string) strings.GithubActionFormatter {
 }
 
 pub fn quotedWriter(writer: anytype, self: string) !void {
-    var remain = self;
+    const remain = self;
     if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
         try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
     } else {
@@ -1170,8 +1170,8 @@ pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) /
 }
 
 pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
-    var output = output_;
-    var input = input_;
+    const output = output_;
+    const input = input_;
     if (comptime Environment.allow_assert) std.debug.assert(input.len <= output.len);
 
     // https://zig.godbolt.org/z/9rTn1orcY
@@ -1297,8 +1297,8 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     if (to.len >= 16 and bun.Environment.enableSIMD) {
         const vector_size = 16;
         // https://zig.godbolt.org/z/qezsY8T3W
-        var remain_in_u64 = remain[0 .. remain.len - (remain.len % vector_size)];
-        var to_in_u64 = to[0 .. to.len - (to.len % vector_size)];
+        const remain_in_u64 = remain[0 .. remain.len - (remain.len % vector_size)];
+        const to_in_u64 = to[0 .. to.len - (to.len % vector_size)];
         var remain_as_u64 = std.mem.bytesAsSlice(u64, remain_in_u64);
         var to_as_u64 = std.mem.bytesAsSlice(u64, to_in_u64);
         const end_vector_len = @min(remain_as_u64.len, to_as_u64.len);
@@ -1759,7 +1759,7 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
 
 pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var list = list_;
-    var result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
         utf16,
         list.items.ptr[0..list.capacity],
     );
@@ -1811,7 +1811,7 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
     if (isAllASCII(latin1))
         return null;
 
-    var list = try std.ArrayList(u8).initCapacity(allocator, latin1.len);
+    const list = try std.ArrayList(u8).initCapacity(allocator, latin1.len);
     return try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
 }
 
@@ -1872,7 +1872,7 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
         return out;
     }
 
-    var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
+    const list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
     var foo = try allocateLatin1IntoUTF8WithList(list, 0, Type, latin1_);
     return try foo.toOwnedSlice();
 }
@@ -2407,7 +2407,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 return .{ .original = {} };
             }
 
-            var output = allo.alloc(u8, total) catch unreachable;
+            const output = allo.alloc(u8, total) catch unreachable;
             var head = output.ptr;
             inline for (comptime bun.range(0, len)) |i| {
                 head += @This().append(head, chars[i]);
@@ -2794,7 +2794,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
 
                         if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(remaining.ptr + i) >= @intFromPtr(utf16.ptr));
                         const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @intFromPtr(remaining.ptr + i) - @intFromPtr(utf16.ptr)];
-                        var to_copy_16 = std.mem.bytesAsSlice(u16, to_copy);
+                        const to_copy_16 = std.mem.bytesAsSlice(u16, to_copy);
                         buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + 6);
                         try buf.appendSlice(to_copy_16);
 
@@ -2907,7 +2907,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(utf16.ptr));
 
                             const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @intFromPtr(ptr) - @intFromPtr(utf16.ptr)];
-                            var to_copy_16 = std.mem.bytesAsSlice(u16, to_copy);
+                            const to_copy_16 = std.mem.bytesAsSlice(u16, to_copy);
                             try buf.appendSlice(to_copy_16);
                             any_needs_escape = true;
                             break :scan_and_allocate_lazily;
@@ -2970,7 +2970,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
 }
 
 test "copyLatin1IntoUTF8 - ascii" {
-    var input: string = "hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!";
+    const input: string = "hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!";
     var output = std.mem.zeroes([500]u8);
     const result = copyLatin1IntoUTF8(&output, string, input);
     try std.testing.expectEqual(input.len, result.read);
@@ -2981,9 +2981,9 @@ test "copyLatin1IntoUTF8 - ascii" {
 
 test "copyLatin1IntoUTF8 - latin1" {
     {
-        var input: string = &[_]u8{ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 32, 169 };
+        const input: string = &[_]u8{ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 32, 169 };
         var output = std.mem.zeroes([500]u8);
-        var expected = "hello world ©";
+        const expected = "hello world ©";
         const result = copyLatin1IntoUTF8(&output, string, input);
         try std.testing.expectEqual(input.len, result.read);
 
@@ -2991,9 +2991,9 @@ test "copyLatin1IntoUTF8 - latin1" {
     }
 
     {
-        var input: string = &[_]u8{ 72, 169, 101, 108, 108, 169, 111, 32, 87, 111, 114, 169, 108, 100, 33 };
+        const input: string = &[_]u8{ 72, 169, 101, 108, 108, 169, 111, 32, 87, 111, 114, 169, 108, 100, 33 };
         var output = std.mem.zeroes([500]u8);
-        var expected = "H©ell©o Wor©ld!";
+        const expected = "H©ell©o Wor©ld!";
         const result = copyLatin1IntoUTF8(&output, string, input);
         try std.testing.expectEqual(input.len, result.read);
 
@@ -3979,7 +3979,7 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
     var remaining = source[0..to_read];
     var remaining_dest = destination;
     if (comptime Environment.enableSIMD) {
-        var remaining_end = remaining.ptr + remaining.len - (remaining.len % 16);
+        const remaining_end = remaining.ptr + remaining.len - (remaining.len % 16);
         while (remaining.ptr != remaining_end) {
             const input_chunk: @Vector(16, u8) = remaining[0..16].*;
             const input_chunk_4: @Vector(16, u8) = input_chunk >> @as(@Vector(16, u8), @splat(@as(u8, 4)));
@@ -4053,11 +4053,11 @@ test "decodeHexToBytes" {
         buffer[i] = @as(u8, @truncate(i % 256));
     }
     var written: [2048]u8 = undefined;
-    var hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
+    const hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
     var good: [4096]u8 = undefined;
     var ours_buf: [4096]u8 = undefined;
-    var match = try std.fmt.hexToBytes(good[0..1024], hex);
-    var ours = decodeHexToBytes(&ours_buf, u8, hex);
+    const match = try std.fmt.hexToBytes(good[0..1024], hex);
+    const ours = decodeHexToBytes(&ours_buf, u8, hex);
     try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
     try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
 }
@@ -4093,7 +4093,7 @@ const LineRange = struct {
     end: u32,
 };
 pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) std.BoundedArray(LineRange, line_range_count) {
-    var remaining = text;
+    const remaining = text;
     if (remaining.len == 0) return .{};
 
     var ranges = std.BoundedArray(LineRange, line_range_count){};
@@ -4607,7 +4607,7 @@ pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
     const n = _text.len;
     if (n > 0) {
         var i: usize = 0;
-        var text = _text[0 .. n - 1];
+        const text = _text[0 .. n - 1];
         while (i < n - 1) : (i += 1) {
             switch (text[i]) {
                 // Check for a high surrogate
@@ -5036,7 +5036,7 @@ pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: st
     const fields_we_care_about = comptime brk: {
         var count: usize = 0;
         for (std.meta.fields(Type)) |field| {
-            if (std.meta.trait.isSlice(field.type) and std.meta.Child(field.type) == u8) {
+            if (std.meta.isSlice(field.type) and std.meta.Child(field.type) == u8) {
                 count += 1;
             }
         }
@@ -5044,7 +5044,7 @@ pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: st
         var fields: [count][]const u8 = undefined;
         count = 0;
         for (std.meta.fields(Type)) |field| {
-            if (std.meta.trait.isSlice(field.type) and std.meta.Child(field.type) == u8) {
+            if (std.meta.isSlice(field.type) and std.meta.Child(field.type) == u8) {
                 fields[count] = field.name;
                 count += 1;
             }
@@ -5084,9 +5084,9 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
 
 test "moveSlice" {
     var input: string = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
-    var cloned = try std.heap.page_allocator.dupe(u8, input);
+    const cloned = try std.heap.page_allocator.dupe(u8, input);
 
-    var slice = input[20..][0..10];
+    const slice = input[20..][0..10];
 
     try std.testing.expectEqual(eqlLong(moveSlice(slice, input, cloned), slice, false), true);
 }
@@ -5102,7 +5102,7 @@ test "moveAllSlices" {
     var move = Move{ .foo = input[20..], .bar = input[30..], .baz = input[10..20], .wrong = "baz" };
     var cloned = try std.heap.page_allocator.dupe(u8, input);
     moveAllSlices(Move, &move, input, cloned);
-    var expected = Move{ .foo = cloned[20..], .bar = cloned[30..], .baz = cloned[10..20], .wrong = "bar" };
+    const expected = Move{ .foo = cloned[20..], .bar = cloned[30..], .baz = cloned[10..20], .wrong = "bar" };
     try std.testing.expectEqual(move.foo.ptr, expected.foo.ptr);
     try std.testing.expectEqual(move.bar.ptr, expected.bar.ptr);
     try std.testing.expectEqual(move.baz.ptr, expected.baz.ptr);
@@ -5113,7 +5113,7 @@ test "moveAllSlices" {
 }
 
 test "join" {
-    var string_list = &[_]string{ "abc", "def", "123", "hello" };
+    const string_list = &[_]string{ "abc", "def", "123", "hello" };
     const list = try join(string_list, "-", std.heap.page_allocator);
     try std.testing.expectEqualStrings("abc-def-123-hello", list);
 }
@@ -5121,9 +5121,9 @@ test "join" {
 test "sortAsc" {
     var string_list = [_]string{ "abc", "def", "123", "hello" };
     var sorted_string_list = [_]string{ "123", "abc", "def", "hello" };
-    var sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
+    const sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
     sortAsc(&string_list);
-    var string_join = try join(&string_list, "-", std.heap.page_allocator);
+    const string_join = try join(&string_list, "-", std.heap.page_allocator);
 
     try std.testing.expectEqualStrings(sorted_join, string_join);
 }
@@ -5131,9 +5131,9 @@ test "sortAsc" {
 test "sortDesc" {
     var string_list = [_]string{ "abc", "def", "123", "hello" };
     var sorted_string_list = [_]string{ "hello", "def", "abc", "123" };
-    var sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
+    const sorted_join = try join(&sorted_string_list, "-", std.heap.page_allocator);
     sortDesc(&string_list);
-    var string_join = try join(&string_list, "-", std.heap.page_allocator);
+    const string_join = try join(&string_list, "-", std.heap.page_allocator);
 
     try std.testing.expectEqualStrings(sorted_join, string_join);
 }
@@ -5164,7 +5164,7 @@ pub fn isIPAddress(input: []const u8) bool {
     @memcpy(max_ip_address_buffer[0..input.len], input);
     max_ip_address_buffer[input.len] = 0;
 
-    var ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
+    const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
 
     return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
 }
@@ -5178,7 +5178,7 @@ pub fn isIPV6Address(input: []const u8) bool {
     @memcpy(max_ip_address_buffer[0..input.len], input);
     max_ip_address_buffer[input.len] = 0;
 
-    var ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
+    const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
     return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
 }
 
@@ -5187,7 +5187,7 @@ pub fn cloneNormalizingSeparators(
     input: []const u8,
 ) ![]u8 {
     // remove duplicate slashes in the file path
-    var base = withoutTrailingSlash(input);
+    const base = withoutTrailingSlash(input);
     var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
     var buf = try allocator.alloc(u8, base.len + 2);
     if (comptime Environment.allow_assert) std.debug.assert(base.len > 0);
@@ -5245,7 +5245,7 @@ pub fn concatWithLength(
     args: []const string,
     length: usize,
 ) !string {
-    var out = try allocator.alloc(u8, length);
+    const out = try allocator.alloc(u8, length);
     var remain = out;
     for (args) |arg| {
         @memcpy(remain[0..arg.len], arg);
@@ -5297,7 +5297,7 @@ pub fn concatIfNeeded(
     }
 
     const is_needed = brk: {
-        var out = dest.*;
+        const out = dest.*;
         var remain = out;
 
         for (args) |arg| {

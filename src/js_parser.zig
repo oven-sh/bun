@@ -11637,7 +11637,7 @@ fn NewParser_(
                 notes[0] = logger.rangeData(p.source, where, why);
                 try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), notes);
             } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with ESM due to strict mode", .{text}));
+                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with the ESM output format due to strict mode", .{text}));
             }
         }
 

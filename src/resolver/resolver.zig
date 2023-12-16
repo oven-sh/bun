@@ -2616,7 +2616,7 @@ pub const Resolver = struct {
                 const open_req = if (comptime Environment.isPosix)
                     std.fs.openDirAbsoluteZ(
                         sentinel,
-                        .{ .no_follow = !follow_symlinks },
+                        .{ .no_follow = !follow_symlinks, .iterate = true },
                     )
                 else if (comptime Environment.isWindows) open_req: {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);

@@ -315,7 +315,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
-          path: ${{ env.tag }}.zip
+          path: ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
@@ -352,4 +352,3 @@ jobs:
             **[View build output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
 
             [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
-

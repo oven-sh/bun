@@ -1874,6 +1874,18 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     idx += 1;
                     args_idx += 1;
                 },
+                'p' => {
+                    var formatter = JSC.ZigConsoleClient.Formatter{
+                        .globalThis = globalThis,
+                        .quote_strings = true,
+                    };
+                    const value_fmt = current_arg.toFmt(globalThis, &formatter);
+                    const test_index_str = try std.fmt.allocPrint(allocator, "{any}", .{value_fmt});
+                    defer allocator.free(test_index_str);
+                    try list.appendSlice(allocator, test_index_str);
+                    idx += 1;
+                    args_idx += 1;
+                },
                 '#' => {
                     const test_index_str = try std.fmt.allocPrint(allocator, "{d}", .{test_idx});
                     defer allocator.free(test_index_str);

@@ -165,6 +165,9 @@ fn NewLexer_(
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
         prev_error_loc: logger.Loc = logger.Loc.Empty,
+        prev_token_was_await_keyword: bool = false,
+        await_keyword_loc: logger.Loc = logger.Loc.Empty,
+        fn_or_arrow_start_loc: logger.Loc = logger.Loc.Empty,
         regex_flags_start: ?u16 = null,
         allocator: std.mem.Allocator,
         /// In JavaScript, strings are stored as UTF-16, but nearly every string is ascii.
@@ -212,6 +215,9 @@ fn NewLexer_(
                 .string_literal_is_ascii = self.string_literal_is_ascii,
                 .is_ascii_only = self.is_ascii_only,
                 .all_comments = self.all_comments,
+                .prev_token_was_await_keyword = self.prev_token_was_await_keyword,
+                .await_keyword_loc = self.await_keyword_loc,
+                .fn_or_arrow_start_loc = self.fn_or_arrow_start_loc,
             };
         }
 
@@ -262,6 +268,31 @@ fn NewLexer_(
 
             const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
             try self.log.addRangeError(&self.source, r, errorMessage);
+            self.prev_error_loc = r.loc;
+
+            // if (panic) {
+            //     return Error.ParserError;
+            // }
+        }
+
+        pub fn addRangeErrorWithNotes(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, notes: []const logger.Data) !void {
+            @setCold(true);
+
+            if (self.is_log_disabled) return;
+            if (self.prev_error_loc.eql(r.loc)) {
+                return;
+            }
+
+            const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
+            try self.log.addRangeErrorWithNotes(
+                &self.source,
+                r,
+                errorMessage,
+                try self.log.msgs.allocator.dupe(
+                    logger.Data,
+                    notes,
+                ),
+            );
             self.prev_error_loc = r.loc;
 
             // if (panic) {
@@ -1109,6 +1140,7 @@ fn NewLexer_(
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
             lexer.has_pure_comment_before = false;
+            lexer.prev_token_was_await_keyword = false;
 
             while (true) {
                 lexer.start = lexer.end;
@@ -1819,6 +1851,32 @@ fn NewLexer_(
         }
 
         pub fn expectedString(self: *LexerType, text: string) !void {
+            if (self.prev_token_was_await_keyword) {
+                var notes: [1]logger.Data = undefined;
+                if (!self.fn_or_arrow_start_loc.isEmpty()) {
+                    notes[0] = logger.rangeData(
+                        &self.source,
+                        rangeOfIdentifier(
+                            &self.source,
+                            self.fn_or_arrow_start_loc,
+                        ),
+                        "Consider adding the \"async\" keyword here",
+                    );
+                }
+
+                const notes_ptr: []const logger.Data = notes[0..@as(
+                    usize,
+                    @intFromBool(!self.fn_or_arrow_start_loc.isEmpty()),
+                )];
+
+                try self.addRangeErrorWithNotes(
+                    self.range(),
+                    "\"await\" can only be used inside an \"async\" function",
+                    .{},
+                    notes_ptr,
+                );
+                return;
+            }
             if (self.source.contents.len != self.start) {
                 try self.addRangeError(
                     self.range(),

@@ -2086,7 +2086,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  it.only("works after 2038", () => {
+  it("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);

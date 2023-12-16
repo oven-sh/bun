@@ -16,6 +16,7 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/bun-linux-aarch64.yml"
   pull_request:
     branches:
       - main
@@ -27,6 +28,7 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/bun-linux-aarch64.yml"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -49,9 +51,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          submodules: recursive
+          submodules: false
           ref: ${{github.sha}}
           clean: true
+      - run: |
+          bash ./scripts/update-submodules.sh
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:

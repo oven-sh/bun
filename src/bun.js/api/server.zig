@@ -5401,7 +5401,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             if (tcp.hostname) |hostname| {
                                 this.cached_hostname = bun.String.create(bun.sliceTo(hostname, 0));
                             } else {
-                                this.cached_hostname = bun.String.createAtom("localhost");
+                                this.cached_hostname = bun.String.createAtomASCII("localhost");
                             }
                         },
                         else => {},

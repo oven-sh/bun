@@ -298,41 +298,68 @@ pub const String = extern struct {
         }
     }
 
-    pub fn createUninitializedLatin1(len: usize) String {
-        JSC.markBinding(@src());
-        return BunString__fromLatin1Unitialized(len);
+    fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
+        std.debug.assert(len > 0);
+        const string = BunString__fromLatin1Unitialized(len);
+        const wtf = string.value.WTFStringImpl;
+        return .{
+            string,
+            @constCast(wtf.m_ptr.latin1[0..wtf.m_length]),
+        };
     }
 
-    pub fn createUninitializedUTF16(len: usize) String {
-        JSC.markBinding(@src());
-        return BunString__fromUTF16Unitialized(len);
+    fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
+        std.debug.assert(len > 0);
+        const string = BunString__fromUTF16Unitialized(len);
+        const wtf = string.value.WTFStringImpl;
+        return .{
+            string,
+            @constCast(wtf.m_ptr.utf16[0..wtf.m_length]),
+        };
     }
 
-    pub fn createUninitialized(comptime kind: @Type(.EnumLiteral), len: usize) ?String {
-        const without_check = switch (comptime kind) {
+    const WTFStringEncoding = enum {
+        latin1,
+        utf16,
+
+        pub fn Byte(comptime this: WTFStringEncoding) type {
+            return switch (this) {
+                .latin1 => u8,
+                .utf16 => u16,
+            };
+        }
+    };
+
+    /// Allocate memory for a WTF::String of a given length and encoding, and
+    /// return the string and a mutable slice for that string.
+    ///
+    /// This is not allowed on zero-length strings, in this case you should
+    /// check *earlier* and use String.empty.
+    pub fn createUninitialized(
+        comptime kind: WTFStringEncoding,
+        len: usize,
+    ) struct { String, [](kind.Byte()) } {
+        std.debug.assert(len > 0);
+        return switch (comptime kind) {
             .latin1 => createUninitializedLatin1(len),
             .utf16 => createUninitializedUTF16(len),
-            else => @compileError("Invalid string kind"),
         };
-
-        if (without_check.tag == .Dead) {
-            return null;
-        }
-
-        return without_check;
     }
 
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
+        if (bytes.len == 0) return String.empty;
         return BunString__fromLatin1(bytes.ptr, bytes.len);
     }
 
     pub fn create(bytes: []const u8) String {
         JSC.markBinding(@src());
+        if (bytes.len == 0) return String.empty;
         return BunString__fromBytes(bytes.ptr, bytes.len);
     }
 
     pub fn createUTF16(bytes: []const u16) String {
+        if (bytes.len == 0) return String.empty;
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
@@ -359,12 +386,12 @@ pub const String = extern struct {
         }
 
         if (this.isEmpty()) {
-            return this;
+            return String.empty;
         }
 
         if (this.isUTF16()) {
-            var new = createUninitializedUTF16(this.length());
-            @memcpy(@constCast(new.byteSlice()), this.byteSlice());
+            const new, var bytes = createUninitialized(.utf16, this.length());
+            @memcpy(bytes, this.value.ZigString.utf16Slice());
             return new;
         }
 
@@ -372,20 +399,17 @@ pub const String = extern struct {
     }
 
     extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
+    extern fn BunString__tryCreateAtom(bytes: [*]const u8, len: usize) String;
 
-    /// May return .Dead if the string is too long or non-ascii.
-    pub fn createAtom(bytes: []const u8) String {
-        JSC.markBinding(@src());
+    /// Must be given ascii input
+    pub fn createAtomASCII(bytes: []const u8) String {
         return BunString__createAtom(bytes.ptr, bytes.len);
     }
 
+    /// Will return null if the input is non-ascii or too long
     pub fn tryCreateAtom(bytes: []const u8) ?String {
-        const atom = createAtom(bytes);
-        if (atom.isEmpty()) {
-            return null;
-        }
-
-        return atom;
+        const atom = BunString__tryCreateAtom(bytes.ptr, bytes.len);
+        return if (atom.tag == .Dead) null else atom;
     }
 
     /// Atomized strings are interned strings
@@ -509,16 +533,10 @@ pub const String = extern struct {
         }
     }
 
-    pub fn toJS(this: *String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
 
         return BunString__toJS(globalObject, this);
-    }
-
-    pub fn toJSWithLength(this: *String, globalObject: *bun.JSC.JSGlobalObject, len: usize) JSC.JSValue {
-        JSC.markBinding(@src());
-
-        return BunString__toJSWithLength(globalObject, this, len);
     }
 
     pub fn toJSDOMURL(this: *String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
@@ -725,8 +743,8 @@ pub const String = extern struct {
     }
 
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
-    extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
-    extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *String, usize) JSC.JSValue;
+    extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *const String) JSC.JSValue;
+    extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *const String, usize) JSC.JSValue;
     extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toWTFString(this: *String) void;
 

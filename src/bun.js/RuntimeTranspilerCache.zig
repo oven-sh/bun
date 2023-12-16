@@ -44,11 +44,10 @@ pub const RuntimeTranspilerCache = struct {
 
         pub const size = brk: {
             var count: usize = 0;
-            var meta: Metadata = undefined;
+            var meta: Metadata = .{};
             for (std.meta.fieldNames(Metadata)) |name| {
                 count += @sizeOf(@TypeOf(@field(meta, name)));
             }
-
             break :brk count;
         };
 
@@ -250,61 +249,59 @@ pub const RuntimeTranspilerCache = struct {
 
             std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
-            this.output_code = brk: {
-                switch (this.metadata.output_encoding) {
-                    .utf8 => {
-                        var utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
-                        errdefer output_code_allocator.free(utf8);
-                        const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
+            this.output_code = switch (this.metadata.output_encoding) {
+                .utf8 => brk: {
+                    var utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
+                    errdefer output_code_allocator.free(utf8);
+                    const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
+                    }
+
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(utf8) != this.metadata.output_hash) {
+                            return error.InvalidHash;
                         }
+                    }
 
-                        if (this.metadata.output_hash != 0) {
-                            if (hash(utf8) != this.metadata.output_hash) {
-                                return error.InvalidHash;
-                            }
+                    break :brk .{ .utf8 = utf8 };
+                },
+                .latin1 => brk: {
+                    var latin1, var bytes = bun.String.createUninitialized(.latin1, this.metadata.output_byte_length);
+                    errdefer latin1.deref();
+                    const read_bytes = try file.preadAll(bytes, this.metadata.output_byte_offset);
+
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(latin1.latin1()) != this.metadata.output_hash) {
+                            return error.InvalidHash;
                         }
+                    }
 
-                        break :brk .{ .utf8 = utf8 };
-                    },
-                    .latin1 => {
-                        var latin1 = bun.String.createUninitializedLatin1(this.metadata.output_byte_length);
-                        errdefer latin1.deref();
-                        const read_bytes = try file.preadAll(@constCast(latin1.latin1()), this.metadata.output_byte_offset);
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
+                    }
 
-                        if (this.metadata.output_hash != 0) {
-                            if (hash(latin1.latin1()) != this.metadata.output_hash) {
-                                return error.InvalidHash;
-                            }
+                    break :brk .{ .string = latin1 };
+                },
+                .utf16 => brk: {
+                    var string, var chars = bun.String.createUninitialized(.utf16, this.metadata.output_byte_length / 2);
+                    errdefer string.deref();
+
+                    const read_bytes = try file.preadAll(std.mem.sliceAsBytes(chars), this.metadata.output_byte_offset);
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
+                    }
+
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(std.mem.sliceAsBytes(string.utf16())) != this.metadata.output_hash) {
+                            return error.InvalidHash;
                         }
+                    }
 
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
-                        }
+                    break :brk .{ .string = string };
+                },
 
-                        break :brk .{ .string = latin1 };
-                    },
-
-                    .utf16 => {
-                        var utf16 = bun.String.createUninitializedUTF16(this.metadata.output_byte_length / 2);
-                        errdefer utf16.deref();
-                        const read_bytes = try file.preadAll(std.mem.sliceAsBytes(@constCast(utf16.utf16())), this.metadata.output_byte_offset);
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
-                        }
-
-                        if (this.metadata.output_hash != 0) {
-                            if (hash(std.mem.sliceAsBytes(utf16.utf16())) != this.metadata.output_hash) {
-                                return error.InvalidHash;
-                            }
-                        }
-
-                        break :brk .{ .string = utf16 };
-                    },
-
-                    else => @panic("Unexpected output encoding"),
-                }
+                else => @panic("Unexpected output encoding"),
             };
 
             errdefer {
@@ -370,10 +367,8 @@ pub const RuntimeTranspilerCache = struct {
         return buf[0 .. cache_dir.len + 1 + cache_filename_len :0];
     }
 
-    fn reallyGetCacheDir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
-    ) [:0]const u8 {
-        if (comptime bun.Environment.allow_assert) {
+    fn reallyGetCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+        if (comptime bun.Environment.isDebug) {
             bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE") != null;
         }
 
@@ -421,28 +416,25 @@ pub const RuntimeTranspilerCache = struct {
 
     // Only do this at most once per-thread.
     threadlocal var runtime_transpiler_cache_static_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var runtime_transpiler_cache: [:0]u8 = undefined;
-    threadlocal var runtime_transpiler_cache_loaded: bool = false;
+    threadlocal var runtime_transpiler_cache: ?[:0]const u8 = null;
     pub var is_disabled = false;
 
-    fn getCacheDir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
-    ) [:0]const u8 {
+    fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
         if (is_disabled) return "";
 
-        if (!runtime_transpiler_cache_loaded) {
-            runtime_transpiler_cache_loaded = true;
-            runtime_transpiler_cache = @constCast(reallyGetCacheDir(&runtime_transpiler_cache_static_buffer));
-            if (runtime_transpiler_cache.len == 0) {
-                is_disabled = true;
-                return "";
-            }
+        if (runtime_transpiler_cache) |path| {
+            @memcpy(buf[0..path.len], path);
+            buf[path.len] = 0;
+            return buf[0..path.len :0];
         }
 
-        @memcpy(buf[0..runtime_transpiler_cache.len], runtime_transpiler_cache);
-        buf[runtime_transpiler_cache.len] = 0;
-
-        return buf[0..runtime_transpiler_cache.len :0];
+        const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
+        runtime_transpiler_cache = path;
+        if (path.len == 0) {
+            is_disabled = true;
+            return "";
+        }
+        return path;
     }
 
     pub fn fromFile(

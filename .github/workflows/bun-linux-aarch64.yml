@@ -49,9 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          submodules: recursive
+          submodules: false
           ref: ${{github.sha}}
           clean: true
+      - run: |
+          bash ./scripts/update-submodules.sh
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:

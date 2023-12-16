@@ -517,7 +517,10 @@ pub const Msg = struct {
             for (notes) |*note| {
                 note.deinit(allocator);
             }
+
+            allocator.free(notes);
         }
+
         msg.notes = null;
     }
 

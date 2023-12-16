@@ -2606,6 +2606,7 @@ const AwaitOrYield = enum(u3) {
 // arrow expressions.
 const FnOrArrowDataParse = struct {
     async_range: logger.Range = logger.Range.None,
+    needs_async_loc: logger.Loc = logger.Loc.Empty,
     allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_super_call: bool = false,
@@ -7372,6 +7373,7 @@ fn NewParser_(
 
             var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
             var func = try p.parseFn(name, FnOrArrowDataParse{
+                .needs_async_loc = loc,
                 .async_range = asyncRange orelse logger.Range.None,
                 .has_async_range = asyncRange != null,
                 .allow_await = if (is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -7486,6 +7488,9 @@ fn NewParser_(
                 AwaitOrYield.forbid_all
             else
                 AwaitOrYield.allow_ident;
+
+            // Don't suggest inserting "async" before anything if "await" is found
+            p.fn_or_arrow_data_parse.needs_async_loc = logger.Loc.Empty;
 
             // If "super()" is allowed in the body, it's allowed in the arguments
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
@@ -11833,6 +11838,7 @@ fn NewParser_(
             }
 
             const func = try p.parseFn(name, FnOrArrowDataParse{
+                .needs_async_loc = loc,
                 .async_range = async_range,
                 .allow_await = if (is_async) .allow_expr else .allow_ident,
                 .allow_yield = if (is_generator) .allow_expr else .allow_ident,
@@ -12002,7 +12008,9 @@ fn NewParser_(
                                 async_range.loc,
                             ) };
                             _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
-                            var data = FnOrArrowDataParse{};
+                            var data = FnOrArrowDataParse{
+                                .needs_async_loc = async_range.loc,
+                            };
                             var arrow_body = try p.parseArrowBody(args, &data);
                             p.popScope();
                             return p.newExpr(arrow_body, async_range.loc);
@@ -12019,7 +12027,7 @@ fn NewParser_(
                                 B.Identifier{
                                     .ref = ref,
                                 },
-                                async_range.loc,
+                                p.lexer.loc(),
                             ) };
                             try p.lexer.next();
 
@@ -12028,6 +12036,7 @@ fn NewParser_(
 
                             var data = FnOrArrowDataParse{
                                 .allow_await = .allow_expr,
+                                .needs_async_loc = args[0].binding.loc,
                             };
                             var arrowBody = try p.parseArrowBody(args, &data);
                             arrowBody.is_async = true;
@@ -12779,6 +12788,7 @@ fn NewParser_(
 
                 var func = try p.parseFn(null, FnOrArrowDataParse{
                     .async_range = opts.async_range,
+                    .needs_async_loc = key.loc,
                     .has_async_range = !opts.async_range.isEmpty(),
                     .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                     .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -14053,7 +14063,11 @@ fn NewParser_(
                                         return p.newExpr(E.Await{ .value = value }, loc);
                                     }
                                 },
-                                else => {},
+                                .allow_ident => {
+                                    p.lexer.prev_token_was_await_keyword = true;
+                                    p.lexer.await_keyword_loc = name_range.loc;
+                                    p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                                },
                             }
                         },
 
@@ -14107,9 +14121,10 @@ fn NewParser_(
                         _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                         defer p.popScope();
 
-                        var fn_or_arrow_data = FnOrArrowDataParse{};
-                        const ret = p.newExpr(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
-                        return ret;
+                        var fn_or_arrow_data = FnOrArrowDataParse{
+                            .needs_async_loc = loc,
+                        };
+                        return p.newExpr(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
                     }
 
                     const ref = p.storeNameInRef(name) catch unreachable;

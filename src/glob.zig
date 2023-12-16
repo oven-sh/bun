@@ -195,7 +195,7 @@ pub fn GlobWalker_(
                 const root_path = this.walker.cwd;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                var cwd_fd = switch (Syscall.open(@ptrCast(path_buf[0 .. root_path.len + 1]), std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                const cwd_fd = switch (Syscall.open(@ptrCast(path_buf[0 .. root_path.len + 1]), std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,
                 };
@@ -298,7 +298,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
                 this.iter_state.directory.at_cwd = false;
 
-                var fd: bun.FileDescriptor = fd: {
+                const fd: bun.FileDescriptor = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
                         if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
@@ -327,8 +327,8 @@ pub fn GlobWalker_(
                 };
 
                 this.iter_state.directory.fd = fd;
-                var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                var iterator = DirIterator.iterate(dir);
+                const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+                const iterator = DirIterator.iterate(dir);
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
@@ -615,7 +615,7 @@ pub fn GlobWalker_(
                     return .{ .err = err };
                 },
                 .result => |result| {
-                    var copiedCwd = try arena.allocator().alloc(u8, result.len);
+                    const copiedCwd = try arena.allocator().alloc(u8, result.len);
                     @memcpy(copiedCwd, result);
                     cwd = copiedCwd;
                 },
@@ -773,7 +773,7 @@ pub fn GlobWalker_(
         // NOTE you must check that the pattern at `idx` has `syntax_hint == .Double` first
         fn collapseSuccessiveDoubleWildcards(this: *GlobWalker, idx: u32) u32 {
             var component_idx = idx;
-            var pattern = this.patternComponents.items[idx];
+            const pattern = this.patternComponents.items[idx];
             _ = pattern;
             // Collapse successive double wildcards
             while (component_idx + 1 < this.patternComponents.items.len and
@@ -954,7 +954,7 @@ pub fn GlobWalker_(
         fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
             if (pattern_component.unicode_set) return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
 
-            var codepoints = this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            const codepoints = this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
             GlobWalker.convertUtf8ToCodepoints(
                 codepoints,
                 this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
@@ -1049,7 +1049,7 @@ pub fn GlobWalker_(
             const syntax_tokens = comptime [_]u8{ '*', '[', '{', '?', '!' };
             const needles: [syntax_tokens.len]@Vector(16, u8) = comptime needles: {
                 var needles: [syntax_tokens.len]@Vector(16, u8) = undefined;
-                inline for (syntax_tokens, 0..) |tok, i| {
+                for (syntax_tokens, 0..) |tok, i| {
                     needles[i] = @splat(tok);
                 }
                 break :needles needles;
@@ -1227,7 +1227,7 @@ pub fn GlobWalker_(
 
             out_cp_len.* = cp_len;
 
-            var codepoints = try arena.allocator().alloc(u32, cp_len);
+            const codepoints = try arena.allocator().alloc(u32, cp_len);
             // On Windows filepaths are UTF-16 so its better to fill the codepoints buffer upfront
             if (comptime isWindows) {
                 GlobWalker.convertUtf8ToCodepoints(codepoints, pattern);

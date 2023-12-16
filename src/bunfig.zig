@@ -296,7 +296,7 @@ pub const Bunfig = struct {
             if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
-                        var install_ = try this.allocator.create(Api.BunInstall);
+                        const install_ = try this.allocator.create(Api.BunInstall);
                         install_.* = std.mem.zeroes(Api.BunInstall);
                         this.ctx.install = install_;
                         break :brk install_;
@@ -608,9 +608,9 @@ pub const Bunfig = struct {
 
             if (this.bunfig.jsx == null) {
                 this.bunfig.jsx = Api.Jsx{
-                    .factory = bun.constStrToU8(jsx_factory),
-                    .fragment = bun.constStrToU8(jsx_fragment),
-                    .import_source = bun.constStrToU8(jsx_import_source),
+                    .factory = @constCast(jsx_factory),
+                    .fragment = @constCast(jsx_fragment),
+                    .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
                     .react_fast_refresh = false,
@@ -618,13 +618,13 @@ pub const Bunfig = struct {
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;
                 if (jsx_factory.len > 0) {
-                    jsx.factory = bun.constStrToU8(jsx_factory);
+                    jsx.factory = jsx_factory;
                 }
                 if (jsx_fragment.len > 0) {
-                    jsx.fragment = bun.constStrToU8(jsx_fragment);
+                    jsx.fragment = jsx_fragment;
                 }
                 if (jsx_import_source.len > 0) {
-                    jsx.import_source = bun.constStrToU8(jsx_import_source);
+                    jsx.import_source = jsx_import_source;
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
@@ -698,7 +698,7 @@ pub const Bunfig = struct {
                 var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
 
                 for (properties, 0..) |item, i| {
-                    var key = item.key.?.asString(allocator).?;
+                    const key = item.key.?.asString(allocator).?;
                     if (key.len == 0) continue;
                     if (key[0] != '.') {
                         try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
@@ -737,7 +737,7 @@ pub const Bunfig = struct {
     pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        var expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }

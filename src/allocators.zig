@@ -3,7 +3,6 @@ const std = @import("std");
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const constStrToU8 = @import("root").bun.constStrToU8;
 const bun = @import("root").bun;
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@intFromPtr(&buffer) <= @intFromPtr(slice.ptr) and (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer) + buffer.len));
@@ -170,15 +169,13 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
     };
 }
 
-// const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
-
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
     return struct {
         const ChunkSize = 256;
         const OverflowBlock = struct {
-            used: std.atomic.Atomic(u16) = std.atomic.Atomic(u16).init(0),
+            used: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
             data: [ChunkSize]ValueType = undefined,
             prev: ?*OverflowBlock = null,
 
@@ -313,12 +310,12 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn editableSlice(slice: []const u8) []u8 {
-            return constStrToU8(slice);
+            return @constCast(slice);
         }
 
         pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
             const appended = try @call(.always_inline, append, .{ self, AppendType, _value });
-            return constStrToU8(appended);
+            return @constCast(appended);
         }
 
         pub fn getMutable(self: *Self, len: usize) ![]u8 {
@@ -350,7 +347,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             for (_value, 0..) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
             }
-            var slice = lowercase_append_buf[0.._value.len];
+            const slice = lowercase_append_buf[0.._value.len];
 
             return self.doAppend(
                 @TypeOf(slice),
@@ -490,7 +487,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
             self.mutex.lock();
             defer self.mutex.unlock();
-            var index = try self.index.getOrPut(self.allocator, _key);
+            const index = try self.index.getOrPut(self.allocator, _key);
 
             if (index.found_existing) {
                 return Result{
@@ -558,7 +555,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 if (self.overflow_list.len() == result.index.index) {
                     return self.overflow_list.append(value);
                 } else {
-                    var ptr = self.overflow_list.atIndexMut(result.index);
+                    const ptr = self.overflow_list.atIndexMut(result.index);
                     ptr.* = value;
                     return ptr;
                 }
@@ -654,7 +651,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn put(self: *Self, key: anytype, comptime store_key: bool, result: *Result, value: ValueType) !*ValueType {
-            var ptr = try self.map.put(result, value);
+            const ptr = try self.map.put(result, value);
             if (store_key) {
                 try self.putKey(key, result);
             }
@@ -676,7 +673,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
             // Is this actually a slice into the map? Don't free it.
             if (isKeyStaticallyAllocated(key)) {
-                slice = constStrToU8(key);
+                slice = key;
             } else if (instance.key_list_buffer_used + key.len < instance.key_list_buffer.len) {
                 const start = instance.key_list_buffer_used;
                 instance.key_list_buffer_used += key.len;
@@ -687,7 +684,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
 
             if (comptime remove_trailing_slashes) {
-                slice = constStrToU8(std.mem.trimRight(u8, slice, "/"));
+                slice = std.mem.trimRight(u8, slice, "/");
             }
 
             if (!result.index.is_overflow) {

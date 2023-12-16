@@ -29,7 +29,7 @@ pub usingnamespace JSC.Codegen.JSGlob;
 pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,
 is_ascii: bool,
-has_pending_activity: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 const ScanOpts = struct {
     cwd: ?[]const u8,
@@ -46,7 +46,7 @@ const ScanOpts = struct {
                 const cwd_zig_str = cwdVal.getZigString(globalThis);
                 // Dupe if already utf-16
                 if (cwd_zig_str.is16Bit()) {
-                    var duped = allocator.dupe(u8, cwd_zig_str.slice()) catch {
+                    const duped = allocator.dupe(u8, cwd_zig_str.slice()) catch {
                         globalThis.throwOutOfMemory();
                         return null;
                     };
@@ -65,7 +65,7 @@ const ScanOpts = struct {
                     return null;
                 }) orelse brk: {
                     // All ascii
-                    var output = allocator.alloc(u16, cwd_zig_str.len) catch {
+                    const output = allocator.alloc(u16, cwd_zig_str.len) catch {
                         globalThis.throwOutOfMemory();
                         return null;
                     };
@@ -207,7 +207,7 @@ pub const WalkTask = struct {
     alloc: Allocator,
     err: ?Err = null,
     global: *JSC.JSGlobalObject,
-    has_pending_activity: *std.atomic.Atomic(usize),
+    has_pending_activity: *std.atomic.Value(usize),
 
     pub const Err = union(enum) {
         syscall: Syscall.Error,
@@ -227,9 +227,9 @@ pub const WalkTask = struct {
         globalThis: *JSC.JSGlobalObject,
         alloc: Allocator,
         globWalker: *GlobWalker,
-        has_pending_activity: *std.atomic.Atomic(usize),
+        has_pending_activity: *std.atomic.Value(usize),
     ) !*AsyncGlobWalkTask {
-        var walkTask = try alloc.create(WalkTask);
+        const walkTask = try alloc.create(WalkTask);
         walkTask.* = .{
             .walker = globWalker,
             .global = globalThis,
@@ -293,12 +293,12 @@ fn makeGlobWalker(
     arena: *Arena,
 ) ?*GlobWalker {
     const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, arena) orelse return null;
-    var cwd = matchOpts.cwd;
-    var dot = matchOpts.dot;
-    var absolute = matchOpts.absolute;
-    var follow_symlinks = matchOpts.follow_symlinks;
-    var error_on_broken_symlinks = matchOpts.error_on_broken_symlinks;
-    var only_files = matchOpts.only_files;
+    const cwd = matchOpts.cwd;
+    const dot = matchOpts.dot;
+    const absolute = matchOpts.absolute;
+    const follow_symlinks = matchOpts.follow_symlinks;
+    const error_on_broken_symlinks = matchOpts.error_on_broken_symlinks;
+    const only_files = matchOpts.only_files;
 
     if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
@@ -376,7 +376,7 @@ pub fn constructor(
         return null;
     }
 
-    var pat_str: []u8 = pat_arg.toBunString(globalThis).toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+    const pat_str: []u8 = pat_arg.toBunString(globalThis).toOwnedSlice(bun.default_allocator) catch @panic("OOM");
 
     const all_ascii = isAllAscii(pat_str);
 
@@ -417,12 +417,12 @@ pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
     return this.has_pending_activity.load(.SeqCst) > 0;
 }
 
-fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(usize)) void {
+fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
     @fence(.SeqCst);
     _ = has_pending_activity.fetchAdd(1, .SeqCst);
 }
 
-fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(usize)) void {
+fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
     @fence(.SeqCst);
     _ = has_pending_activity.fetchSub(1, .SeqCst);
 }
@@ -435,7 +435,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
+    const globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };

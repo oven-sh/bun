@@ -44,7 +44,7 @@ const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
-var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
+var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
 const print_every = 0;
 var print_every_i: usize = 0;
@@ -59,20 +59,20 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 pub const Signals = struct {
-    header_progress: ?*std.atomic.Atomic(bool) = null,
-    body_streaming: ?*std.atomic.Atomic(bool) = null,
-    aborted: ?*std.atomic.Atomic(bool) = null,
-    cert_errors: ?*std.atomic.Atomic(bool) = null,
+    header_progress: ?*std.atomic.Value(bool) = null,
+    body_streaming: ?*std.atomic.Value(bool) = null,
+    aborted: ?*std.atomic.Value(bool) = null,
+    cert_errors: ?*std.atomic.Value(bool) = null,
 
     pub fn isEmpty(this: *const Signals) bool {
         return this.aborted == null and this.body_streaming == null and this.header_progress == null and this.cert_errors == null;
     }
 
     pub const Store = struct {
-        header_progress: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
-        body_streaming: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
-        aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
-        cert_errors: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        header_progress: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        body_streaming: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        cert_errors: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         pub fn to(this: *Store) Signals {
             return .{
@@ -85,7 +85,7 @@ pub const Signals = struct {
     };
 
     pub fn get(this: Signals, comptime field: std.meta.FieldEnum(Signals)) bool {
-        var ptr: *std.atomic.Atomic(bool) = @field(this, @tagName(field)) orelse return false;
+        var ptr: *std.atomic.Value(bool) = @field(this, @tagName(field)) orelse return false;
         return ptr.load(.Monotonic);
     }
 };
@@ -190,7 +190,7 @@ const ProxySSLData = struct {
     partial: bool,
     temporary_slice: ?[]const u8,
     pub fn init() !ProxySSLData {
-        var buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, 16 * 1024);
+        const buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, 16 * 1024);
 
         return ProxySSLData{ .buffer = buffer, .partial = false, .temporary_slice = null };
     }
@@ -222,29 +222,29 @@ const ProxyTunnel = struct {
 
     pub fn init(comptime is_ssl: bool, client: *HTTPClient, socket: NewHTTPContext(is_ssl).HTTPSocket) ProxyTunnel {
         BoringSSL.load();
-        var context = BoringSSL.SSL_CTX.init();
+        const context = BoringSSL.SSL_CTX.init();
 
         if (context) |ssl_context| {
-            var ssl_ctx = ssl_context;
+            const ssl_ctx = ssl_context;
             var ssl = BoringSSL.SSL.init(ssl_context);
             ssl.setIsClient(true);
             var out_bio: *BoringSSL.BIO = undefined;
             if (comptime is_ssl) {
                 //TLS -> TLS
-                var proxy_ssl: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+                const proxy_ssl: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                 //create new SSL BIO
                 out_bio = BoringSSL.BIO_new(BoringSSL.BIO_f_ssl()) orelse unreachable;
                 //chain SSL bio with proxy BIO
-                var proxy_bio = BoringSSL.SSL_get_wbio(proxy_ssl);
+                const proxy_bio = BoringSSL.SSL_get_wbio(proxy_ssl);
                 _ = BoringSSL.BIO_push(out_bio, proxy_bio);
             } else {
                 // socket output bio for non-TLS -> TLS
-                var fd = @as(c_int, @intCast(@intFromPtr(socket.getNativeHandle())));
+                const fd = @as(c_int, @intCast(@intFromPtr(socket.getNativeHandle())));
                 out_bio = BoringSSL.BIO_new_fd(fd, BoringSSL.BIO_NOCLOSE);
             }
 
             // in memory bio to control input flow from onData handler
-            var in_bio = BoringSSL.BIO.init() catch {
+            const in_bio = BoringSSL.BIO.init() catch {
                 unreachable;
             };
             _ = BoringSSL.BIO_set_mem_eof_return(in_bio, -1);
@@ -357,7 +357,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn init(this: *@This()) !void {
             if (comptime ssl) {
-                var opts: uws.us_bun_socket_context_options_t = .{
+                const opts: uws.us_bun_socket_context_options_t = .{
                     // we request the cert so we load root certs and can verify it
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
@@ -367,7 +367,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 this.sslCtx().setup();
             } else {
-                var opts: uws.us_socket_context_options_t = .{};
+                const opts: uws.us_socket_context_options_t = .{};
                 this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             }
 
@@ -674,7 +674,7 @@ const Queue = UnboundedQueue(AsyncHTTP, .next);
 const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
 
 pub const HTTPThread = struct {
-    var http_thread_loaded: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false);
+    var http_thread_loaded: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
     loop: *uws.Loop,
     http_context: NewHTTPContext(false),
@@ -682,7 +682,7 @@ pub const HTTPThread = struct {
 
     queued_tasks: Queue = Queue{},
     queued_shutdowns: ShutdownQueue = ShutdownQueue{},
-    has_awoken: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+    has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer = undefined,
     const threadlog = Output.scoped(.HTTPThread, true);
 
@@ -722,7 +722,7 @@ pub const HTTPThread = struct {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
-        var loop = bun.uws.Loop.create(struct {
+        const loop = bun.uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
             }
@@ -801,7 +801,7 @@ pub const HTTPThread = struct {
             // TODO(@paperdave): this does not wait any time on windows
             this.loop.run();
             if (comptime Environment.isDebug) {
-                var end = std.time.nanoTimestamp();
+                const end = std.time.nanoTimestamp();
                 threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});
                 Output.flush();
             }
@@ -826,7 +826,7 @@ pub const HTTPThread = struct {
         {
             var batch_ = batch;
             while (batch_.pop()) |task| {
-                var http: *AsyncHTTP = @fieldParentPtr(AsyncHTTP, "task", task);
+                const http: *AsyncHTTP = @fieldParentPtr(AsyncHTTP, "task", task);
                 this.queued_tasks.push(http);
             }
         }
@@ -859,7 +859,7 @@ pub fn checkServerIdentity(
                 if (client.signals.get(.cert_errors)) {
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
-                    var cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch @panic("OOM");
+                    const cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch @panic("OOM");
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     std.debug.assert(result_size == cert_size);
@@ -982,7 +982,7 @@ pub fn onClose(
         // a missing 0\r\n chunk
         if (client.state.isChunkedEncoding()) {
             if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
-                var buf = client.state.getBodyBuffer();
+                const buf = client.state.getBodyBuffer();
                 if (buf.list.items.len > 0) {
                     client.state.received_last_chunk = true;
                     client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
@@ -1043,7 +1043,7 @@ pub fn onEnd(
         // a missing 0\r\n chunk
         if (client.state.isChunkedEncoding()) {
             if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
-                var buf = client.state.getBodyBuffer();
+                const buf = client.state.getBodyBuffer();
                 if (buf.list.items.len > 0) {
                     client.state.received_last_chunk = true;
                     client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
@@ -1249,7 +1249,7 @@ pub const InternalState = struct {
         this.compressed_body.deinit();
         this.response_message_buffer.deinit();
 
-        var body_msg = this.body_out_str;
+        const body_msg = this.body_out_str;
         if (body_msg) |body| body.reset();
         if (this.zlib_reader) |reader| {
             this.zlib_reader = null;
@@ -1610,8 +1610,8 @@ pub const AsyncHTTP = struct {
 
     signals: Signals = .{},
 
-    pub var active_requests_count = std.atomic.Atomic(usize).init(0);
-    pub var max_simultaneous_requests = std.atomic.Atomic(usize).init(256);
+    pub var active_requests_count = std.atomic.Value(usize).init(0);
+    pub var max_simultaneous_requests = std.atomic.Value(usize).init(256);
 
     pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) void {
         if (env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
@@ -1665,7 +1665,7 @@ pub const AsyncHTTP = struct {
         success = 3,
         fail = 4,
     };
-    const AtomicState = std.atomic.Atomic(State);
+    const AtomicState = std.atomic.Value(State);
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -1712,7 +1712,7 @@ pub const AsyncHTTP = struct {
                     var password_buffer: [4096]u8 = undefined;
                     @memset(&password_buffer, 0);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
-                    var password_writer = password_stream.writer();
+                    const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
                     const password_len = PercentEncoding.decode(PassWriter, password_writer, proxy.password) catch {
                         // Invalid proxy authorization
@@ -1724,7 +1724,7 @@ pub const AsyncHTTP = struct {
                     var username_buffer: [4096]u8 = undefined;
                     @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
-                    var username_writer = username_stream.writer();
+                    const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
                     const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
                         // Invalid proxy authorization
@@ -1737,7 +1737,7 @@ pub const AsyncHTTP = struct {
                     defer allocator.free(auth);
                     const size = std.base64.standard.Encoder.calcSize(auth.len);
                     var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
-                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], auth);
+                    const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], auth);
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
@@ -1745,7 +1745,7 @@ pub const AsyncHTTP = struct {
                     var username_buffer: [4096]u8 = undefined;
                     @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
-                    var username_writer = username_stream.writer();
+                    const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
                     const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
                         // Invalid proxy authorization
@@ -1756,7 +1756,7 @@ pub const AsyncHTTP = struct {
                     // only use user
                     const size = std.base64.standard.Encoder.calcSize(username_len);
                     var buf = allocator.alloc(u8, size + "Basic ".len) catch unreachable;
-                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
+                    const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 }
@@ -1797,7 +1797,7 @@ pub const AsyncHTTP = struct {
 
     fn reset(this: *AsyncHTTP) !void {
         const timeout = this.timeout;
-        var aborted = this.client.aborted;
+        const aborted = this.client.aborted;
         this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
@@ -1814,7 +1814,7 @@ pub const AsyncHTTP = struct {
                     var password_buffer: [4096]u8 = undefined;
                     @memset(&password_buffer, 0);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
-                    var password_writer = password_stream.writer();
+                    const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
                     const password_len = PercentEncoding.decode(PassWriter, password_writer, proxy.password) catch {
                         // Invalid proxy authorization
@@ -1826,7 +1826,7 @@ pub const AsyncHTTP = struct {
                     var username_buffer: [4096]u8 = undefined;
                     @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
-                    var username_writer = username_stream.writer();
+                    const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
                     const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
                         // Invalid proxy authorization
@@ -1840,7 +1840,7 @@ pub const AsyncHTTP = struct {
                     defer this.allocator.free(auth);
                     const size = std.base64.standard.Encoder.calcSize(auth.len);
                     var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
-                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], auth);
+                    const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], auth);
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
@@ -1848,7 +1848,7 @@ pub const AsyncHTTP = struct {
                     var username_buffer: [4096]u8 = undefined;
                     @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
-                    var username_writer = username_stream.writer();
+                    const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
                     const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
                         // Invalid proxy authorization
@@ -1859,7 +1859,7 @@ pub const AsyncHTTP = struct {
                     // only use user
                     const size = std.base64.standard.Encoder.calcSize(username_len);
                     var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
-                    var encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
+                    const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                     buf[0.."Basic ".len].* = "Basic ".*;
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 }
@@ -1969,8 +1969,8 @@ pub const AsyncHTTP = struct {
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
-    var header_names = header_entries.items(.name);
-    var header_values = header_entries.items(.value);
+    const header_names = header_entries.items(.name);
+    const header_values = header_entries.items(.value);
     var request_headers_buf = &shared_request_headers_buf;
 
     var override_accept_encoding = false;
@@ -2074,7 +2074,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
 pub fn doRedirect(this: *HTTPClient) void {
     std.debug.assert(this.state.cloned_metadata == null);
-    var body_out_str = this.state.body_out_str.?;
+    const body_out_str = this.state.body_out_str.?;
     this.remaining_redirect_count -|= 1;
     std.debug.assert(this.redirect_type == FetchRedirect.follow);
 
@@ -2176,10 +2176,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     switch (this.state.request_stage) {
         .pending, .headers => {
             var stack_fallback = std.heap.stackFallback(16384, default_allocator);
-            var allocator = stack_fallback.get();
+            const allocator = stack_fallback.get();
             var list = std.ArrayList(u8).initCapacity(allocator, stack_fallback.buffer.len) catch unreachable;
             defer if (list.capacity > stack_fallback.buffer.len) list.deinit();
-            var writer = &list.writer();
+            const writer = &list.writer();
 
             this.setTimeout(socket, 5);
 
@@ -2361,10 +2361,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
             this.setTimeout(socket, 5);
             var stack_fallback = std.heap.stackFallback(16384, default_allocator);
-            var allocator = stack_fallback.get();
+            const allocator = stack_fallback.get();
             var list = std.ArrayList(u8).initCapacity(allocator, stack_fallback.buffer.len) catch unreachable;
             defer if (list.capacity > stack_fallback.buffer.len) list.deinit();
-            var writer = &list.writer();
+            const writer = &list.writer();
 
             const request = this.buildRequest(this.state.request_body.len);
             writeRequest(
@@ -2563,7 +2563,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             // we save the successful parsed response
             this.state.pending_response = response;
 
-            var body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
+            const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
             // handle the case where we have a 100 Continue
             if (response.status_code == 100) {
                 // we still can have the 200 OK in the same buffer sometimes
@@ -2613,7 +2613,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             if (this.state.content_encoding_i < response.headers.len and !this.state.did_set_content_encoding) {
                 // if it compressed with this header, it is no longer because we will decompress it
-                var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+                const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
                 this.state.did_set_content_encoding = true;
                 response.headers = mutable_headers.items;
                 this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
@@ -2828,7 +2828,7 @@ fn cloneMetadata(this: *HTTPClient) void {
         builder.count(this.url.href);
         builder.allocate(this.allocator) catch unreachable;
         // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        var headers_buf = this.allocator.alloc(picohttp.Header, response.headers.len) catch unreachable;
+        const headers_buf = this.allocator.alloc(picohttp.Header, response.headers.len) catch unreachable;
         const cloned_response = response.clone(headers_buf, builder);
 
         // we clean the temporary response since cloned_metadata is now the owner
@@ -2860,8 +2860,8 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
 
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
-        var out_str = this.state.body_out_str.?;
-        var body = out_str.*;
+        const out_str = this.state.body_out_str.?;
+        const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
 
@@ -2961,7 +2961,7 @@ pub const HTTPClientResult = struct {
                 }
 
                 pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
-                    var casted = @as(Type, @ptrCast(@alignCast(ptr)));
+                    const casted = @as(Type, @ptrCast(@alignCast(ptr)));
                     @call(.always_inline, callback, .{ casted, result });
                 }
             };
@@ -3116,8 +3116,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     incoming_data: []const u8,
 ) !bool {
     var decoder = &this.state.chunked_decoder;
-    var buffer_ = this.state.getBodyBuffer();
-    var buffer = buffer_.*;
+    const buffer_ptr = this.state.getBodyBuffer();
+    var buffer = buffer_ptr.*;
     try buffer.appendSlice(incoming_data);
 
     // set consume_trailer to 1 to discard the trailing header
@@ -3139,7 +3139,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
 
-    buffer_.* = buffer;
+    buffer_ptr.* = buffer;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -3199,7 +3199,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     if (
     // if we've already copied the buffer once, we can avoid copying it again.
     this.state.response_message_buffer.owns(incoming_data)) {
-        buffer = bun.constStrToU8(incoming_data);
+        buffer = @constCast(incoming_data);
     } else {
         buffer = single_packet_small_buffer[0..incoming_data.len];
         @memcpy(buffer[0..incoming_data.len], incoming_data);

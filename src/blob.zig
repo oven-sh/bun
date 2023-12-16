@@ -65,7 +65,7 @@ pub const Group = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !*Group {
-        var group = try allocator.create(Group);
+        const group = try allocator.create(Group);
         group.* = Group{ .persistent = Map.init(allocator), .temporary = Map.init(allocator), .allocator = allocator };
         return group;
     }

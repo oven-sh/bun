@@ -486,7 +486,7 @@ pub const Body = struct {
 
             if (js_type.isTypedArray()) {
                 if (value.asArrayBuffer(globalThis)) |buffer| {
-                    var bytes = buffer.byteSlice();
+                    const bytes = buffer.byteSlice();
 
                     if (bytes.len == 0) {
                         return Body.Value{
@@ -541,7 +541,7 @@ pub const Body = struct {
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
                 switch (readable.ptr) {
                     .Blob => |blob| {
-                        var result: Value = .{
+                        const result: Value = .{
                             .Blob = Blob.initWithStore(blob.store, globalThis),
                         };
                         blob.store.ref();
@@ -674,13 +674,13 @@ pub const Body = struct {
 
             switch (this.*) {
                 .Blob => {
-                    var new_blob = this.Blob;
+                    const new_blob = this.Blob;
                     std.debug.assert(new_blob.allocator == null); // owned by Body
                     this.* = .{ .Used = {} };
                     return new_blob;
                 },
                 .InternalBlob => {
-                    var new_blob = Blob.init(
+                    const new_blob = Blob.init(
                         this.InternalBlob.toOwnedSlice(),
                         // we will never resize it from here
                         // we have to use the default allocator
@@ -831,7 +831,7 @@ pub const Body = struct {
 
         pub fn toErrorString(this: *Value, comptime err: string, global: *JSGlobalObject) void {
             var error_str = ZigString.init(err);
-            var error_instance = error_str.toErrorInstance(global);
+            const error_instance = error_str.toErrorInstance(global);
             return this.toErrorInstance(error_instance, global);
         }
 
@@ -842,7 +842,7 @@ pub const Body = struct {
                 .{@errorName(err)},
             ) catch unreachable);
             error_str.mark();
-            var error_instance = error_str.toErrorInstance(global);
+            const error_instance = error_str.toErrorInstance(global);
             return this.toErrorInstance(error_instance, global);
         }
 
@@ -1232,13 +1232,13 @@ pub const BodyValueBufferer = struct {
                 log("onFinishedLoadingFile Data {}", .{data.buf.len});
                 sink.onFinishedBuffering(sink.ctx, data.buf, null, true);
                 if (data.is_temporary) {
-                    bun.default_allocator.free(bun.constStrToU8(data.buf));
+                    bun.default_allocator.free(@constCast(data.buf));
                 }
             },
         }
     }
     fn onStreamPipe(sink: *@This(), stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
-        var stream_needs_deinit = stream == .owned or stream == .owned_and_done;
+        const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
 
         defer {
             if (stream_needs_deinit) {
@@ -1271,7 +1271,7 @@ pub const BodyValueBufferer = struct {
     pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(2);
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
-        var err = args.ptr[0];
+        const err = args.ptr[0];
         sink.handleRejectStream(err, true);
         return JSValue.jsUndefined();
     }

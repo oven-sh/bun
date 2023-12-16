@@ -130,7 +130,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 used_list.len += 1;
             }
 
-            var used = overflow.allocator.dupe(*Block, used_list) catch unreachable;
+            const used = overflow.allocator.dupe(*Block, used_list) catch unreachable;
 
             for (to_move, overflow.ptrs[0..to_move.len]) |b, *out| {
                 b.* = Block{
@@ -157,7 +157,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             for (blocks) |b| {
                 if (comptime Environment.isDebug) {
                     // ensure we crash if we use a freed value
-                    var bytes = std.mem.asBytes(&b.items);
+                    const bytes = std.mem.asBytes(&b.items);
                     @memset(bytes, undefined);
                 }
                 b.used = 0;
@@ -184,14 +184,14 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         fn deinit() void {
             if (_self) |this| {
                 _self = null;
-                var sliced = this.overflow.slice();
+                const sliced = this.overflow.slice();
                 var allocator = this.overflow.allocator;
 
                 if (sliced.len > 1) {
                     var i: usize = 1;
                     const end = sliced.len;
                     while (i < end) {
-                        var ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
+                        const ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
                         allocator.free(ptrs);
                         i += 2;
                     }
@@ -407,7 +407,7 @@ pub const Binding = struct {
                 return Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(exprs), .is_single_line = b.is_single_line }, loc);
             },
             .b_object => |b| {
-                var properties = wrapper
+                const properties = wrapper
                     .allocator
                     .alloc(G.Property, b.properties.len) catch unreachable;
                 for (properties, b.properties) |*property, item| {
@@ -479,22 +479,22 @@ pub const Binding = struct {
         icount += 1;
         switch (@TypeOf(t)) {
             B.Identifier => {
-                var data = allocator.create(B.Identifier) catch unreachable;
+                const data = allocator.create(B.Identifier) catch unreachable;
                 data.* = t;
                 return Binding{ .loc = loc, .data = B{ .b_identifier = data } };
             },
             B.Array => {
-                var data = allocator.create(B.Array) catch unreachable;
+                const data = allocator.create(B.Array) catch unreachable;
                 data.* = t;
                 return Binding{ .loc = loc, .data = B{ .b_array = data } };
             },
             B.Property => {
-                var data = allocator.create(B.Property) catch unreachable;
+                const data = allocator.create(B.Property) catch unreachable;
                 data.* = t;
                 return Binding{ .loc = loc, .data = B{ .b_property = data } };
             },
             B.Object => {
-                var data = allocator.create(B.Object) catch unreachable;
+                const data = allocator.create(B.Object) catch unreachable;
                 data.* = t;
                 return Binding{ .loc = loc, .data = B{ .b_object = data } };
             },
@@ -607,7 +607,7 @@ pub const CharFreq = struct {
         std.debug.assert(remain.len >= scan_big_chunk_size);
 
         const unrolled = remain.len - (remain.len % scan_big_chunk_size);
-        var remain_end = remain.ptr + unrolled;
+        const remain_end = remain.ptr + unrolled;
         var unrolled_ptr = remain.ptr;
         remain = remain[unrolled..];
 
@@ -1304,7 +1304,7 @@ pub const Symbol = struct {
         }
 
         pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
-            var symbols_for_source: NestedList = NestedList.init(try allocator.alloc([]Symbol, sourceCount));
+            const symbols_for_source: NestedList = NestedList.init(try allocator.alloc([]Symbol, sourceCount));
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
@@ -1810,7 +1810,7 @@ pub const E = struct {
                     return try next.append(expr, allocator);
                 }
 
-                var rope = try allocator.create(Rope);
+                const rope = try allocator.create(Rope);
                 rope.* = .{
                     .head = expr,
                 };
@@ -2266,7 +2266,7 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 if (comptime !Environment.isNative) {
-                    var allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
                     defer bun.default_allocator.free(allocated);
                     return @as(u32, @truncate(allocated.len));
                 }
@@ -2757,7 +2757,7 @@ pub const Stmt = struct {
     }
 
     fn allocateData(allocator: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
-        var value = allocator.create(@TypeOf(origData)) catch unreachable;
+        const value = allocator.create(@TypeOf(origData)) catch unreachable;
         value.* = origData;
 
         return comptime_init(tag_name, *typename, value, loc);
@@ -3088,7 +3088,7 @@ pub const Expr = struct {
         log: *logger.Log,
         loc: logger.Loc,
     ) !Expr {
-        var bytes = blob.sharedView();
+        const bytes = blob.sharedView();
 
         const mime_type = mime_type_ orelse MimeType.init(blob.content_type, null, null);
 
@@ -3412,7 +3412,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3424,7 +3424,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_class = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3436,7 +3436,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_unary = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3448,7 +3448,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_binary = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3500,7 +3500,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_new = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3520,7 +3520,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_function = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3540,7 +3540,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_call = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3552,7 +3552,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_dot = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3564,7 +3564,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_index = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3576,7 +3576,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_arrow = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3631,7 +3631,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_jsx_element = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3654,7 +3654,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_big_int = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3666,7 +3666,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_object = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3678,7 +3678,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_spread = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3696,7 +3696,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_string = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3708,7 +3708,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_template_part = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3720,7 +3720,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_template = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3732,7 +3732,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_reg_exp = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3744,7 +3744,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_await = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3756,7 +3756,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_yield = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3768,7 +3768,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_if = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3788,7 +3788,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_import = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
                         },
@@ -3808,7 +3808,7 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_string = brk: {
-                            var item = allocator.create(Type) catch unreachable;
+                            const item = allocator.create(Type) catch unreachable;
                             item.* = st.*;
                             break :brk item;
                         },
@@ -4873,112 +4873,112 @@ pub const Expr = struct {
         pub fn clone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
             return switch (this) {
                 .e_array => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_array)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_array)));
                     item.* = el.*;
                     return .{ .e_array = item };
                 },
                 .e_unary => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_unary)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_unary)));
                     item.* = el.*;
                     return .{ .e_unary = item };
                 },
                 .e_binary => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_binary)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_binary)));
                     item.* = el.*;
                     return .{ .e_binary = item };
                 },
                 .e_class => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_class)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_class)));
                     item.* = el.*;
                     return .{ .e_class = item };
                 },
                 .e_new => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_new)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_new)));
                     item.* = el.*;
                     return .{ .e_new = item };
                 },
                 .e_function => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_function)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_function)));
                     item.* = el.*;
                     return .{ .e_function = item };
                 },
                 .e_call => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_call)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_call)));
                     item.* = el.*;
                     return .{ .e_call = item };
                 },
                 .e_dot => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_dot)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_dot)));
                     item.* = el.*;
                     return .{ .e_dot = item };
                 },
                 .e_index => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_index)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_index)));
                     item.* = el.*;
                     return .{ .e_index = item };
                 },
                 .e_arrow => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_arrow)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_arrow)));
                     item.* = el.*;
                     return .{ .e_arrow = item };
                 },
                 .e_jsx_element => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_jsx_element)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_jsx_element)));
                     item.* = el.*;
                     return .{ .e_jsx_element = item };
                 },
                 .e_object => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_object)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_object)));
                     item.* = el.*;
                     return .{ .e_object = item };
                 },
                 .e_spread => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
                     item.* = el.*;
                     return .{ .e_spread = item };
                 },
                 .e_template_part => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
                     item.* = el.*;
                     return .{ .e_template_part = item };
                 },
                 .e_template => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
                     item.* = el.*;
                     return .{ .e_template = item };
                 },
                 .e_reg_exp => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_reg_exp)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_reg_exp)));
                     item.* = el.*;
                     return .{ .e_reg_exp = item };
                 },
                 .e_await => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_await)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_await)));
                     item.* = el.*;
                     return .{ .e_await = item };
                 },
                 .e_yield => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_yield)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_yield)));
                     item.* = el.*;
                     return .{ .e_yield = item };
                 },
                 .e_if => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_if)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_if)));
                     item.* = el.*;
                     return .{ .e_if = item };
                 },
                 .e_import => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_import)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_import)));
                     item.* = el.*;
                     return .{ .e_import = item };
                 },
                 .e_big_int => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_big_int)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_big_int)));
                     item.* = el.*;
                     return .{ .e_big_int = item };
                 },
                 .e_string => |el| {
-                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
                     item.* = el.*;
                     return .{ .e_string = item };
                 },
@@ -6309,7 +6309,7 @@ pub const DeclaredSymbol = struct {
         }
 
         pub fn toOwnedSlice(this: *List) List {
-            var new = this.*;
+            const new = this.*;
 
             this.* = .{};
             return new;
@@ -6833,7 +6833,7 @@ pub const Macro = struct {
                 &specifier_buf_len,
             );
 
-            var macro_entry = this.macros.getOrPut(hash) catch unreachable;
+            const macro_entry = this.macros.getOrPut(hash) catch unreachable;
             if (!macro_entry.found_existing) {
                 macro_entry.value_ptr.* = Macro.init(
                     default_allocator,
@@ -6911,7 +6911,7 @@ pub const Macro = struct {
         var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.isLoaded())
             JavaScript.VirtualMachine.get()
         else brk: {
-            var old_transform_options = resolver.opts.transform_options;
+            const old_transform_options = resolver.opts.transform_options;
             defer resolver.opts.transform_options = old_transform_options;
 
             // JSC needs to be initialized if building from CLI
@@ -6981,9 +6981,9 @@ pub const Macro = struct {
                 id: i32,
             ) MacroError!Expr {
                 if (comptime is_bindgen) return undefined;
-                var macro_callback = macro.vm.macros.get(id) orelse return caller;
+                const macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
+                const result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
                     macro.vm.global,
                     macro_callback,
                     null,
@@ -7057,13 +7057,13 @@ pub const Macro = struct {
                     .Null => return Expr.init(E.Null, E.Null{}, this.caller.loc),
                     .Private => {
                         this.is_top_level = false;
-                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                         if (_entry.found_existing) {
                             return _entry.value_ptr.*;
                         }
 
                         var blob_: ?JSC.WebCore.Blob = null;
-                        var mime_type: ?MimeType = null;
+                        const mime_type: ?MimeType = null;
 
                         if (value.jsType() == .DOMWrapper) {
                             if (value.as(JSC.WebCore.Response)) |resp| {
@@ -7106,7 +7106,7 @@ pub const Macro = struct {
                     JSC.ZigConsoleClient.Formatter.Tag.Array => {
                         this.is_top_level = false;
 
-                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                         if (_entry.found_existing) {
                             switch (_entry.value_ptr.*.data) {
                                 .e_object, .e_array => {
@@ -7157,7 +7157,7 @@ pub const Macro = struct {
                     // TODO: optimize this
                     JSC.ZigConsoleClient.Formatter.Tag.Object => {
                         this.is_top_level = false;
-                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                         if (_entry.found_existing) {
                             switch (_entry.value_ptr.*.data) {
                                 .e_object, .e_array => {
@@ -7169,7 +7169,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var object = value.asObjectRef();
+                        const object = value.asObjectRef();
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
@@ -7225,11 +7225,11 @@ pub const Macro = struct {
 
                         // encode into utf16 so the printer escapes the string correctly
                         var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
-                        var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
+                        const out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
                         return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
                     },
                     .Promise => {
-                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                         if (_entry.found_existing) {
                             return _entry.value_ptr.*;
                         }
@@ -7296,7 +7296,7 @@ pub const Macro = struct {
                 allocator.free(js_args);
             }
 
-            var globalObject = JSC.VirtualMachine.get().global;
+            const globalObject = JSC.VirtualMachine.get().global;
 
             switch (caller.data) {
                 .e_call => |call| {
@@ -7390,7 +7390,7 @@ pub const ASTMemoryAllocator = struct {
     }
 
     pub fn pop(this: *ASTMemoryAllocator) void {
-        var prev = this.previous;
+        const prev = this.previous;
         std.debug.assert(prev != this);
         Stmt.Data.Store.memory_allocator = prev;
         Expr.Data.Store.memory_allocator = prev;
@@ -7491,7 +7491,7 @@ pub const GlobalStoreHandle = struct {
             global_store_ast = global;
         }
 
-        var prev = Stmt.Data.Store.memory_allocator;
+        const prev = Stmt.Data.Store.memory_allocator;
         Stmt.Data.Store.memory_allocator = global_store_ast;
         Expr.Data.Store.memory_allocator = global_store_ast;
         return prev;

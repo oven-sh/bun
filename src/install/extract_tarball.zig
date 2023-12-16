@@ -167,9 +167,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
 
     var resolved: string = "";
-    var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
+    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
-        var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
+        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -235,10 +235,10 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 // installed from GitHub. package.json version becomes sort of
                 // meaningless in cases like this.
                 if (resolved.len > 0) insert_tag: {
-                    const gh_tag = extract_destination.dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+                    const gh_tag = extract_destination.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
                     defer gh_tag.close();
                     gh_tag.writeAll(resolved) catch {
-                        extract_destination.dir.deleteFileZ(".bun-tag") catch {};
+                        extract_destination.deleteFileZ(".bun-tag") catch {};
                     };
                 }
             },
@@ -295,7 +295,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |err| {
+    var final_dir = cache_dir.openDirZ(folder_name, .{}) catch |err| {
         this.package_manager.log.addErrorFmt(
             null,
             logger.Loc.Empty,
@@ -308,7 +308,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     defer final_dir.close();
     // and get the fd path
-    var final_path = bun.getFdPath(
+    const final_path = bun.getFdPath(
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {
@@ -324,9 +324,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // create an index storing each version of a package installed
     if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
+        var index_dir = cache_dir.makeOpenPath(name, .{}) catch break :create_index;
         defer index_dir.close();
-        index_dir.dir.symLink(
+        index_dir.symLink(
             final_path,
             switch (this.resolution.tag) {
                 .github => folder_name["@GH@".len..],

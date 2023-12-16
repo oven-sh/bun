@@ -180,7 +180,7 @@ pub const Expect = struct {
         switch (flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {
-                    var vm = globalThis.vm();
+                    const vm = globalThis.vm();
                     promise.setHandled(vm);
 
                     const now = std.time.Instant.now() catch unreachable;
@@ -274,7 +274,7 @@ pub const Expect = struct {
     }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
-        var parent = this.testScope() orelse return error.NoTest;
+        const parent = this.testScope() orelse return error.NoTest;
 
         const test_name = parent.describe.tests.items[parent.test_id].label;
 
@@ -1839,7 +1839,7 @@ pub const Expect = struct {
             vm.global.handleRejectedPromises();
 
             var scope = vm.unhandledRejectionScope();
-            var prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+            const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
             const return_value_from_fucntion: JSValue = value.call(globalObject, &.{});
@@ -2229,7 +2229,7 @@ pub const Expect = struct {
         }
 
         if (property_matchers) |_prop_matchers| {
-            var prop_matchers = _prop_matchers;
+            const prop_matchers = _prop_matchers;
 
             if (!value.jestDeepMatch(prop_matchers, globalObject, true)) {
                 // TODO: print diff with properties from propertyMatchers
@@ -2861,8 +2861,8 @@ pub const Expect = struct {
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
 
             var left: usize = 0;
             var right: usize = 0;
@@ -3156,8 +3156,8 @@ pub const Expect = struct {
             _subStringAsStr.deinit();
         }
 
-        var expectStringAsStr = _expectStringAsStr.slice();
-        var subStringAsStr = _subStringAsStr.slice();
+        const expectStringAsStr = _expectStringAsStr.slice();
+        const subStringAsStr = _subStringAsStr.slice();
 
         if (subStringAsStr.len == 0) {
             globalThis.throw("toIncludeRepeated() requires the first argument to be a non-empty string", .{});
@@ -3941,7 +3941,7 @@ pub const Expect = struct {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
-                    var type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalObject).getZigString(globalObject));
+                    const type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalObject).getZigString(globalObject));
                     globalObject.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
                     return .zero;
                 }
@@ -3950,7 +3950,7 @@ pub const Expect = struct {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                var wrapper_fn = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
+                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
 
                 expect_proto.put(globalObject, &matcher_name, wrapper_fn);
                 expect_constructor.put(globalObject, &matcher_name, wrapper_fn);
@@ -3977,7 +3977,7 @@ pub const Expect = struct {
                 var source: string = source_slice.slice();
                 if (std.mem.indexOfScalar(u8, source, '(')) |lparen| {
                     if (std.mem.indexOfScalarPos(u8, source, lparen, ')')) |rparen| {
-                        var params_str = source[(lparen + 1)..rparen];
+                        const params_str = source[(lparen + 1)..rparen];
                         var param_index: usize = 0;
                         var iter = std.mem.splitScalar(u8, params_str, ',');
                         while (iter.next()) |param_name| : (param_index += 1) {
@@ -3987,7 +3987,7 @@ pub const Expect = struct {
                                 } else if (this.colors) {
                                     try writer.writeAll("<green>");
                                 }
-                                var param_name_trimmed = std.mem.trim(u8, param_name, " ");
+                                const param_name_trimmed = std.mem.trim(u8, param_name, " ");
                                 if (param_name_trimmed.len > 0) {
                                     try writer.writeAll(param_name_trimmed);
                                 } else {
@@ -4052,7 +4052,7 @@ pub const Expect = struct {
         }
         // support for async matcher results
         if (result.asAnyPromise()) |promise| {
-            var vm = globalObject.vm();
+            const vm = globalObject.vm();
             promise.setHandled(vm);
 
             const now = std.time.Instant.now() catch unreachable;
@@ -4084,7 +4084,7 @@ pub const Expect = struct {
         var message: JSValue = undefined;
 
         // Parse and validate the custom matcher result, which should conform to: { pass: boolean, message?: () => string }
-        var is_valid = valid: {
+        const is_valid = valid: {
             if (result.isObject()) {
                 if (result.get(globalObject, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
@@ -4146,7 +4146,7 @@ pub const Expect = struct {
         defer globalObject.bunVM().autoGarbageCollect();
 
         // retrieve the user-provided matcher function (matcher_fn)
-        var func: JSValue = callFrame.callee();
+        const func: JSValue = callFrame.callee();
         var matcher_fn = getCustomMatcherFn(func, globalObject) orelse JSValue.undefined;
         if (!matcher_fn.jsType().isFunction()) {
             globalObject.throw("Internal consistency error: failed to retrieve the matcher function for a custom matcher!", .{});
@@ -4155,8 +4155,8 @@ pub const Expect = struct {
         matcher_fn.ensureStillAlive();
 
         // try to retrieve the Expect instance
-        var thisValue: JSValue = callFrame.this();
-        var expect: *Expect = Expect.fromJS(thisValue) orelse {
+        const thisValue: JSValue = callFrame.this();
+        const expect: *Expect = Expect.fromJS(thisValue) orelse {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher.create(globalObject, callFrame, matcher_fn);
         };
@@ -4298,7 +4298,7 @@ pub const ExpectStatic = struct {
 
     fn asyncChainingError(globalObject: *JSGlobalObject, flags: Expect.Flags, name: string) JSValue {
         @setCold(true);
-        var str = switch (flags.promise) {
+        const str = switch (flags.promise) {
             .resolves => "resolvesTo",
             .rejects => "rejectsTo",
             else => unreachable,
@@ -4730,7 +4730,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             if (fn_value.jsType().isFunction()) {
                 const captured_args: JSValue = ExpectCustomAsymmetricMatcher.capturedArgsGetCached(thisValue) orelse return false;
                 var stack_fallback = std.heap.stackFallback(256, globalObject.allocator());
-                var args_len = captured_args.getLength(globalObject);
+                const args_len = captured_args.getLength(globalObject);
                 var args = try std.ArrayList(JSValue).initCapacity(stack_fallback.get(), args_len);
                 var iter = captured_args.arrayIterator(globalObject);
                 while (iter.next()) |arg| {
@@ -4760,7 +4760,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         };
         defer mutable_string.deinit();
 
-        var printed = customPrint(this, callframe.this(), globalObject, mutable_string.writer()) catch {
+        const printed = customPrint(this, callframe.this(), globalObject, mutable_string.writer()) catch {
             globalObject.throwOutOfMemory();
             return .zero;
         };
@@ -4897,7 +4897,7 @@ pub const ExpectMatcherUtils = struct {
             globalObject.throw("matcherHint: the first argument (matcher name) must be a string", .{});
             return .zero;
         }
-        var matcher_name = bun.String.init(arguments[0].toString(globalObject).getZigString(globalObject));
+        const matcher_name = bun.String.init(arguments[0].toString(globalObject).getZigString(globalObject));
 
         const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJSConst(globalObject);
         const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJSConst(globalObject);

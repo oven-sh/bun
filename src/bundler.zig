@@ -91,7 +91,7 @@ pub const ParseResult = struct {
         _resolver.PendingResolution.deinitListItems(this.pending_imports, bun.default_allocator);
         this.pending_imports.deinit(bun.default_allocator);
         this.ast.deinit();
-        bun.default_allocator.free(bun.constStrToU8(this.source.contents));
+        bun.default_allocator.free(@constCast(this.source.contents));
     }
 };
 
@@ -295,7 +295,7 @@ pub const PluginRunner = struct {
         };
 
         // Our super slow way of cloning the string into memory owned by JSC
-        var combined_string = std.fmt.allocPrint(
+        const combined_string = std.fmt.allocPrint(
             this.allocator,
             "{any}:{any}",
             .{ user_namespace, file_path },
@@ -377,7 +377,7 @@ pub const Bundler = struct {
     ) !Bundler {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
-        var fs = try Fs.FileSystem.init(
+        const fs = try Fs.FileSystem.init(
             opts.absolute_working_dir,
         );
         const bundle_options = try options.BundleOptions.fromApi(
@@ -388,10 +388,10 @@ pub const Bundler = struct {
         );
 
         var env_loader: *DotEnv.Loader = env_loader_ orelse DotEnv.instance orelse brk: {
-            var map = try allocator.create(DotEnv.Map);
+            const map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
-            var loader = try allocator.create(DotEnv.Loader);
+            const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
@@ -407,7 +407,7 @@ pub const Bundler = struct {
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
         // });
-        var resolve_results = try allocator.create(ResolveResults);
+        const resolve_results = try allocator.create(ResolveResults);
         resolve_results.* = ResolveResults.init(allocator);
         return Bundler{
             .options = bundle_options,
@@ -465,7 +465,7 @@ pub const Bundler = struct {
                     this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
                 }
 
-                var dir = dir_info.getEntries(this.resolver.generation) orelse return;
+                const dir = dir_info.getEntries(this.resolver.generation) orelse return;
 
                 // Process always has highest priority.
                 const was_production = this.options.production;
@@ -622,8 +622,8 @@ pub const Bundler = struct {
         }
 
         if (this.options.routes.routes_enabled) {
-            var dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
-            var dir_info = dir_info_ orelse return error.MissingRoutesDir;
+            const dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
+            const dir_info = dir_info_ orelse return error.MissingRoutesDir;
 
             this.options.routes.dir = dir_info.abs_path;
 
@@ -708,10 +708,10 @@ pub const Bundler = struct {
             file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
         }
 
-        var old_bundler_allocator = bundler.allocator;
+        const old_bundler_allocator = bundler.allocator;
         bundler.allocator = allocator;
         defer bundler.allocator = old_bundler_allocator;
-        var old_linker_allocator = bundler.linker.allocator;
+        const old_linker_allocator = bundler.linker.allocator;
         defer bundler.linker.allocator = old_linker_allocator;
         bundler.linker.allocator = allocator;
 
@@ -935,7 +935,7 @@ pub const Bundler = struct {
                         );
                 }
 
-                var buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
+                const buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (bundler.options.target) {
@@ -979,7 +979,7 @@ pub const Bundler = struct {
                 const CSSBuildContext = struct {
                     origin: URL,
                 };
-                var build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
+                const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
                 const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8096, std.fs.File.Writer));
                 const CSSWriter = Css.NewWriter(
@@ -1034,7 +1034,7 @@ pub const Bundler = struct {
                 output_file.value = .{ .move = file_op };
             },
             .wasm, .file, .napi => {
-                var hashed_name = try bundler.linker.getHashedFilename(file_path, null);
+                const hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
@@ -1070,7 +1070,7 @@ pub const Bundler = struct {
         const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
         defer tracer.end();
 
-        var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
+        const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1423,9 +1423,9 @@ pub const Bundler = struct {
 
                 var symbols: []js_ast.Symbol = &.{};
 
-                var parts = brk: {
+                const parts = brk: {
                     if (expr.data == .e_object) {
-                        var properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
+                        const properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
                         if (properties.len > 0) {
                             var stmts = allocator.alloc(js_ast.Stmt, 3) catch return null;
                             var decls = allocator.alloc(js_ast.G.Decl, properties.len) catch return null;
@@ -1440,7 +1440,7 @@ pub const Bundler = struct {
                                 if (strings.eqlComptime(name, "default"))
                                     continue;
 
-                                var visited = duplicate_key_checker.getOrPut(name) catch continue;
+                                const visited = duplicate_key_checker.getOrPut(name) catch continue;
                                 if (visited.found_existing) {
                                     decls[visited.value_ptr.*].value = prop.value.?;
                                     continue;
@@ -1536,10 +1536,10 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                var expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
-                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{
                         .loc = logger.Loc{},
@@ -1599,7 +1599,7 @@ pub const Bundler = struct {
         path_to_use_: string,
         comptime client_entry_point_enabled: bool,
     ) !ServeResult {
-        var old_log = bundler.log;
+        const old_log = bundler.log;
 
         bundler.setLog(log);
         defer bundler.setLog(old_log);
@@ -1678,7 +1678,7 @@ pub const Bundler = struct {
                 };
             },
             else => {
-                var abs_path = path.text;
+                const abs_path = path.text;
                 const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
                 const size = try file.getEndPos();
                 return ServeResult{
@@ -1728,7 +1728,7 @@ pub const Bundler = struct {
         var entry_point_i: usize = 0;
 
         for (bundler.options.entry_points) |_entry| {
-            var entry: string = if (comptime normalize_entry_point) bundler.normalizeEntryPointPath(_entry) else _entry;
+            const entry: string = if (comptime normalize_entry_point) bundler.normalizeEntryPointPath(_entry) else _entry;
 
             defer {
                 js_ast.Expr.Data.Store.reset();
@@ -1770,7 +1770,7 @@ pub const Bundler = struct {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
         bundler.options.transform_only = true;
-        var did_start = false;
+        const did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
             const outstream = std.io.getStdOut();
@@ -1850,7 +1850,7 @@ pub const Bundler = struct {
             // defer count += 1;
 
             if (comptime wrap_entry_point) {
-                var path = item.pathConst() orelse unreachable;
+                const path = item.pathConst() orelse unreachable;
                 const loader = bundler.options.loader(path.name.ext);
 
                 if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {

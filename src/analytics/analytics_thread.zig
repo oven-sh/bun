@@ -364,7 +364,7 @@ pub const GenerateHeader = struct {
                 break :brk try std.fs.openFileAbsoluteZ("/etc/machine-id", .{ .mode = .read_only });
             };
             defer file.close();
-            var read_count = try file.read(&linux_machine_id);
+            const read_count = try file.read(&linux_machine_id);
 
             const hash = bun.hash(std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
@@ -381,7 +381,7 @@ pub var disabled = false;
 pub fn enqueue(comptime _: EventName) void {}
 
 pub var thread: std.Thread = undefined;
-var counter: std.atomic.Atomic(u32) = undefined;
+var counter: std.atomic.Value(u32) = undefined;
 
 fn start() bool {}
 

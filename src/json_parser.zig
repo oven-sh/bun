@@ -68,7 +68,7 @@ const HashMapPool = struct {
             }
         }
 
-        var new_node = default_allocator.create(LinkedList.Node) catch unreachable;
+        const new_node = default_allocator.create(LinkedList.Node) catch unreachable;
         new_node.* = LinkedList.Node{ .data = HashMap.initContext(default_allocator, IdentityContext{}) };
         return new_node;
     }
@@ -411,7 +411,7 @@ pub const PackageJSONVersionChecker = struct {
                 return newExpr(E.Null{}, loc);
             },
             .t_string_literal => {
-                var str: E.String = p.lexer.toEString();
+                const str: E.String = p.lexer.toEString();
 
                 try p.lexer.next();
                 return newExpr(str, loc);
@@ -941,7 +941,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Global.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
     const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source);
     var js = writer.ctx.buffer.list.items.ptr[0 .. written + 1];

@@ -155,7 +155,7 @@ pub const Async = struct {
             }
 
             pub fn runFromJSThread(this: *Task) void {
-                var globalObject = this.globalObject;
+                const globalObject = this.globalObject;
                 var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
@@ -217,11 +217,11 @@ pub const AsyncCpTask = struct {
     ref: bun.Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
-    has_result: std.atomic.Atomic(bool),
+    has_result: std.atomic.Value(bool),
     /// On each creation of a `AsyncCpSingleFileTask`, this is incremented.
     /// When each task is finished, decrement.
     /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
-    subtask_count: std.atomic.Atomic(usize),
+    subtask_count: std.atomic.Value(usize),
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
@@ -238,12 +238,12 @@ pub const AsyncCpTask = struct {
         task.* = AsyncCpTask{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = cp_args,
-            .has_result = .{ .value = false },
+            .has_result = .{ .raw = false },
             .result = undefined,
             .globalObject = globalObject,
             .tracker = JSC.AsyncTaskTracker.init(vm),
             .arena = arena,
-            .subtask_count = .{ .value = 1 },
+            .subtask_count = .{ .raw = 1 },
         };
         task.ref.ref(vm);
         task.args.src.toThreadSafe();
@@ -256,7 +256,7 @@ pub const AsyncCpTask = struct {
     }
 
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncCpTask = @fieldParentPtr(AsyncCpTask, "task", task);
+        const this: *AsyncCpTask = @fieldParentPtr(AsyncCpTask, "task", task);
 
         var node_fs = NodeFS{};
         node_fs.cpAsync(this);
@@ -264,7 +264,7 @@ pub const AsyncCpTask = struct {
 
     /// May be called from any thread (the subtasks)
     fn finishConcurrently(this: *AsyncCpTask, result: Maybe(Return.Cp)) void {
-        if (this.has_result.compareAndSwap(false, true, .Monotonic, .Monotonic)) |_| {
+        if (this.has_result.cmpxchgStrong(false, true, .Monotonic, .Monotonic)) |_| {
             return;
         }
 
@@ -278,7 +278,7 @@ pub const AsyncCpTask = struct {
     }
 
     fn runFromJSThread(this: *AsyncCpTask) void {
-        var globalObject = this.globalObject;
+        const globalObject = this.globalObject;
         var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
         const result = switch (this.result) {
             .err => |err| err.toJSC(globalObject),
@@ -331,15 +331,15 @@ pub const AsyncReaddirRecursiveTask = struct {
     tracker: JSC.AsyncTaskTracker,
 
     // It's not 100% clear this one is necessary
-    has_result: std.atomic.Atomic(bool),
+    has_result: std.atomic.Value(bool),
 
-    subtask_count: std.atomic.Atomic(usize),
+    subtask_count: std.atomic.Value(usize),
 
     /// The final result list
     result_list: ResultListEntry.Value = undefined,
 
     /// When joining the result list, we use this to preallocate the joined array.
-    result_list_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+    result_list_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
     /// A lockless queue of result lists.
     ///
@@ -434,10 +434,10 @@ pub const AsyncReaddirRecursiveTask = struct {
         task.* = AsyncReaddirRecursiveTask{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = args,
-            .has_result = .{ .value = false },
+            .has_result = .{ .raw = false },
             .globalObject = globalObject,
             .tracker = JSC.AsyncTaskTracker.init(vm),
-            .subtask_count = .{ .value = 1 },
+            .subtask_count = .{ .raw = 1 },
             .root_path = PathString.init(bun.default_allocator.dupeZ(u8, args.path.slice()) catch bun.outOfMemory()),
             .result_list = switch (args.tag()) {
                 .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
@@ -523,7 +523,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 Buffer => .buffers,
                 else => unreachable,
             };
-            var list = bun.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
+            const list = bun.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
             errdefer {
                 bun.default_allocator.destroy(list);
             }
@@ -541,7 +541,7 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     /// May be called from any thread (the subtasks)
     pub fn finishConcurrently(this: *AsyncReaddirRecursiveTask) void {
-        if (this.has_result.compareAndSwap(false, true, .Monotonic, .Monotonic)) |_| {
+        if (this.has_result.cmpxchgStrong(false, true, .Monotonic, .Monotonic)) |_| {
             return;
         }
 
@@ -612,7 +612,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     }
 
     pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
-        var globalObject = this.globalObject;
+        const globalObject = this.globalObject;
         var success = this.pending_err == null;
         const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
             const res = switch (this.result_list) {
@@ -845,7 +845,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            var clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -936,7 +936,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            var clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -1661,7 +1661,7 @@ pub const Arguments = struct {
                     if (next_val.isString()) {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
-                        var utf8 = str.utf8();
+                        const utf8 = str.utf8();
                         if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
                         if (strings.eqlComptime(utf8, "file")) break :link_type .file;
                         if (strings.eqlComptime(utf8, "junction")) break :link_type .junction;
@@ -1983,7 +1983,7 @@ pub const Arguments = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            var prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
+            const prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "prefix must be a string or TypedArray",
@@ -3030,7 +3030,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateReadStream {
-            var path = PathLike.fromJS(ctx, arguments, exception);
+            const path = PathLike.fromJS(ctx, arguments, exception);
             if (exception.* != null) return null;
             if (path == null) arguments.eat();
 
@@ -3168,7 +3168,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateWriteStream {
-            var path = PathLike.fromJS(ctx, arguments, exception);
+            const path = PathLike.fromJS(ctx, arguments, exception);
             if (exception.* != null) return null;
             if (path == null) arguments.eat();
 
@@ -3702,7 +3702,7 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
-        var path = args.path.sliceZ(&this.sync_error_buf);
+        const path = args.path.sliceZ(&this.sync_error_buf);
         if (Environment.isWindows) {
             return Syscall.access(path, @intFromEnum(args.mode));
         }
@@ -3767,7 +3767,7 @@ pub const NodeFS = struct {
                 // Don't allocate more than 8 MB at a time
                 const clamped_size: usize = @min(stat_size, 8 * 1024 * 1024);
 
-                var buf_ = bun.default_allocator.alloc(u8, clamped_size) catch break :maybe_allocate_large_temp_buf;
+                const buf_ = bun.default_allocator.alloc(u8, clamped_size) catch break :maybe_allocate_large_temp_buf;
                 buf = buf_;
                 buf_to_free = buf_;
             }
@@ -3840,8 +3840,8 @@ pub const NodeFS = struct {
             var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-            var src = args.src.sliceZ(&src_buf);
-            var dest = args.dest.sliceZ(&dest_buf);
+            const src = args.src.sliceZ(&src_buf);
+            const dest = args.dest.sliceZ(&dest_buf);
 
             if (args.mode.isForceClone()) {
                 // https://www.manpagez.com/man/2/clonefile/
@@ -3914,8 +3914,8 @@ pub const NodeFS = struct {
         if (comptime Environment.isLinux) {
             var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var src = args.src.sliceZ(&src_buf);
-            var dest = args.dest.sliceZ(&dest_buf);
+            const src = args.src.sliceZ(&src_buf);
+            const dest = args.dest.sliceZ(&dest_buf);
 
             const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                 .result => |result| result,
@@ -4041,8 +4041,8 @@ pub const NodeFS = struct {
 
             var src_buf: bun.WPathBuffer = undefined;
             var dest_buf: bun.WPathBuffer = undefined;
-            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.sliceZ(&this.sync_error_buf));
-            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceZ(&this.sync_error_buf));
+            const src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.sliceZ(&this.sync_error_buf));
+            const dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceZ(&this.sync_error_buf));
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
                 if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
                     return rest;
@@ -4302,7 +4302,7 @@ pub const NodeFS = struct {
         while (i > 0) : (i -= 1) {
             if (_isSep(path[i])) {
                 working_mem[i] = 0;
-                var parent: [:0]Char = working_mem[0..i :0];
+                const parent: [:0]Char = working_mem[0..i :0];
 
                 switch (Syscall.mkdirOSPath(parent, mode)) {
                     .err => |err| {
@@ -4331,13 +4331,13 @@ pub const NodeFS = struct {
                 }
             }
         }
-        var first_match: u16 = i;
+        const first_match: u16 = i;
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while (i < len) : (i += 1) {
             if (_isSep(path[i])) {
                 working_mem[i] = 0;
-                var parent: [:0]Char = working_mem[0..i :0];
+                const parent: [:0]Char = working_mem[0..i :0];
 
                 switch (Syscall.mkdirOSPath(parent, mode)) {
                     .err => |err| {
@@ -4610,7 +4610,7 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+        const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
 
@@ -4923,7 +4923,7 @@ pub const NodeFS = struct {
             else => unreachable,
         };
 
-        var path = args.path.sliceZ(buf);
+        const path = args.path.sliceZ(buf);
 
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -5313,7 +5313,7 @@ pub const NodeFS = struct {
 
     pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime _: Flavor) Maybe(Return.Readlink) {
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var inbuf = &this.sync_error_buf;
+        const inbuf = &this.sync_error_buf;
 
         const path = args.path.sliceZ(inbuf);
 
@@ -5384,12 +5384,12 @@ pub const NodeFS = struct {
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
-        var path_slice = args.path.slice();
+        const path_slice = args.path.slice();
 
         var parts = [_]string{ FileSystem.instance.top_level_dir, path_slice };
-        var path_ = FileSystem.instance.absBuf(&parts, inbuf);
+        const path_ = FileSystem.instance.absBuf(&parts, inbuf);
         inbuf[path_.len] = 0;
-        var path: [:0]u8 = inbuf[0..path_.len :0];
+        const path: [:0]u8 = inbuf[0..path_.len :0];
 
         const flags = if (comptime Environment.isLinux)
             // O_PATH is faster
@@ -5437,11 +5437,11 @@ pub const NodeFS = struct {
     // }
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
         _ = flavor;
-        var from_buf = &this.sync_error_buf;
+        const from_buf = &this.sync_error_buf;
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        var from = args.old_path.sliceZ(from_buf);
-        var to = args.new_path.sliceZ(&to_buf);
+        const from = args.old_path.sliceZ(from_buf);
+        const to = args.new_path.sliceZ(&to_buf);
         return Syscall.rename(from, to);
     }
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rmdir) {
@@ -5530,7 +5530,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.Rm).success;
             }
 
-            var dest = args.path.sliceZ(&this.sync_error_buf);
+            const dest = args.path.sliceZ(&this.sync_error_buf);
 
             std.os.unlinkZ(dest) catch |er| {
                 // empircally, it seems to return AccessDenied when the
@@ -5598,7 +5598,7 @@ pub const NodeFS = struct {
         }
 
         if (false) {
-            var dest = args.path.osPath(&this.sync_error_buf);
+            const dest = args.path.osPath(&this.sync_error_buf);
             std.os.windows.DeleteFile(dest, .{
                 .dir = null,
                 .remove_dir = brk: {
@@ -5737,7 +5737,7 @@ pub const NodeFS = struct {
         }
 
         const watcher = args.createStatWatcher() catch |err| {
-            var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
@@ -5836,7 +5836,7 @@ pub const NodeFS = struct {
         }
 
         const watcher = args.createFSWatcher() catch |err| {
-            var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
@@ -5863,8 +5863,8 @@ pub const NodeFS = struct {
         var src_buf: bun.PathBuffer = undefined;
         var dest_buf: bun.PathBuffer = undefined;
 
-        var src = args.src.osPath(&src_buf);
-        var dest = args.dest.osPath(&dest_buf);
+        const src = args.src.osPath(&src_buf);
+        const dest = args.dest.osPath(&dest_buf);
 
         return this._cpSync(
             @as(*bun.OSPathBuffer, @alignCast(@ptrCast(&src_buf))),
@@ -5994,7 +5994,7 @@ pub const NodeFS = struct {
         }
 
         var iterator = iterator: {
-            var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+            const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
             if (Environment.isWindows) {
                 // iterate directly over [:0]const u16 instead of converting to utf8
                 break :iterator DirIterator.IteratorW{
@@ -6347,8 +6347,8 @@ pub const NodeFS = struct {
         const args = task.args;
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var src = args.src.sliceZ(&src_buf);
-        var dest = args.dest.sliceZ(&dest_buf);
+        const src = args.src.sliceZ(&src_buf);
+        const dest = args.dest.sliceZ(&dest_buf);
 
         const stat_ = switch (Syscall.lstat(src)) {
             .result => |result| result,
@@ -6450,7 +6450,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        var dir = std.fs.Dir{ .fd = fd };
+        const dir = std.fs.Dir{ .fd = fd };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
         while (switch (entry) {

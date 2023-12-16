@@ -46,7 +46,7 @@ pub const BuildMessage = struct {
     }
 
     pub fn toStringFn(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
+        const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };

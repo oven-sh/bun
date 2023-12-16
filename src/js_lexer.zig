@@ -78,7 +78,7 @@ pub const JSONOptions = struct {
 pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
     var log = logger.Log.init(allocator);
     defer log.deinit();
-    var source = logger.Source.initEmptyFile("");
+    const source = logger.Source.initEmptyFile("");
     var lexer = try NewLexer(.{}).init(&log, source, allocator);
     defer lexer.deinit();
 
@@ -2052,7 +2052,7 @@ fn NewLexer_(
         }
 
         pub fn initTSConfig(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            var empty_string_literal: JavascriptString = &emptyJavaScriptString;
+            const empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
                 .source = source,
@@ -2071,7 +2071,7 @@ fn NewLexer_(
         }
 
         pub fn initJSON(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            var empty_string_literal: JavascriptString = &emptyJavaScriptString;
+            const empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
                 .string_literal_buffer = std.ArrayList(u16).init(allocator),
@@ -2089,7 +2089,7 @@ fn NewLexer_(
         }
 
         pub fn initWithoutReading(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
-            var empty_string_literal: JavascriptString = &emptyJavaScriptString;
+            const empty_string_literal: JavascriptString = &emptyJavaScriptString;
             return LexerType{
                 .log = log,
                 .source = source,
@@ -2526,7 +2526,7 @@ fn NewLexer_(
 
             var decoded = jsx_decode_buf;
             defer jsx_decode_buf = decoded;
-            var decoded_ptr = &decoded;
+            const decoded_ptr = &decoded;
 
             var after_last_non_whitespace: ?u32 = null;
 
@@ -2740,7 +2740,7 @@ fn NewLexer_(
 
         fn parseNumericLiteralOrDot(lexer: *LexerType) !void {
             // Number or dot;
-            var first = lexer.code_point;
+            const first = lexer.code_point;
             lexer.step();
 
             // Dot without a digit after it;
@@ -2864,11 +2864,11 @@ fn NewLexer_(
                     isFirst = false;
                 }
 
-                var isBigIntegerLiteral = lexer.code_point == 'n' and !hasDotOrExponent;
+                const isBigIntegerLiteral = lexer.code_point == 'n' and !hasDotOrExponent;
 
                 // Slow path: do we need to re-scan the input as text?
                 if (isBigIntegerLiteral or isInvalidLegacyOctalLiteral) {
-                    var text = lexer.raw();
+                    const text = lexer.raw();
 
                     // Can't use a leading zero for bigint literals;
                     if (isBigIntegerLiteral and lexer.is_legacy_octal_literal) {
@@ -2900,7 +2900,7 @@ fn NewLexer_(
                 }
             } else {
                 // Floating-point literal;
-                var isInvalidLegacyOctalLiteral = first == '0' and (lexer.code_point == '8' or lexer.code_point == '9');
+                const isInvalidLegacyOctalLiteral = first == '0' and (lexer.code_point == '8' or lexer.code_point == '9');
 
                 // Initial digits;
                 while (true) {

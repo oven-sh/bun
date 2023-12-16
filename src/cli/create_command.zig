@@ -1,6 +1,5 @@
 const bun = @import("root").bun;
 const string = bun.string;
-const constStrToU8 = bun.constStrToU8;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
@@ -245,7 +244,7 @@ pub const CreateCommand = struct {
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -289,7 +288,7 @@ pub const CreateCommand = struct {
 
         switch (example_tag) {
             Example.Tag.github_repository, Example.Tag.official => {
-                var tarball_bytes: MutableString = switch (example_tag) {
+                const tarball_bytes: MutableString = switch (example_tag) {
                     .official => Example.fetch(ctx, &env_loader, template, &progress, node) catch |err| {
                         switch (err) {
                             error.HTTPForbidden, error.ExampleNotFound => {
@@ -357,7 +356,7 @@ pub const CreateCommand = struct {
 
                 progress.refresh();
 
-                var file_buf = try ctx.allocator.alloc(u8, 16384);
+                const file_buf = try ctx.allocator.alloc(u8, 16384);
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
@@ -432,7 +431,7 @@ pub const CreateCommand = struct {
                 );
 
                 if (!create_options.skip_package_json) {
-                    var plucker = pluckers[0];
+                    const plucker = pluckers[0];
 
                     if (plucker.found and plucker.fd != 0) {
                         node.name = "Updating package.json";
@@ -449,7 +448,7 @@ pub const CreateCommand = struct {
                 node.name = "Copying files";
                 progress.refresh();
 
-                const template_dir = std.fs.cwd().openIterableDir(filesystem.abs(&template_parts), .{}) catch |err| {
+                const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{}) catch |err| {
                     node.end();
                     progress.refresh();
 
@@ -458,7 +457,7 @@ pub const CreateCommand = struct {
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
-                const destination_dir__ = std.fs.cwd().makeOpenPathIterable(destination, .{}) catch |err| {
+                const destination_dir__ = std.fs.cwd().makeOpenPath(destination, .{}) catch |err| {
                     node.end();
 
                     progress.refresh();
@@ -466,7 +465,7 @@ pub const CreateCommand = struct {
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
-                const destination_dir = destination_dir__.dir;
+                const destination_dir = destination_dir__;
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
@@ -497,7 +496,7 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             if (comptime Environment.isPosix) {
@@ -574,9 +573,9 @@ pub const CreateCommand = struct {
         node.end();
         progress.refresh();
 
-        var is_nextjs = false;
-        var is_create_react_app = false;
-        var create_react_app_entry_point_path: string = "";
+        const is_nextjs = false;
+        const is_create_react_app = false;
+        const create_react_app_entry_point_path: string = "";
         var preinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var postinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var has_dependencies: bool = false;
@@ -623,7 +622,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
+                const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     if (Output.enable_ansi_colors) {
@@ -638,7 +637,7 @@ pub const CreateCommand = struct {
 
                 if (package_json_expr.asProperty("name")) |name_expr| {
                     if (name_expr.expr.data == .e_string) {
-                        var basename = std.fs.path.basename(destination);
+                        const basename = std.fs.path.basename(destination);
                         name_expr.expr.data.e_string.data = @as([*]u8, @ptrFromInt(@intFromPtr(basename.ptr)))[0..basename.len];
                     }
                 }
@@ -737,7 +736,7 @@ pub const CreateCommand = struct {
                             // is_nextjs = true;
                             // needs.bun_bun_for_nextjs = true;
 
-                            // next_q.expr.data.e_string.data = constStrToU8(target_nextjs_version);
+                            // next_q.expr.data.e_string.data = @constCast(target_nextjs_version);
                             // }
 
                             // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
@@ -1346,7 +1345,7 @@ pub const CreateCommand = struct {
                     package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
                 }
 
-                var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+                const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
                 const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -1567,11 +1566,11 @@ pub const CreateCommand = struct {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 
-        var create_options = try CreateOptions.parse(ctx);
+        const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
 
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -1587,9 +1586,9 @@ pub const CreateCommand = struct {
                 outer: {
                     if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                         var parts = [_]string{ home_dir, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1598,9 +1597,9 @@ pub const CreateCommand = struct {
 
                 outer: {
                     var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
-                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                    const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;
-                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                     std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
@@ -1609,9 +1608,9 @@ pub const CreateCommand = struct {
                 outer: {
                     if (env_loader.map.get("HOME")) |home_dir| {
                         var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1699,7 +1698,7 @@ pub const Example = struct {
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
-            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
+            const app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
                 Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{
@@ -1722,43 +1721,36 @@ pub const Example = struct {
 
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
-            var folders = [3]std.fs.IterableDir{
-                .{
-                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
-                },
-                .{
-                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
-                },
-                .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } },
+            var folders = [3]std.fs.Dir{
+                .{ .fd = bun.fdcast(bun.invalid_fd) },
+                .{ .fd = bun.fdcast(bun.invalid_fd) },
+                .{ .fd = bun.fdcast(bun.invalid_fd) },
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
             }
 
             if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
-                var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
             }
 
             // subfolders with package.json
-            for (folders) |folder__| {
-                const folder_ = folder__.dir;
-
-                if (folder_.fd != bun.fdcast(bun.invalid_fd)) {
-                    const folder: std.fs.Dir = folder_;
-                    var iter = (std.fs.IterableDir{ .dir = folder }).iterate();
+            for (folders) |folder| {
+                if (folder.fd != bun.fdcast(bun.invalid_fd)) {
+                    var iter = folder.iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.IterableDir.Entry = entry_;
+                        const entry: std.fs.Dir.Entry = entry_;
 
                         switch (entry.kind) {
                             .directory => {
@@ -1773,7 +1765,7 @@ pub const Example = struct {
                                 bun.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
                                 home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
 
-                                var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
+                                const path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
 
                                 folder.accessZ(path, .{ .mode = .read_only }) catch continue :loop;
 
@@ -1805,8 +1797,8 @@ pub const Example = struct {
         refresher: *std.Progress,
         progress: *std.Progress.Node,
     ) !MutableString {
-        var owner_i = std.mem.indexOfScalar(u8, name, '/').?;
-        var owner = name[0..owner_i];
+        const owner_i = std.mem.indexOfScalar(u8, name, '/').?;
+        const owner = name[0..owner_i];
         var repository = name[owner_i + 1 ..];
 
         if (std.mem.indexOfScalar(u8, repository, '/')) |i| {
@@ -1823,7 +1815,7 @@ pub const Example = struct {
             }
         }
 
-        var api_url = URL.parse(
+        const api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
                 "https://{s}/repos/{s}/{s}/tarball",
@@ -1853,8 +1845,8 @@ pub const Example = struct {
             }
         }
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
-        var mutable = try ctx.allocator.create(MutableString);
+        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8096);
 
         // ensure very stable memory address
@@ -2064,10 +2056,10 @@ pub const Example = struct {
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+        const http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        var mutable = try ctx.allocator.create(MutableString);
+        const mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
         async_http.* = HTTP.AsyncHTTP.initSync(
@@ -2159,9 +2151,9 @@ pub const Example = struct {
 
 pub const CreateListExamplesCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        var filesystem = try fs.FileSystem.init(null);
+        const filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -2170,7 +2162,7 @@ pub const CreateListExamplesCommand = struct {
         env_loader.loadProcess();
 
         var progress = std.Progress{};
-        var node = progress.start("Fetching manifest", 0);
+        const node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         progress.refresh();
 
@@ -2199,14 +2191,14 @@ pub const CreateListExamplesCommand = struct {
 };
 
 const GitHandler = struct {
-    var success: std.atomic.Atomic(u32) = undefined;
+    var success: std.atomic.Value(u32) = undefined;
     var thread: std.Thread = undefined;
     pub fn spawn(
         destination: string,
         PATH: string,
         verbose: bool,
     ) void {
-        success = std.atomic.Atomic(u32).init(0);
+        success = std.atomic.Value(u32).init(0);
 
         thread = std.Thread.spawn(.{}, spawnThread, .{ destination, PATH, verbose }) catch |err| {
             Output.prettyErrorln("<r><red>{s}<r>", .{@errorName(err)});

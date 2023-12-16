@@ -83,7 +83,7 @@ pub const INotify = struct {
     var eventlist: EventListBuffer = undefined;
     var eventlist_ptrs: [128]*const INotifyEvent = undefined;
 
-    var watch_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
+    var watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
     const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
     const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
@@ -186,7 +186,7 @@ pub const INotify = struct {
                     var i: u32 = 0;
                     while (i < len) : (i += @sizeOf(INotifyEvent)) {
                         @setRuntimeSafety(false);
-                        var event = @as(*INotifyEvent, @ptrCast(@alignCast(eventlist[i..][0..@sizeOf(INotifyEvent)])));
+                        const event = @as(*INotifyEvent, @ptrCast(@alignCast(eventlist[i..][0..@sizeOf(INotifyEvent)])));
                         i += event.name_len;
 
                         eventlist_ptrs[count] = event;
@@ -382,7 +382,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
-            var watcher = try allocator.create(Watcher);
+            const watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
             if (comptime bun.Environment.isWindows) {
@@ -507,7 +507,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             );
 
             var slice = this.watchlist.slice();
-            var fds = slice.items(.fd);
+            const fds = slice.items(.fd);
             var last_item = NoWatchItem;
 
             for (evict_list[0..evict_list_i]) |item| {
@@ -771,7 +771,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // bun.copy(u8, &buf, file_path_to_use_);
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
-                var slice: [:0]const u8 = buf[0..file_path_.len :0];
+                const slice: [:0]const u8 = buf[0..file_path_.len :0];
                 index = try INotify.watchPath(slice);
             }
 
@@ -790,16 +790,15 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         fn appendDirectoryAssumeCapacity(
             this: *Watcher,
-            fd_: StoredFileDescriptorType,
+            stored_fd: StoredFileDescriptorType,
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
         ) !WatchItemIndex {
             const fd = brk: {
-                if (fd_ > 0) break :brk fd_;
-
-                const dir = try std.fs.cwd().openIterableDir(file_path, .{});
-                break :brk bun.toFD(dir.dir.fd);
+                if (stored_fd > 0) break :brk stored_fd;
+                const dir = try std.fs.cwd().openDir(file_path, .{});
+                break :brk bun.toFD(dir.fd);
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
@@ -848,11 +847,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     null,
                 );
             } else if (Environment.isLinux) {
-                var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
+                const file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
                 var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
                 bun.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
-                var slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
+                const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
                 index = try INotify.watchDir(slice);
             }
 
@@ -910,7 +909,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const pathname = Fs.PathName.init(file_path);
 
             const parent_dir = pathname.dirWithTrailingSlash();
-            var parent_dir_hash: HashType = Watcher.getHash(parent_dir);
+            const parent_dir_hash: HashType = Watcher.getHash(parent_dir);
 
             var parent_watch_item: ?WatchItemIndex = null;
             const autowatch_parent_dir = (comptime FeatureFlags.watch_directories) and this.isEligibleDirectory(parent_dir);
@@ -918,7 +917,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 var watchlist_slice = this.watchlist.slice();
 
                 if (dir_fd > 0) {
-                    var fds = watchlist_slice.items(.fd);
+                    const fds = watchlist_slice.items(.fd);
                     if (std.mem.indexOfScalar(StoredFileDescriptorType, fds, dir_fd)) |i| {
                         parent_watch_item = @as(WatchItemIndex, @truncate(i));
                     }

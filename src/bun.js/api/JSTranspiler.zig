@@ -168,7 +168,7 @@ pub const TransformTask = struct {
             return;
         }
 
-        var global_allocator = arena.backingAllocator();
+        const global_allocator = arena.backingAllocator();
         var buffer_writer = JSPrinter.BufferWriter.init(global_allocator) catch |err| {
             this.err = err;
             return;
@@ -290,10 +290,10 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
     }
 
     if (value.isString()) {
-        var str = JSAst.E.String{
+        const str = JSAst.E.String{
             .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
         };
-        var out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
+        const out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
         out.* = str;
         return Expr{
             .data = .{
@@ -307,7 +307,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
 }
 
 fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) !TranspilerOptions {
-    var globalThis = globalObject;
+    const globalThis = globalObject;
     const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
     if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
 
@@ -611,7 +611,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
             var total_name_buf_len: u32 = 0;
             var string_count: u32 = 0;
-            var iter = JSC.JSArrayIterator.init(eliminate, globalThis);
+            const iter = JSC.JSArrayIterator.init(eliminate, globalThis);
             {
                 var length_iter = iter;
                 while (length_iter.next()) |value| {
@@ -630,7 +630,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                     var length_iter = iter;
                     while (length_iter.next()) |value| {
                         if (!value.isString()) continue;
-                        var str = value.getZigString(globalThis);
+                        const str = value.getZigString(globalThis);
                         if (str.len == 0) continue;
                         const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
                             JSC.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{}, globalObject, exception);
@@ -665,7 +665,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 defer if (exception.* != null) {
                     iter.deinit();
                     for (replacements.keys()) |key| {
-                        bun.default_allocator.free(bun.constStrToU8(key));
+                        bun.default_allocator.free(@constCast(key));
                     }
                     replacements.clearAndFree(bun.default_allocator);
                 };
@@ -674,7 +674,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                     const value = iter.value;
                     if (value.isEmpty()) continue;
 
-                    var key = try key_.toOwnedSlice(bun.default_allocator);
+                    const key = try key_.toOwnedSlice(bun.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
                         JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, globalObject, exception);
@@ -682,7 +682,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         return transpiler;
                     }
 
-                    var entry = replacements.getOrPutAssumeCapacity(key);
+                    const entry = replacements.getOrPutAssumeCapacity(key);
 
                     if (exportReplacementValue(value, globalThis)) |expr| {
                         entry.value_ptr.* = .{ .replace = expr };
@@ -694,7 +694,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
                             const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
                             var slice = (try replacementKey.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator));
-                            var replacement_name = slice.slice();
+                            const replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
                                 JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name}, globalObject, exception);
@@ -750,7 +750,7 @@ pub fn constructor(
 
     defer temp.deinit();
     var exception_ref = [_]JSC.C.JSValueRef{null};
-    var exception = &exception_ref[0];
+    const exception = &exception_ref[0];
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
         transformOptionsFromJSC(globalThis, temp.allocator(), &args, exception) catch {
             JSC.throwInvalidArguments("Failed to create transpiler", .{}, globalThis, exception);
@@ -834,7 +834,7 @@ pub fn constructor(
     bundler.options.jsx.supports_fast_refresh = bundler.options.hot_module_reloading and
         bundler.options.allow_runtime and transpiler_options.runtime.react_fast_refresh;
 
-    var transpiler = allocator.create(Transpiler) catch unreachable;
+    const transpiler = allocator.create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{
         .transpiler_options = transpiler_options,
         .bundler = bundler,
@@ -922,7 +922,7 @@ pub fn scan(
     const code = code_holder.slice();
     args.protectEat();
     var exception_ref = [_]JSC.C.JSValueRef{null};
-    var exception: JSC.C.ExceptionRef = &exception_ref;
+    const exception: JSC.C.ExceptionRef = &exception_ref;
 
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
@@ -939,7 +939,7 @@ pub fn scan(
     }
 
     var arena = Mimalloc.Arena.init() catch unreachable;
-    var prev_allocator = this.bundler.allocator;
+    const prev_allocator = this.bundler.allocator;
     this.bundler.setAllocator(arena.allocator());
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();
@@ -1005,7 +1005,7 @@ pub fn transform(
 ) callconv(.C) JSC.JSValue {
     JSC.markBinding(@src());
     var exception_ref = [_]JSC.C.JSValueRef{null};
-    var exception: JSC.C.ExceptionRef = &exception_ref;
+    const exception: JSC.C.ExceptionRef = &exception_ref;
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
     defer args.arena.deinit();
@@ -1060,7 +1060,7 @@ pub fn transformSync(
 ) callconv(.C) JSC.JSValue {
     JSC.markBinding(@src());
     var exception_value = [_]JSC.C.JSValueRef{null};
-    var exception: JSC.C.ExceptionRef = &exception_value;
+    const exception: JSC.C.ExceptionRef = &exception_value;
     const arguments = callframe.arguments(3);
 
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
@@ -1129,7 +1129,7 @@ pub fn transformSync(
         JSAst.Expr.Data.Store.reset();
     }
 
-    var prev_bundler = this.bundler;
+    const prev_bundler = this.bundler;
     this.bundler.setAllocator(arena.allocator());
     this.bundler.macro_context = null;
     var log = logger.Log.init(arena.backingAllocator());
@@ -1139,7 +1139,7 @@ pub fn transformSync(
     defer {
         this.bundler = prev_bundler;
     }
-    var parse_result = getParseResult(
+    const parse_result = getParseResult(
         this,
         arena.allocator(),
         code,
@@ -1245,7 +1245,7 @@ pub fn scanImports(
 ) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(2);
     var exception_val = [_]JSC.C.JSValueRef{null};
-    var exception: JSC.C.ExceptionRef = &exception_val;
+    const exception: JSC.C.ExceptionRef = &exception_val;
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
     defer args.deinit();
 
@@ -1285,7 +1285,7 @@ pub fn scanImports(
     }
 
     var arena = Mimalloc.Arena.init() catch unreachable;
-    var prev_allocator = this.bundler.allocator;
+    const prev_allocator = this.bundler.allocator;
     this.bundler.setAllocator(arena.allocator());
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();

@@ -11,7 +11,7 @@ skip_dirnames: []const u64 = &[_]u64{},
 skip_all: []const u64 = &[_]u64{},
 seed: u64 = 0,
 
-const Dir = std.fs.IterableDir;
+const Dir = std.fs.Dir;
 
 pub const WalkerEntry = struct {
     /// The containing directory. This can be used to operate directly on `basename`
@@ -79,7 +79,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
             self.name_buffer.shrinkRetainingCapacity(cur_len);
 
             if (base.kind == .directory) {
-                var new_dir = top.iter.dir.openIterableDir(base.name, .{}) catch |err| switch (err) {
+                var new_dir = top.iter.dir.openDir(base.name, .{ .iterate = true }) catch |err| switch (err) {
                     error.NameTooLong => unreachable, // no path sep in base.name
                     else => |e| return e,
                 };
@@ -93,7 +93,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                 }
             }
             return WalkerEntry{
-                .dir = .{ .dir = top.iter.dir },
+                .dir = top.iter.dir,
                 .basename = self.name_buffer.items[dirname_len..],
                 .path = self.name_buffer.items,
                 .kind = base.kind,
@@ -147,7 +147,7 @@ pub fn walk(
         skip_names[skip_name_i] = bun.hashWithSeed(seed, name);
         skip_name_i += 1;
     }
-    var skip_filenames_ = skip_names[0..skip_name_i];
+    const skip_filenames_ = skip_names[0..skip_name_i];
     var skip_dirnames_ = skip_names[skip_name_i..];
 
     for (skip_dirnames, 0..) |name, i| {

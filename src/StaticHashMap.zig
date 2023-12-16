@@ -135,7 +135,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime Context: type, compt
             const overflow = capacity / 10 + (63 - @as(usize, self.shift) + 1) << 1;
             const end = self.entries + @as(usize, @intCast(capacity + overflow));
 
-            var map = try Self.initCapacity(gpa, @as(usize, @intCast(capacity * 2)));
+            const map = try Self.initCapacity(gpa, @as(usize, @intCast(capacity * 2)));
             var src = self.entries;
             var dst = map.entries;
 
@@ -429,7 +429,7 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
             const overflow = capacity / 10 + (63 - @as(usize, self.shift) + 1) << 1;
             const end = self.entries + @as(usize, @intCast(capacity + overflow));
 
-            var map = try Self.initCapacity(gpa, @as(usize, @intCast(capacity * 2)));
+            const map = try Self.initCapacity(gpa, @as(usize, @intCast(capacity * 2)));
             var src = self.entries;
             var dst = map.entries;
 

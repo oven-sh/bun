@@ -404,7 +404,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
             var out = str.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
-            this.buf = bun.constStrToU8(out.slice());
+            this.buf = @constCast(out.slice());
         }
     };
 
@@ -1586,7 +1586,7 @@ pub const Blob = struct {
                 },
                 .file => |file| {
                     if (file.pathlike == .path) {
-                        allocator.free(bun.constStrToU8(file.pathlike.path.slice()));
+                        allocator.free(@constCast(file.pathlike.path.slice()));
                     }
                 },
             }
@@ -1835,7 +1835,7 @@ pub const Blob = struct {
             io_request: bun.io.Request = .{ .callback = &onRequestReadable },
             could_block: bool = false,
             close_after_io: bool = false,
-            state: std.atomic.Atomic(ClosingState) = std.atomic.Atomic(ClosingState).init(.running),
+            state: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.running),
 
             pub const Read = struct {
                 buf: []u8,
@@ -2042,7 +2042,7 @@ pub const Blob = struct {
                 }
 
                 var store = this.store.?;
-                var buf = this.buffer.items;
+                const buf = this.buffer.items;
 
                 defer store.deref();
                 defer bun.default_allocator.destroy(this);
@@ -2542,7 +2542,7 @@ pub const Blob = struct {
             io_task: ?*WriteFileTask = null,
             io_poll: bun.io.Poll = .{},
             io_request: bun.io.Request = .{ .callback = &onRequestWritable },
-            state: std.atomic.Atomic(ClosingState) = std.atomic.Atomic(ClosingState).init(.running),
+            state: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.running),
 
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnWriteFileCallback = undefined,
@@ -2943,7 +2943,7 @@ pub const Blob = struct {
             pub fn deinit(this: *CopyFile) void {
                 if (this.source_file_store.pathlike == .path) {
                     if (this.source_file_store.pathlike.path == .string and this.system_error == null) {
-                        bun.default_allocator.free(bun.constStrToU8(this.source_file_store.pathlike.path.slice()));
+                        bun.default_allocator.free(@constCast(this.source_file_store.pathlike.path.slice()));
                     }
                 }
                 this.store.?.deref();
@@ -4398,7 +4398,7 @@ pub const Blob = struct {
                 }
 
                 if (lifetime == .temporary) {
-                    bun.default_allocator.free(bun.constStrToU8(buf));
+                    bun.default_allocator.free(@constCast(buf));
                 }
 
                 return ZigString.toExternalU16(external.ptr, external.len, global);
@@ -4457,7 +4457,7 @@ pub const Blob = struct {
         }
 
         const view_: []u8 =
-            bun.constStrToU8(this.sharedView());
+            @constCast(this.sharedView());
 
         if (view_.len == 0)
             return ZigString.Empty.toValue(global);
@@ -4481,7 +4481,7 @@ pub const Blob = struct {
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-        defer if (comptime lifetime == .temporary) bun.default_allocator.free(bun.constStrToU8(buf));
+        defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
@@ -4553,7 +4553,7 @@ pub const Blob = struct {
         if (view_.len == 0)
             return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
 
-        return toArrayBufferWithBytes(this, global, bun.constStrToU8(view_), lifetime);
+        return toArrayBufferWithBytes(this, global, @constCast(view_), lifetime);
     }
 
     pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
@@ -4566,7 +4566,7 @@ pub const Blob = struct {
         if (view_.len == 0)
             return JSC.DOMFormData.create(global);
 
-        return toFormDataWithBytes(this, global, bun.constStrToU8(view_), lifetime);
+        return toFormDataWithBytes(this, global, @constCast(view_), lifetime);
     }
 
     pub inline fn get(
@@ -4657,7 +4657,7 @@ pub const Blob = struct {
                         sliced.allocator = NullableAllocator.init(bun.default_allocator);
                     }
 
-                    return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), bun.default_allocator, global, is_all_ascii);
+                    return Blob.initWithAllASCII(@constCast(sliced.slice()), bun.default_allocator, global, is_all_ascii);
                 },
 
                 JSC.JSValue.JSType.ArrayBuffer,
@@ -4700,7 +4700,7 @@ pub const Blob = struct {
                         }
                     } else if (current.toSliceClone(global)) |sliced| {
                         if (sliced.allocator.get()) |allocator| {
-                            return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), allocator, global, false);
+                            return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
                         }
                     }
                 },

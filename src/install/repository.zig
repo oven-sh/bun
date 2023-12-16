@@ -172,7 +172,7 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id),
         });
 
-        return if (cache_dir.openDirZ(folder_name, .{}, true)) |dir| fetch: {
+        return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
             _ = exec(allocator, env, dir, &[_]string{ "git", "fetch", "--quiet" }) catch |err| {
                 log.addErrorFmt(
                     null,
@@ -204,7 +204,7 @@ pub const Repository = extern struct {
                 ) catch unreachable;
                 return err;
             };
-            break :clone try cache_dir.openDirZ(folder_name, .{}, true);
+            break :clone try cache_dir.openDirZ(folder_name, .{});
         };
     }
 
@@ -248,7 +248,7 @@ pub const Repository = extern struct {
     ) !ExtractData {
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
 
-        var package_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |not_found| brk: {
+        var package_dir = cache_dir.openDirZ(folder_name, .{}) catch |not_found| brk: {
             if (not_found != error.FileNotFound) return not_found;
 
             _ = exec(allocator, env, cache_dir, &[_]string{
@@ -269,7 +269,7 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            var dir = try cache_dir.openDirZ(folder_name, .{}, true);
+            var dir = try cache_dir.openDirZ(folder_name, .{});
 
             _ = exec(allocator, env, dir, &[_]string{ "git", "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
@@ -307,7 +307,7 @@ pub const Repository = extern struct {
         };
         defer json_file.close();
         const size = try json_file.getEndPos();
-        var json_buf = try allocator.alloc(u8, size + 64);
+        const json_buf = try allocator.alloc(u8, size + 64);
         const json_len = try json_file.preadAll(json_buf, 0);
 
         const json_path = bun.getFdPath(

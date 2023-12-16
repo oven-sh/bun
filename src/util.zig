@@ -23,7 +23,7 @@ pub fn fromEntries(
         map = Map{};
     }
 
-    if (comptime std.meta.trait.isIndexable(EntryType)) {
+    if (comptime bun.trait.isIndexable(EntryType)) {
         if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
             try map.ensureUnusedCapacity(entries.len);
         } else {
@@ -37,7 +37,7 @@ pub fn fromEntries(
         }
 
         return map;
-    } else if (comptime std.meta.trait.isContainer(EntryType) and @hasDecl(EntryType, "count")) {
+    } else if (std.meta.hasFn(EntryType, "count")) {
         if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
             try map.ensureUnusedCapacity(entries.count());
         } else {
@@ -52,7 +52,7 @@ pub fn fromEntries(
 
             return map;
         }
-    } else if (comptime std.meta.trait.isContainer(EntryType) and std.meta.fields(EntryType).len > 0) {
+    } else if (comptime bun.trait.isContainer(EntryType) and std.meta.fields(EntryType).len > 0) {
         if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
             try map.ensureUnusedCapacity(std.meta.fields(EntryType).len);
         } else {
@@ -64,7 +64,7 @@ pub fn fromEntries(
         }
 
         return map;
-    } else if (comptime std.meta.trait.isConstPtr(EntryType) and std.meta.fields(std.meta.Child(EntryType)).len > 0) {
+    } else if (comptime bun.trait.isConstPtr(EntryType) and std.meta.fields(std.meta.Child(EntryType)).len > 0) {
         if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
             try map.ensureUnusedCapacity(std.meta.fields(std.meta.Child(EntryType)).len);
         } else {
@@ -112,7 +112,7 @@ pub fn FieldType(comptime Map: type, comptime name: []const u8) ?type {
 }
 
 pub fn Of(comptime ArrayLike: type) type {
-    if (std.meta.trait.isSlice(ArrayLike)) {
+    if (bun.trait.isSlice(ArrayLike)) {
         return std.meta.Child(ArrayLike);
     }
 
@@ -137,12 +137,12 @@ pub inline fn from(
     default: anytype,
 ) !Array {
     const DefaultType = @TypeOf(default);
-    if (comptime std.meta.trait.isSlice(DefaultType)) {
+    if (comptime bun.trait.isSlice(DefaultType)) {
         return fromSlice(Array, allocator, DefaultType, default);
     }
 
-    if (comptime std.meta.trait.isContainer(DefaultType)) {
-        if (comptime std.meta.trait.isContainer(Array) and @hasDecl(DefaultType, "put")) {
+    if (comptime bun.trait.isContainer(DefaultType)) {
+        if (comptime bun.trait.isContainer(Array) and @hasDecl(DefaultType, "put")) {
             return fromMapLike(Array, allocator, default);
         }
 
@@ -153,8 +153,8 @@ pub inline fn from(
         }
     }
 
-    if (comptime std.meta.trait.isContainer(Array) and @hasDecl(Array, "put")) {
-        if (comptime std.meta.trait.isConstPtr(DefaultType) and std.meta.fields(std.meta.Child(DefaultType)).len > 0) {
+    if (comptime bun.trait.isContainer(Array) and @hasDecl(Array, "put")) {
+        if (comptime bun.trait.isConstPtr(DefaultType) and std.meta.fields(std.meta.Child(DefaultType)).len > 0) {
             return fromEntries(Array, allocator, @TypeOf(default.*), default.*);
         }
         return fromEntries(Array, allocator, DefaultType, default);
@@ -190,14 +190,14 @@ pub fn fromSlice(
     default: DefaultType,
 ) !Array {
     var map: Array = undefined;
-    if (comptime std.meta.trait.isSlice(Array)) {} else if (comptime @hasField(Array, "allocator")) {
+    if (comptime bun.trait.isSlice(Array)) {} else if (comptime @hasField(Array, "allocator")) {
         map = Array.init(allocator);
     } else {
         map = Array{};
     }
 
     // is it a MultiArrayList?
-    if (comptime !std.meta.trait.isSlice(Array) and @hasField(Array, "bytes")) {
+    if (comptime !bun.trait.isSlice(Array) and @hasField(Array, "bytes")) {
         try map.ensureUnusedCapacity(allocator, default.len);
         for (default) |elem| {
             map.appendAssumeCapacity(elem);
@@ -206,7 +206,7 @@ pub fn fromSlice(
         return map;
     } else {
         var slice: []Of(Array) = undefined;
-        if (comptime !std.meta.trait.isSlice(Array)) {
+        if (comptime !bun.trait.isSlice(Array)) {
             // is it an ArrayList with an allocator?
             if (comptime !needsAllocator(Array.ensureUnusedCapacity)) {
                 try map.ensureUnusedCapacity(default.len);
@@ -234,16 +234,12 @@ pub fn fromSlice(
             };
         }
 
-        if (comptime std.meta.trait.isIndexable(DefaultType) and (std.meta.trait.isSlice(DefaultType) or std.meta.trait.is(.Array)(DefaultType))) {
-            var in = std.mem.sliceAsBytes(default);
-            var out = std.mem.sliceAsBytes(slice);
-            @memcpy(out[0..in.len], in);
-        } else {
-            @compileError("Needs a more specific type to copy from");
-        }
+        const in = std.mem.sliceAsBytes(default);
+        var out = std.mem.sliceAsBytes(slice);
+        @memcpy(out[0..in.len], in);
 
-        if (comptime std.meta.trait.isSlice(Array)) {
-            return @as(Array, slice);
+        if (bun.trait.isSlice(Array)) {
+            return slice;
         }
 
         return map;
@@ -260,7 +256,7 @@ pub fn Batcher(comptime Type: type) type {
         head: []Type,
 
         pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
-            var all = try allocator.alloc(Type, count);
+            const all = try allocator.alloc(Type, count);
             return @This(){ .head = all };
         }
 
@@ -281,7 +277,7 @@ pub fn Batcher(comptime Type: type) type {
 
         pub inline fn next(this: *@This(), values: anytype) []Type {
             this.head[0..values.len].* = values;
-            var prev = this.head[0..values.len];
+            const prev = this.head[0..values.len];
             this.head = this.head[values.len..];
             return prev;
         }

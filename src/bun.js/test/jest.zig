@@ -103,7 +103,7 @@ pub const TestRunner = struct {
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
-        var this = timer.ext(TestRunner).?;
+        const this = timer.ext(TestRunner).?;
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported) {
@@ -168,7 +168,7 @@ pub const TestRunner = struct {
         }
         this.only = true;
 
-        var list = this.queue.readableSlice(0);
+        const list = this.queue.readableSlice(0);
         for (list) |task| {
             task.deinit();
         }
@@ -215,18 +215,18 @@ pub const TestRunner = struct {
         this.tests.ensureUnusedCapacity(this.allocator, count) catch unreachable;
         const start = @as(Test.ID, @truncate(this.tests.len));
         this.tests.len += count;
-        var statuses = this.tests.items(.status)[start..][0..count];
+        const statuses = this.tests.items(.status)[start..][0..count];
         @memset(statuses, Test.Status.pending);
         this.callback.onUpdateCount(this.callback, count, count + start);
         return start;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        var entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable;
+        const entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
-        var scope = this.allocator.create(DescribeScope) catch unreachable;
+        const scope = this.allocator.create(DescribeScope) catch unreachable;
         const file_id = @as(File.ID, @truncate(this.files.len));
         scope.* = DescribeScope{
             .file_id = file_id,
@@ -498,7 +498,7 @@ pub const Jest = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         if (vm.is_in_preload or runner == null) {
             return Bun__Jest__testPreloadObject(globalObject);
         }
@@ -511,14 +511,14 @@ pub const Jest = struct {
         }
         var str = arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
-        var slice = str.slice();
+        const slice = str.slice();
 
         if (!std.fs.path.isAbsolute(slice)) {
             globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
             return .zero;
         }
 
-        var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
+        const filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
         var scope = runner.?.getOrPutFile(filepath);
         scope.push();
 
@@ -941,7 +941,7 @@ pub const DescribeScope = struct {
                         false,
                         this,
                     );
-                    var result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
+                    const result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
                     vm.waitFor(&this.done);
                     break :brk result;
                 },
@@ -1116,7 +1116,7 @@ pub const DescribeScope = struct {
 
         const file = this.file_id;
         const allocator = getAllocator(globalObject);
-        var tests: []TestScope = this.tests.items;
+        const tests: []TestScope = this.tests.items;
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
 
@@ -1319,7 +1319,7 @@ pub const TestRunnerTask = struct {
         describe.current_test_id = test_id;
 
         if (test_.func == .zero or !describe.shouldEvaluateScope()) {
-            var tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
+            const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
                     this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
@@ -1419,7 +1419,7 @@ pub const TestRunnerTask = struct {
         this.reported = true;
 
         const test_id = this.test_id;
-        var test_ = this.describe.tests.items[test_id];
+        const test_ = this.describe.tests.items[test_id];
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
         if (comptime from == .timeout) {
@@ -1615,7 +1615,7 @@ inline fn createScope(
                 buffer.reset();
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
                 buffer.append(label) catch unreachable;
-                var str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
                 is_skip = !regex.matches(str);
                 if (is_skip) {
                     tag_to_use = .skip;
@@ -1637,7 +1637,7 @@ inline fn createScope(
             has_callback = true;
             arg_size = 1;
         }
-        var function_args = allocator.alloc(JSC.JSValue, arg_size) catch unreachable;
+        const function_args = allocator.alloc(JSC.JSValue, arg_size) catch unreachable;
 
         parent.tests.append(allocator, TestScope{
             .label = label,
@@ -1650,7 +1650,7 @@ inline fn createScope(
         }) catch unreachable;
 
         if (test_elapsed_timer == null) create_timer: {
-            var timer = allocator.create(std.time.Timer) catch unreachable;
+            const timer = allocator.create(std.time.Timer) catch unreachable;
             timer.* = std.time.Timer.start() catch break :create_timer;
             test_elapsed_timer = timer;
         }
@@ -1913,7 +1913,7 @@ fn eachBind(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
 ) callconv(.C) JSValue {
-    comptime var signature = "eachBind";
+    const signature = "eachBind";
     const callee = callframe.callee();
     const arguments = callframe.arguments(3);
     const args = arguments.ptr[0..arguments.len];
@@ -2035,7 +2035,7 @@ fn eachBind(
                 }) catch unreachable;
 
                 if (test_elapsed_timer == null) create_timer: {
-                    var timer = allocator.create(std.time.Timer) catch unreachable;
+                    const timer = allocator.create(std.time.Timer) catch unreachable;
                     timer.* = std.time.Timer.start() catch break :create_timer;
                     test_elapsed_timer = timer;
                 }
@@ -2082,8 +2082,8 @@ inline fn createEach(
 
     const allocator = getAllocator(globalThis);
     const name = ZigString.static(property);
-    var strong = JSC.Strong.create(array, globalThis);
-    var each_data = allocator.create(EachData) catch unreachable;
+    const strong = JSC.Strong.create(array, globalThis);
+    const each_data = allocator.create(EachData) catch unreachable;
     each_data.* = EachData{
         .strong = strong,
         .is_test = is_test,

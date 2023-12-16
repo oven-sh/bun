@@ -40,7 +40,7 @@ pub const BuildCommand = struct {
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
         var ctx = ctx_;
-        var allocator = ctx.allocator;
+        const allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
         if (ctx.bundler_options.compile) {
@@ -301,21 +301,21 @@ pub const BuildCommand = struct {
                         root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
 
                     const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
-                        std.fs.IterableDir{ .dir = std.fs.cwd() }
+                        std.fs.cwd()
                     else
-                        std.fs.cwd().makeOpenPathIterable(root_path, .{}) catch |err| {
+                        std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
                             Output.prettyErrorln("<r><red>{s}<r> while attemping to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
                             exitOrWatch(1, ctx.debug.hot_reload == .watch);
                             unreachable;
                         };
 
-                    var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
+                    const all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
                     for (all_paths, output_files) |*dest, src| {
                         dest.* = src.dest_path;
                     }
 
-                    var from_path = resolve_path.longestCommonPath(all_paths);
+                    const from_path = resolve_path.longestCommonPath(all_paths);
 
                     for (output_files) |f| {
                         max_path_len = @max(
@@ -390,7 +390,7 @@ pub const BuildCommand = struct {
                                     rel_path = resolve_path.relative(from_path, f.dest_path);
                                     if (std.fs.path.dirname(rel_path)) |parent| {
                                         if (parent.len > root_path.len) {
-                                            try root_dir.dir.makePath(parent);
+                                            try root_dir.makePath(parent);
                                         }
                                     }
                                 }
@@ -411,7 +411,7 @@ pub const BuildCommand = struct {
                                         },
                                         .encoding = .buffer,
                                         .mode = if (f.is_executable) 0o755 else 0o644,
-                                        .dirfd = bun.toFD(root_dir.dir.fd),
+                                        .dirfd = bun.toFD(root_dir.fd),
                                         .file = .{
                                             .path = JSC.Node.PathLike{
                                                 .string = JSC.PathString.init(rel_path),
@@ -431,12 +431,12 @@ pub const BuildCommand = struct {
                                 rel_path = filepath_buf[0 .. primary.len + 2];
                                 rel_path = value.pathname;
 
-                                try f.moveTo(root_path, bun.constStrToU8(rel_path), bun.toFD(root_dir.dir.fd));
+                                try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
                             },
                             .copy => |value| {
                                 rel_path = value.pathname;
 
-                                try f.copyTo(root_path, bun.constStrToU8(rel_path), bun.toFD(root_dir.dir.fd));
+                                try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
                             },
                             .noop => {},
                             .pending => unreachable,

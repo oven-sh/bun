@@ -83,7 +83,7 @@ pub const OpaqueJSString = opaque {
         }
 
         // also extremely inefficient
-        var utf8Z = allocator.dupeZ(u8, zig_str.slice()) catch unreachable;
+        const utf8Z = allocator.dupeZ(u8, zig_str.slice()) catch unreachable;
         const cloned = JSStringCreateWithUTF8CString(utf8Z);
         allocator.free(utf8Z);
         return cloned;
@@ -386,7 +386,7 @@ pub fn isObjectOfClassAndResolveIfNeeded(ctx: JSContextRef, obj: JSObjectRef, cl
         thenable_string = JSStringCreateWithUTF8CString(then_key[0.. :0]);
     }
 
-    var prop = JSObjectGetPropertyForKey(ctx, obj, JSValueMakeString(ctx, thenable_string), null);
+    const prop = JSObjectGetPropertyForKey(ctx, obj, JSValueMakeString(ctx, thenable_string), null);
     if (prop == null) {
         return null;
     }

@@ -65,7 +65,7 @@ pub const To = struct {
                     globalThis: *JSC.JSGlobalObject,
                 ) callconv(.C) JSC.JSValue {
                     var exception_ref = [_]JSC.C.JSValueRef{null};
-                    var exception: JSC.C.ExceptionRef = &exception_ref;
+                    const exception: JSC.C.ExceptionRef = &exception_ref;
                     const result = toJS(globalThis, @call(.auto, @field(Type, @tagName(decl)), .{this}), exception);
                     if (exception.* != null) {
                         globalThis.throwValue(JSC.JSValue.c(exception.*));
@@ -83,7 +83,7 @@ pub const To = struct {
         }
 
         pub fn withTypeClone(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef, clone: bool) JSC.C.JSValueRef {
-            if (comptime std.meta.trait.isNumber(Type)) {
+            if (comptime bun.trait.isNumber(Type)) {
                 return JSC.JSValue.jsNumberWithType(Type, value).asRef();
             }
 
@@ -99,7 +99,7 @@ pub const To = struct {
                     break :brk val.asObjectRef();
                 },
                 []const JSC.ZigString => {
-                    var array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
+                    const array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
                     const values: []const JSC.ZigString = value;
                     defer bun.default_allocator.free(values);
                     if (clone) {
@@ -141,7 +141,7 @@ pub const To = struct {
                     // there is a possible C ABI bug or something here when the ptr is null
                     // it should not be segfaulting but it is
                     // that's why we check at the top of this function
-                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
+                    const array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
 
                     if (clone and value.len > 0) {
                         for (value) |path_string| {
@@ -160,17 +160,18 @@ pub const To = struct {
                 JSC.C.JSValueRef => value,
 
                 else => {
-                    const Info: std.builtin.Type = comptime @typeInfo(Type);
-                    if (comptime Info == .Enum) {
+                    const Info: std.builtin.Type = @typeInfo(Type);
+                    if (Info == .Enum) {
                         const Enum: std.builtin.Type.Enum = Info.Enum;
-                        if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
-                            zig_str = JSC.ZigString.init(@tagName(value));
-                            return zig_str.toValue(context.ptr()).asObjectRef();
+                        if (!bun.trait.isNumber(Enum.tag_type)) {
+                            @compileError("im curious if this ever gets hit. this feels like dead code");
+                            // zig_str = JSC.ZigString.init(@tagName(value));
+                            // return zig_str.toValue(context.ptr()).asObjectRef();
                         }
                     }
 
                     // Recursion can stack overflow here
-                    if (comptime std.meta.trait.isSlice(Type)) {
+                    if (bun.trait.isSlice(Type)) {
                         const Child = comptime std.meta.Child(Type);
 
                         var array = JSC.JSValue.createEmptyArray(context, value.len);
@@ -188,14 +189,14 @@ pub const To = struct {
                         return array.asObjectRef();
                     }
 
-                    if (comptime std.meta.trait.isZigString(Type)) {
+                    if (comptime bun.trait.isZigString(Type)) {
                         zig_str = JSC.ZigString.init(value);
                         return zig_str.toValue(context.ptr()).asObjectRef();
                     }
 
                     if (comptime Info == .Pointer) {
-                        const Child = comptime std.meta.Child(Type);
-                        if (comptime std.meta.trait.isContainer(Child) and @hasDecl(Child, "Class") and @hasDecl(Child.Class, "isJavaScriptCoreClass")) {
+                        const Child = std.meta.Child(Type);
+                        if (bun.trait.isContainer(Child) and @hasDecl(Child, "Class") and @hasDecl(Child.Class, "isJavaScriptCoreClass")) {
                             return Child.Class.make(context, value);
                         }
                     }
@@ -207,17 +208,13 @@ pub const To = struct {
                             }
 
                             if (comptime !@hasDecl(Type, "toJS")) {
-                                var val = bun.default_allocator.create(Type) catch unreachable;
-                                val.* = value;
-                                return Type.Class.make(context, val);
+                                return Type.Class.make(context, bun.new(Type, value));
                             }
                         }
                     }
 
                     if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
-                        var val = bun.default_allocator.create(Type) catch unreachable;
-                        val.* = value;
-                        return val.toJS(context).asObjectRef();
+                        return bun.new(Type, value).toJS(context).asObjectRef();
                     }
 
                     const res = value.toJS(context, exception);
@@ -227,6 +224,7 @@ pub const To = struct {
                     } else if (@TypeOf(res) == JSC.JSValue) {
                         return res.asObjectRef();
                     }
+                    @compileError("dont know how to convert " ++ @typeName(@TypeOf(res)) ++ " to JS");
                 },
             };
         }
@@ -311,7 +309,7 @@ pub fn createError(
         var fallback = std.heap.stackFallback(256, default_allocator);
         var allocator = fallback.get();
 
-        var buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
+        const buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         // it alwayas clones
@@ -343,7 +341,7 @@ pub fn toTypeErrorWithCode(
         zig_str = JSC.ZigString.init(fmt);
         zig_str.detectEncoding();
     } else {
-        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        const buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
         zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         zig_str.mark();
@@ -633,7 +631,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
-        var buf = try allocator.dupe(u8, str);
+        const buf = try allocator.dupe(u8, str);
         return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
@@ -669,7 +667,7 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
-        var container = try allocator.create(MarkedArrayBuffer);
+        const container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
         return container;
     }
@@ -1242,7 +1240,7 @@ pub fn wrapInstanceMethod(
                 break :brk false;
             };
             var exception_value = [_]JSC.C.JSValueRef{null};
-            var exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
+            const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
@@ -1721,28 +1719,28 @@ pub const AsyncTaskTracker = struct {
 
 pub const MemoryReportingAllocator = struct {
     child_allocator: std.mem.Allocator,
-    memory_cost: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+    memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     const log = Output.scoped(.MEM, false);
 
     fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
-        var result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+        const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
         _ = this.memory_cost.fetchAdd(n, .Monotonic);
         if (comptime Environment.allow_assert)
-            log("malloc({d}) = {d}", .{ n, this.memory_cost.loadUnchecked() });
+            log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
         return result;
     }
 
     pub fn discard(this: *MemoryReportingAllocator, buf: []const u8) void {
         _ = this.memory_cost.fetchSub(buf.len, .Monotonic);
         if (comptime Environment.allow_assert)
-            log("discard({d}) = {d}", .{ buf.len, this.memory_cost.loadUnchecked() });
+            log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
     fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
         if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
             _ = this.memory_cost.fetchAdd(new_len -| buf.len, .Monotonic);
             if (comptime Environment.allow_assert)
-                log("resize() = {d}", .{this.memory_cost.loadUnchecked()});
+                log("resize() = {d}", .{this.memory_cost.raw});
             return true;
         } else {
             return false;
@@ -1757,7 +1755,7 @@ pub const MemoryReportingAllocator = struct {
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
             // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
-            log("free({d}) = {d}", .{ buf.len, this.memory_cost.loadUnchecked() });
+            log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }
 

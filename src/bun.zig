@@ -546,7 +546,7 @@ pub const fmt = struct {
             const output = brk: {
                 var text: []const u8 = "";
                 const names = std.meta.fieldNames(Enum);
-                inline for (names, 0..) |name, i| {
+                for (names, 0..) |name, i| {
                     if (Separator == .list) {
                         if (i > 0) {
                             if (i + 1 == names.len) {
@@ -777,7 +777,7 @@ pub const FDImpl = @import("./fd.zig").FDImpl;
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
-pub const StoredFileDescriptorType = if (Environment.isBrowser) u0 else FileDescriptor;
+pub const StoredFileDescriptorType = FileDescriptor;
 
 /// Thin wrapper around iovec / libuv buffer
 /// This is used for readv/writev calls.
@@ -811,10 +811,6 @@ pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
-pub inline fn constStrToU8(s: []const u8) []u8 {
-    return @constCast(s);
-}
-
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
 pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
@@ -823,18 +819,17 @@ pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 pub const WPathBuffer = [MAX_PATH_BYTES / 2]u16;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
-    if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
-        return @as(To, @ptrFromInt(@as(usize, @bitCast(value))));
+    if (@typeInfo(@TypeOf(value)) == .Int) {
+        return @ptrFromInt(@as(usize, value));
     }
 
-    // TODO: file issue about why std.meta.Child only is necessary on Linux aarch64
-    // it should be necessary on all targets
     return @ptrCast(@alignCast(value));
 }
 
 extern fn strlen(ptr: [*c]const u8) usize;
+
 pub fn indexOfSentinel(comptime Elem: type, comptime sentinel: Elem, ptr: [*:sentinel]const Elem) usize {
-    if (comptime Elem == u8 and sentinel == 0) {
+    if (Elem == u8 and sentinel == 0) {
         return strlen(ptr);
     } else {
         var i: usize = 0;
@@ -1031,37 +1026,31 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     }
 }
 
-pub const hasCloneFn = std.meta.trait.multiTrait(.{ std.meta.trait.isContainer, std.meta.trait.hasFn("clone") });
-pub fn cloneWithType(comptime T: type, item: T, allocator: std.mem.Allocator) !T {
-    if (comptime std.meta.trait.isIndexable(T)) {
-        const Child = std.meta.Child(T);
-        assertDefined(item);
+pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
+    const T = @TypeOf(item);
 
-        if (comptime hasCloneFn(Child)) {
-            var slice = try allocator.alloc(Child, item.len);
+    if (std.meta.hasFn(T, "clone")) {
+        return try item.clone(allocator);
+    }
+
+    const Child = std.meta.Child(T);
+    assertDefined(item);
+
+    if (comptime trait.isContainer(Child)) {
+        if (std.meta.hasFn(Child, "clone")) {
+            const slice = try allocator.alloc(Child, item.len);
             for (slice, 0..) |*val, i| {
                 val.* = try item[i].clone(allocator);
             }
             return slice;
         }
 
-        if (comptime std.meta.trait.isContainer(Child)) {
-            @compileError("Expected clone() to exist for slice child: " ++ @typeName(Child));
-        }
-
-        return try allocator.dupe(Child, item);
+        @compileError("Expected clone() to exist for slice child: " ++ @typeName(Child));
     }
 
-    if (comptime hasCloneFn(T)) {
-        return try item.clone(allocator);
-    }
-
-    @compileError("Expected clone() to exist for " ++ @typeName(T));
+    return try allocator.dupe(Child, item);
 }
 
-pub fn clone(val: anytype, allocator: std.mem.Allocator) !@TypeOf(val) {
-    return cloneWithType(@TypeOf(val), val, allocator);
-}
 pub const StringBuilder = @import("./string_builder.zig");
 
 pub fn assertDefined(val: anytype) void {
@@ -1075,11 +1064,11 @@ pub fn assertDefined(val: anytype) void {
         return;
     }
 
-    if (comptime std.meta.trait.isSlice(Type)) {
+    if (comptime trait.isSlice(Type)) {
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        var slice: []Type = undefined;
+        const slice: []Type = undefined;
         if (val.len > 0) {
             std.debug.assert(@intFromPtr(val.ptr) != @intFromPtr(slice.ptr));
         }
@@ -1087,7 +1076,7 @@ pub fn assertDefined(val: anytype) void {
     }
 
     if (comptime @typeInfo(Type) == .Pointer) {
-        var slice: *Type = undefined;
+        const slice: *Type = undefined;
         std.debug.assert(@intFromPtr(val) != @intFromPtr(slice));
         return;
     }
@@ -1299,23 +1288,23 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
     return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
 }
 
-pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
+pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
+        return std.fs.Dir{ .fd = fdcast(res) };
     } else {
         const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
-        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+        return std.fs.Dir{ .fd = fd };
     }
 }
 
-pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.IterableDir {
+pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
+        return std.fs.Dir{ .fd = fdcast(res) };
     } else {
         const fd = try sys.openatA(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
-        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+        return std.fs.Dir{ .fd = fd };
     }
 }
 
@@ -1520,7 +1509,7 @@ pub const StringHashMapContext = struct {
         value: u64,
         input: []const u8,
         pub fn init(allocator: std.mem.Allocator, input: []const u8) PrehashedCaseInsensitive {
-            var out = allocator.alloc(u8, input.len) catch unreachable;
+            const out = allocator.alloc(u8, input.len) catch unreachable;
             _ = strings.copyLowercase(input, out);
             return PrehashedCaseInsensitive{
                 .value = StringHashMapContext.hash(.{}, out),
@@ -1683,7 +1672,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
         const labels = brk: {
             var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
             @setEvalBranchQuota(99999);
-            inline for (vargs) |field| {
+            for (vargs) |field| {
                 vabels_.set(field.@"0", field.@"1");
             }
             break :brk vabels_;
@@ -1701,7 +1690,7 @@ pub fn ComptimeEnumMap(comptime T: type) type {
     comptime {
         var entries: [std.enums.values(T).len]struct { string, T } = undefined;
         var i: usize = 0;
-        inline for (std.enums.values(T)) |value| {
+        for (std.enums.values(T)) |value| {
             entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
             i += 1;
         }
@@ -1743,7 +1732,7 @@ pub fn getcwd(buf_: []u8) ![]u8 {
     }
 
     var temp: [MAX_PATH_BYTES]u8 = undefined;
-    var temp_slice = try std.os.getcwd(&temp);
+    const temp_slice = try std.os.getcwd(&temp);
     // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
     // It is possible to expose this value to JS land
     return path.normalizeBuf(temp_slice, buf_, .loose);
@@ -1751,7 +1740,7 @@ pub fn getcwd(buf_: []u8) ![]u8 {
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;
-    var temp_slice = try getcwd(&temp);
+    const temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }
 
@@ -1762,7 +1751,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
-        var temp_slice = try std.os.getFdPath(fd, &temp);
+        const temp_slice = try std.os.getFdPath(fd, &temp);
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
 
@@ -1939,13 +1928,8 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
         []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
         [*:0]u8, [*:0]const u8 => buffer[0..len(buffer)],
         [*c]const u8, [*c]u8 => span(buffer),
-        else => |T| {
-            if (comptime std.meta.trait.isPtrTo(.Array)(T)) {
-                return @as([]const u8, buffer);
-            }
 
-            @compileError("Unsupported type " ++ @typeName(T));
-        },
+        else => buffer, // attempt to coerce to []const u8
     };
 }
 
@@ -2025,13 +2009,13 @@ pub fn reloadProcess(
 ) void {
     const PosixSpawn = posix.spawn;
     const bun = @This();
-    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
+    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
     }
 
-    var environ_slice = std.mem.span(std.c.environ);
-    var environ = allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null) catch unreachable;
+    const environ_slice = std.mem.span(std.c.environ);
+    const environ = allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null) catch unreachable;
     for (environ_slice, environ) |src, *dest| {
         if (src == null) {
             dest.* = null;
@@ -2106,7 +2090,7 @@ pub const StringSet = struct {
     }
 
     pub fn insert(self: *StringSet, key: []const u8) !void {
-        var entry = try self.map.getOrPut(key);
+        const entry = try self.map.getOrPut(key);
         if (!entry.found_existing) {
             entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
         }
@@ -2156,7 +2140,7 @@ pub const StringMap = struct {
     }
 
     pub fn insert(self: *StringMap, key: []const u8, value: []const u8) !void {
-        var entry = try self.map.getOrPut(key);
+        const entry = try self.map.getOrPut(key);
         if (!entry.found_existing) {
             if (self.dupe_keys)
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
@@ -2597,7 +2581,7 @@ pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field:
 pub fn serializable(input: anytype) @TypeOf(input) {
     const T = @TypeOf(input);
     comptime {
-        if (std.meta.trait.isExtern(T)) {
+        if (trait.isExternContainer(T)) {
             if (@typeInfo(T) == .Union) {
                 @compileError("Extern unions must be serialized with serializableInto");
             }
@@ -2648,7 +2632,7 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
                 copy(u8, &path_buf2, component.path);
 
                 path_buf2[component.path.len] = 0;
-                var path_to_use = path_buf2[0..component.path.len :0];
+                const path_to_use = path_buf2[0..component.path.len :0];
                 const result = try sys.lstat(path_to_use).unwrap();
                 const is_dir = S.ISDIR(@intCast(result.mode));
                 // dangling symlink
@@ -2691,7 +2675,7 @@ pub noinline fn outOfMemory() noreturn {
 }
 
 pub inline fn new(comptime T: type, t: T) *T {
-    var ptr = default_allocator.create(T) catch outOfMemory();
+    const ptr = default_allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
@@ -2701,7 +2685,7 @@ pub inline fn destroy(t: anytype) void {
 }
 
 pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    var ptr = allocator.create(T) catch outOfMemory();
+    const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
@@ -2764,3 +2748,6 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 }
 
 pub const S = if (Environment.isWindows) windows.libuv.S else std.os.S;
+
+/// Deprecated!
+pub const trait = @import("./trait.zig");

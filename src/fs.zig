@@ -68,11 +68,11 @@ pub const FileSystem = struct {
 
     pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dir = try bun.getFdPath(fd, &buf);
+        const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
     }
 
-    var tmpname_id_number = std.atomic.Atomic(u32).init(0);
+    var tmpname_id_number = std.atomic.Value(u32).init(0);
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
@@ -158,7 +158,7 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const _kind: Entry.Kind = switch (entry.kind) {
                 .directory => .dir,
                 // This might be wrong!
@@ -541,7 +541,7 @@ pub const FileSystem = struct {
                         if (bun.getenvZ("USERPROFILE")) |profile| {
                             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
-                            var out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                            const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
                             break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
                         }
 
@@ -596,7 +596,7 @@ pub const FileSystem = struct {
                         &existing.entries.data,
                         existing.entries.dir,
                         generation,
-                        handle.dir,
+                        handle,
 
                         void,
                         void{},
@@ -690,11 +690,11 @@ pub const FileSystem = struct {
             }
 
             pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
-                var tmpdir_ = try rfs.openTmpDir();
+                const tmpdir_ = try rfs.openTmpDir();
 
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
-                var result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
+                const result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
                 this.fd = bun.toFD(result);
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
@@ -923,7 +923,7 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = (std.fs.IterableDir{ .dir = handle }).iterate();
+            var iter = handle.iterate();
             var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
@@ -947,7 +947,7 @@ pub const FileSystem = struct {
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
-                var opt = try fs.entries.put(&get_or_put_result, EntriesOption{
+                const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
                     .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
                 });
 
@@ -1040,7 +1040,7 @@ pub const FileSystem = struct {
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                var entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
+                const entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
@@ -1052,7 +1052,7 @@ pub const FileSystem = struct {
                     .entries = entries_ptr,
                 };
 
-                var out = try fs.entries.put(&cache_result.?, result);
+                const out = try fs.entries.put(&cache_result.?, result);
 
                 return out;
             }
@@ -1195,7 +1195,7 @@ pub const FileSystem = struct {
         ) !Entry.Cache {
             var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-            var stat = try C.lstat_absolute(absolute_path);
+            const stat = try C.lstat_absolute(absolute_path);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
             var cache = Entry.Cache{
@@ -1253,10 +1253,10 @@ pub const FileSystem = struct {
                 .symlink = PathString.empty,
             };
 
-            var dir = _dir;
+            const dir = _dir;
             var combo = [2]string{ dir, base };
             var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
+            const entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
             outpath[entry_path.len + 1] = 0;
             outpath[entry_path.len] = 0;
@@ -1275,7 +1275,7 @@ pub const FileSystem = struct {
                 return cache;
             }
 
-            var stat = try C.lstat_absolute(absolute_path_c);
+            const stat = try C.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
             var _kind = stat.kind;
 
@@ -1389,8 +1389,7 @@ pub const NodeJSPathName = struct {
         // if only one character ext = "" even if filename it's "."
         if (filename.len > 1) {
             // Strip off the extension
-            var _dot = strings.lastIndexOfChar(filename, '.');
-            if (_dot) |dot| {
+            if (strings.lastIndexOfChar(filename, '.')) |dot| {
                 ext = filename[dot..];
                 if (dot > 0)
                     filename = filename[0..dot];
@@ -1673,7 +1672,7 @@ pub const Path = struct {
                 var buf = try allocator.alloc(u8, this.text.len + this.pretty.len + 2);
                 bun.copy(u8, buf, this.text);
                 buf.ptr[this.text.len] = 0;
-                var new_pretty = buf[this.text.len + 1 ..][0..this.pretty.len];
+                const new_pretty = buf[this.text.len + 1 ..][0..this.pretty.len];
                 bun.copy(u8, buf[this.text.len + 1 ..], this.pretty);
                 var new_path = Fs.Path.init(buf[0..this.text.len]);
                 buf.ptr[buf.len - 1] = 0;

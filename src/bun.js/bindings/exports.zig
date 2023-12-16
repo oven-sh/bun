@@ -47,7 +47,7 @@ pub const ZigGlobalObject = extern struct {
         mini_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
-        var global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
+        const global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -212,13 +212,13 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
-    var str = ptr[0..len];
+    const str = ptr[0..len];
 
     allocator.free(str);
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    var untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
+    const untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
@@ -417,7 +417,7 @@ pub const ZigStackTrace = extern struct {
         {
             var source_lines_iter = this.sourceLineIterator();
 
-            var source_line_len = source_lines_iter.getLength();
+            const source_line_len = source_lines_iter.getLength();
 
             if (source_line_len > 0) {
                 var source_lines = try allocator.alloc(Api.SourceLine, @as(usize, @intCast(@max(source_lines_iter.i + 1, 0))));
@@ -442,7 +442,7 @@ pub const ZigStackTrace = extern struct {
             }
         }
         {
-            var _frames = this.frames();
+            const _frames = this.frames();
             if (_frames.len > 0) {
                 var stack_frames = try allocator.alloc(Api.StackFrame, _frames.len);
                 stack_trace.frames = stack_frames;
@@ -1034,7 +1034,7 @@ pub const ZigConsoleClient = struct {
     pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
         var holder = ZigException.Holder.init();
 
-        var exception = holder.zigException();
+        const exception = holder.zigException();
         var err = ZigString.init("trace output").toErrorInstance(global);
         err.toZigException(global, exception);
         JS.VirtualMachine.get().remapZigException(exception, err, null);
@@ -1915,7 +1915,7 @@ pub const ZigConsoleClient = struct {
 
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
-                    var writer_ = ctx.writer;
+                    const writer_ = ctx.writer;
                     var writer = WrappedWriter(Writer){
                         .ctx = writer_,
                         .failed = false,
@@ -2062,7 +2062,7 @@ pub const ZigConsoleClient = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                var entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+                const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -2123,7 +2123,7 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll(str.slice());
                     } else if (str.len > 0) {
                         // slow path
-                        var buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);
@@ -2153,7 +2153,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {
-                    var out_str = value.getZigString(this.globalThis).slice();
+                    const out_str = value.getZigString(this.globalThis).slice();
                     this.addForNewLine(out_str.len);
 
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -2300,7 +2300,7 @@ pub const ZigConsoleClient = struct {
 
                         this.addForNewLine(2);
 
-                        var prev_quote_strings = this.quote_strings;
+                        const prev_quote_strings = this.quote_strings;
                         this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
                         var empty_start: ?u32 = null;
@@ -2854,7 +2854,7 @@ pub const ZigConsoleClient = struct {
                         }).init(this.globalThis, props.asObjectRef());
                         defer props_iter.deinit();
 
-                        var children_prop = props.get(this.globalThis, "children");
+                        const children_prop = props.get(this.globalThis, "children");
                         if (props_iter.len > 0) {
                             {
                                 this.indent += 1;
@@ -2865,7 +2865,7 @@ pub const ZigConsoleClient = struct {
                                     if (prop.eqlComptime("children"))
                                         continue;
 
-                                    var property_value = props_iter.value;
+                                    const property_value = props_iter.value;
                                     const tag = Tag.getAdvanced(property_value, this.globalThis, .{ .hide_global = true });
 
                                     if (tag.cell.isHidden()) continue;
@@ -2923,7 +2923,7 @@ pub const ZigConsoleClient = struct {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
-                                                var children_string = children.getZigString(this.globalThis);
+                                                const children_string = children.getZigString(this.globalThis);
                                                 if (children_string.len == 0) break :print_children;
                                                 if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
@@ -3207,7 +3207,7 @@ pub const ZigConsoleClient = struct {
             if (comptime is_bindgen) {
                 return;
             }
-            var prevGlobalThis = this.globalThis;
+            const prevGlobalThis = this.globalThis;
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;
 
@@ -3272,7 +3272,7 @@ pub const ZigConsoleClient = struct {
         const slice = ptr[0..len];
         const hash = bun.hash(slice);
         // we don't want to store these strings, it will take too much memory
-        var counter = this.counts.getOrPut(globalThis.allocator(), hash) catch unreachable;
+        const counter = this.counts.getOrPut(globalThis.allocator(), hash) catch unreachable;
         const current = @as(u32, if (counter.found_existing) counter.value_ptr.* else @as(u32, 0)) + 1;
         counter.value_ptr.* = current;
 
@@ -3298,7 +3298,7 @@ pub const ZigConsoleClient = struct {
         const slice = ptr[0..len];
         const hash = bun.hash(slice);
         // we don't delete it because deleting is implemented via tombstoning
-        var entry = this.counts.getEntry(hash) orelse return;
+        const entry = this.counts.getEntry(hash) orelse return;
         entry.value_ptr.* = 0;
     }
 
@@ -3320,7 +3320,7 @@ pub const ZigConsoleClient = struct {
             pending_time_logs_loaded = true;
         }
 
-        var result = pending_time_logs.getOrPut(id) catch unreachable;
+        const result = pending_time_logs.getOrPut(id) catch unreachable;
 
         if (!result.found_existing or (result.found_existing and result.value_ptr.* == null)) {
             result.value_ptr.* = std.time.Timer.start() catch unreachable;
@@ -3339,7 +3339,7 @@ pub const ZigConsoleClient = struct {
         }
 
         const id = bun.hash(chars[0..len]);
-        var result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
+        const result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
         var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
         // then display it in milliseconds

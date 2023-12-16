@@ -35,7 +35,7 @@ pub const FSWatcher = struct {
     closed: bool,
     // counts pending tasks so we only deinit after all tasks are done
     task_count: u32,
-    has_pending_activity: std.atomic.Atomic(bool),
+    has_pending_activity: std.atomic.Value(bool),
     current_task: FSWatchTask = undefined,
     pub usingnamespace JSC.Codegen.JSFSWatcher;
 
@@ -76,7 +76,7 @@ pub const FSWatcher = struct {
         pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, needs_free: bool) void {
             if (this.count == 8) {
                 this.enqueue();
-                var ctx = this.ctx;
+                const ctx = this.ctx;
                 this.* = .{
                     .ctx = ctx,
                     .count = 0,
@@ -555,7 +555,7 @@ pub const FSWatcher = struct {
             slice,
         };
 
-        var file_path = Path.joinAbsStringBuf(
+        const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,
             &buf,
             &parts,
@@ -563,7 +563,7 @@ pub const FSWatcher = struct {
         );
 
         buf[file_path.len] = 0;
-        var file_path_z = buf[0..file_path.len :0];
+        const file_path_z = buf[0..file_path.len :0];
 
         var ctx = try bun.default_allocator.create(FSWatcher);
         const vm = args.global_this.bunVM();
@@ -582,7 +582,7 @@ pub const FSWatcher = struct {
             .encoding = args.encoding,
             .closed = false,
             .task_count = 0,
-            .has_pending_activity = std.atomic.Atomic(bool).init(true),
+            .has_pending_activity = std.atomic.Value(bool).init(true),
             .verbose = args.verbose,
         };
 

@@ -165,7 +165,7 @@ pub const TSConfigJSON = struct {
             // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    var str_lower = allocator.alloc(u8, str.len) catch unreachable;
+                    const str_lower = allocator.alloc(u8, str.len) catch unreachable;
                     defer allocator.free(str_lower);
                     _ = strings.copyLowercase(str, str_lower);
                     // - We don't support "preserve" yet
@@ -319,7 +319,7 @@ pub const TSConfigJSON = struct {
             std.debug.assert(result.base_url.len > 0);
         }
 
-        var _result = allocator.create(TSConfigJSON) catch unreachable;
+        const _result = allocator.create(TSConfigJSON) catch unreachable;
         _result.* = result;
 
         if (Environment.isDebug and has_base_url) {

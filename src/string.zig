@@ -435,13 +435,7 @@ pub const String = extern struct {
             *const ZigString, *ZigString => return String{ .tag = .ZigString, .value = .{ .ZigString = value.* } },
             *const [0:0]u8 => return String{ .tag = .Empty, .value = .{ .Empty = {} } },
             String => return value,
-            else => {
-                if (comptime std.meta.trait.isZigString(Type)) {
-                    return static(value);
-                }
-
-                @compileError("Unsupported type for String " ++ @typeName(Type));
-            },
+            else => return static(value),
         }
     }
 
@@ -664,7 +658,7 @@ pub const String = extern struct {
     }
 
     pub fn substring(this: String, start_index: usize) String {
-        var len = this.length();
+        const len = this.length();
         return this.substringWithLen(@min(len, start_index), len);
     }
 

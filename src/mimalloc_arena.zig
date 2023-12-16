@@ -83,7 +83,7 @@ const ArenaRegistry = struct {
         if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
-            var entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
+            const entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
             const received = std.Thread.getCurrentId();
 
             if (entry.found_existing) {
@@ -204,7 +204,7 @@ pub const Arena = struct {
     fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
+        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_heap_malloc_aligned(heap, len, alignment)
         else
             mimalloc.mi_heap_malloc(heap, len);
@@ -227,7 +227,7 @@ pub const Arena = struct {
     }
 
     fn alloc(arena: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
-        var this = bun.cast(*mimalloc.Heap, arena);
+        const this = bun.cast(*mimalloc.Heap, arena);
         // if (comptime Environment.allow_assert)
         //     ArenaRegistry.assert(.{ .heap = this });
         if (comptime FeatureFlags.alignment_tweak) {

@@ -44,7 +44,7 @@ pub const RuntimeTranspilerCache = struct {
 
         pub const size = brk: {
             var count: usize = 0;
-            var meta: Metadata = undefined;
+            const meta: Metadata = undefined;
             for (std.meta.fieldNames(Metadata)) |name| {
                 count += @sizeOf(@TypeOf(@field(meta, name)));
             }
@@ -223,7 +223,7 @@ pub const RuntimeTranspilerCache = struct {
                 std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
                 bun.C.preallocate_file(bun.fdcast(tmpfile.fd), 0, @intCast(end_position)) catch {};
-                var current_vecs: []std.os.iovec = vecs[0..];
+                const current_vecs: []std.os.iovec = vecs[0..];
                 while (position < end_position) {
                     const written = try bun.sys.pwritev(tmpfile.fd, current_vecs, position).unwrap();
                     if (written <= 0) {
@@ -253,7 +253,7 @@ pub const RuntimeTranspilerCache = struct {
             this.output_code = brk: {
                 switch (this.metadata.output_encoding) {
                     .utf8 => {
-                        var utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
+                        const utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
                         errdefer output_code_allocator.free(utf8);
                         const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
                         if (read_bytes != this.metadata.output_byte_length) {
@@ -315,7 +315,7 @@ pub const RuntimeTranspilerCache = struct {
             }
 
             if (this.metadata.sourcemap_byte_length > 0) {
-                var sourcemap = try sourcemap_allocator.alloc(u8, this.metadata.sourcemap_byte_length);
+                const sourcemap = try sourcemap_allocator.alloc(u8, this.metadata.sourcemap_byte_length);
                 errdefer sourcemap_allocator.free(sourcemap);
                 const read_bytes = try file.preadAll(sourcemap, this.metadata.sourcemap_byte_offset);
                 if (read_bytes != this.metadata.sourcemap_byte_length) {
@@ -389,7 +389,7 @@ pub const RuntimeTranspilerCache = struct {
         }
 
         if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {
-            var parts = &[_][]const u8{ dir, "bun", "@t@" };
+            const parts = &[_][]const u8{ dir, "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
 
@@ -409,12 +409,12 @@ pub const RuntimeTranspilerCache = struct {
         }
 
         if (bun.getenvZ(bun.DotEnv.home_env)) |dir| {
-            var parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
+            const parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
 
         {
-            var parts = &[_][]const u8{ bun.fs.FileSystem.instance.fs.tmpdirPath(), "bun", "@t@" };
+            const parts = &[_][]const u8{ bun.fs.FileSystem.instance.fs.tmpdirPath(), "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
     }
@@ -495,7 +495,7 @@ pub const RuntimeTranspilerCache = struct {
             .output_code = .{ .utf8 = "" },
             .sourcemap = "",
         };
-        var reader = metadata_stream.reader();
+        const reader = metadata_stream.reader();
         try entry.metadata.decode(reader);
         if (entry.metadata.input_hash != input_hash or entry.metadata.input_byte_length != input_stat_size) {
             // delete the cache in this case
@@ -544,8 +544,8 @@ pub const RuntimeTranspilerCache = struct {
 
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
-                const dir = try std.fs.cwd().makeOpenPathIterable(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toFD(dir.dir.fd);
+                const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
+                break :brk bun.toFD(dir.fd);
             }
 
             break :brk bun.toFD(std.fs.cwd().fd);

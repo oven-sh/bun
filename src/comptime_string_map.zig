@@ -193,7 +193,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
         pub fn getWithEql(input: anytype, comptime eql: anytype) ?V {
             const Input = @TypeOf(input);
-            const length = if (comptime std.meta.trait.isSlice(Input) or std.meta.trait.isZigString(Input)) input.len else input.length();
+            const length = if (@hasField(Input, "len")) input.len else input.length();
             if (length < precomputed.min_len or length > precomputed.max_len)
                 return null;
 
@@ -209,7 +209,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
         pub fn getWithEqlList(input: anytype, comptime eql: anytype) ?V {
             const Input = @TypeOf(input);
-            const length = if (comptime std.meta.trait.isSlice(Input) or std.meta.trait.isZigString(Input)) input.len else input.length();
+            const length = if (@hasField(Input, "len")) input.len else input.length();
             if (length < precomputed.min_len or length > precomputed.max_len)
                 return null;
 
@@ -464,7 +464,7 @@ const TestEnum2 = enum {
 };
 
 pub fn compareString(input: []const u8) !void {
-    var str = try std.heap.page_allocator.dupe(u8, input);
+    const str = try std.heap.page_allocator.dupe(u8, input);
     if (TestEnum2.map.has(str) != TestEnum2.official.has(str)) {
         std.debug.panic("{s} - TestEnum2.map.has(str) ({d}) != TestEnum2.official.has(str) ({d})", .{
             str,

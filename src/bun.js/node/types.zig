@@ -86,7 +86,7 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub inline fn todo() @This() {
             if (Environment.isDebug) {
-                @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
+                @panic("Maybe(" ++ @typeName(ReturnType) ++ ").todo() Called");
             }
             return .{ .err = Syscall.Error.todo() };
         }
@@ -99,45 +99,29 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-            switch (this) {
-                .err => |e| {
-                    return e.toJSC(globalThis);
+            return switch (this) {
+                .err => |e| e.toJSC(globalThis),
+                .result => |r| switch (ReturnType) {
+                    JSC.JSValue => r,
+
+                    void => .undefined,
+                    bool => JSC.JSValue.jsBoolean(r),
+
+                    JSC.ArrayBuffer => r.toJS(globalThis, null),
+                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null),
+
+                    else => switch (@typeInfo(ReturnType)) {
+                        .Int, .Float, .ComptimeInt, .ComptimeFloat => JSC.JSValue.jsNumber(r),
+                        .Struct, .Enum, .Opaque, .Union => r.toJS(globalThis),
+                        .Pointer => {
+                            if (bun.trait.isZigString(ResultType))
+                                JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toValueAuto(globalThis);
+
+                            return r.toJS(globalThis);
+                        },
+                    },
                 },
-                .result => |r| {
-                    if (comptime ReturnType == void) {
-                        return JSC.JSValue.jsUndefined();
-                    }
-
-                    if (comptime ReturnType == JSC.JSValue) {
-                        return r;
-                    }
-
-                    if (comptime ReturnType == JSC.ArrayBuffer) {
-                        return r.toJS(globalThis, null);
-                    }
-
-                    if (comptime std.meta.trait.isNumber(ResultType) or std.meta.trait.isFloat(ResultType)) {
-                        return JSC.JSValue.jsNumber(r);
-                    }
-
-                    if (comptime std.meta.trait.isZigString(ResultType)) {
-                        if (ResultType == []u8) {
-                            return JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null);
-                        }
-                        return JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toValueAuto(globalThis);
-                    }
-
-                    if (comptime @typeInfo(ReturnType) == .Bool) {
-                        return JSC.JSValue.jsBoolean(r);
-                    }
-
-                    if (comptime std.meta.trait.isContainer(ReturnType)) {
-                        return r.toJS(globalThis);
-                    }
-
-                    @compileError("toJS Not implemented for type " ++ @typeName(ReturnType));
-                },
-            }
+            };
         }
 
         pub fn toArrayBuffer(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -229,7 +213,7 @@ pub const StringOrBuffer = union(Tag) {
 
                 const input = this.string;
                 if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(bun.constStrToU8(input));
+                    bun.default_allocator.free(@constCast(input));
                     return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
                 }
 
@@ -281,7 +265,7 @@ pub const StringOrBunStringOrBuffer = union(enum) {
 
                 const input = this.string;
                 if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(bun.constStrToU8(input));
+                    bun.default_allocator.free(@constCast(input));
                     return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
                 }
 
@@ -429,7 +413,7 @@ pub const StringOrNodeBuffer = union(Tag) {
                     return JSC.ZigString.Empty.toValue(ctx).asObjectRef();
 
                 if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(bun.constStrToU8(input));
+                    bun.default_allocator.free(@constCast(input));
                     return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
                 }
 
@@ -519,9 +503,9 @@ pub const SliceOrBuffer = union(Tag) {
     pub fn toJS(this: SliceOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             string => {
-                const input = this.string.slice;
+                const input = this.string.slice();
                 if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(bun.constStrToU8(input));
+                    bun.default_allocator.free(@constCast(input));
                     return JSC.ZigString.toExternalU16(utf16.p.tr, utf16.len, ctx.ptr()).asObjectRef();
                 }
 

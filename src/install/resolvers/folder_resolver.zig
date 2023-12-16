@@ -205,13 +205,13 @@ pub const FolderResolution = union(Tag) {
         const abs = paths.abs;
         const rel = paths.rel;
 
-        var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
+        const entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {
             .global => brk: {
                 var path: [bun.MAX_PATH_BYTES]u8 = undefined;
-                std.mem.copy(u8, &path, non_normalized_path);
+                std.mem.copyForwards(u8, &path, non_normalized_path);
                 break :brk readPackageJSONFromDisk(
                     manager,
                     abs,

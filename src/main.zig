@@ -36,8 +36,8 @@ pub fn main() void {
 
     bun.start_time = std.time.nanoTimestamp();
 
-    var stdout = std.io.getStdOut();
-    var stderr = std.io.getStdErr();
+    const stdout = std.io.getStdOut();
+    const stderr = std.io.getStdErr();
     var output_source = Output.Source.init(stdout, stderr);
 
     Output.Source.set(&output_source);

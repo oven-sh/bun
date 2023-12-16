@@ -22,7 +22,7 @@ pub const Reader = struct {
             return error.EOF;
         }
 
-        var slice = this.remain[0..read_count];
+        const slice = this.remain[0..read_count];
 
         this.remain = this.remain[read_count..];
 
@@ -30,7 +30,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readAs(this: *Self, comptime T: type) !T {
-        if (!std.meta.trait.hasUniqueRepresentation(T)) {
+        if (!std.meta.hasUniqueRepresentation(T)) {
             @compileError(@typeName(T) ++ " must have unique representation.");
         }
 
@@ -85,7 +85,7 @@ pub const Reader = struct {
                         switch (Struct.layout) {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
-                                var slice = try this.read(sizeof * length);
+                                const slice = try this.read(sizeof * length);
                                 return std.mem.bytesAsSlice(T, slice);
                             },
                             else => {},
@@ -119,7 +119,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readInt(this: *Self, comptime T: type) !T {
-        var slice = try this.read(@sizeOf(T));
+        const slice = try this.read(@sizeOf(T));
 
         return std.mem.readIntSliceNative(T, slice);
     }

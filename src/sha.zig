@@ -201,9 +201,9 @@ const labels = [_][]const u8{
 };
 pub fn main() anyerror!void {
     var file = try std.fs.cwd().openFileZ(bun.argv()[bun.argv().len - 1], .{});
-    var bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
+    const bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
 
-    var engine = BoringSSL.ENGINE_new().?;
+    const engine = BoringSSL.ENGINE_new().?;
 
     std.debug.print(
         "Hashing {any:3}\n\n",

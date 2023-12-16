@@ -44,7 +44,7 @@ pub const HTMLRewriter = struct {
     pub usingnamespace JSC.Codegen.JSHTMLRewriter;
 
     pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*HTMLRewriter {
-        var rewriter = bun.default_allocator.create(HTMLRewriter) catch unreachable;
+        const rewriter = bun.default_allocator.create(HTMLRewriter) catch unreachable;
         rewriter.* = HTMLRewriter{
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
             .context = .{},
@@ -59,12 +59,12 @@ pub const HTMLRewriter = struct {
         callFrame: *JSC.CallFrame,
         listener: JSValue,
     ) JSValue {
-        var selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch unreachable;
+        const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch unreachable;
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
             return throwLOLHTMLError(global);
-        var handler_ = ElementHandler.init(global, listener) catch return .zero;
-        var handler = getAllocator(global).create(ElementHandler) catch unreachable;
+        const handler_ = ElementHandler.init(global, listener) catch return .zero;
+        const handler = getAllocator(global).create(ElementHandler) catch unreachable;
         handler.* = handler_;
 
         this.builder.addElementContentHandlers(
@@ -106,9 +106,9 @@ pub const HTMLRewriter = struct {
         listener: JSValue,
         callFrame: *JSC.CallFrame,
     ) JSValue {
-        var handler_ = DocumentHandler.init(global, listener) catch return .zero;
+        const handler_ = DocumentHandler.init(global, listener) catch return .zero;
 
-        var handler = getAllocator(global).create(DocumentHandler) catch unreachable;
+        const handler = getAllocator(global).create(DocumentHandler) catch unreachable;
         handler.* = handler_;
 
         // If this fails, subsequent calls to write or end should throw
@@ -407,7 +407,7 @@ pub const HTMLRewriter = struct {
             }
 
             result.url = original.url.clone();
-            var value = original.getBodyValue();
+            const value = original.getBodyValue();
             sink.bodyValueBufferer = JSC.WebCore.BodyValueBufferer.init(sink, onFinishedBuffering, sink.global, bun.default_allocator);
             sink.bodyValueBufferer.?.run(value) catch |buffering_error| {
                 return switch (buffering_error) {
@@ -487,7 +487,7 @@ pub const HTMLRewriter = struct {
             is_async: bool,
         ) ?JSValue {
             sink.bytes.growBy(bytes.len) catch unreachable;
-            var global = sink.global;
+            const global = sink.global;
             var response = sink.response;
 
             sink.rewriter.write(bytes) catch {
@@ -651,7 +651,7 @@ pub const HTMLRewriter = struct {
     //         free_bytes_on_end: bool,
     //     ) ?JSValue {
     //         defer if (free_bytes_on_end)
-    //             bun.default_allocator.free(bun.constStrToU8(bytes));
+    //             bun.default_allocator.free(bytes);
 
     //         return null;
     //     }
@@ -1448,7 +1448,7 @@ pub const Element = struct {
             return ZigString.init("Expected a function").withEncoding().toValueGC(globalObject);
         }
 
-        var end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch unreachable;
+        const end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch unreachable;
         end_tag_handler.* = .{ .global = globalObject, .callback = function };
 
         this.element.?.onEndTag(EndTag.Handler.onEndTagHandler, end_tag_handler) catch {
@@ -1712,7 +1712,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsUndefined();
 
-        var iter = this.element.?.attributes() orelse return throwLOLHTMLError(globalObject);
+        const iter = this.element.?.attributes() orelse return throwLOLHTMLError(globalObject);
         var attr_iter = bun.default_allocator.create(AttributeIterator) catch unreachable;
         attr_iter.* = .{ .iterator = iter };
         var js_attr_iter = attr_iter.toJS(globalObject);

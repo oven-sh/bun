@@ -173,7 +173,7 @@ pub const UV_VERSION_HEX = ((UV_VERSION_MAJOR << @as(c_int, 16)) | (UV_VERSION_M
 
 pub const UV_THREADPOOL_H_ = "";
 pub const MAX_PIPENAME_LEN = @as(c_int, 256);
-pub const S_IFLNK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA000, .hexadecimal);
+pub const S_IFLNK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA000, .hex);
 pub const SIGHUP = @as(c_int, 1);
 pub const SIGQUIT = @as(c_int, 3);
 pub const SIGKILL = @as(c_int, 9);
@@ -190,7 +190,7 @@ pub const UV__DT_BLOCK = UV_DIRENT_BLOCK;
 pub const UV_FS_O_APPEND = O.APPEND;
 pub const UV_FS_O_CREAT = O.CREAT;
 pub const UV_FS_O_EXCL = O.EXCL;
-pub const UV_FS_O_FILEMAP = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hexadecimal);
+pub const UV_FS_O_FILEMAP = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex);
 pub const UV_FS_O_RANDOM = O.RANDOM;
 pub const UV_FS_O_RDONLY = O.RDONLY;
 pub const UV_FS_O_RDWR = O.RDWR;
@@ -199,16 +199,16 @@ pub const UV_FS_O_SHORT_LIVED = O.SHORT_LIVED;
 pub const UV_FS_O_TEMPORARY = O.TEMPORARY;
 pub const UV_FS_O_TRUNC = O.TRUNC;
 pub const UV_FS_O_WRONLY = O.WRONLY;
-pub const UV_FS_O_DIRECT = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x02000000, .hexadecimal);
+pub const UV_FS_O_DIRECT = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x02000000, .hex);
 pub const UV_FS_O_DIRECTORY = @as(c_int, 0);
-pub const UV_FS_O_DSYNC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x04000000, .hexadecimal);
-pub const UV_FS_O_EXLOCK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000000, .hexadecimal);
+pub const UV_FS_O_DSYNC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x04000000, .hex);
+pub const UV_FS_O_EXLOCK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000000, .hex);
 pub const UV_FS_O_NOATIME = @as(c_int, 0);
 pub const UV_FS_O_NOCTTY = @as(c_int, 0);
 pub const UV_FS_O_NOFOLLOW = @as(c_int, 0);
 pub const UV_FS_O_NONBLOCK = @as(c_int, 0);
 pub const UV_FS_O_SYMLINK = @as(c_int, 0);
-pub const UV_FS_O_SYNC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x08000000, .hexadecimal);
+pub const UV_FS_O_SYNC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x08000000, .hex);
 pub const UV_PRIORITY_LOW = @as(c_int, 19);
 pub const UV_PRIORITY_BELOW_NORMAL = @as(c_int, 10);
 pub const UV_PRIORITY_NORMAL = @as(c_int, 0);
@@ -544,7 +544,7 @@ pub const Loop = extern struct {
     }
 
     pub fn new() ?bun.C.E {
-        var ptr = bun.default_allocator.create(Loop);
+        const ptr = bun.default_allocator.create(Loop);
         if (init(ptr)) |e| return e;
         return ptr;
     }

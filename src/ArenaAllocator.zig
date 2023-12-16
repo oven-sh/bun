@@ -257,7 +257,7 @@ test "ArenaAllocator (reset with preheating)" {
         rounds -= 1;
         _ = arena_allocator.reset(.retain_capacity);
         var alloced_bytes: usize = 0;
-        var total_size: usize = random.intRangeAtMost(usize, 256, 16384);
+        const total_size: usize = random.intRangeAtMost(usize, 256, 16384);
         while (alloced_bytes < total_size) {
             const size = random.intRangeAtMost(usize, 16, 256);
             const alignment = 32;

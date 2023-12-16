@@ -317,7 +317,7 @@ pub const MutableString = struct {
         }
 
         pub fn writeAll(this: *BufferedWriter, bytes: []const u8) anyerror!usize {
-            var pending = bytes;
+            const pending = bytes;
 
             if (pending.len >= max) {
                 try this.flush();
@@ -353,7 +353,7 @@ pub const MutableString = struct {
         /// This automatically encodes UTF-16 into UTF-8 using
         /// the same code path as TextEncoder
         pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) anyerror!usize {
-            var pending = bytes;
+            const pending = bytes;
 
             if (pending.len >= max) {
                 try this.flush();

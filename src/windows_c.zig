@@ -813,10 +813,8 @@ pub const SystemErrno = enum(u16) {
             };
         }
 
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
-        }
+        if (code < 0)
+            return init(-code);
 
         if (code >= max) return null;
         return @as(SystemErrno, @enumFromInt(code));

@@ -4889,7 +4889,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,
-                    bun.String.static(info.ip).toJSConst(this.globalThis),
+                    bun.String.static(info.ip).toJS(this.globalThis),
                     info.port,
                     info.is_ipv6,
                 )

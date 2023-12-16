@@ -2524,7 +2524,7 @@ pub const JSGlobalObject = extern struct {
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
         const err = this.createErrorInstance("{s}", .{msg});
-        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJSConst(this));
+        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
         this.throwValue(err);
     }
 
@@ -2659,7 +2659,7 @@ pub const JSGlobalObject = extern struct {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
-                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
             var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
             return str.toErrorInstance(this);
@@ -2949,7 +2949,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
-        if(bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
+        if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
     pub const Extern = [_][]const u8{
@@ -3928,7 +3928,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         var writer = buf.writer();
         try writer.print(fmt, args);
-        return String.init(buf.toOwnedSliceLeaky()).toJSConst(globalThis);
+        return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
     }
 
     /// Create a JSValue string from a zig format-print (fmt + args), with pretty format
@@ -3942,7 +3942,7 @@ pub const JSValue = enum(JSValueReprInt) {
         switch (Output.enable_ansi_colors) {
             inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
         }
-        return String.init(buf.toOwnedSliceLeaky()).toJSConst(globalThis);
+        return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
     }
 
     pub fn fromEntries(globalThis: *JSGlobalObject, keys: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {

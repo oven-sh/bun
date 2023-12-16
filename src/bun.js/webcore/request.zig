@@ -253,7 +253,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return bun.String.static(@tagName(this.method)).toJSConst(globalThis);
+        return bun.String.static(@tagName(this.method)).toJS(globalThis);
     }
 
     pub fn getMode(

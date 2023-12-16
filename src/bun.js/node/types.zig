@@ -290,7 +290,7 @@ pub const StringOrBunStringOrBuffer = union(enum) {
             .buffer => this.buffer.toJSObjectRef(ctx, exception),
             .BunString => {
                 defer this.BunString.deref();
-                return this.BunString.toJSConst(ctx).asObjectRef();
+                return this.BunString.toJS(ctx).asObjectRef();
             },
         };
     }

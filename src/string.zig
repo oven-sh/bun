@@ -334,7 +334,7 @@ pub const String = extern struct {
     /// return the string and a mutable slice for that string.
     ///
     /// This is not allowed on zero-length strings, in this case you should
-    /// check *earlier* and use String.empty.
+    /// check earlier and use String.empty in that case.
     pub fn createUninitialized(
         comptime kind: WTFStringEncoding,
         len: usize,
@@ -450,28 +450,33 @@ pub const String = extern struct {
         };
     }
 
-    pub fn initWithType(comptime Type: type, value: Type) String {
-        switch (comptime Type) {
-            ZigString => return String{ .tag = .ZigString, .value = .{ .ZigString = value } },
-            [:0]u8, []u8, [:0]const u8, []const u8 => return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.fromBytes(value) } },
-            [:0]u16, []u16, [:0]const u16, []const u16 => return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.from16Slice(value) } },
-            WTFStringImpl => return String{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = value } },
-            *const ZigString, *ZigString => return String{ .tag = .ZigString, .value = .{ .ZigString = value.* } },
-            *const [0:0]u8 => return String{ .tag = .Empty, .value = .{ .Empty = {} } },
-            String => return value,
+    /// Create a bun.String from a slice. This is never a copy.
+    /// For strings created from static string literals, use `String.static`
+    pub fn init(value: anytype) String {
+        const Type = @TypeOf(value);
+        return switch (Type) {
+            String => value,
+            ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value } },
+            [:0]u8, []u8, [:0]const u8, []const u8 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.fromBytes(value) } },
+            [:0]u16, []u16, [:0]const u16, []const u16 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.from16Slice(value) } },
+            WTFStringImpl => .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = value } },
+            *const ZigString, *ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value.* } },
+            *const [0:0]u8 => .{ .tag = .Empty, .value = .{ .Empty = {} } },
             else => {
-                if (comptime std.meta.trait.isZigString(Type)) {
-                    return static(value);
+                const info = @typeInfo(Type);
+
+                // Zig string literals
+                if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
+                    const child_info = @typeInfo(info.Pointer.child);
+                    if (child_info == .Array and child_info.Array.child == u8) {
+                        if (child_info.Array.len == 0) return String.empty;
+                        return static(value);
+                    }
                 }
 
                 @compileError("Unsupported type for String " ++ @typeName(Type));
             },
-        }
-    }
-
-    pub fn toErrorInstance(this_: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        var this = this_;
-        return JSC__createError(globalObject, &this);
+        };
     }
 
     pub fn static(input: []const u8) String {
@@ -481,8 +486,8 @@ pub const String = extern struct {
         };
     }
 
-    pub fn init(value: anytype) String {
-        return initWithType(@TypeOf(value), value);
+    pub fn toErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC__createError(globalObject, this);
     }
 
     extern fn BunString__createExternal(
@@ -500,11 +505,11 @@ pub const String = extern struct {
     }
 
     pub fn fromUTF8(value: []const u8) String {
-        return String.initWithType(ZigString, ZigString.initUTF8(value));
+        return String.init(ZigString.initUTF8(value));
     }
 
     pub fn fromBytes(value: []const u8) String {
-        return String.initWithType(ZigString, ZigString.fromBytes(value));
+        return String.init(ZigString.fromBytes(value));
     }
 
     pub fn format(self: String, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
@@ -543,12 +548,6 @@ pub const String = extern struct {
         JSC.markBinding(@src());
 
         return BunString__toJSDOMURL(globalObject, this);
-    }
-
-    pub fn toJSConst(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        var a = this.*;
-        return toJS(&a, globalObject);
     }
 
     extern fn BunString__createArray(

@@ -57,7 +57,7 @@ const ValueRef = union(Tag) {
     pub fn asJSValue(this: ValueRef, globalObject: *JSGlobalObject) JSValue {
         return switch (this) {
             .jsvalue => |str| str,
-            .bunstr => |str| return str.toJSConst(globalObject),
+            .bunstr => |str| return str.toJS(globalObject),
         };
     }
 };
@@ -128,7 +128,7 @@ const OptionToken = struct {
             const raw = this.raw.asBunString(globalThis);
             var buf: [8]u8 = undefined;
             var str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
-            return String.fromUTF8(str).toJSConst(globalThis);
+            return String.fromUTF8(str).toJS(globalThis);
         } else {
             switch (this.parse_type) {
                 .lone_short_option, .lone_long_option => {
@@ -137,13 +137,13 @@ const OptionToken = struct {
                 .short_option_and_value => {
                     var raw = this.raw.asBunString(globalThis);
                     var substr = raw.substringWithLen(0, 2);
-                    return substr.toJSConst(globalThis);
+                    return substr.toJS(globalThis);
                 },
                 .long_option_and_value => {
                     var raw = this.raw.asBunString(globalThis);
                     const equal_index = raw.indexOfAsciiChar('=').?;
                     var substr = raw.substringWithLen(0, equal_index);
-                    return substr.toJSConst(globalThis);
+                    return substr.toJS(globalThis);
                 },
             }
         }
@@ -618,7 +618,7 @@ const ParseArgsState = struct {
             // reuse JSValue for the kind names: "positional", "option", "option-terminator"
             var kind_idx = @intFromEnum(token_generic);
             var kind_jsvalue = this.kinds_jsvalues[kind_idx] orelse kindval: {
-                var val = String.static(@as(string, @tagName(token_generic))).toJSConst(globalThis);
+                var val = String.static(@as(string, @tagName(token_generic))).toJS(globalThis);
                 this.kinds_jsvalues[kind_idx] = val;
                 break :kindval val;
             };

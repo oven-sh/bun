@@ -2493,6 +2493,10 @@ pub const BufferedWriter = struct {
         }
     };
 
+    pub fn isDone(this: *BufferedWriter) bool {
+        return this.remain.len == 0 or this.err != null;
+    }
+
     pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
 
     pub fn onReady(this: *BufferedWriter, _: i64) void {
@@ -3524,7 +3528,16 @@ pub const Builtin = struct {
                     },
                     waiting_but_errored: struct {
                         tasks_done: usize,
+                        error_writer: ?BufferedWriter = null,
                     },
+
+                    pub fn tasksDone(this: *@This()) usize {
+                        return switch (this.*) {
+                            .idle => 0,
+                            .waiting => this.waiting.tasks_done,
+                            .waiting_but_errored => this.waiting_but_errored.tasks_done,
+                        };
+                    }
                 },
             },
             done,
@@ -3800,7 +3813,19 @@ pub const Builtin = struct {
         pub fn onBufferedWriterDone(this: *Rm, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
             _ = bufwriter;
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err);
+                std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
+                    (this.state == .exec and
+                    this.state.exec.state == .waiting_but_errored and
+                    this.state.exec.state.waiting_but_errored.error_writer != null));
+            }
+
+            if (this.state.exec.state == .waiting_but_errored) {
+                if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks) {
+                    this.state = .{ .err = this.state.exec.err.? };
+                    _ = this.next();
+                    return;
+                }
+                return;
             }
 
             if (e != null) {
@@ -3911,6 +3936,17 @@ pub const Builtin = struct {
             return .continue_parsing;
         }
 
+        /// Error messages formatted to match bash
+        fn taskErrorToString(this: *Rm, err: Syscall.Error) []const u8 {
+            return switch (err.getErrno()) {
+                bun.C.E.NOENT => this.bltn.fmtErrorArena(.rm, "{s}: No such file or directory\n", .{err.path}),
+                bun.C.E.NAMETOOLONG => this.bltn.fmtErrorArena(.rm, "{s}: File name too long\n", .{err.path}),
+                bun.C.E.ISDIR => this.bltn.fmtErrorArena(.rm, "{s}: is a directory\n", .{err.path}),
+                bun.C.E.NOTEMPTY => this.bltn.fmtErrorArena(.rm, "{s}: Directory not empty\n", .{err.path}),
+                else => err.toSystemError().message.byteSlice(),
+            };
+        }
+
         pub fn asyncTaskDone(this: *Rm, task: *AsyncRmTask) void {
             var exec = &this.state.exec;
             const tasks_done = switch (exec.state) {
@@ -3921,12 +3957,35 @@ pub const Builtin = struct {
                     if (task.err) |err| {
                         if (this.state.exec.err == null) {
                             this.state.exec.err = err;
+                            const error_string = this.taskErrorToString(err);
+
+                            exec.state = .{
+                                .waiting_but_errored = .{
+                                    .tasks_done = amt,
+                                },
+                            };
+
+                            if (this.bltn.stderr.needsIO()) {
+                                exec.state.waiting_but_errored.error_writer = BufferedWriter{
+                                    .fd = this.bltn.stderr.fd,
+                                    .remain = error_string,
+                                    .parent = BufferedWriter.ParentPtr.init(this),
+                                };
+                                exec.state.waiting_but_errored.error_writer.?.writeIfPossible(false);
+                                return;
+                            }
+
+                            switch (this.bltn.writeNoIO(.stderr, error_string)) {
+                                .result => {},
+                                .err => {},
+                            }
+                        } else {
+                            this.state.exec.state = .{
+                                .waiting_but_errored = .{
+                                    .tasks_done = amt,
+                                },
+                            };
                         }
-                        this.state.exec.state = .{
-                            .waiting_but_errored = .{
-                                .tasks_done = amt,
-                            },
-                        };
                     }
                     break :brk amt;
                 },
@@ -3938,13 +3997,20 @@ pub const Builtin = struct {
 
             if (tasks_done >= this.state.exec.total_tasks) {
                 if (exec.state == .waiting_but_errored) {
+                    if (exec.state.waiting_but_errored.error_writer) |*writer| {
+                        if (!writer.isDone()) {
+                            // Need to keep waiting
+                            return;
+                        }
+                    }
+
                     const err = this.state.exec.err.?;
                     this.state = .{
                         .err = err,
                     };
-                } else {
-                    this.state = .done;
                 }
+
+                this.state = .done;
                 _ = this.next();
                 return;
             }

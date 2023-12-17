@@ -29,12 +29,15 @@ pub fn main() void {
         bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
         bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
         bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
+
+        // This fixes printing unicode characters
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
     bun.start_time = std.time.nanoTimestamp();
 
-    var stdout = std.io.getStdOut();
-    var stderr = std.io.getStdErr();
+    const stdout = std.io.getStdOut();
+    const stderr = std.io.getStdErr();
     var output_source = Output.Source.init(stdout, stderr);
 
     Output.Source.set(&output_source);

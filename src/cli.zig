@@ -7,7 +7,6 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const constStrToU8 = bun.constStrToU8;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const root = @import("root");
@@ -269,7 +268,7 @@ pub const Arguments = struct {
         };
 
         defer config_file.close();
-        var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+        const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
                 @errorName(err),
@@ -284,7 +283,7 @@ pub const Arguments = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
         }
-        var original_level = ctx.log.level;
+        const original_level = ctx.log.level;
         defer {
             ctx.log.level = original_level;
         }
@@ -339,7 +338,7 @@ pub const Arguments = struct {
         } else {
             if (ctx.args.absolute_working_dir == null) {
                 var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = bun.getcwd(&secondbuf) catch return;
+                const cwd = bun.getcwd(&secondbuf) catch return;
 
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
@@ -482,7 +481,7 @@ pub const Arguments = struct {
 
         var opts: Api.TransformOptions = ctx.args;
 
-        var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
+        const defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
 
         if (defines_tuple.keys.len > 0) {
             opts.define = .{
@@ -491,7 +490,7 @@ pub const Arguments = struct {
             };
         }
 
-        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -611,8 +610,8 @@ pub const Arguments = struct {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
 
-        var output_dir: ?string = null;
-        var output_file: ?string = null;
+        const output_dir: ?string = null;
+        const output_file: ?string = null;
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
@@ -625,7 +624,7 @@ pub const Arguments = struct {
             if (args.options("--external").len > 0) {
                 var externals = try allocator.alloc([]u8, args.options("--external").len);
                 for (args.options("--external"), 0..) |external, i| {
-                    externals[i] = constStrToU8(external);
+                    externals[i] = @constCast(external);
                 }
                 opts.external = externals;
             }
@@ -754,10 +753,10 @@ pub const Arguments = struct {
             opts.entry_points = entry_points;
         }
 
-        var jsx_factory = args.option("--jsx-factory");
-        var jsx_fragment = args.option("--jsx-fragment");
-        var jsx_import_source = args.option("--jsx-import-source");
-        var jsx_runtime = args.option("--jsx-runtime");
+        const jsx_factory = args.option("--jsx-factory");
+        const jsx_fragment = args.option("--jsx-fragment");
+        const jsx_import_source = args.option("--jsx-import-source");
+        const jsx_runtime = args.option("--jsx-runtime");
         const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
@@ -783,18 +782,18 @@ pub const Arguments = struct {
             var default_import_source = "".*;
             if (opts.jsx == null) {
                 opts.jsx = Api.Jsx{
-                    .factory = constStrToU8(jsx_factory orelse &default_factory),
-                    .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
-                    .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
+                    .factory = (jsx_factory orelse &default_factory),
+                    .fragment = (jsx_fragment orelse &default_fragment),
+                    .import_source = (jsx_import_source orelse &default_import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };
             } else {
                 opts.jsx = Api.Jsx{
-                    .factory = constStrToU8(jsx_factory orelse opts.jsx.?.factory),
-                    .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
-                    .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
+                    .factory = (jsx_factory orelse opts.jsx.?.factory),
+                    .fragment = (jsx_fragment orelse opts.jsx.?.fragment),
+                    .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
@@ -1144,19 +1143,19 @@ pub const Command = struct {
         }
     };
 
+    pub fn isBunX(argv0: []const u8) bool {
+        const suffix = if (Environment.isWindows) ".exe" else "";
+
+        return strings.endsWithComptime(argv0, "bunx" ++ suffix) or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
+    }
+
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = bun.argv() };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
         // symlink is argv[0]
-        if (strings.endsWithComptime(argv0, "bunx"))
-            return .BunxCommand;
-
-        if (comptime Environment.isDebug) {
-            if (strings.endsWithComptime(argv0, "bunx-debug"))
-                return .BunxCommand;
-        }
+        if (isBunX(argv0)) return .BunxCommand;
 
         if (strings.endsWithComptime(argv0, "node")) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
@@ -1283,7 +1282,7 @@ pub const Command = struct {
                 };
 
                 ctx.args.target = Api.Target.bun;
-                var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
+                const argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
                 if (bun.argv().len > 1) {
                     for (argv, bun.argv()[1..]) |*dest, src| {
                         dest.* = bun.span(src);
@@ -1516,10 +1515,10 @@ pub const Command = struct {
                 var positional_i: usize = 0;
 
                 if (args.len > 2) {
-                    var remainder = args[2..];
+                    const remainder = args[2..];
                     var remainder_i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        var slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
+                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
                         if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
                             if (positional_i == 0) {
                                 template_name_start = remainder_i + 2;
@@ -1578,7 +1577,7 @@ pub const Command = struct {
 
                 const create_command_info = try CreateCommand.extractInfo(ctx);
                 const template = create_command_info.template;
-                var example_tag = create_command_info.example_tag;
+                const example_tag = create_command_info.example_tag;
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
@@ -1764,7 +1763,11 @@ pub const Command = struct {
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
+                var winResolver = resolve_path.PosixToWinNormalizer{};
+                break :brk bun.openFile(
+                    winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"),
+                    .{ .mode = .read_only },
+                );
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                 const file_pathZ = brk2: {
                     @memcpy(script_name_buf[0..file_path.len], file_path);
@@ -1786,7 +1789,7 @@ pub const Command = struct {
                 );
                 if (file_path.len == 0) return false;
                 script_name_buf[file_path.len] = 0;
-                var file_pathZ = script_name_buf[0..file_path.len :0];
+                const file_pathZ = script_name_buf[0..file_path.len :0];
                 break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
             }
         };
@@ -1796,7 +1799,7 @@ pub const Command = struct {
         Global.configureAllocator(.{ .long_running = true });
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+        const absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
@@ -1816,6 +1819,9 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
             Global.exit(1);
         };
         return true;
@@ -1846,7 +1852,9 @@ pub const Command = struct {
         ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
-            return &comptime switch (cmd) {
+            // TODO: report zig compiler bug
+            //       moving the "&" before "comptime" causes compiler error.
+            return comptime &switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
                 .RunCommand, .RunAsNodeCommand => Arguments.run_params,
                 .BuildCommand => Arguments.build_params,

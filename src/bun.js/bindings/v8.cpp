@@ -1,5 +1,15 @@
+// This file implements the v8 and node C++ APIs
+//
+// If you have issues linking this file, you probably have to update
+// the code in `napi.zig` at `const V8API`
 #include "root.h"
 #include "ZigGlobalObject.h"
+
+#if defined(WIN32) || defined(_WIN32)
+#define BUN_EXPORT __declspec(dllexport)
+#else
+#define BUN_EXPORT
+#endif
 
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 
@@ -20,12 +30,12 @@ public:
     Isolate() = default;
 
     // Returns the isolate inside which the current thread is running or nullptr.
-    JS_EXPORT static Isolate* TryGetCurrent();
+    BUN_EXPORT static Isolate* TryGetCurrent();
 
     // Returns the isolate inside which the current thread is running.
-    JS_EXPORT static Isolate* GetCurrent();
+    BUN_EXPORT static Isolate* GetCurrent();
 
-    JS_EXPORT Local<Context> GetCurrentContext();
+    BUN_EXPORT Local<Context> GetCurrentContext();
 
     Zig::GlobalObject* globalObject() { return reinterpret_cast<Zig::GlobalObject*>(this); }
     JSC::VM& vm() { return globalObject()->vm(); }
@@ -56,22 +66,14 @@ Local<Context> Isolate::GetCurrentContext()
 
 namespace node {
 
-JS_EXPORT void AddEnvironmentCleanupHook(v8::Isolate* isolate,
-    void (*fun)(void* arg),
-    void* arg);
-
-JS_EXPORT void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
-    void (*fun)(void* arg),
-    void* arg);
-
-void AddEnvironmentCleanupHook(v8::Isolate* isolate,
+BUN_EXPORT void AddEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),
     void* arg)
 {
     // TODO
 }
 
-void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
+BUN_EXPORT void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),
     void* arg)
 {

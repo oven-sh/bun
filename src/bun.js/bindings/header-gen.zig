@@ -91,7 +91,7 @@ pub const C_Generator = struct {
     };
 
     pub fn init(comptime src_file: []const u8, comptime Writer: type, _: Writer) Self {
-        var res = Self{ .filebase = src_file };
+        const res = Self{ .filebase = src_file };
 
         return res;
     }
@@ -344,7 +344,7 @@ pub const C_Generator = struct {
                     Type = OtherType;
                 }
             }
-            if (@typeInfo(Type) == .Pointer and !std.meta.trait.isManyItemPtr(Type)) {
+            if (@typeInfo(Type) == .Pointer and !std.meta.isManyItemPtr(Type)) {
                 Type = @typeInfo(Type).Pointer.child;
             }
 
@@ -474,7 +474,10 @@ const NamedStruct = struct {
 };
 
 pub fn getCStruct(comptime T: type) ?NamedStruct {
-    if (!std.meta.trait.isContainer(T) or (std.meta.trait.isSingleItemPtr(T) and !std.meta.trait.isContainer(std.meta.Child(T)))) {
+    if (!std.meta.isContainer(T) or
+        (std.meta.isSingleItemPtr(T) and
+        !std.meta.isContainer(std.meta.Child(T))))
+    {
         return null;
     }
 
@@ -511,7 +514,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             file: anytype,
             other: std.fs.File,
         ) void {
-            if (comptime std.meta.trait.hasDecls(Type, .{"include"})) {
+            if (@hasDecl(Type, "include")) {
                 comptime var new_name = std.mem.zeroes([Type.include.len]u8);
 
                 comptime {

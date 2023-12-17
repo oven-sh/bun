@@ -1,3 +1,6 @@
+param(
+  [switch]$Baseline = $False
+)
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
@@ -33,6 +36,11 @@ $CXX = "clang-cl"
 $CFLAGS = '/O2'
 $CXXFLAGS = '/O2'
 
+if ($Baseline) {
+  $CFLAGS += ' -march=nehalem'
+  $CXXFLAGS += ' -march=nehalem'
+}
+
 $CMAKE_FLAGS = @(
   "-GNinja",
   "-DCMAKE_BUILD_TYPE=Release",
@@ -47,6 +55,10 @@ $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS
 $env:CXXFLAGS = $CXXFLAGS
 $env:CPUS = $CPUS
+
+if ($Baseline) {
+  $CMAKE_FLAGS += "-DUSE_BASELINE_BUILD=ON"
+}
 
 $null = New-Item -ItemType Directory -Force -Path $BUN_DEPS_OUT_DIR
 

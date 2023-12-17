@@ -1529,12 +1529,12 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
         // TODO(dylan-conway): this is not tested
         var wbuf: bun.MAX_WPATH = undefined;
         const path_to_use = bun.strings.toWPath(&wbuf, subpath);
-        var nt_name = windows.UNICODE_STRING{
+        const nt_name = windows.UNICODE_STRING{
             .Length = path_to_use.len * 2,
             .MaximumLength = path_to_use.len * 2,
             .Buffer = path_to_use,
         };
-        var attr = windows.OBJECT_ATTRIBUTES{
+        const attr = windows.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
             .RootDirectory = bun.toFD(fd),
             .Attributes = 0,
@@ -1542,7 +1542,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
             .SecurityDescriptor = null,
             .SecurityQualityOfService = null,
         };
-        var basic_info: windows.FILE_BASIC_INFORMATION = undefined;
+        const basic_info: windows.FILE_BASIC_INFORMATION = undefined;
         return switch (kernel32.NtQueryAttributesFile(&attr, basic_info)) {
             .SUCCESS => true,
             else => false,

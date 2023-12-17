@@ -3516,6 +3516,7 @@ pub const Builtin = struct {
                 lock: std.Thread.Mutex = std.Thread.Mutex{},
                 total_tasks: usize,
                 error_signal: std.atomic.Atomic(bool) = .{ .value = false },
+                err: ?Syscall.Error = null,
                 state: union(enum) {
                     idle,
                     waiting: struct {
@@ -3740,16 +3741,20 @@ pub const Builtin = struct {
                         // do nothing
                         return Maybe(void).success;
                     },
-                    .done => {
-                        this.bltn.done(0);
-                        return Maybe(void).success;
-                    },
-                    .err => {
-                        this.bltn.done(this.state.err.errno);
-                        return Maybe(void).success;
-                    },
+                    .done, .err => unreachable,
                 }
             }
+
+            if (this.state == .done) {
+                this.bltn.done(0);
+                return Maybe(void).success;
+            }
+
+            if (this.state == .err) {
+                this.bltn.done(this.state.err.errno);
+                return Maybe(void).success;
+            }
+
             return Maybe(void).success;
         }
 
@@ -3868,26 +3873,59 @@ pub const Builtin = struct {
         }
 
         pub fn asyncTaskDone(this: *Rm, task: *AsyncRmTask) void {
-            this.state.exec.state.waiting.tasks_done += 1;
-            if (task.err) |err| {
-                _ = err;
+            var exec = &this.state.exec;
+            const tasks_done = switch (exec.state) {
+                .idle => @panic("Invalid state"),
+                .waiting => brk: {
+                    exec.state.waiting.tasks_done += 1;
+                    const amt = exec.state.waiting.tasks_done;
+                    if (task.err) |err| {
+                        if (this.state.exec.err == null) {
+                            this.state.exec.err = err;
+                        }
+                        this.state.exec.state = .{
+                            .waiting_but_errored = .{
+                                .tasks_done = amt,
+                            },
+                        };
+                    }
+                    break :brk amt;
+                },
+                .waiting_but_errored => brk: {
+                    exec.state.waiting_but_errored.tasks_done += 1;
+                    break :brk exec.state.waiting_but_errored.tasks_done;
+                },
+            };
 
-                // this.
+            if (tasks_done >= this.state.exec.total_tasks) {
+                if (exec.state == .waiting_but_errored) {
+                    const err = this.state.exec.err.?;
+                    this.state = .{
+                        .err = err,
+                    };
+                } else {
+                    this.state = .done;
+                }
+                _ = this.next();
+                return;
             }
-            if (this.state.exec.state.waiting.tasks_done >= this.state.exec.total_tasks) {}
         }
 
         pub const AsyncRmTask = struct {
             const print = bun.Output.scoped(.AsyncRmTask, false);
 
-            rm: *Rm,
+            // const MAX_FDS_OPEN: u8 = 16;
 
+            rm: *Rm,
             opts: Opts,
+
+            root_task: DirTask,
             root_path: bun.PathString = bun.PathString.empty,
             root_is_absolute: bool,
 
+            // fds_opened: u8 = 0,
+
             error_signal: *std.atomic.Atomic(bool),
-            subtask_count: std.atomic.Atomic(usize),
             err_mutex: bun.Lock = bun.Lock.init(),
             err: ?Syscall.Error = null,
 
@@ -3897,33 +3935,84 @@ pub const Builtin = struct {
                 .callback = workPoolCallback,
             },
 
-            const EntryKindHint = enum {
-                idk,
-                file,
-                dir,
-            };
-
-            pub const Subtask = struct {
-                parent_Task: *AsyncRmTask,
+            pub const DirTask = struct {
+                task_manager: *AsyncRmTask,
+                parent_task: ?*DirTask,
                 path: [:0]const u8,
+                subtask_count: std.atomic.Atomic(usize),
+                need_to_wait: bool = false,
                 task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
-                kind: EntryKindHint,
 
                 pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
-                    var this: *Subtask = @fieldParentPtr(Subtask, "task", task);
+                    var this: *DirTask = @fieldParentPtr(DirTask, "task", task);
+                    this.runFromThreadPoolImpl();
+                }
 
-                    defer {
+                fn runFromThreadPoolImpl(this: *DirTask) void {
+                    defer this.postRun();
+
+                    switch (this.task_manager.removeEntry(this, ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]))) {
+                        .err => |err| {
+                            print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                            this.task_manager.err_mutex.lock();
+                            defer this.task_manager.err_mutex.unlock();
+                            if (this.task_manager.err == null) {
+                                this.task_manager.err = err;
+                                this.task_manager.error_signal.store(true, .SeqCst);
+                            }
+                        },
+                        .result => {},
+                    }
+                }
+
+                pub fn postRun(this: *DirTask) void {
+
+                    // All entries including recursive directories were deleted
+                    if (this.need_to_wait) return;
+
+                    if (this.subtask_count.fetchSub(1, .SeqCst) == 1) {
+                        defer this.deinit();
+
+                        // If we have a parent and we are the last child
+                        if (this.parent_task != null and this.parent_task.?.subtask_count.fetchSub(1, .SeqCst) == 2) {
+                            this.parent_task.?.finishAfterWaitingForChildren();
+                            return;
+                        }
+
+                        // Otherwise we are root task
+                        this.task_manager.finishConcurrently();
+                    }
+
+                    // Otherwise need to wait
+                }
+
+                pub fn finishAfterWaitingForChildren(this: *DirTask) void {
+                    this.need_to_wait = false;
+                    defer this.postRun();
+                    if (this.task_manager.error_signal.load(.SeqCst)) {
+                        return;
+                    }
+
+                    switch (this.task_manager.removeEntryDirAfterChildren(this)) {
+                        .err => |e| {
+                            print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
+                            this.task_manager.err_mutex.lock();
+                            defer this.task_manager.err_mutex.unlock();
+                            if (this.task_manager.err != null) {
+                                this.task_manager.err = e;
+                            }
+                        },
+                        .result => {},
+                    }
+                }
+
+                pub fn deinit(this: *DirTask) void {
+                    // The root's path string is from Rm's argv so don't deallocate it
+                    // And root is field on the struct of the AsyncRmTask so don't deallocate it either
+                    if (this.parent_task != null) {
                         bun.default_allocator.free(this.path);
                         bun.default_allocator.destroy(this);
                     }
-
-                    if (this.parent_Task.error_signal.load(.SeqCst)) {
-                        if (this.parent_Task.subtask_count.fetchSub(1, .Monotonic) == 1) {
-                            this.parent_Task.finishConcurrently();
-                        }
-                    }
-
-                    this.parent_Task.removeEntry(this.path, this.kind, false, ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]));
                 }
             };
 
@@ -3933,7 +4022,12 @@ pub const Builtin = struct {
                     .rm = rm,
                     .opts = rm.opts,
                     .root_path = root_path,
-                    .subtask_count = std.atomic.Atomic(usize).init(1),
+                    .root_task = DirTask{
+                        .task_manager = task,
+                        .parent_task = null,
+                        .path = root_path.sliceAssumeZ(),
+                        .subtask_count = std.atomic.Atomic(usize).init(1),
+                    },
                     .event_loop = JSC.VirtualMachine.get().event_loop,
                     .error_signal = error_signal,
                     .root_is_absolute = is_absolute,
@@ -3945,30 +4039,35 @@ pub const Builtin = struct {
                 JSC.WorkPool.schedule(&this.task);
             }
 
-            pub fn enqueue(this: *AsyncRmTask, dir: [:0]const u8, path: [:0]const u8, kind_hint: EntryKindHint, is_absolute: bool) void {
+            pub fn enqueue(this: *AsyncRmTask, parent_dir: *DirTask, path: [:0]const u8, is_absolute: bool) void {
+                if (this.error_signal.load(.SeqCst)) {
+                    return;
+                }
                 const new_path = this.join(
                     bun.default_allocator,
                     &[_][]const u8{
-                        dir[0..dir.len],
+                        parent_dir.path[0..parent_dir.path.len],
                         path[0..path.len],
                     },
                     is_absolute,
                 );
-                this.enqueueNoJoin(new_path, kind_hint);
+                this.enqueueNoJoin(parent_dir, new_path);
             }
 
-            pub fn enqueueNoJoin(this: *AsyncRmTask, path: [:0]const u8, kind_hint: EntryKindHint) void {
+            pub fn enqueueNoJoin(this: *AsyncRmTask, parent_task: *DirTask, path: [:0]const u8) void {
                 if (this.error_signal.load(.SeqCst)) {
                     return;
                 }
 
-                var subtask = bun.default_allocator.create(Subtask) catch bun.outOfMemory();
-                subtask.* = Subtask{
-                    .parent_Task = this,
+                var subtask = bun.default_allocator.create(DirTask) catch bun.outOfMemory();
+                subtask.* = DirTask{
+                    .task_manager = this,
                     .path = path,
-                    .kind = kind_hint,
+                    .parent_task = parent_task,
+                    .subtask_count = std.atomic.Atomic(usize).init(1),
                 };
-                std.debug.assert(this.subtask_count.fetchAdd(1, .Monotonic) > 0);
+                std.debug.assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+                print("enqueue: {s}", .{path});
                 JSC.WorkPool.schedule(&subtask.task);
             }
 
@@ -3976,30 +4075,6 @@ pub const Builtin = struct {
                 print("deleted: {s}", .{path[0..path.len]});
                 _ = this;
                 return Maybe(void).success;
-            }
-
-            pub fn removeEntry(this: *AsyncRmTask, path: [:0]const u8, kind_hint: EntryKindHint, comptime is_root: bool, is_absolute: bool) void {
-                switch (this.removeEntryImpl(path, kind_hint, is_root, is_absolute)) {
-                    .err => |err| {
-                        {
-                            this.err_mutex.lock();
-                            defer this.err_mutex.unlock();
-                            if (this.err == null) {
-                                const err_path = if (err.path.len > 0) err.path else this.root_path.slice();
-                                this.err = err.withPath(bun.default_allocator.dupe(u8, err_path) catch "");
-                            }
-                        }
-
-                        if (this.subtask_count.fetchSub(1, .Monotonic) == 1) {
-                            this.finishConcurrently();
-                        }
-                    },
-                    .result => {
-                        if (this.subtask_count.fetchSub(1, .Monotonic) == 1) {
-                            this.finishConcurrently();
-                        }
-                    },
-                }
             }
 
             pub fn finishConcurrently(this: *AsyncRmTask) void {
@@ -4011,34 +4086,13 @@ pub const Builtin = struct {
                 return .{ .result = std.fs.path.joinZ(fixed_buf_allocator.allocator(), parts) catch return Maybe([:0]u8).initErr(Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, syscall_tag)) };
             }
 
-            pub fn removeEntryImpl(this: *AsyncRmTask, path: [:0]const u8, kind_hint: EntryKindHint, comptime is_root: bool, is_absolute: bool) Maybe(void) {
+            pub fn removeEntry(this: *AsyncRmTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                return switch (kind_hint) {
-                    .dir, .idk => this.removeEntryDir(path, is_root, is_absolute, &buf),
-                    .file => {
-                        if (!is_root) return this.removeEntryFile(path, is_root);
-
-                        const parent_path = this.root_path.sliceAssumeZ();
-                        const joined = switch (AsyncRmTask.bufJoin(
-                            &buf,
-                            &[_][]const u8{
-                                parent_path[0..parent_path.len],
-                                path[0..path.len],
-                            },
-                            .unlink,
-                        )) {
-                            .err => |e| return .{ .err = e },
-                            .result => |p| p,
-                        };
-
-                        return this.removeEntryFile(joined, is_root);
-                    },
-                };
+                return this.removeEntryDir(dir_task, is_absolute, &buf);
             }
 
-            fn removeEntryDir(this: *AsyncRmTask, path: [:0]const u8, comptime is_root: bool, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
-
-                // const dirfd = if (is_root) bun.toFD(std.fs.cwd().fd) else this.root_fd;
+            fn removeEntryDir(this: *AsyncRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                const path = dir_task.path;
                 const dirfd = bun.toFD(std.fs.cwd().fd);
                 const flags = os.O.DIRECTORY | os.O.RDONLY;
                 const fd = switch (Syscall.openat(dirfd, path, flags, 0)) {
@@ -4046,25 +4100,22 @@ pub const Builtin = struct {
                     .err => |e| {
                         switch (e.getErrno()) {
                             bun.C.E.NOENT => {
-                                if (this.opts.force) {
-                                    return this.verboseDeleted(path);
-                                }
+                                if (this.opts.force) return this.verboseDeleted(path);
                                 return .{ .err = this.errorWithPath(e, path) };
                             },
                             bun.C.E.NOTDIR => {
-                                return this.removeEntryFile(path, is_root);
+                                return this.removeEntryFile(dir_task, dir_task.path);
                             },
                             else => return .{ .err = this.errorWithPath(e, path) },
                         }
                     },
                 };
+                defer {
+                    _ = Syscall.close(fd);
+                }
 
                 if (this.error_signal.load(.SeqCst)) {
                     return Maybe(void).success;
-                }
-
-                defer {
-                    _ = Syscall.close(fd);
                 }
 
                 var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) });
@@ -4083,7 +4134,7 @@ pub const Builtin = struct {
                     defer i += 1;
                     switch (current.kind) {
                         .directory => {
-                            this.enqueue(path, current.name.sliceAssumeZ(), .dir, is_absolute);
+                            this.enqueue(dir_task, current.name.sliceAssumeZ(), is_absolute);
                         },
                         else => {
                             const name = current.name.sliceAssumeZ();
@@ -4099,7 +4150,7 @@ pub const Builtin = struct {
                                 .result => |p| p,
                             };
 
-                            switch (this.removeEntryFile(file_path, false)) {
+                            switch (this.removeEntryFile(dir_task, file_path)) {
                                 .err => |e| return .{ .err = this.errorWithPath(e, current.name.sliceAssumeZ()) },
                                 .result => {},
                             }
@@ -4107,13 +4158,32 @@ pub const Builtin = struct {
                     }
                 }
 
-                switch (Syscall.unlinkatWithFlags(fd, ".", std.os.AT.REMOVEDIR)) {
-                    .result => return this.verboseDeleted(path),
+                // Need to wait for children to finish
+                if (dir_task.subtask_count.load(.SeqCst) > 1) {
+                    dir_task.need_to_wait = true;
+                    return Maybe(void).success;
+                }
+
+                if (this.error_signal.load(.SeqCst)) return Maybe(void).success;
+
+                switch (Syscall.unlinkatWithFlags(dirfd, path, std.os.AT.REMOVEDIR)) {
+                    .result => {
+                        switch (this.verboseDeleted(path)) {
+                            .err => |e| return .{ .err = e },
+                            else => {},
+                        }
+                        return Maybe(void).success;
+                    },
                     .err => |e| {
                         switch (e.getErrno()) {
                             bun.C.E.NOENT => {
-                                if (this.opts.force)
-                                    return this.verboseDeleted(path);
+                                if (this.opts.force) {
+                                    switch (this.verboseDeleted(path)) {
+                                        .err => |e2| return .{ .err = e2 },
+                                        else => {},
+                                    }
+                                    return Maybe(void).success;
+                                }
 
                                 return .{ .err = this.errorWithPath(e, path) };
                             },
@@ -4123,9 +4193,81 @@ pub const Builtin = struct {
                 }
             }
 
-            fn removeEntryFile(this: *AsyncRmTask, path: [:0]const u8, comptime is_root: bool) Maybe(void) {
-                _ = is_root;
+            fn removeEntryDirAfterChildren(this: *AsyncRmTask, dir_task: *DirTask) Maybe(void) {
+                const dirfd = bun.toFD(std.fs.cwd().fd);
+                var treat_as_dir = true;
+                const fd: bun.FileDescriptor = handle_entry: while (true) {
+                    if (treat_as_dir) {
+                        switch (Syscall.openat(dirfd, dir_task.path, os.O.DIRECTORY | os.O.RDONLY, 0)) {
+                            .err => |e| switch (e.getErrno()) {
+                                bun.C.E.NOENT => {
+                                    if (this.opts.force) {
+                                        if (this.verboseDeleted(dir_task.path).asErr()) |e2| return .{ .err = e2 };
+                                        return Maybe(void).success;
+                                    }
+                                    return .{ .err = e };
+                                },
+                                bun.C.E.NOTDIR => {
+                                    treat_as_dir = false;
+                                    continue;
+                                },
+                                else => return .{ .err = e },
+                            },
+                            .result => |fd| break :handle_entry fd,
+                        }
+                    } else {
+                        if (Syscall.unlinkat(dirfd, dir_task.path).asErr()) |e| {
+                            switch (e.getErrno()) {
+                                bun.C.E.NOENT => {
+                                    if (this.opts.force) {
+                                        if (this.verboseDeleted(dir_task.path).asErr()) |e2| return .{ .err = e2 };
+                                        return Maybe(void).success;
+                                    }
+                                    return .{ .err = e };
+                                },
+                                bun.C.E.ISDIR => {
+                                    treat_as_dir = true;
+                                    continue;
+                                },
+                                bun.C.E.PERM => {
+                                    // TODO should check if dir
+                                    return .{ .err = e };
+                                },
+                                else => return .{ .err = e },
+                            }
+                        }
+                        return Maybe(void).success;
+                    }
+                };
 
+                defer {
+                    _ = Syscall.close(fd);
+                }
+
+                switch (Syscall.unlinkatWithFlags(dirfd, dir_task.path, std.os.AT.REMOVEDIR)) {
+                    .result => {
+                        switch (this.verboseDeleted(dir_task.path)) {
+                            .err => |e| return .{ .err = e },
+                            else => {},
+                        }
+                        return Maybe(void).success;
+                    },
+                    .err => |e| {
+                        switch (e.getErrno()) {
+                            bun.C.E.NOENT => {
+                                if (this.opts.force) {
+                                    if (this.verboseDeleted(dir_task.path).asErr()) |e2| return .{ .err = e2 };
+                                    return Maybe(void).success;
+                                }
+                                return .{ .err = e };
+                            },
+                            else => return .{ .err = e },
+                        }
+                    },
+                }
+            }
+
+            fn removeEntryFile(this: *AsyncRmTask, parent_dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
                 const dirfd = bun.toFD(std.fs.cwd().fd);
                 switch (Syscall.unlinkatWithFlags(dirfd, path, 0)) {
                     .result => return this.verboseDeleted(path),
@@ -4138,7 +4280,7 @@ pub const Builtin = struct {
                                 return .{ .err = this.errorWithPath(e, path) };
                             },
                             bun.C.E.ISDIR => {
-                                this.enqueueNoJoin(path, .dir);
+                                this.enqueueNoJoin(parent_dir_task, path);
                                 return Maybe(void).success;
                             },
                             // This might happen if the file is actually a directory
@@ -4158,7 +4300,7 @@ pub const Builtin = struct {
                                                     return switch (e2.getErrno()) {
                                                         // not empty, process directory as we would normally
                                                         bun.C.E.NOTEMPTY => {
-                                                            this.enqueueNoJoin(path, .dir);
+                                                            this.enqueueNoJoin(parent_dir_task, path);
                                                             return Maybe(void).success;
                                                         },
                                                         // actually a file, the error is a permissions error
@@ -4203,7 +4345,7 @@ pub const Builtin = struct {
 
             pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
                 var this: *AsyncRmTask = @fieldParentPtr(AsyncRmTask, "task", task);
-                this.removeEntry(this.root_path.sliceAssumeZ(), .idk, true, this.root_is_absolute);
+                this.root_task.runFromThreadPoolImpl();
             }
 
             pub fn runFromJs(this: *AsyncRmTask) void {

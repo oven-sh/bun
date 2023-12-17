@@ -94,6 +94,11 @@ pub fn Maybe(comptime ResultType: type) type {
             return .{ .err = e };
         }
 
+        pub inline fn asErr(this: *const @This()) ?Syscall.Error {
+            if (this.* == .err) return this.err;
+            return null;
+        }
+
         pub inline fn initResult(result: ReturnType) Maybe(ReturnType) {
             return .{ .result = result };
         }

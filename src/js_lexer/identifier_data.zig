@@ -65,7 +65,7 @@ const id_start: IDStartType = brk: {
     @setEvalBranchQuota(999999);
     while (i < start_codepoints_including_ascii.len) : (i += 2) {
         var min = start_codepoints_including_ascii[i];
-        var max = start_codepoints_including_ascii[i + 1];
+        const max = start_codepoints_including_ascii[i + 1];
         while (min <= max) : (min += 1) {
             @setEvalBranchQuota(999999);
             bits.set(id_start_range[1] - min);
@@ -80,7 +80,7 @@ const id_continue: IDContinueType = brk: {
 
     while (i < part_codepoints_including_ascii.len) : (i += 2) {
         var min = part_codepoints_including_ascii[i];
-        var max = part_codepoints_including_ascii[i + 1];
+        const max = part_codepoints_including_ascii[i + 1];
         @setEvalBranchQuota(999999);
         while (min <= max) : (min += 1) {
             @setEvalBranchQuota(999999);
@@ -96,8 +96,8 @@ pub fn main() anyerror!void {
     var id_start_cached = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
     var id_continue_cached = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
 
-    var id_continue_data = std.mem.asBytes(&id_continue.masks);
-    var id_start_data = std.mem.asBytes(&id_start.masks);
+    const id_continue_data = std.mem.asBytes(&id_continue.masks);
+    const id_start_data = std.mem.asBytes(&id_start.masks);
 
     try std.os.chdir(std.fs.path.dirname(@src().file).?);
     var start = try std.fs.cwd().createFileZ("id_start_bitset.meta.blob", .{ .truncate = true });
@@ -122,19 +122,19 @@ test "Check" {
     const id_continue_cached_correct = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
     try std.os.chdir(std.fs.path.dirname(@src().file).?);
     var start_cached = try std.fs.cwd().openFileZ("id_start_bitset.meta.blob", .{ .mode = .read_only });
-    var start_cached_data = try start_cached.readToEndAlloc(std.heap.c_allocator, 4096);
+    const start_cached_data = try start_cached.readToEndAlloc(std.heap.c_allocator, 4096);
 
     try std.testing.expectEqualSlices(u8, start_cached_data, std.mem.asBytes(&id_start_cached_correct));
 
     var continue_cached = try std.fs.cwd().openFileZ("id_continue_bitset.meta.blob", .{ .mode = .read_only });
-    var continue_cached_data = try continue_cached.readToEndAlloc(std.heap.c_allocator, 4096);
+    const continue_cached_data = try continue_cached.readToEndAlloc(std.heap.c_allocator, 4096);
 
     try std.testing.expectEqualSlices(u8, continue_cached_data, std.mem.asBytes(&id_continue_cached_correct));
 
     var start_blob_file = try std.fs.cwd().openFileZ("id_start_bitset.blob", .{ .mode = .read_only });
-    var start_blob_data = try start_blob_file.readToEndAlloc(std.heap.c_allocator, try start_blob_file.getEndPos());
+    const start_blob_data = try start_blob_file.readToEndAlloc(std.heap.c_allocator, try start_blob_file.getEndPos());
     var continue_blob_file = try std.fs.cwd().openFileZ("id_continue_bitset.blob", .{ .mode = .read_only });
-    var continue_blob_data = try continue_blob_file.readToEndAlloc(std.heap.c_allocator, try continue_blob_file.getEndPos());
+    const continue_blob_data = try continue_blob_file.readToEndAlloc(std.heap.c_allocator, try continue_blob_file.getEndPos());
 
     try std.testing.expectEqualSlices(u8, start_blob_data, std.mem.asBytes(&id_start.masks));
     try std.testing.expectEqualSlices(u8, continue_blob_data, std.mem.asBytes(&id_continue.masks));
@@ -144,16 +144,16 @@ test "Check #2" {
     const id_start_cached_correct = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
     const id_continue_cached_correct = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
     try std.os.chdir(std.fs.path.dirname(@src().file).?);
-    var start_cached_data = std.mem.asBytes(&Cache.id_start_meta);
+    const start_cached_data = std.mem.asBytes(&Cache.id_start_meta);
 
     try std.testing.expectEqualSlices(u8, start_cached_data, std.mem.asBytes(&id_start_cached_correct));
 
-    var continue_cached_data = std.mem.asBytes(&Cache.id_continue_meta);
+    const continue_cached_data = std.mem.asBytes(&Cache.id_continue_meta);
 
     try std.testing.expectEqualSlices(u8, continue_cached_data, std.mem.asBytes(&id_continue_cached_correct));
 
-    var start_blob_data = Cache.id_start_masks;
-    var continue_blob_data = Cache.id_continue_masks;
+    const start_blob_data = Cache.id_start_masks;
+    const continue_blob_data = Cache.id_continue_masks;
 
     try std.testing.expectEqualSlices(u8, start_blob_data, std.mem.asBytes(&id_start.masks));
     try std.testing.expectEqualSlices(u8, continue_blob_data, std.mem.asBytes(&id_continue.masks));

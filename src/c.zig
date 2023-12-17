@@ -265,7 +265,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 allocator.free(slice);
             }
 
-            var b = "/boot/system/runtime_loader";
+            const b = "/boot/system/runtime_loader";
             const item = try allocator.dupeZ(u8, mem.sliceTo(b, 0));
             errdefer allocator.free(item);
             try paths.append(item);

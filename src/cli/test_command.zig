@@ -116,7 +116,7 @@ pub const CommandLineReporter = struct {
             parent_ = scope.parent;
         }
 
-        var scopes: []*jest.DescribeScope = scopes_stack.slice();
+        const scopes: []*jest.DescribeScope = scopes_stack.slice();
 
         const display_label = if (label.len > 0) label else "test";
 
@@ -165,7 +165,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        const writer_: std.fs.File.Writer = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
@@ -275,7 +275,7 @@ pub const CommandLineReporter = struct {
 
         while (iter.next()) |entry| {
             const value: bun.sourcemap.ByteRangeMapping = entry.*;
-            var utf8 = value.source_url.slice();
+            const utf8 = value.source_url.slice();
             byte_ranges.appendAssumeCapacity(value);
             max_filepath_length = @max(bun.path.relative(relative_dir, utf8).len, max_filepath_length);
         }
@@ -288,7 +288,7 @@ pub const CommandLineReporter = struct {
 
         iter = map.valueIterator();
         var writer = Output.errorWriter();
-        var base_fraction = opts.fractions;
+        const base_fraction = opts.fractions;
         var failing = false;
 
         writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
@@ -383,7 +383,7 @@ const Scanner = struct {
     }
 
     pub fn scan(this: *Scanner, path_literal: string) void {
-        var parts = &[_]string{ this.fs.top_level_dir, path_literal };
+        const parts = &[_]string{ this.fs.top_level_dir, path_literal };
         const path = this.fs.absBuf(parts, &this.scan_dir_buf);
 
         var root = this.readDirWithName(path, null) catch |err| {
@@ -410,24 +410,24 @@ const Scanner = struct {
 
         while (this.dirs_to_scan.readItem()) |entry| {
             if (!Environment.isWindows) {
-                var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
-                var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
+                const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 this.open_dir_buf[path2.len] = 0;
-                var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-                var child_dir = bun.openDir(dir, pathZ) catch continue;
+                const pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
+                const child_dir = bun.openDir(dir, pathZ) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                FileSystem.setMaxFd(child_dir.dir.fd);
-                _ = this.readDirWithName(path2, child_dir.dir) catch continue;
+                FileSystem.setMaxFd(child_dir.fd);
+                _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
-                var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
-                var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
+                const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
-                var child_dir = bun.openDirAbsolute(path2) catch continue;
+                const child_dir = bun.openDirAbsolute(path2) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
@@ -544,7 +544,7 @@ const Scanner = struct {
                 this.search_count += 1;
                 if (!this.couldBeTestFile(name)) return;
 
-                var parts = &[_]string{ entry.dir, entry.base() };
+                const parts = &[_]string{ entry.dir, entry.base() };
                 const path = this.fs.absBuf(parts, &this.open_dir_buf);
 
                 if (!this.doesAbsolutePathMatchFilter(path)) {
@@ -579,10 +579,10 @@ pub const TestCommand = struct {
         Output.flush();
 
         var env_loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
-            var loader = try ctx.allocator.create(DotEnv.Loader);
+            const loader = try ctx.allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
@@ -937,10 +937,10 @@ pub const TestCommand = struct {
             files: []const PathString,
             allocator: std.mem.Allocator,
             pub fn begin(this: *@This()) void {
-                var reporter = this.reporter;
-                var vm = this.vm;
+                const reporter = this.reporter;
+                const vm = this.vm;
                 var files = this.files;
-                var allocator = this.allocator;
+                const allocator = this.allocator;
                 std.debug.assert(files.len > 0);
 
                 if (files.len > 1) {
@@ -988,8 +988,8 @@ pub const TestCommand = struct {
             Output.flush();
         }
 
-        var file_start = reporter.jest.files.len;
-        var resolution = try vm.bundler.resolveEntryPoint(file_name);
+        const file_start = reporter.jest.files.len;
+        const resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
 
         const file_path = resolution.path_pair.primary.text;
@@ -1000,7 +1000,7 @@ pub const TestCommand = struct {
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
         const file_prefix = if (Output.is_github_action) "::group::" else "";
 
-        var repeat_count = reporter.repeat_count;
+        const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
@@ -1015,7 +1015,7 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    var result = promise.result(vm.global.vm());
+                    const result = promise.result(vm.global.vm());
                     vm.runErrorHandler(result, null);
                     reporter.summary.fail += 1;
 

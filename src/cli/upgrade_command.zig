@@ -200,7 +200,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var api_url = URL.parse(
+        const api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
                 "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
@@ -229,7 +229,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -426,7 +426,7 @@ pub const UpgradeCommand = struct {
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -491,8 +491,8 @@ pub const UpgradeCommand = struct {
             };
         }
 
-        var zip_url = URL.parse(version.zip_url);
-        var http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const zip_url = URL.parse(version.zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
 
         {
             var refresher = std.Progress{};
@@ -558,18 +558,18 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir_it = save_dir_.makeOpenPathIterable(version_name, .{}) catch {
+            const save_dir_it = save_dir_.makeOpenPath(version_name, .{}) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };
-            const save_dir = save_dir_it.dir;
-            var tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
+            const save_dir = save_dir_it;
+            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
             };
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
-            var tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
+            const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
             _ = bun.sys.chdir(tmpdir_z);
 
             const tmpname = "bun.zip";
@@ -632,7 +632,7 @@ pub const UpgradeCommand = struct {
                     }
                 } else if (Environment.isWindows) {
                     // Run a powershell script to unzip the file
-                    var unzip_script = try std.fmt.allocPrint(
+                    const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
                         "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path {s} {s} -Force",
                         .{
@@ -740,21 +740,21 @@ pub const UpgradeCommand = struct {
                 }
             }
 
-            var destination_executable_ = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
+            const destination_executable_ = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
             current_executable_buf[destination_executable_.len] = 0;
 
-            var target_filename_ = std.fs.path.basename(destination_executable_);
-            var target_filename = current_executable_buf[destination_executable_.len - target_filename_.len ..][0..target_filename_.len :0];
-            var target_dir_ = std.fs.path.dirname(destination_executable_) orelse return error.UpgradeFailedBecauseOfMissingExecutableDir;
+            const target_filename_ = std.fs.path.basename(destination_executable_);
+            const target_filename = current_executable_buf[destination_executable_.len - target_filename_.len ..][0..target_filename_.len :0];
+            const target_dir_ = std.fs.path.dirname(destination_executable_) orelse return error.UpgradeFailedBecauseOfMissingExecutableDir;
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
-            var target_dirname = current_executable_buf[0..target_dir_.len :0];
-            var target_dir_it = std.fs.openIterableDirAbsoluteZ(target_dirname, .{}) catch |err| {
+            const target_dirname = current_executable_buf[0..target_dir_.len :0];
+            const target_dir_it = std.fs.openDirAbsoluteZ(target_dirname, .{}) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open Bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            var target_dir = target_dir_it.dir;
+            var target_dir = target_dir_it;
 
             if (use_canary) {
 
@@ -772,7 +772,7 @@ pub const UpgradeCommand = struct {
                 };
 
                 if (target_stat.size == dest_stat.size and target_stat.size > 0) {
-                    var input_buf = try ctx.allocator.alloc(u8, target_stat.size);
+                    const input_buf = try ctx.allocator.alloc(u8, target_stat.size);
 
                     const target_hash = bun.hash(target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
@@ -895,7 +895,7 @@ pub const UpgradeCommand = struct {
             if (Environment.isWindows) {
                 if (outdated_filename) |to_remove| {
                     current_executable_buf[target_dir_.len] = '\\';
-                    var delete_old_script = try std.fmt.allocPrint(
+                    const delete_old_script = try std.fmt.allocPrint(
                         ctx.allocator,
                         // What is this?
                         // 1. spawns powershell

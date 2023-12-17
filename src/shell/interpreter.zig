@@ -3644,6 +3644,50 @@ pub const Builtin = struct {
                                         }
                                         const filepath_args_start = idx;
                                         const filepath_args = parse_opts.args_slice[filepath_args_start..];
+
+                                        // Check that non of the paths will delete the root
+                                        {
+                                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                            const cwd = switch (Syscall.getcwd(&buf)) {
+                                                .err => |err| {
+                                                    return .{ .err = err };
+                                                },
+                                                .result => |cwd| cwd,
+                                            };
+
+                                            for (filepath_args) |filepath| {
+                                                const path = filepath[0..std.mem.len(filepath)];
+                                                const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
+                                                const is_root = if (comptime bun.Environment.isWindows) brk: {
+                                                    const disk_designator = std.fs.path.diskDesignator(resolved_path);
+                                                    // TODO is this check correct?
+                                                    break :brk std.mem.eql(u8, disk_designator, resolved_path);
+                                                } else std.mem.eql(u8, resolved_path, "/");
+
+                                                if (is_root) {
+                                                    const error_string = this.bltn.fmtErrorArena(.rm, "\"{s}\" may not be removed\n", .{resolved_path});
+                                                    if (this.bltn.stderr.needsIO()) {
+                                                        parse_opts.state = .{
+                                                            .wait_write_err = BufferedWriter{
+                                                                .fd = this.bltn.stderr.fd,
+                                                                .remain = error_string,
+                                                                .parent = BufferedWriter.ParentPtr.init(this),
+                                                            },
+                                                        };
+                                                        parse_opts.state.wait_write_err.writeIfPossible(false);
+                                                        return Maybe(void).success;
+                                                    }
+
+                                                    switch (this.bltn.writeNoIO(.stderr, error_string)) {
+                                                        .result => {},
+                                                        .err => |e| return Maybe(void).initErr(e),
+                                                    }
+                                                    this.bltn.done(1);
+                                                    return Maybe(void).success;
+                                                }
+                                            }
+                                        }
+
                                         const total_tasks = filepath_args.len;
                                         this.state = .{
                                             .exec = .{
@@ -3936,11 +3980,21 @@ pub const Builtin = struct {
                 path: [:0]const u8,
                 subtask_count: std.atomic.Atomic(usize),
                 need_to_wait: bool = false,
+                kind_hint: EntryKindHint,
                 task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
+
+                const EntryKindHint = enum { idk, dir, file };
 
                 pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
                     var this: *DirTask = @fieldParentPtr(DirTask, "task", task);
                     this.runFromThreadPoolImpl();
+                }
+
+                fn runFromThreadPoolAsRoot(this: *DirTask) void {
+                    _ = this;
+
+                    // Check that the resolved path does not point to the root directory
+                    {}
                 }
 
                 fn runFromThreadPoolImpl(this: *DirTask) void {
@@ -3954,9 +4008,23 @@ pub const Builtin = struct {
                             if (this.task_manager.err == null) {
                                 this.task_manager.err = err;
                                 this.task_manager.error_signal.store(true, .SeqCst);
+                            } else {
+                                bun.default_allocator.free(err.path);
                             }
                         },
                         .result => {},
+                    }
+                }
+
+                fn handleErr(this: *DirTask, err: Syscall.Error) void {
+                    print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                    this.task_manager.err_mutex.lock();
+                    defer this.task_manager.err_mutex.unlock();
+                    if (this.task_manager.err == null) {
+                        this.task_manager.err = err;
+                        this.task_manager.error_signal.store(true, .SeqCst);
+                    } else {
+                        bun.default_allocator.free(err.path);
                     }
                 }
 
@@ -3993,8 +4061,10 @@ pub const Builtin = struct {
                             print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
                             this.task_manager.err_mutex.lock();
                             defer this.task_manager.err_mutex.unlock();
-                            if (this.task_manager.err != null) {
+                            if (this.task_manager.err == null) {
                                 this.task_manager.err = e;
+                            } else {
+                                bun.default_allocator.free(e.path);
                             }
                         },
                         .result => {},
@@ -4022,6 +4092,7 @@ pub const Builtin = struct {
                         .parent_task = null,
                         .path = root_path.sliceAssumeZ(),
                         .subtask_count = std.atomic.Atomic(usize).init(1),
+                        .kind_hint = .idk,
                     },
                     .event_loop = JSC.VirtualMachine.get().event_loop,
                     .error_signal = error_signal,
@@ -4034,7 +4105,7 @@ pub const Builtin = struct {
                 JSC.WorkPool.schedule(&this.task);
             }
 
-            pub fn enqueue(this: *AsyncRmTask, parent_dir: *DirTask, path: [:0]const u8, is_absolute: bool) void {
+            pub fn enqueue(this: *AsyncRmTask, parent_dir: *DirTask, path: [:0]const u8, is_absolute: bool, kind_hint: DirTask.EntryKindHint) void {
                 if (this.error_signal.load(.SeqCst)) {
                     return;
                 }
@@ -4046,10 +4117,10 @@ pub const Builtin = struct {
                     },
                     is_absolute,
                 );
-                this.enqueueNoJoin(parent_dir, new_path);
+                this.enqueueNoJoin(parent_dir, new_path, kind_hint);
             }
 
-            pub fn enqueueNoJoin(this: *AsyncRmTask, parent_task: *DirTask, path: [:0]const u8) void {
+            pub fn enqueueNoJoin(this: *AsyncRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
                 if (this.error_signal.load(.SeqCst)) {
                     return;
                 }
@@ -4060,6 +4131,7 @@ pub const Builtin = struct {
                     .path = path,
                     .parent_task = parent_task,
                     .subtask_count = std.atomic.Atomic(usize).init(1),
+                    .kind_hint = kind_hint,
                 };
                 std.debug.assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
                 print("enqueue: {s}", .{path});
@@ -4083,10 +4155,17 @@ pub const Builtin = struct {
 
             pub fn removeEntry(this: *AsyncRmTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                return this.removeEntryDir(dir_task, is_absolute, &buf);
+                switch (dir_task.kind_hint) {
+                    .idk, .file => return this.removeEntryFile(dir_task, dir_task.path, is_absolute, &buf, false),
+                    .dir => return this.removeEntryDir(dir_task, is_absolute, &buf),
+                }
             }
 
             fn removeEntryDir(this: *AsyncRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                if (!(this.opts.recursive or this.opts.remove_empty_dirs)) {
+                    return Maybe(void).initErr(Syscall.Error.fromCode(bun.C.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
+                }
+
                 const path = dir_task.path;
                 const dirfd = bun.toFD(std.fs.cwd().fd);
                 const flags = os.O.DIRECTORY | os.O.RDONLY;
@@ -4129,7 +4208,7 @@ pub const Builtin = struct {
                     defer i += 1;
                     switch (current.kind) {
                         .directory => {
-                            this.enqueue(dir_task, current.name.sliceAssumeZ(), is_absolute);
+                            this.enqueue(dir_task, current.name.sliceAssumeZ(), is_absolute, .dir);
                         },
                         else => {
                             const name = current.name.sliceAssumeZ();
@@ -4283,7 +4362,7 @@ pub const Builtin = struct {
                             },
                             bun.C.E.ISDIR => {
                                 if (comptime is_file_in_dir) {
-                                    this.enqueueNoJoin(parent_dir_task, path);
+                                    this.enqueueNoJoin(parent_dir_task, path, .dir);
                                     return Maybe(void).success;
                                 }
                                 return this.removeEntryDir(parent_dir_task, is_absolute, buf);
@@ -4305,7 +4384,7 @@ pub const Builtin = struct {
                                                     return switch (e2.getErrno()) {
                                                         // not empty, process directory as we would normally
                                                         bun.C.E.NOTEMPTY => {
-                                                            this.enqueueNoJoin(parent_dir_task, path);
+                                                            this.enqueueNoJoin(parent_dir_task, path, .dir);
                                                             return Maybe(void).success;
                                                         },
                                                         // actually a file, the error is a permissions error
@@ -4316,8 +4395,12 @@ pub const Builtin = struct {
                                             };
                                         }
 
-                                        // TODO might be better to check that if not a directory here
-                                        return .{ .err = this.errorWithPath(e, path) };
+                                        // We don't know if it was an actual permissions error or it was a directory so we need to try to delete it as a directory
+                                        if (comptime is_file_in_dir) {
+                                            this.enqueueNoJoin(parent_dir_task, path, .dir);
+                                            return Maybe(void).success;
+                                        }
+                                        return this.removeEntryDir(parent_dir_task, is_absolute, buf);
                                     },
                                     else => {},
                                 }

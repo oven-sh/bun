@@ -3644,11 +3644,6 @@ pub const Builtin = struct {
                                         }
                                         const filepath_args_start = idx;
                                         const filepath_args = parse_opts.args_slice[filepath_args_start..];
-                                        const cwd_fd = switch (Syscall.open(".", os.O.DIRECTORY | os.O.RDONLY, 0)) {
-                                            .result => |fd| fd,
-                                            .err => |e| return Maybe(void).initErr(e),
-                                        };
-                                        _ = cwd_fd;
                                         const total_tasks = filepath_args.len;
                                         this.state = .{
                                             .exec = .{
@@ -4104,7 +4099,7 @@ pub const Builtin = struct {
                                 return .{ .err = this.errorWithPath(e, path) };
                             },
                             bun.C.E.NOTDIR => {
-                                return this.removeEntryFile(dir_task, dir_task.path);
+                                return this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, false);
                             },
                             else => return .{ .err = this.errorWithPath(e, path) },
                         }
@@ -4150,7 +4145,7 @@ pub const Builtin = struct {
                                 .result => |p| p,
                             };
 
-                            switch (this.removeEntryFile(dir_task, file_path)) {
+                            switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, true)) {
                                 .err => |e| return .{ .err = this.errorWithPath(e, current.name.sliceAssumeZ()) },
                                 .result => {},
                             }
@@ -4267,7 +4262,14 @@ pub const Builtin = struct {
                 }
             }
 
-            fn removeEntryFile(this: *AsyncRmTask, parent_dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
+            fn removeEntryFile(
+                this: *AsyncRmTask,
+                parent_dir_task: *DirTask,
+                path: [:0]const u8,
+                is_absolute: bool,
+                buf: *[bun.MAX_PATH_BYTES]u8,
+                comptime is_file_in_dir: bool,
+            ) Maybe(void) {
                 const dirfd = bun.toFD(std.fs.cwd().fd);
                 switch (Syscall.unlinkatWithFlags(dirfd, path, 0)) {
                     .result => return this.verboseDeleted(path),
@@ -4280,8 +4282,11 @@ pub const Builtin = struct {
                                 return .{ .err = this.errorWithPath(e, path) };
                             },
                             bun.C.E.ISDIR => {
-                                this.enqueueNoJoin(parent_dir_task, path);
-                                return Maybe(void).success;
+                                if (comptime is_file_in_dir) {
+                                    this.enqueueNoJoin(parent_dir_task, path);
+                                    return Maybe(void).success;
+                                }
+                                return this.removeEntryDir(parent_dir_task, is_absolute, buf);
                             },
                             // This might happen if the file is actually a directory
                             bun.C.E.PERM => {

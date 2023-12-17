@@ -338,7 +338,7 @@ const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const ShellGlobTask = @import("../shell/interpreter.zig").ShellGlobTask;
-const RmTask = @import("../shell/interpreter.zig").Builtin.Rm.RmTask;
+const AsyncRmTask = @import("../shell/interpreter.zig").Builtin.Rm.AsyncRmTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -402,7 +402,7 @@ pub const Task = TaggedPointerUnion(.{
     JSC.Subprocess.WaiterThread.WaitPidResultTask,
     bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
     ShellGlobTask,
-    RmTask,
+    AsyncRmTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -687,11 +687,10 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                .RmTask => {
-                    var rm_task: *RmTask = task.get(RmTask).?;
-                    rm_task.task.runFromJS();
-                    // rm_task.runFromJS();
-                    // rm_task.deinit();
+                .AsyncRmTask => {
+                    var shell_rm_task: *AsyncRmTask = task.get(AsyncRmTask).?;
+                    shell_rm_task.runFromJs();
+                    shell_rm_task.deinit();
                 },
                 .ShellGlobTask => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;

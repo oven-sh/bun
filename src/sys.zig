@@ -1180,8 +1180,12 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
             return err;
         }
+        if (comptime Environment.allow_assert)
+            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return Maybe(void).success;
     }
     unreachable;

@@ -447,7 +447,7 @@ elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
     # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
-    if(USE_DEBUG_JSC AND EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
+    if(EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
         # You may need to run:
         # make jsc-compile-debug jsc-copy-headers
         include_directories(

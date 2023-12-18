@@ -2666,6 +2666,8 @@ pub const Builtin = struct {
         ls: Ls,
     },
 
+    const Result = @import("../result.zig").Result;
+
     const Kind = enum {
         @"export",
         cd,
@@ -3901,6 +3903,183 @@ pub const Builtin = struct {
                 show_usage,
             };
         };
+
+        pub fn parseOpts(this: *Ls) Result(void, Opts.ParseError) {
+            const filepath_args = switch (this.parseFlags()) {
+                .ok => |args| args,
+                .err => |e| return .{ .err = e },
+            };
+
+            if (filepath_args.len < 2) {
+                return .{ .err = .show_usage };
+            }
+
+            this.args.sources = filepath_args[0 .. filepath_args.len - 1];
+            this.args.target = filepath_args[filepath_args.len - 1][0..std.mem.len(filepath_args[filepath_args.len - 1]) :0];
+
+            return .ok;
+        }
+
+        pub fn parseFlags(this: *Mv) Result([]const [*:0]const u8, Opts.ParseError) {
+            const args = this.bltn.argsSlice();
+            var idx: usize = 0;
+            if (args.len == 0) {
+                return .{ .err = .show_usage };
+            }
+
+            while (idx < args.len) : (idx += 1) {
+                const flag = args[idx];
+                switch (this.parseFlag(flag[0..std.mem.len(flag)])) {
+                    .done => {
+                        const filepath_args = args[idx..];
+                        return .{ .ok = filepath_args };
+                    },
+                    .continue_parsing => {},
+                    .illegal_option => |opt_str| return .{ .err = .{ .illegal_option = opt_str } },
+                }
+            }
+
+            return .{ .err = .show_usage };
+        }
+
+        pub fn parseFlag(this: *Ls, flag: []const u8) union(enum) { continue_parsing, done, illegal_option: []const u8 } {
+            if (flag.len == 0) return .done;
+            if (flag[0] != '-') return .done;
+
+            // FIXME windows
+            if (flag.len == 1) return .{ .illegal_option = "-" };
+
+            const small_flags = flag[1..];
+            for (small_flags) |char| {
+                switch (char) {
+                    'a' => {
+                        this.opts.show_all = true;
+                    },
+                    'A' => {
+                        this.opts.show_almost_all = true;
+                    },
+                    'b' => {
+                        this.opts.escape = true;
+                    },
+                    'B' => {
+                        this.opts.ignore_backups = true;
+                    },
+                    'c' => {
+                        this.opts.use_ctime = true;
+                    },
+                    'C' => {
+                        this.opts.list_by_columns = true;
+                    },
+                    'd' => {
+                        this.opts.list_directories = true;
+                    },
+                    'D' => {
+                        this.opts.dired_mode = true;
+                    },
+                    'f' => {
+                        this.opts.unsorted = true;
+                    },
+                    'F' => {
+                        this.opts.classify = "always";
+                    },
+                    'g' => {
+                        this.opts.no_owner = true;
+                    },
+                    'G' => {
+                        this.opts.no_group = true;
+                    },
+                    'h' => {
+                        this.opts.human_readable = true;
+                    },
+                    'H' => {
+                        this.opts.dereference_cmd_symlinks = true;
+                    },
+                    'i' => {
+                        this.opts.show_inode = true;
+                    },
+                    'I' => {
+                        this.opts.ignore_pattern = ""; // This will require additional logic to handle patterns
+                    },
+                    'k' => {
+                        this.opts.kibibytes = true;
+                    },
+                    'l' => {
+                        this.opts.long_listing = true;
+                    },
+                    'L' => {
+                        this.opts.dereference = true;
+                    },
+                    'm' => {
+                        this.opts.comma_separated = true;
+                    },
+                    'n' => {
+                        this.opts.numeric_uid_gid = true;
+                    },
+                    'N' => {
+                        this.opts.literal = true;
+                    },
+                    'o' => {
+                        this.opts.no_group_info = true;
+                    },
+                    'p' => {
+                        this.opts.slash_indicator = true;
+                    },
+                    'q' => {
+                        this.opts.hide_control_chars = true;
+                    },
+                    'Q' => {
+                        this.opts.quote_name = true;
+                    },
+                    'r' => {
+                        this.opts.reverse_order = true;
+                    },
+                    'R' => {
+                        this.opts.recursive = true;
+                    },
+                    's' => {
+                        this.opts.show_size = true;
+                    },
+                    'S' => {
+                        this.opts.sort_by_size = true;
+                    },
+                    't' => {
+                        this.opts.sort_by_time = true;
+                    },
+                    'T' => {
+                        this.opts.tabsize = 8; // Default tab size, needs additional handling for custom sizes
+                    },
+                    'u' => {
+                        this.opts.use_atime = true;
+                    },
+                    'U' => {
+                        this.opts.no_sort = true;
+                    },
+                    'v' => {
+                        this.opts.natural_sort = true;
+                    },
+                    'w' => {
+                        this.opts.output_width = 0; // Default to no limit, needs additional handling for custom widths
+                    },
+                    'x' => {
+                        this.opts.list_by_lines = true;
+                    },
+                    'X' => {
+                        this.opts.sort_by_extension = true;
+                    },
+                    'Z' => {
+                        this.opts.show_context = true;
+                    },
+                    '1' => {
+                        this.opts.one_file_per_line = true;
+                    },
+                    else => {
+                        return .{ .illegal_option = flag[1..2] };
+                    },
+                }
+            }
+
+            return .continue_parsing;
+        }
     };
 
     pub const Mv = struct {
@@ -3934,8 +4113,6 @@ pub const Builtin = struct {
             },
             err: Syscall.Error,
         } = .idle,
-
-        const Result = @import("../result.zig").Result;
 
         pub const ShellMvCheckTargetTask = struct {
             const print = bun.Output.scoped(.MvCheckTargetTask, false);

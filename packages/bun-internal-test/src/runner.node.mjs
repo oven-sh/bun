@@ -18,10 +18,25 @@ process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
 
+let testList = [];
+if (process.platform == "win32") {
+  testList = readFileSync("test/windows-test-allowlist.txt", "utf8")
+    .replaceAll("\r", "")
+    .split("\n")
+    .map(x => x.trim().replaceAll("/", "\\"))
+    .filter(x => !!x && !x.startsWith("#"));
+}
+
 const extensions = [".js", ".ts", ".jsx", ".tsx"];
 
 function isTest(path) {
-  return basename(path).includes(".test.") && extensions.some(ext => path.endsWith(ext));
+  if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
+    return false;
+  }
+  if (testList.length > 0) {
+    return testList.some(testPattern => name.includes(testPattern));
+  }
+  return true;
 }
 
 function* findTests(dir, query) {
@@ -37,6 +52,14 @@ function* findTests(dir, query) {
 
 var failingTests = [];
 
+let bunExe = process.argv[2] ?? "bun";
+try {
+  const { error } = spawnSync(bunExe, ["--revision"]);
+  if (error) throw error;
+} catch {
+  console.error(bunExe + " is not installed");
+}
+
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
   try {
@@ -45,7 +68,7 @@ async function runTest(path) {
       stderr,
       status: exitCode,
       error: timedOut,
-    } = spawnSync("bun", ["test", path], {
+    } = spawnSync(bunExe, ["test", resolve(path)], {
       stdio: "inherit",
       timeout: 1000 * 60 * 3,
       env: {
@@ -54,6 +77,9 @@ async function runTest(path) {
         BUN_GARBAGE_COLLECTOR_LEVEL: "1",
         BUN_JSC_forceRAMSize,
         BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+        // reproduce CI results locally
+        GITHUB_ACTION: process.env.GITHUB_ACTION ?? "true",
+        BUN_DEBUG_QUIET_LOGS: "1",
       },
     });
   } catch (e) {
@@ -87,7 +113,13 @@ if (isAction) {
   action.summary.addHeading(`${tests.length} files with tests ran`).addList(testFileNames);
   await action.summary.write();
 } else {
+  if (failingTests.length > 0) {
+    console.log(`${failingTests.length} files with failing tests:`);
+    for (const test of failingTests) {
+      console.log(`- ${resolve(test)}`);
+    }
+  }
   writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
 
-process.exit(failingTests.length);
+process.exit(Math.min(failingTests.length, 127));

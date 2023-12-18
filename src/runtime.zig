@@ -35,7 +35,7 @@ pub const ErrorCSS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
             var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
+            const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, &paths, .auto),
@@ -58,7 +58,7 @@ pub const ErrorJS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
             var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
+            const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, &paths, .auto),
@@ -86,7 +86,7 @@ pub const Fallback = struct {
         pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var bb = std.ArrayList(u8).init(this.allocator);
             defer bb.deinit();
-            var bb_writer = bb.writer();
+            const bb_writer = bb.writer();
             const Encoder = Schema.Writer(@TypeOf(bb_writer));
             var encoder = Encoder.init(bb_writer);
             this.msg.encode(&encoder) catch {};
@@ -117,7 +117,7 @@ pub const Fallback = struct {
 
     pub inline fn scriptContent() string {
         if (comptime Environment.isDebug) {
-            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
+            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -127,7 +127,7 @@ pub const Fallback = struct {
                 "jarred",
                 env.get("USER").?,
             ) catch unreachable;
-            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
+            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
                 "Missing bun/src/fallback.out.js. " ++ "Please run \"make fallback_decoder\"",
                 ProdSourceContent,
@@ -204,7 +204,7 @@ pub const Runtime = struct {
 
     pub inline fn sourceContentWithoutRefresh() string {
         if (comptime Environment.isDebug) {
-            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
+            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -214,7 +214,7 @@ pub const Runtime = struct {
                 "jarred",
                 env.get("USER").?,
             ) catch unreachable;
-            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
+            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
                 "Missing bun/src/runtime.out.js. " ++ "Please run \"make runtime_js_dev\"",
                 ProdSourceContent,
@@ -241,7 +241,7 @@ pub const Runtime = struct {
 
     pub inline fn sourceContentWithRefresh() string {
         if (comptime Environment.isDebug) {
-            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
+            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -251,7 +251,7 @@ pub const Runtime = struct {
                 "jarred",
                 env.get("USER").?,
             ) catch unreachable;
-            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.refresh.js" }) catch unreachable;
+            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.refresh.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
                 "Missing bun/src/runtime.out.refresh.js. " ++ "Please run \"make runtime_js_dev\"",
                 ProdSourceContentWithRefresh,
@@ -453,7 +453,7 @@ pub const Runtime = struct {
         /// This is a lookup table so we don't need to resort the strings each time
         pub const all_sorted_index = brk: {
             var out: [all.len]usize = undefined;
-            inline for (all, 0..) |name, i| {
+            for (all, 0..) |name, i| {
                 for (all_sorted, 0..) |cmp, j| {
                     if (strings.eqlComptime(name, cmp)) {
                         out[i] = j;

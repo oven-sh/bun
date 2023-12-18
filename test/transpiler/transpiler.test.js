@@ -3315,3 +3315,94 @@ console.log("boop");
     );
   });
 });
+
+describe("await can only be used inside an async function message", () => {
+  var transpiler = new Bun.Transpiler({
+    logLevel: "debug",
+  });
+
+  function assertError(code, hasNote = false) {
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      function handle(error) {
+        expect(error.message).toBe('"await" can only be used inside an "async" function');
+
+        if (hasNote) {
+          expect(error.notes).toHaveLength(1);
+          expect(error.notes[0].message).toBe('Consider adding the "async" keyword here');
+          expect(error.notes[0].position.lineText).toContain("foo");
+        } else {
+          expect(error.notes).toHaveLength(0);
+        }
+      }
+      if (e instanceof AggregateError) {
+        handle(e.errors[0]);
+      } else {
+        expect.unreachable();
+      }
+    }
+  }
+  it("in object method", () => {
+    assertError(
+      `const x = {
+      foo() {
+       await bar();
+     }
+    }`,
+      true,
+    );
+  });
+
+  it("in class method", () => {
+    assertError(
+      `class X {
+      foo() {
+       await bar();
+     }
+    }`,
+      true,
+    );
+  });
+
+  it("in function statement", () => {
+    assertError(
+      `function foo() {
+      await bar();
+    }`,
+      true,
+    );
+  });
+
+  it("in function expression", () => {
+    assertError(
+      `const foo = function() {
+      await bar();
+    }`,
+      true,
+    );
+  });
+
+  it("in arrow function", () => {
+    assertError(
+      `const foo = () => {
+      await bar();
+    }`,
+      false,
+    );
+  });
+
+  it("in arrow function with block body", () => {
+    assertError(
+      `const foo = () => {
+      await bar();
+    }`,
+      false,
+    );
+  });
+
+  it("in arrow function with expression body", () => {
+    assertError(`const foo = () => await bar();`, false);
+  });
+});

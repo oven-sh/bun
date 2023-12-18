@@ -47,7 +47,7 @@ pub const Run = struct {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
-        var graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
         js_ast.Expr.Data.Store.create(default_allocator);
@@ -131,7 +131,7 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
-        var callback = OpaqueWrap(Run, Run.start);
+        const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
 
@@ -173,7 +173,7 @@ pub const Run = struct {
 
         if (ctx.runtime_options.eval_script.len > 0) {
             vm.module_loader.eval_script = ptr: {
-                var v = try bun.default_allocator.create(logger.Source);
+                const v = try bun.default_allocator.create(logger.Source);
                 v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
                 break :ptr v;
             };
@@ -205,6 +205,16 @@ pub const Run = struct {
                 b.options.macro_remap = macros;
             },
             .unspecified => {},
+        }
+
+        // Set NODE_ENV to a value if something else hadn't already set it
+        const node_env_entry = try b.env.map.getOrPutWithoutValue("NODE_ENV");
+        if (!node_env_entry.found_existing) {
+            node_env_entry.key_ptr.* = try b.env.allocator.dupe(u8, node_env_entry.key_ptr.*);
+            node_env_entry.value_ptr.* = .{
+                .value = try b.env.allocator.dupe(u8, "development"),
+                .conditional = false,
+            };
         }
 
         b.configureRouter(false) catch {
@@ -241,7 +251,7 @@ pub const Run = struct {
 
         vm.bundler.env.loadTracy();
 
-        var callback = OpaqueWrap(Run, Run.start);
+        const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
 

@@ -383,7 +383,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.toContainEqual()`](https://jestjs.io/docs/expect#tocontainequalitem)
 
 ---

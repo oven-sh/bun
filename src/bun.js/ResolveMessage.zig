@@ -74,7 +74,7 @@ pub const ResolveMessage = struct {
     }
 
     pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
+        const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };

@@ -10,6 +10,7 @@ const BUN_VERSION = (
   Bun.version ||
   process.versions.bun
 ).replace(/^.*v/, "");
+
 const folder = resolve(process.argv.at(-1)!);
 if (folder.endsWith("bundle.ts")) {
   throw new Error("Pass a folder");
@@ -56,6 +57,11 @@ const packageJSON = {
   keywords: ["bun", "bun.js", "types"],
   repository: "https://github.com/oven-sh/bun",
   homepage: "https://bun.sh",
+  dependencies: {
+    "@types/node": "*",
+    "@types/ws": "*",
+    "undici-types": "^5.26.4",
+  },
 };
 
 await write(
@@ -81,7 +87,6 @@ const tsConfig = {
     allowSyntheticDefaultImports: true,
     forceConsistentCasingInFileNames: true,
     allowJs: true,
-    types: ["bun-types"],
   },
 };
 
@@ -96,5 +101,3 @@ await write(
 );
 
 export {};
-
-import "../index";

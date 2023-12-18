@@ -2,10 +2,15 @@
   "name": "bun-types",
   "repository": "https://github.com/oven-sh/bun",
   "license": "MIT",
+  "dependencies": {
+    "@types/node": "*",
+    "@types/ws": "*",
+    "undici-types": "~5.26.4"
+  },
   "devDependencies": {
-    "conditional-type-checks": "^1.0.6",
+    "@definitelytyped/dtslint": "^0.0.199",
+    "@definitelytyped/eslint-plugin": "^0.0.197",
     "prettier": "^2.4.1",
-    "tsd": "^0.22.0",
     "typescript": "^5.0.2"
   },
   "private": true,
@@ -15,9 +20,6 @@
     "bundle": "bun scripts/bundle.ts ./dist",
     "test": "tsc",
     "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
-  },
-  "tsd": {
-    "directory": "tests"
   },
   "types": "index.d.ts"
 }

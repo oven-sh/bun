@@ -2,7 +2,9 @@
 // Project: https://github.com/oven-sh/bun
 // Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
-/// <reference no-default-lib="true" />
+
 /// <reference lib="esnext" />
+/// <reference types="node" />
+/// <reference types="ws" />
 
 // This file is bundled so that your TypeScript editor integration loads it faster.

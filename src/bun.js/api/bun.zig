@@ -424,7 +424,7 @@ pub fn shellLex(
         return .undefined;
     }
 
-    var lex_result = brk: {
+    const lex_result = brk: {
         if (bun.strings.isAllASCII(script.items[0..])) {
             var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
             lexer.lex() catch |err| {
@@ -492,7 +492,7 @@ pub fn shellParse(
         return .undefined;
     }
 
-    var lex_result = brk: {
+    const lex_result = brk: {
         if (bun.strings.isAllASCII(script.items[0..])) {
             var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
             lexer.lex() catch |err| {
@@ -616,7 +616,7 @@ pub fn shell(
     const Interpreter = @import("../../shell/interpreter.zig").Interpreter;
 
     // var allocator = globalThis.bunVM().allocator;
-    var allocator = getAllocator(globalThis);
+    const allocator = getAllocator(globalThis);
     var arena = bun.ArenaAllocator.init(allocator);
 
     const arguments_ = callframe.arguments(1);
@@ -636,7 +636,7 @@ pub fn shell(
         return .undefined;
     }
 
-    var lex_result = brk: {
+    const lex_result = brk: {
         if (bun.strings.isAllASCII(script.items[0..])) {
             var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
             lexer.lex() catch |err| {
@@ -663,7 +663,7 @@ pub fn shell(
         return JSValue.undefined;
     };
 
-    var script_heap = arena.allocator().create(Shell.AST.Script) catch {
+    const script_heap = arena.allocator().create(Shell.AST.Script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     };

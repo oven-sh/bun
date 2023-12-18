@@ -124,7 +124,7 @@ pub fn fastDetect(src: []const u8) bool {
         @splat('"'),
     };
 
-    var i: usize = 0;
+    const i: usize = 0;
     while (i + 16 <= src.len) {
         const haystack = src[i .. i + 16].*;
         if (std.simd.firstTrue(needles[0] == haystack)) {
@@ -221,7 +221,7 @@ fn expandNested(
     }
 
     for (root.atoms.many[start..], start..) |atom, i_| {
-        var i: u16 = @intCast(i_);
+        const i: u16 = @intCast(i_);
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
@@ -347,7 +347,7 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) !AST.Group {
         var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
-        var group_alloc = group_alloc_.get();
+        const group_alloc = group_alloc_.get();
         var nodes = std.ArrayList(AST.Atom).init(group_alloc);
         while (!self.match(.eof)) {
             try nodes.append(try self.parseAtom() orelse break);
@@ -363,7 +363,7 @@ pub const Parser = struct {
     fn parseAtom(self: *Parser) anyerror!?AST.Atom {
         switch (self.advance()) {
             .open => {
-                var expansion_ptr = try self.parseExpansion();
+                const expansion_ptr = try self.parseExpansion();
                 return .{ .expansion = expansion_ptr };
             },
             .text => |txt| return .{ .text = txt },
@@ -377,7 +377,7 @@ pub const Parser = struct {
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
             var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
-            var group_alloc = group_alloc_.get();
+            const group_alloc = group_alloc_.get();
             var group = std.ArrayList(AST.Atom).init(group_alloc);
             var close = false;
             while (!self.match(.eof)) {
@@ -386,7 +386,7 @@ pub const Parser = struct {
                     break;
                 }
                 if (self.match(.comma)) break;
-                var group_atom = try self.parseAtom() orelse break;
+                const group_atom = try self.parseAtom() orelse break;
                 try group.append(group_atom);
             }
             if (group.items.len == 1) {
@@ -494,7 +494,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
                 try nested_brace_stack.push(0);
             },
             .comma => {
-                var val = nested_brace_stack.topPtr().?;
+                const val = nested_brace_stack.topPtr().?;
                 val.* += 1;
                 prev_comma = true;
             },
@@ -504,7 +504,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
                     variants += 1;
                 }
                 if (nested_brace_stack.len > 0) {
-                    var top = nested_brace_stack.topPtr().?;
+                    const top = nested_brace_stack.topPtr().?;
                     top.* += variants - 1;
                 } else if (variant_count == 0) {
                     variant_count = variants;
@@ -725,7 +725,7 @@ pub fn NewLexer(comptime encoding: Encoding) type {
 
         fn rollbackBraces(self: *@This(), starting_idx: u32) !void {
             if (bun.Environment.allow_assert) {
-                var first = &self.tokens.items[starting_idx];
+                const first = &self.tokens.items[starting_idx];
                 std.debug.assert(first.* == .open);
             }
 
@@ -762,7 +762,7 @@ pub fn NewLexer(comptime encoding: Encoding) type {
 
         fn replaceTokenWithString(self: *@This(), token_idx: u32) !void {
             var tok = &self.tokens.items[token_idx];
-            var tok_text = tok.toText();
+            const tok_text = tok.toText();
             tok.* = .{ .text = tok_text };
         }
 

@@ -128,14 +128,14 @@ pub const Interpreter = struct {
             allocator.destroy(interpreter);
         }
 
-        var export_env = brk: {
+        const export_env = brk: {
             var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
             errdefer {
                 export_env.deinit();
             }
             var iter = global.bunVM().bundler.env.map.iter();
             while (iter.next()) |entry| {
-                var dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
+                const dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
                 try export_env.put(entry.key_ptr.*, dupedz);
             }
             break :brk export_env;
@@ -227,7 +227,7 @@ pub const Interpreter = struct {
         // then the final result is copied into the interpreter's arena.
         var arena = Arena.init(this.allocator);
         defer arena.deinit();
-        var arena_alloc = arena.allocator();
+        const arena_alloc = arena.allocator();
 
         var expander = ExpansionCtx(.{ .for_spawn = false, .single = true }).init(
             this,
@@ -462,7 +462,7 @@ pub const Expansion = struct {
                 .braces => {
                     var arena = Arena.init(this.base.interpreter.allocator);
                     defer arena.deinit();
-                    var arena_allocator = arena.allocator();
+                    const arena_allocator = arena.allocator();
                     const brace_str = this.current_out.items[0..];
                     // FIXME some of these errors aren't alloc errors for example lexer parser errors
                     var lexer_output = Braces.Lexer.tokenize(arena_allocator, brace_str) catch |e| OOM(e);
@@ -474,7 +474,7 @@ pub const Expansion = struct {
                             std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
                         }
                         var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, this.base.interpreter.allocator);
-                        var expanded_strings = maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
+                        const expanded_strings = maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
                         break :brk expanded_strings;
                     };
 
@@ -594,7 +594,7 @@ pub const Expansion = struct {
                 std.debug.assert(this.child_state == .cmd_subst);
             }
 
-            var stdout = this.child_state.cmd_subst.cmd.stdoutSlice() orelse @panic("Should not happen");
+            const stdout = this.child_state.cmd_subst.cmd.stdoutSlice() orelse @panic("Should not happen");
             this.current_out.appendSlice(stdout) catch bun.outOfMemory();
             // FIXME check if output is empty, trim output, also I think it needs to be split into muliple words?
 
@@ -838,7 +838,7 @@ pub fn ExpansionCtx(comptime opts: ExpansionOpts) type {
                     std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
                 }
                 var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, this.arena);
-                var expanded_strings = try maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count);
+                const expanded_strings = try maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count);
                 break :brk expanded_strings;
             };
 
@@ -1141,7 +1141,7 @@ pub const Script = struct {
     };
 
     fn init(interpreter: *Interpreter, node: *const ast.Script, io: IO) !*Script {
-        var script = try interpreter.allocator.create(Script);
+        const script = try interpreter.allocator.create(Script);
         errdefer interpreter.allocator.destroy(script);
         script.* = .{
             .base = .{ .kind = .script, .interpreter = interpreter },
@@ -1300,11 +1300,11 @@ pub const Stmt = struct {
     }
 
     pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: u8) void {
-        var data = child.ptr.repr.data;
+        const data = child.ptr.repr.data;
         log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
         this.last_exit_code = exit_code;
         const next_idx = this.idx + 1;
-        var data2 = child.ptr.repr.data;
+        const data2 = child.ptr.repr.data;
         log("{d} {d}", .{ data, data2 });
         child.deinit();
         this.currently_executing = null;
@@ -1527,11 +1527,11 @@ pub const Pipeline = struct {
         var i: u32 = 0;
         for (node.items) |*item| {
             if (item.* == .cmd) {
-                var kind = "subproc";
+                const kind = "subproc";
                 _ = kind;
                 var cmd_io = io;
-                var stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin;
-                var stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
+                const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin;
+                const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
                 cmd_io.stdin = stdin;
                 cmd_io.stdout = stdout;
                 pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, &item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
@@ -1545,7 +1545,7 @@ pub const Pipeline = struct {
     }
 
     pub fn start(this: *Pipeline) void {
-        var cmds = this.cmds orelse {
+        const cmds = this.cmds orelse {
             this.parent.childDone(this, 0);
             return;
         };
@@ -1730,14 +1730,14 @@ pub const Cmd = struct {
             switch (io) {
                 .stdout => {
                     if (this.stdout) |*stdout| {
-                        var readable = io.stdout;
+                        const readable = io.stdout;
                         stdout.state = .{ .closed = readable.pipe.buffer.internal_buffer };
                         io.stdout.pipe.buffer.internal_buffer = .{};
                     }
                 },
                 .stderr => {
                     if (this.stderr) |*stderr| {
-                        var readable = io.stderr;
+                        const readable = io.stderr;
                         stderr.state = .{ .closed = readable.pipe.buffer.internal_buffer };
                         io.stderr.pipe.buffer.internal_buffer = .{};
                     }
@@ -1932,7 +1932,7 @@ pub const Cmd = struct {
             }
 
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+            const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
                 this.base.interpreter.global.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{first_arg});
                 return ShellError.Process;
             };
@@ -1978,7 +1978,7 @@ pub const Cmd = struct {
             } else switch (redirect) {
                 .jsbuf => |val| {
                     if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(this.base.interpreter.global)) |buf| {
-                        var stdio: Subprocess.Stdio = .{ .array_buffer = .{
+                        const stdio: Subprocess.Stdio = .{ .array_buffer = .{
                             .buf = JSC.ArrayBuffer.Strong{
                                 .array_buffer = buf,
                                 .held = JSC.Strong.create(buf.value, this.base.interpreter.global),
@@ -2286,7 +2286,7 @@ const CmdEnvIter = struct {
     };
 
     pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
-        var iter = env.iterator();
+        const iter = env.iterator();
         return .{
             .env = env,
             .iter = iter,
@@ -2337,21 +2337,21 @@ pub fn ShellTask(
 
         pub fn onFinish(this: *@This()) void {
             print("onFinish", .{});
-            var ctx = @fieldParentPtr(Ctx, "task", this);
+            const ctx = @fieldParentPtr(Ctx, "task", this);
             this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(ctx, .manual_deinit));
         }
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
             print("runFromThreadPool", .{});
             var this = @fieldParentPtr(@This(), "task", task);
-            var ctx = @fieldParentPtr(Ctx, "task", this);
+            const ctx = @fieldParentPtr(Ctx, "task", this);
             runFromThreadPool_(ctx);
             this.onFinish();
         }
 
         pub fn runFromJS(this: *@This()) void {
             print("runFromJS", .{});
-            var ctx = @fieldParentPtr(Ctx, "task", this);
+            const ctx = @fieldParentPtr(Ctx, "task", this);
             this.ref.unref(this.event_loop.virtual_machine);
             runFromJS_(ctx);
         }
@@ -2799,8 +2799,8 @@ pub const Builtin = struct {
     }
 
     fn callImplWithType(this: *Builtin, comptime Impl: type, comptime Ret: type, comptime union_field: []const u8, comptime field: []const u8, args_: anytype) Ret {
-        var self = &@field(this.impl, union_field);
-        var args = brk: {
+        const self = &@field(this.impl, union_field);
+        const args = brk: {
             var args: std.meta.ArgsTuple(@TypeOf(@field(Impl, field))) = undefined;
             args[0] = self;
 
@@ -2831,7 +2831,7 @@ pub const Builtin = struct {
         io_: *IO,
         comptime in_cmd_subst: bool,
     ) void {
-        var io = io_.*;
+        const io = io_.*;
 
         var stdin: Builtin.BuiltinIO = switch (io.stdin) {
             .std => .{ .fd = bun.STDIN_FD },
@@ -2965,7 +2965,7 @@ pub const Builtin = struct {
             .ls => {
                 cmd.exec.bltn.impl = .{
                     .ls = Ls{
-                        .btln = &cmd.exec.bltn,
+                        .bltn = &cmd.exec.bltn,
                     },
                 };
             },
@@ -2973,7 +2973,7 @@ pub const Builtin = struct {
     }
 
     pub inline fn parentCmd(this: *Builtin) *Cmd {
-        var union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
+        const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
         return @fieldParentPtr(Cmd, "exec", union_ptr);
     }
 
@@ -3050,7 +3050,7 @@ pub const Builtin = struct {
                 else
                     len;
 
-                var slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
+                const slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
                 @memcpy(slice, buf[0..write_len]);
                 io.arraybuf.i +|= @truncate(write_len);
                 log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
@@ -3312,7 +3312,7 @@ pub const Builtin = struct {
                 var had_not_found = false;
                 for (args) |arg_raw| {
                     const arg = arg_raw[0..std.mem.len(arg_raw)];
-                    var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                    const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
                         had_not_found = true;
                         const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                         switch (this.bltn.writeNoIO(.stdout, buf)) {
@@ -3356,7 +3356,7 @@ pub const Builtin = struct {
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
 
-            var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+            const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
                 const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
                 multiargs.had_not_found = true;
                 multiargs.state = .{
@@ -3662,7 +3662,17 @@ pub const Builtin = struct {
             },
             waiting_write_err: BufferedWriter,
             done,
-        },
+        } = .idle,
+
+        pub fn start(this: *Ls) Maybe(void) {
+            _ = this; // autofix
+
+            return Maybe(void).success;
+        }
+
+        pub fn deinit(this: *Ls) void {
+            _ = this; // autofix
+        }
 
         const ShellLsTask = struct {
             const print = bun.Output.scoped(.ShellLsTask, false);
@@ -4165,7 +4175,7 @@ pub const Builtin = struct {
             executing: struct {
                 task_count: usize,
                 tasks_done: usize = 0,
-                error_signal: std.atomic.Atomic(bool),
+                error_signal: std.atomic.Value(bool),
                 tasks: []ShellMvBatchedTask,
                 err: ?Syscall.Error = null,
             },
@@ -4219,7 +4229,7 @@ pub const Builtin = struct {
             target: [:0]const u8,
             target_fd: ?bun.FileDescriptor,
             cwd: bun.FileDescriptor,
-            error_signal: *std.atomic.Atomic(bool),
+            error_signal: *std.atomic.Value(bool),
 
             err: ?Syscall.Error = null,
 
@@ -4367,7 +4377,7 @@ pub const Builtin = struct {
                     },
                     .check_target => {
                         if (this.state.check_target.state == .running) return Maybe(void).success;
-                        var check_target = &this.state.check_target;
+                        const check_target = &this.state.check_target;
 
                         if (comptime bun.Environment.allow_assert) {
                             std.debug.assert(check_target.task.result != null);
@@ -4455,7 +4465,7 @@ pub const Builtin = struct {
                         this.state = .{
                             .executing = .{
                                 .task_count = task_count,
-                                .error_signal = std.atomic.Atomic(bool).init(false),
+                                .error_signal = std.atomic.Value(bool).init(false),
                                 .tasks = tasks,
                             },
                         };
@@ -4468,7 +4478,7 @@ pub const Builtin = struct {
                         return Maybe(void).success;
                     },
                     .executing => {
-                        var exec = &this.state.executing;
+                        const exec = &this.state.executing;
                         _ = exec;
                         // if (exec.state == .idle) {
                         //     // 1. Check if target is directory or file
@@ -4680,7 +4690,7 @@ pub const Builtin = struct {
                 filepath_args: []const [*:0]const u8,
                 lock: std.Thread.Mutex = std.Thread.Mutex{},
                 total_tasks: usize,
-                error_signal: std.atomic.Atomic(bool) = .{ .value = false },
+                error_signal: std.atomic.Value(bool) = .{ .raw = false },
                 err: ?Syscall.Error = null,
                 state: union(enum) {
                     idle,
@@ -5213,7 +5223,7 @@ pub const Builtin = struct {
 
             // fds_opened: u8 = 0,
 
-            error_signal: *std.atomic.Atomic(bool),
+            error_signal: *std.atomic.Value(bool),
             err_mutex: bun.Lock = bun.Lock.init(),
             err: ?Syscall.Error = null,
 
@@ -5227,7 +5237,7 @@ pub const Builtin = struct {
                 task_manager: *ShellRmTask,
                 parent_task: ?*DirTask,
                 path: [:0]const u8,
-                subtask_count: std.atomic.Atomic(usize),
+                subtask_count: std.atomic.Value(usize),
                 need_to_wait: bool = false,
                 kind_hint: EntryKindHint,
                 task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
@@ -5323,8 +5333,8 @@ pub const Builtin = struct {
                 }
             };
 
-            pub fn create(root_path: bun.PathString, rm: *Rm, error_signal: *std.atomic.Atomic(bool), is_absolute: bool) *ShellRmTask {
-                var task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
+            pub fn create(root_path: bun.PathString, rm: *Rm, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
+                const task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
                 task.* = ShellRmTask{
                     .rm = rm,
                     .opts = rm.opts,
@@ -5333,7 +5343,7 @@ pub const Builtin = struct {
                         .task_manager = task,
                         .parent_task = null,
                         .path = root_path.sliceAssumeZ(),
-                        .subtask_count = std.atomic.Atomic(usize).init(1),
+                        .subtask_count = std.atomic.Value(usize).init(1),
                         .kind_hint = .idk,
                     },
                     .event_loop = JSC.VirtualMachine.get().event_loop,
@@ -5372,7 +5382,7 @@ pub const Builtin = struct {
                     .task_manager = this,
                     .path = path,
                     .parent_task = parent_task,
-                    .subtask_count = std.atomic.Atomic(usize).init(1),
+                    .subtask_count = std.atomic.Value(usize).init(1),
                     .kind_hint = kind_hint,
                 };
                 std.debug.assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);

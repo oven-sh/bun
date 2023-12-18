@@ -304,7 +304,7 @@ pub const Interpreter = struct {
                 .fd => |fd| {
                     var stack_alloc = std.heap.stackFallback(256, this.args.allocator);
                     const len = std.fmt.count(fmt, args);
-                    var buf = try stack_alloc.get().alloc(u8, len);
+                    const buf = try stack_alloc.get().alloc(u8, len);
                     _ = try std.fmt.bufPrint(buf, fmt, args);
                     _ = try std.os.write(fd, buf);
                 },
@@ -354,7 +354,7 @@ pub const Interpreter = struct {
                     else
                         len;
 
-                    var slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
+                    const slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
                     @memcpy(slice, buf[0..write_len]);
                     io.arraybuf.i +|= @truncate(write_len);
                     log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
@@ -367,11 +367,11 @@ pub const Interpreter = struct {
 
     pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject, jsobjs: []JSValue) !Interpreter {
         const allocator = arena.allocator();
-        var export_env = brk: {
+        const export_env = brk: {
             var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
             var iter = globalThis.bunVM().bundler.env.map.iter();
             while (iter.next()) |entry| {
-                var dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
+                const dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
                 try export_env.put(entry.key_ptr.*, dupedz);
             }
             break :brk export_env;
@@ -396,7 +396,7 @@ pub const Interpreter = struct {
             },
         };
 
-        var interpreter: Interpreter = .{
+        const interpreter: Interpreter = .{
             .arena = arena,
             .allocator = allocator,
             .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
@@ -559,7 +559,7 @@ pub const Interpreter = struct {
                 };
                 log("Spawn: proc_idx={d} stdin={any} stdout={any} stderr={any}\n", .{ i, file_to_read_from, file_to_write_to, io.stderr });
 
-                var cmd_proc = try self.init_cmd(cmd, &cmd_io, false);
+                const cmd_proc = try self.init_cmd(cmd, &cmd_io, false);
                 kind = @as(Cmd.Kind, cmd_proc);
 
                 cmd_procs[i] = cmd_proc;
@@ -568,7 +568,7 @@ pub const Interpreter = struct {
             }
         }
 
-        var jsc_vm = self.globalThis.bunVM();
+        const jsc_vm = self.globalThis.bunVM();
 
         var fail_idx: ?u32 = null;
         for (cmd_procs, 0..) |*subcmd, i| {
@@ -661,7 +661,7 @@ pub const Interpreter = struct {
             }
 
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+            const resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
                 self.globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{first_arg});
                 return ShellError.Process;
             };
@@ -846,7 +846,7 @@ pub const Interpreter = struct {
 
     fn interpret_subproc(self: *Interpreter, subprocess: *Subprocess) !bool {
         log("Interpret cmd", .{});
-        var jsc_vm = self.globalThis.bunVM();
+        const jsc_vm = self.globalThis.bunVM();
         return Cmd.waitSubproc(subprocess, jsc_vm);
     }
 
@@ -888,7 +888,7 @@ pub const Interpreter = struct {
         }
 
         const filepath_args = args[filepaths_start..];
-        var paths = brk: {
+        const paths = brk: {
             var paths = try std.ArrayList(Rm.Item).initCapacity(self.allocator, filepath_args.len);
             for (filepath_args) |arg| {
                 try paths.append(.{
@@ -922,7 +922,7 @@ pub const Interpreter = struct {
         for (args) |arg_raw| {
             const arg = arg_raw[0..std.mem.len(arg_raw)];
             const PATH = self.globalThis.bunVM().bundler.env.get("PATH") orelse "";
-            var resolved = Which.which(&path_buf, PATH, self.cwd, arg) orelse {
+            const resolved = Which.which(&path_buf, PATH, self.cwd, arg) orelse {
                 try bltn.write_fmt(&bltn.stdout, "{s} not found\n", .{arg});
                 continue;
             };
@@ -1200,11 +1200,11 @@ pub const Interpreter = struct {
         var glob_walker: Glob.BunGlobWalker = .{};
         var arena = std.heap.ArenaAllocator.init(self.allocator);
 
-        var dot = false;
-        var absolute = false;
-        var follow_symlinks = false;
-        var error_on_broken_symlinks = false;
-        var only_files = false;
+        const dot = false;
+        const absolute = false;
+        const follow_symlinks = false;
+        const error_on_broken_symlinks = false;
+        const only_files = false;
 
         switch (GlobWalker.initWithCwd(
             &glob_walker,
@@ -1262,7 +1262,7 @@ pub const Interpreter = struct {
                 std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
             }
             var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, self.allocator);
-            var expanded_strings = try maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count);
+            const expanded_strings = try maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count);
             break :brk expanded_strings;
         };
 
@@ -1527,7 +1527,7 @@ pub const AST = struct {
         pub fn to_expr(this: CmdOrAssigns, alloc: Allocator) !Expr {
             switch (this) {
                 .cmd => |cmd| {
-                    var cmd_ptr = try alloc.create(Cmd);
+                    const cmd_ptr = try alloc.create(Cmd);
                     cmd_ptr.* = cmd;
                     return .{ .cmd = cmd_ptr };
                 },
@@ -1605,8 +1605,8 @@ pub const AST = struct {
             }
 
             pub fn merge(a: RedirectFlags, b: RedirectFlags) RedirectFlags {
-                var anum: u8 = @bitCast(a);
-                var bnum: u8 = @bitCast(b);
+                const anum: u8 = @bitCast(a);
+                const bnum: u8 = @bitCast(b);
                 return @bitCast(anum | bnum);
             }
         };
@@ -2005,7 +2005,7 @@ pub const Parser = struct {
     }
 
     fn allocate(self: *const Parser, comptime T: type, val: T) !*T {
-        var heap = try self.alloc.create(T);
+        const heap = try self.alloc.create(T);
         heap.* = val;
         return heap;
     }
@@ -2236,7 +2236,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn make_sublexer(self: *@This(), kind: CmdSubstKind) @This() {
-            var sublexer = .{
+            const sublexer = .{
                 .chars = self.chars,
                 .strpool = self.strpool,
                 .tokens = self.tokens,
@@ -2507,7 +2507,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const start = self.strpool.items.len;
                 const end = start + char_len;
                 try self.strpool.appendNTimes(0, char_len);
-                var slice = self.strpool.items[start..end];
+                const slice = self.strpool.items[start..end];
                 const n = try std.unicode.utf8Encode(@intCast(char), slice);
                 if (bun.Environment.allow_assert) {
                     std.debug.assert(n == char_len);
@@ -2581,7 +2581,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         }
                     }
 
-                    var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
+                    const num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
                         // This means the number was really large, meaning it
                         // probably was supposed to be a string
                         return null;
@@ -2666,7 +2666,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 return null;
             }
 
-            var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
+            const num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
                 self.backtrack(snap);
                 return null;
             };
@@ -3162,7 +3162,7 @@ const CmdEnvIter = struct {
     };
 
     pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
-        var iter = env.iterator();
+        const iter = env.iterator();
         return .{
             .env = env,
             .iter = iter,
@@ -3414,7 +3414,7 @@ pub const Rm = struct {
             return 0;
         }
 
-        var dir = std.fs.Dir{ .fd = bun.fdcast(dir_fd) };
+        const dir = std.fs.Dir{ .fd = bun.fdcast(dir_fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
 

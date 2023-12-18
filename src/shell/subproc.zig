@@ -239,7 +239,7 @@ pub const ShellSubprocess = struct {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
                     this.pipe.buffer.readAll();
 
-                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    const bytes = this.pipe.buffer.internal_buffer.slice();
                     // this.pipe.buffer.internal_buffer = .{};
 
                     if (bytes.len > 0) {
@@ -263,7 +263,7 @@ pub const ShellSubprocess = struct {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
                     this.pipe.buffer.readAll();
 
-                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    const bytes = this.pipe.buffer.internal_buffer.slice();
                     this.pipe.buffer.internal_buffer = .{};
 
                     if (bytes.len > 0) {
@@ -728,7 +728,7 @@ pub const ShellSubprocess = struct {
     }
 
     pub fn ref(this: *ShellSubprocess) void {
-        var vm = this.globalThis.bunVM();
+        const vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
@@ -754,7 +754,7 @@ pub const ShellSubprocess = struct {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *ShellSubprocess, comptime deactivate_poll_ref: bool) void {
-        var vm = this.globalThis.bunVM();
+        const vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
@@ -1016,7 +1016,7 @@ pub const ShellSubprocess = struct {
             env_iter: *std.StringArrayHashMap([:0]const u8).Iterator,
             comptime disable_path_lookup_for_arv0: bool,
         ) bool {
-            var allocator = this.arena.allocator();
+            const allocator = this.arena.allocator();
             this.override_env = true;
             this.env_array.ensureTotalCapacityPrecise(allocator, env_iter.len) catch bun.outOfMemory();
 
@@ -1026,8 +1026,8 @@ pub const ShellSubprocess = struct {
             }
 
             while (env_iter.next()) |entry| {
-                var key = entry.key_ptr.*;
-                var value = entry.value_ptr.*;
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
 
                 var line = std.fmt.allocPrintZ(allocator, "{s}={s}", .{ key, value }) catch bun.outOfMemory();
 
@@ -1059,7 +1059,7 @@ pub const ShellSubprocess = struct {
 
         var out_err: ?JSValue = null;
         var out_watchfd: if (Environment.isLinux) ?std.os.fd_t else ?i32 = null;
-        var subprocess = util.spawnMaybeSyncImpl(
+        const subprocess = util.spawnMaybeSyncImpl(
             .{
                 .SpawnArgs = SpawnArgs,
                 .Subprocess = ShellSubprocess,
@@ -1075,7 +1075,7 @@ pub const ShellSubprocess = struct {
         ) orelse
             {
             if (out_err) |err| {
-                var str = err.getZigString(globalThis);
+                const str = err.getZigString(globalThis);
                 std.debug.print("THE STR: {s}\n", .{str});
                 globalThis.throwValue(err);
             }
@@ -1093,7 +1093,7 @@ pub const ShellSubprocess = struct {
             globalThis.throwTODO("spawn() is not yet implemented on Windows");
             return null;
         }
-        var is_sync = true;
+        const is_sync = true;
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var jsc_vm = globalThis.bunVM();
@@ -1142,7 +1142,7 @@ pub const ShellSubprocess = struct {
         };
 
         if (!WaiterThread.shouldUseWaiterThread()) {
-            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, ShellSubprocess, subprocess);
+            const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, ShellSubprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
@@ -1278,7 +1278,7 @@ pub const ShellSubprocess = struct {
         }
 
         if (!sync and this.hasExited()) {
-            var vm = this.globalThis.bunVM();
+            const vm = this.globalThis.bunVM();
 
             // prevent duplicate notifications
             switch (this.poll) {

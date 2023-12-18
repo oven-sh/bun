@@ -161,7 +161,7 @@ pub const SmolStr = packed struct {
     }
 
     pub fn empty() SmolStr {
-        var inlined = Inlined{
+        const inlined = Inlined{
             .data = 0,
             .__len = 0,
             ._tag = 1,

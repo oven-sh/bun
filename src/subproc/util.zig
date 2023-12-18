@@ -36,7 +36,7 @@ pub const Poll = union(enum) {
 };
 
 pub const WaitThreadPoll = struct {
-    ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     poll_ref: Async.KeepAlive = .{},
 };
 
@@ -276,9 +276,9 @@ pub const BufferedOutput = struct {
         if (this.auto_sizer) |auto_sizer| {
             while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
                 var stack_buffer: [8096]u8 = undefined;
-                var stack_buf: []u8 = stack_buffer[0..];
+                const stack_buf: []u8 = stack_buffer[0..];
                 var buf_to_use = stack_buf;
-                var available = this.internal_buffer.available();
+                const available = this.internal_buffer.available();
                 if (available.len >= stack_buf.len) {
                     buf_to_use = available;
                 }
@@ -318,7 +318,7 @@ pub const BufferedOutput = struct {
         } else {
             log("readAll START status: {s}", .{@tagName(this.status)});
             while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
-                var buf_to_use = this.internal_buffer.available();
+                const buf_to_use = this.internal_buffer.available();
 
                 const result = this.fifo.read(buf_to_use, this.fifo.to_read);
 
@@ -974,7 +974,7 @@ pub fn spawnMaybeSyncImpl(
 
         break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
             .err => |err| {
-                var str = err.toJSC(globalThis).getZigString(globalThis);
+                const str = err.toJSC(globalThis).getZigString(globalThis);
                 std.debug.print("THE ERROR!: {s}\n", .{str});
                 globalThis.throwValue(err.toJSC(globalThis));
                 return null;
@@ -1069,7 +1069,7 @@ pub fn spawnMaybeSyncImpl(
         };
 
         if (spawn_args.ipc_mode != .none) {
-            var ptr = socket.ext(*Subprocess);
+            const ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
             subprocess.ipc.writeVersionPacket();
         }
@@ -1116,7 +1116,7 @@ pub fn spawnMaybeSyncImpl(
 
     if (comptime !is_sync) {
         if (!WaiterThread.shouldUseWaiterThread()) {
-            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
@@ -1183,7 +1183,7 @@ pub fn NewWaiterThread(comptime Subprocess: type, comptime is_js: bool) type {
         const WaiterThread = @This();
         concurrent_queue: Queue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
-        started: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
         eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
 
@@ -1228,7 +1228,7 @@ pub fn NewWaiterThread(comptime Subprocess: type, comptime is_js: bool) type {
             subprocess: *Subprocess,
 
             pub fn runFromJSThread(self: *@This()) void {
-                var result = self.result;
+                const result = self.result;
                 var subprocess = self.subprocess;
                 _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                 bun.default_allocator.destroy(self);
@@ -1244,13 +1244,13 @@ pub fn NewWaiterThread(comptime Subprocess: type, comptime is_js: bool) type {
                 process.poll = .{
                     .wait_thread = .{
                         .poll_ref = .{},
-                        .ref_count = std.atomic.Atomic(u32).init(1),
+                        .ref_count = std.atomic.Value(u32).init(1),
                     },
                 };
                 process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
             }
 
-            var task = bun.default_allocator.create(WaitTask) catch unreachable;
+            const task = bun.default_allocator.create(WaitTask) catch unreachable;
             task.* = WaitTask{
                 .subprocess = process,
             };
@@ -1301,7 +1301,7 @@ pub fn NewWaiterThread(comptime Subprocess: type, comptime is_js: bool) type {
                         _ = this.queue.orderedRemove(i);
                         queue = this.queue.items;
 
-                        var task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
+                        const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
                         task.* = WaitPidResultTask{
                             .result = result,
                             .subprocess = process,
@@ -1339,7 +1339,7 @@ pub fn NewWaiterThread(comptime Subprocess: type, comptime is_js: bool) type {
                 } else {
                     var mask = std.os.empty_sigset;
                     var signal: c_int = std.os.SIG.CHLD;
-                    var rc = std.c.sigwait(&mask, &signal);
+                    const rc = std.c.sigwait(&mask, &signal);
                     _ = rc;
                 }
             }

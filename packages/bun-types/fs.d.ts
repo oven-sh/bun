@@ -176,6 +176,17 @@ declare module "fs" {
      * @since v0.0.67
      */
     name: string;
+    /**
+     * The base path that this `fs.Dirent` object refers to.
+     * Deprecated in favor of `parentPath`.
+     * @since v??????
+     */
+    path: string;
+    /**
+     * The base path that this `fs.Dirent` object refers to.
+     * @since v??????
+     */
+    parentPath: string;
   }
 
   /**

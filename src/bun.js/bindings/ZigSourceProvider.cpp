@@ -111,7 +111,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
         resolvedSource,
-        string.releaseImpl().releaseNonNull(),
+        string.isNull() ? *StringImpl::empty() : *string.impl(),
         JSC::SourceTaintedOrigin::Untainted,
         toSourceOrigin(sourceURLString, isBuiltin),
         sourceURLString.impl(), TextPosition(),

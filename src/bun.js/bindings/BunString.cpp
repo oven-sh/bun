@@ -495,7 +495,7 @@ WTF::String BunString::toWTFString() const
         return WTF::String(this->impl.wtf);
     }
 
-    return WTF::String(MAKE_STATIC_STRING_IMPL(""));
+    return WTF::String();
 }
 
 WTF::String BunString::toWTFString(ZeroCopyTag) const

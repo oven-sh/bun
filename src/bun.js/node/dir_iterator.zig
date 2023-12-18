@@ -50,6 +50,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             pub const Error = IteratorError;
 
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
+
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             const next = switch (builtin.os.tag) {
@@ -123,6 +127,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             pub const Error = IteratorError;
 
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
+
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub fn next(self: *Self) Result {
@@ -177,6 +185,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             pub const Error = IteratorError;
 
             const ResultT = if (use_windows_ospath) ResultW else Result;
+
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
@@ -286,6 +298,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             const Self = @This();
 
             pub const Error = IteratorError;
+
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.

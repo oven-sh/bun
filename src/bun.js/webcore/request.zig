@@ -399,7 +399,7 @@ pub const Request = struct {
 
                     if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
                         this.url, var bytes = bun.String.createUninitialized(.latin1, url_bytelength);
-                        _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
+                        _ = std.fmt.bufPrint(&bytes, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
@@ -408,7 +408,7 @@ pub const Request = struct {
                         };
                     } else {
                         // slow path
-                        var temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                        const temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
@@ -689,10 +689,10 @@ pub const Request = struct {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
-        var request = constructInto(globalThis, arguments) orelse {
+        const request = constructInto(globalThis, arguments) orelse {
             return null;
         };
-        var request_ = getAllocator(globalThis).create(Request) catch {
+        const request_ = getAllocator(globalThis).create(Request) catch {
             return null;
         };
         request_.* = request;
@@ -770,11 +770,11 @@ pub const Request = struct {
         _ = allocator;
         this.ensureURL() catch {};
 
-        var body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
+        const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };
-        var original_url = req.url;
+        const original_url = req.url;
 
         req.* = Request{
             .body = body,
@@ -789,7 +789,7 @@ pub const Request = struct {
     }
 
     pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
-        var req = allocator.create(Request) catch unreachable;
+        const req = allocator.create(Request) catch unreachable;
         this.cloneInto(req, allocator, globalThis, false);
         return req;
     }

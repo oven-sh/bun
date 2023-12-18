@@ -681,7 +681,7 @@ pub const String = extern struct {
     }
 
     pub fn substring(this: String, start_index: usize) String {
-        var len = this.length();
+        const len = this.length();
         return this.substringWithLen(@min(len, start_index), len);
     }
 

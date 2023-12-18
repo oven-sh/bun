@@ -123,7 +123,7 @@ pub fn directEnumArray(
 
 test "std.enums.directEnumArray" {
     const E = enum(i4) { a = 4, b = 6, c = 2 };
-    var runtime_false: bool = false;
+    const runtime_false: bool = false;
     const array = directEnumArray(E, bool, 4, .{
         .a = true,
         .b = runtime_false,
@@ -165,7 +165,7 @@ pub fn directEnumArrayDefault(
 
 test "std.enums.directEnumArrayDefault" {
     const E = enum(i4) { a = 4, b = 6, c = 2 };
-    var runtime_false: bool = false;
+    const runtime_false: bool = false;
     const array = directEnumArrayDefault(E, bool, false, 4, .{
         .a = true,
         .b = runtime_false,
@@ -179,7 +179,7 @@ test "std.enums.directEnumArrayDefault" {
 
 test "std.enums.directEnumArrayDefault slice" {
     const E = enum(i4) { a = 4, b = 6, c = 2 };
-    var runtime_b = "b";
+    const runtime_b = "b";
     const array = directEnumArrayDefault(E, []const u8, "default", 4, .{
         .a = "a",
         .b = runtime_b,
@@ -197,9 +197,9 @@ pub fn nameCast(comptime E: type, comptime value: anytype) E {
     return comptime blk: {
         const V = @TypeOf(value);
         if (V == E) break :blk value;
-        var name: ?[]const u8 = switch (@typeInfo(V)) {
+        const name: ?[]const u8 = switch (@typeInfo(V)) {
             .EnumLiteral, .Enum => @tagName(value),
-            .Pointer => if (std.meta.trait.isZigString(V)) value else null,
+            .Pointer => value,
             else => null,
         };
         if (name) |n| {

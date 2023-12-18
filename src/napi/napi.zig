@@ -416,7 +416,7 @@ inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
 pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr_: ?[*:0]c_char, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     defer value.ensureStillAlive();
-    var buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
+    const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
     var buf = buf_ptr orelse {
@@ -778,7 +778,7 @@ pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*a
 pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
     log("napi_get_arraybuffer_info", .{});
     const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .arraybuffer_expected;
-    var slice = array_buffer.slice();
+    const slice = array_buffer.slice();
     if (data) |dat|
         dat.* = slice.ptr;
     if (byte_length) |len|
@@ -845,7 +845,7 @@ pub export fn napi_is_dataview(_: napi_env, value: napi_value, result: *bool) na
 }
 pub export fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: *usize, data: *?[*]u8, arraybuffer: *napi_value, byte_offset: *usize) napi_status {
     log("napi_get_dataview_info", .{});
-    var array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
+    const array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
     bytelength.* = array_buffer.byte_len;
     data.* = array_buffer.ptr;
 
@@ -894,7 +894,7 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
 pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
     log("napi_run_script", .{});
     // TODO: don't copy
-    var ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
+    const ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
     defer JSC.C.JSStringRelease(ref);
 
     var exception = [_]JSC.C.JSValueRef{null};
@@ -975,7 +975,7 @@ pub const napi_async_work = struct {
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
     ctx: ?*anyopaque = null,
-    status: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    status: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     can_deinit: bool = false,
     wait_for_deinit: bool = false,
     scheduled: bool = false,
@@ -988,7 +988,7 @@ pub const napi_async_work = struct {
     };
 
     pub fn create(global: napi_env, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
-        var work = try bun.default_allocator.create(napi_async_work);
+        const work = try bun.default_allocator.create(napi_async_work);
         work.* = .{
             .global = global,
             .execute = execute,
@@ -1005,7 +1005,7 @@ pub const napi_async_work = struct {
         this.run();
     }
     pub fn run(this: *napi_async_work) void {
-        if (this.status.compareAndSwap(@intFromEnum(Status.pending), @intFromEnum(Status.started), .SeqCst, .SeqCst)) |state| {
+        if (this.status.cmpxchgStrong(@intFromEnum(Status.pending), @intFromEnum(Status.started), .SeqCst, .SeqCst)) |state| {
             if (state == @intFromEnum(Status.cancelled)) {
                 if (this.wait_for_deinit) {
                     // this might cause a segfault due to Task using a linked list!
@@ -1029,7 +1029,7 @@ pub const napi_async_work = struct {
 
     pub fn cancel(this: *napi_async_work) bool {
         this.ref.unref(this.global.bunVM());
-        return this.status.compareAndSwap(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .SeqCst, .SeqCst) != null;
+        return this.status.cmpxchgStrong(@intFromEnum(Status.cancelled), @intFromEnum(Status.pending), .SeqCst, .SeqCst) != null;
     }
 
     pub fn deinit(this: *napi_async_work) void {
@@ -1326,7 +1326,7 @@ pub const ThreadSafeFunction = struct {
                     };
                 },
                 else => {
-                    var slice = allocator.alloc(?*anyopaque, size) catch unreachable;
+                    const slice = allocator.alloc(?*anyopaque, size) catch unreachable;
                     return .{
                         .sized = Channel(?*anyopaque, .Slice).init(slice),
                     };
@@ -1364,7 +1364,7 @@ pub const ThreadSafeFunction = struct {
     };
 
     pub fn call(this: *ThreadSafeFunction) void {
-        var task = this.channel.tryReadItem() catch null orelse return;
+        const task = this.channel.tryReadItem() catch null orelse return;
         switch (this.callback) {
             .js => |js_function| {
                 if (js_function.isEmptyOrUndefinedOrNull()) {
@@ -1556,11 +1556,11 @@ pub const NAPI_MODULE_VERSION = @as(c_int, 1);
 ///
 // TODO: write a script to generate this struct. ideally it wouldn't even need to be committed to source.
 const V8API = if (!bun.Environment.isWindows) struct {
-    extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
-    extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
-    extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
-    extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
-    extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+    pub extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
+    pub extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
+    pub extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
+    pub extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+    pub extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1568,11 +1568,11 @@ const V8API = if (!bun.Environment.isWindows) struct {
     // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
     //
     // Bug @paperdave if you get stuck here
-    extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
-    extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
-    extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VJSGlobalObject@JSC@@@2@XZ"() *anyopaque;
-    extern fn @"?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
-    extern fn @"?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+    pub extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    pub extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    pub extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VJSGlobalObject@JSC@@@2@XZ"() *anyopaque;
+    pub extern fn @"?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+    pub extern fn @"?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

@@ -74,14 +74,14 @@ pub const StandaloneModuleGraph = struct {
             if (this.* == .decompressed) return &this.decompressed;
 
             var decompressed = try allocator.alloc(u8, bun.zstd.getDecompressedSize(this.compressed));
-            var result = bun.zstd.decompress(decompressed, this.compressed);
+            const result = bun.zstd.decompress(decompressed, this.compressed);
             if (result == .err) {
                 allocator.free(decompressed);
                 log.addError(null, bun.logger.Loc.Empty, bun.span(result.err)) catch unreachable;
                 return error.@"Failed to decompress sourcemap";
             }
             errdefer allocator.free(decompressed);
-            var bytes = decompressed[0..result.success];
+            const bytes = decompressed[0..result.success];
 
             this.* = .{ .decompressed = try bun.sourcemap.parse(allocator, &bun.logger.Source.initPathString("sourcemap.json", bytes), log) };
             return &this.decompressed;
@@ -200,7 +200,7 @@ pub const StandaloneModuleGraph = struct {
                 .contents = string_builder.appendCount(output_file.value.buffer.bytes),
             };
             if (output_file.source_map_index != std.math.maxInt(u32)) {
-                var remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
+                const remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
                 const compressed_result = bun.zstd.compress(remaining_slice, output_files[output_file.source_map_index].value.buffer.bytes, 1);
                 if (compressed_result == .err) {
                     bun.Output.panic("Unexpected error compressing sourcemap: {s}", .{bun.span(compressed_result.err)});
@@ -245,13 +245,13 @@ pub const StandaloneModuleGraph = struct {
 
         const cloned_executable_fd: bun.FileDescriptor = brk: {
             var self_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            var self_exe = std.fs.selfExePath(&self_buf) catch |err| {
+            const self_exe = std.fs.selfExePath(&self_buf) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
                 Global.exit(1);
                 return -1;
             };
             self_buf[self_exe.len] = 0;
-            var self_exeZ = self_buf[0..self_exe.len :0];
+            const self_exeZ = self_buf[0..self_exe.len :0];
 
             if (comptime Environment.isMac) {
                 // if we're on a mac, use clonefile() if we can
@@ -399,7 +399,7 @@ pub const StandaloneModuleGraph = struct {
         return cloned_executable_fd;
     }
 
-    pub fn toExecutable(allocator: std.mem.Allocator, output_files: []const bun.options.OutputFile, root_dir: std.fs.IterableDir, module_prefix: []const u8, outfile: []const u8) !void {
+    pub fn toExecutable(allocator: std.mem.Allocator, output_files: []const bun.options.OutputFile, root_dir: std.fs.Dir, module_prefix: []const u8, outfile: []const u8) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files);
         if (bytes.len == 0) return;
 
@@ -448,7 +448,7 @@ pub const StandaloneModuleGraph = struct {
             fd,
             std.fs.cwd().fd,
             bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
-            root_dir.dir.fd,
+            root_dir.fd,
             bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {

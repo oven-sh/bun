@@ -2663,6 +2663,7 @@ pub const Builtin = struct {
         which: Which,
         rm: Rm,
         mv: Mv,
+        ls: Ls,
     },
 
     const Kind = enum {
@@ -2673,6 +2674,7 @@ pub const Builtin = struct {
         which,
         rm,
         mv,
+        ls,
 
         pub fn parentType(this: Kind) type {
             _ = this;
@@ -2687,6 +2689,7 @@ pub const Builtin = struct {
                 .which => "",
                 .rm => "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n",
                 .mv => "usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n",
+                .ls => "usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n",
             };
         }
 
@@ -2699,6 +2702,7 @@ pub const Builtin = struct {
                 .which => "which",
                 .rm => "rm",
                 .mv => "mv",
+                .ls => "ls",
             };
         }
 
@@ -2788,6 +2792,7 @@ pub const Builtin = struct {
             .rm => this.callImplWithType(Rm, Ret, "rm", field, args_),
             .pwd => this.callImplWithType(Pwd, Ret, "pwd", field, args_),
             .mv => this.callImplWithType(Mv, Ret, "mv", field, args_),
+            .ls => this.callImplWithType(Ls, Ret, "ls", field, args_),
         };
     }
 
@@ -2953,6 +2958,13 @@ pub const Builtin = struct {
             .mv => {
                 cmd.exec.bltn.impl = .{
                     .mv = Mv{ .bltn = &cmd.exec.bltn },
+                };
+            },
+            .ls => {
+                cmd.exec.bltn.impl = .{
+                    .ls = Ls{
+                        .btln = &cmd.exec.bltn,
+                    },
                 };
             },
         }
@@ -3634,6 +3646,261 @@ pub const Builtin = struct {
         pub fn deinit(this: *Pwd) void {
             _ = this;
         }
+    };
+
+    pub const Ls = struct {
+        bltn: *Builtin,
+        opts: Opts = .{},
+
+        state: union(enum) {},
+
+        const Opts = struct {
+            /// `-a`, `--all`
+            /// Do not ignore entries starting with .
+            show_all: bool = false,
+
+            /// `-A`, `--almost-all`
+            /// Do not list implied . and ..
+            show_almost_all: bool = false,
+
+            /// `--author`
+            /// With -l, print the author of each file
+            show_author: bool = false,
+
+            /// `-b`, `--escape`
+            /// Print C-style escapes for nongraphic characters
+            escape: bool = false,
+
+            /// `--block-size=SIZE`
+            /// With -l, scale sizes by SIZE when printing them; e.g., '--block-size=M'
+            block_size: ?usize = null,
+
+            /// `-B`, `--ignore-backups`
+            /// Do not list implied entries ending with ~
+            ignore_backups: bool = false,
+
+            /// `-c`
+            /// Sort by, and show, ctime (time of last change of file status information); affects sorting and display based on options
+            use_ctime: bool = false,
+
+            /// `-C`
+            /// List entries by columns
+            list_by_columns: bool = false,
+
+            /// `--color[=WHEN]`
+            /// Color the output; WHEN can be 'always', 'auto', or 'never'
+            color: ?[]const u8 = null,
+
+            /// `-d`, `--directory`
+            /// List directories themselves, not their contents
+            list_directories: bool = false,
+
+            /// `-D`, `--dired`
+            /// Generate output designed for Emacs' dired mode
+            dired_mode: bool = false,
+
+            /// `-f`
+            /// List all entries in directory order
+            unsorted: bool = false,
+
+            /// `-F`, `--classify[=WHEN]`
+            /// Append indicator (one of */=>@|) to entries; WHEN can be 'always', 'auto', or 'never'
+            classify: ?[]const u8 = null,
+
+            /// `--file-type`
+            /// Likewise, except do not append '*'
+            file_type: bool = false,
+
+            /// `--format=WORD`
+            /// Specify format: 'across', 'commas', 'horizontal', 'long', 'single-column', 'verbose', 'vertical'
+            format: ?[]const u8 = null,
+
+            /// `--full-time`
+            /// Like -l --time-style=full-iso
+            full_time: bool = false,
+
+            /// `-g`
+            /// Like -l, but do not list owner
+            no_owner: bool = false,
+
+            /// `--group-directories-first`
+            /// Group directories before files
+            group_directories_first: bool = false,
+
+            /// `-G`, `--no-group`
+            /// In a long listing, don't print group names
+            no_group: bool = false,
+
+            /// `-h`, `--human-readable`
+            /// With -l and -s, print sizes like 1K 234M 2G etc.
+            human_readable: bool = false,
+
+            /// `--si`
+            /// Use powers of 1000 not 1024 for sizes
+            si_units: bool = false,
+
+            /// `-H`, `--dereference-command-line`
+            /// Follow symbolic links listed on the command line
+            dereference_cmd_symlinks: bool = false,
+
+            /// `--dereference-command-line-symlink-to-dir`
+            /// Follow each command line symbolic link that points to a directory
+            dereference_cmd_dir_symlinks: bool = false,
+
+            /// `--hide=PATTERN`
+            /// Do not list entries matching shell PATTERN
+            hide_pattern: ?[]const u8 = null,
+
+            /// `--hyperlink[=WHEN]`
+            /// Hyperlink file names; WHEN can be 'always', 'auto', or 'never'
+            hyperlink: ?[]const u8 = null,
+
+            /// `--indicator-style=WORD`
+            /// Append indicator with style to entry names: 'none', 'slash', 'file-type', 'classify'
+            indicator_style: ?[]const u8 = null,
+
+            /// `-i`, `--inode`
+            /// Print the index number of each file
+            show_inode: bool = false,
+
+            /// `-I`, `--ignore=PATTERN`
+            /// Do not list entries matching shell PATTERN
+            ignore_pattern: ?[]const u8 = null,
+
+            /// `-k`, `--kibibytes`
+            /// Default to 1024-byte blocks for file system usage
+            kibibytes: bool = false,
+
+            /// `-l`
+            /// Use a long listing format
+            long_listing: bool = false,
+
+            /// `-L`, `--dereference`
+            /// Show information for the file the symbolic link references
+            dereference: bool = false,
+
+            /// `-m`
+            /// Fill width with a comma separated list of entries
+            comma_separated: bool = false,
+
+            /// `-n`, `--numeric-uid-gid`
+            /// Like -l, but list numeric user and group IDs
+            numeric_uid_gid: bool = false,
+
+            /// `-N`, `--literal`
+            /// Print entry names without quoting
+            literal: bool = false,
+
+            /// `-o`
+            /// Like -l, but do not list group information
+            no_group_info: bool = false,
+
+            /// `-p`, `--indicator-style=slash`
+            /// Append / indicator to directories
+            slash_indicator: bool = false,
+
+            /// `-q`, `--hide-control-chars`
+            /// Print ? instead of nongraphic characters
+            hide_control_chars: bool = false,
+
+            /// `--show-control-chars`
+            /// Show nongraphic characters as-is
+            show_control_chars: bool = false,
+
+            /// `-Q`, `--quote-name`
+            /// Enclose entry names in double quotes
+            quote_name: bool = false,
+
+            /// `--quoting-style=WORD`
+            /// Use quoting style for entry names
+            quoting_style: ?[]const u8 = null,
+
+            /// `-r`, `--reverse`
+            /// Reverse order while sorting
+            reverse_order: bool = false,
+
+            /// `-R`, `--recursive`
+            /// List subdirectories recursively
+            recursive: bool = false,
+
+            /// `-s`, `--size`
+            /// Print the allocated size of each file, in blocks
+            show_size: bool = false,
+
+            /// `-S`
+            /// Sort by file size, largest first
+            sort_by_size: bool = false,
+
+            /// `--sort=WORD`
+            /// Sort by a specified attribute
+            sort_method: ?[]const u8 = null,
+
+            /// `--time=WORD`
+            /// Select which timestamp to use for display or sorting
+            time_method: ?[]const u8 = null,
+
+            /// `--time-style=TIME_STYLE`
+            /// Time/date format with -l
+            time_style: ?[]const u8 = null,
+
+            /// `-t`
+            /// Sort by time, newest first
+            sort_by_time: bool = false,
+
+            /// `-T`, `--tabsize=COLS`
+            /// Assume tab stops at each specified number of columns
+            tabsize: ?usize = null,
+
+            /// `-u`
+            /// Sort by, and show, access time
+            use_atime: bool = false,
+
+            /// `-U`
+            /// Do not sort; list entries in directory order
+            no_sort: bool = false,
+
+            /// `-v`
+            /// Natural sort of (version) numbers within text
+            natural_sort: bool = false,
+
+            /// `-w`, `--width=COLS`
+            /// Set output width to specified number of columns
+            output_width: ?usize = null,
+
+            /// `-x`
+            /// List entries by lines instead of by columns
+            list_by_lines: bool = false,
+
+            /// `-X`
+            /// Sort alphabetically by entry extension
+            sort_by_extension: bool = false,
+
+            /// `-Z`, `--context`
+            /// Print any security context of each file
+            show_context: bool = false,
+
+            /// `--zero`
+            /// End each output line with NUL, not newline
+            end_with_nul: bool = false,
+
+            /// `-1`
+            /// List one file per line
+            one_file_per_line: bool = false,
+
+            /// `--help`
+            /// Display help and exit
+            show_help: bool = false,
+
+            /// `--version`
+            /// Output version information and exit
+            show_version: bool = false,
+
+            /// Custom parse error for invalid options
+            const ParseError = union(enum) {
+                illegal_option: []const u8,
+                show_usage,
+            };
+        };
     };
 
     pub const Mv = struct {

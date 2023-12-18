@@ -286,7 +286,8 @@ pub const fmt = struct {
                     }
 
                     if (Keywords.get(remain[0..i])) |keyword| {
-                        prev_keyword = keyword;
+                        if (keyword != .as)
+                            prev_keyword = keyword;
                         const code = keyword.colorCode();
                         try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
                     } else {

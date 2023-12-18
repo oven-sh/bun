@@ -195,7 +195,10 @@ socket.write("hello");
 To simplify this for now, consider using Bun's `ArrayBufferSink` with the `{stream: true}` option:
 
 ```ts
-const sink = new ArrayBufferSink({ stream: true, highWaterMark: 1024 });
+import { ArrayBufferSink } from "bun";
+
+const sink = new ArrayBufferSink();
+sink.start({ stream: true, highWaterMark: 1024 });
 
 sink.write("h");
 sink.write("e");
@@ -204,10 +207,11 @@ sink.write("l");
 sink.write("o");
 
 queueMicrotask(() => {
-  var data = sink.flush();
-  if (!socket.write(data)) {
+  const data = sink.flush();
+  const wrote = socket.write(data);
+  if (wrote < data.byteLength) {
     // put it back in the sink if the socket is full
-    sink.write(data);
+    sink.write(data.subarray(wrote));
   }
 });
 ```

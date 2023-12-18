@@ -363,6 +363,9 @@ pub const Loop = struct {
     fn drainExpiredTimers(this: *Loop) void {
         const now = Timer{ .next = this.cached_now };
 
+        var current_batch = JSC.ConcurrentTask.Queue.Batch{};
+        var prev_event_loop: ?*JSC.EventLoop = null;
+
         // Run our expired timers
         while (this.timers.peek()) |t| {
             if (!Timer.less({}, t, &now)) break;
@@ -373,7 +376,10 @@ pub const Loop = struct {
             // Mark completion as done
             t.state = .FIRED;
 
-            switch (t.fire()) {
+            switch (t.fire(
+                &current_batch,
+                &prev_event_loop,
+            )) {
                 .disarm => {},
                 .rearm => |new| {
                     t.next = new;
@@ -382,6 +388,10 @@ pub const Loop = struct {
                     this.timers.insert(t);
                 },
             }
+        }
+
+        if (prev_event_loop) |event_loop| {
+            event_loop.enqueueTaskConcurrentBatch(current_batch);
         }
     }
 
@@ -561,7 +571,7 @@ pub const Timer = struct {
         disarm,
     };
 
-    pub fn fire(this: *Timer) Arm {
+    pub fn fire(this: *Timer, batch: *JSC.ConcurrentTask.Queue.Batch, event_loop: *?*JSC.EventLoop) Arm {
         if (comptime Environment.allow_assert) {
             if (comptime Environment.isPosix) {
                 const timer = std.time.Instant{ .timestamp = this.next };
@@ -578,6 +588,31 @@ pub const Timer = struct {
             inline else => |t| {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
                 if (comptime @hasDecl(t.Type(), "callback")) {
+                    const concurrent_task = container.concurrent_task.from(container, .manual_deinit);
+                    if (event_loop.*) |loop| {
+                        // If they are different event loops, we have to drain the batch right here.
+                        if (loop != container.event_loop) {
+                            loop.enqueueTaskConcurrentBatch(batch.*);
+                            batch.* = .{};
+                            event_loop.* = container.event_loop;
+                        }
+
+                        if (batch.front == null) {
+                            batch.front = concurrent_task;
+                        }
+                    } else {
+                        batch.front = concurrent_task;
+                        event_loop.* = container.event_loop;
+                    }
+
+                    if (batch.last) |last| {
+                        std.debug.assert(last.next == null);
+                        last.next = concurrent_task;
+                    }
+
+                    batch.last = concurrent_task;
+
+                    batch.count += 1;
                     return container.callback();
                 }
 

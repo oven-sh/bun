@@ -3517,6 +3517,9 @@ pub const Timer = struct {
                 .callback = &onRequest,
             },
             interval: i32 = -1,
+            concurrent_task: JSC.ConcurrentTask = undefined,
+
+            pub const Pool = bun.HiveArray(TimerReference, 1024).Fallback;
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
                 var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
@@ -3532,7 +3535,7 @@ pub const Timer = struct {
             }
 
             pub fn callback(this: *TimerReference) bun.io.Timer.Arm {
-                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+                _ = this;
 
                 // TODO:
                 return .{ .disarm = {} };
@@ -3557,11 +3560,11 @@ pub const Timer = struct {
             }
 
             pub fn deinit(this: *TimerReference) void {
-                bun.default_allocator.destroy(this);
+                this.event_loop.timerReferencePool().put(this);
             }
 
             pub fn create(event_loop: *JSC.EventLoop, id: ID) *TimerReference {
-                const timer = bun.default_allocator.create(TimerReference) catch unreachable;
+                const timer = event_loop.timerReferencePool().get();
                 timer.* = .{
                     .id = id,
                     .event_loop = event_loop,

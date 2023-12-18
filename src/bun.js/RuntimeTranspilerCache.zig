@@ -249,21 +249,19 @@ pub const RuntimeTranspilerCache = struct {
 
             std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
-            this.output_code = brk: {
+            this.output_code =
                 switch (this.metadata.output_encoding) {
-                    .utf8 => {
-                        const utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
-                        errdefer output_code_allocator.free(utf8);
-                        const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
-                        }
+                .utf8 => brk: {
+                    const utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
+                    errdefer output_code_allocator.free(utf8);
+                    const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
                     }
-
                     break :brk .{ .utf8 = utf8 };
                 },
                 .latin1 => brk: {
-                    var latin1, var bytes = bun.String.createUninitialized(.latin1, this.metadata.output_byte_length);
+                    var latin1, const bytes = bun.String.createUninitialized(.latin1, this.metadata.output_byte_length);
                     errdefer latin1.deref();
                     const read_bytes = try file.preadAll(bytes, this.metadata.output_byte_offset);
 
@@ -280,7 +278,7 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk .{ .string = latin1 };
                 },
                 .utf16 => brk: {
-                    var string, var chars = bun.String.createUninitialized(.utf16, this.metadata.output_byte_length / 2);
+                    var string, const chars = bun.String.createUninitialized(.utf16, this.metadata.output_byte_length / 2);
                     errdefer string.deref();
 
                     const read_bytes = try file.preadAll(std.mem.sliceAsBytes(chars), this.metadata.output_byte_offset);

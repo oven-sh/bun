@@ -390,7 +390,7 @@ pub const String = extern struct {
         }
 
         if (this.isUTF16()) {
-            const new, var bytes = createUninitialized(.utf16, this.length());
+            const new, const bytes = createUninitialized(.utf16, this.length());
             @memcpy(bytes, this.value.ZigString.utf16Slice());
             return new;
         }
@@ -939,7 +939,7 @@ pub const String = extern struct {
         return this.toZigString().eql(other.toZigString());
     }
 
-    extern fn JSC__createError(*JSC.JSGlobalObject, str: *String) JSC.JSValue;
+    extern fn JSC__createError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
 
     fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !String {
         var num_16bit: usize = 0;

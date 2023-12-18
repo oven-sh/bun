@@ -2386,7 +2386,7 @@ pub const E = struct {
             }
 
             if (s.is_utf16) {
-                var out, var chars = bun.String.createUninitialized(.utf16, s.len());
+                var out, const chars = bun.String.createUninitialized(.utf16, s.len());
                 defer out.deref();
                 @memcpy(chars, s.slice16());
                 return out.toJS(globalObject);
@@ -2398,7 +2398,7 @@ pub const E = struct {
                 const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
                 defer allocator.free(decoded);
 
-                var out, var chars = bun.String.createUninitialized(.utf16, decoded.len);
+                var out, const chars = bun.String.createUninitialized(.utf16, decoded.len);
                 defer out.deref();
                 @memcpy(chars, decoded);
 

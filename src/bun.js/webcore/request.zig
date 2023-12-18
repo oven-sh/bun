@@ -398,8 +398,8 @@ pub const Request = struct {
                     }
 
                     if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
-                        this.url, var bytes = bun.String.createUninitialized(.latin1, url_bytelength);
-                        _ = std.fmt.bufPrint(&bytes, "{s}{any}{s}", .{
+                        this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
+                        _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,

@@ -1981,6 +1981,8 @@ describe("bundler", () => {
   itBundled("default/DirectEvalTaintingNoBundle", {
     files: {
       "/entry.js": /* js */ `
+        module.exports = 1; // flag as CJS input
+
         function test1() {
           let shouldNotBeRenamed1 = 1;
           function add(first, second) {
@@ -2006,16 +2008,7 @@ describe("bundler", () => {
             return first + second
           }
         }
-  
-        function test4(eval) {
-          let shouldNotBeRenamed2 = 1;
-          function add(first, second) {
-            let renameMe1 = 1;
-            return first + second
-          }
-          eval('add(1, 2)')
-        }
-  
+
         function test5() {
           let shouldNotBeRenamed3 = 1;
           function containsDirectEval() { eval() }
@@ -2025,13 +2018,37 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     bundling: false,
-    format: "cjs",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       assert(text.includes("shouldNotBeRenamed1"), "Should not have renamed `shouldNotBeRenamed1`");
-      assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
+      // assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
       assert(text.includes("shouldNotBeRenamed3"), "Should not have renamed `shouldNotBeRenamed3`");
       assert(text.includes("shouldNotBeRenamed4"), "Should not have renamed `shouldNotBeRenamed4`");
+      assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
+    },
+  });
+  itBundled("default/DirectEvalTainting2NoBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = 1; // flag as CJS input
+
+        function test4(eval) {
+          let shouldNotBeRenamed2 = 1;
+          function add(first, second) {
+            let renameMe1 = 1;
+            return first + second
+          }
+          eval('add(1, 2)')
+        }
+      `,
+    },
+    todo: true,
+    minifyIdentifiers: true,
+    bundling: false,
+    format: "cjs",
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
       assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
     },
   });

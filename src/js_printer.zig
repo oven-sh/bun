@@ -2334,8 +2334,6 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
-
                     if (wrap) {
                         p.print("(");
                     }
@@ -2350,8 +2348,13 @@ fn NewPrinter(
                     // We only want to generate an unbound eval() in CommonJS
                     p.call_target = e.target.data;
 
-                    if (is_unbound_eval and p.options.module_type != .cjs) {
-                        p.print("(0, ");
+                    const is_unbound_eval = (!e.is_direct_eval and
+                        p.isUnboundEvalIdentifier(e.target) and
+                        e.optional_chain == null);
+
+                    if (is_unbound_eval) {
+                        p.print("(0,");
+                        p.printSpace();
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");
                     } else {

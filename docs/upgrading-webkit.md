@@ -17,7 +17,9 @@ $ git checkout $COMMIT
 This is the main command to run:
 
 ```bash
-$ git pull https://github.com/WebKit/WebKit.git main --no-rebase --allow-unrelated-histories -X theirs
+$ git merge upstream main
+# If you get an error saying histories are unrelated, run this and try again:
+$ git fetch --unshallow
 ```
 
 Then, you will likely see some silly merge conflicts. Fix them and then run:

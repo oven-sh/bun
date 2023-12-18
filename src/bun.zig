@@ -293,11 +293,6 @@ pub const fmt = struct {
                         write: {
                             if (prev_keyword) |prev| {
                                 switch (prev) {
-                                    .@"const", .let, .@"var", .function, .class => {
-                                        try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
-                                        prev_keyword = null;
-                                        break :write;
-                                    },
                                     .new => {
                                         prev_keyword = null;
 
@@ -311,11 +306,23 @@ pub const fmt = struct {
                                         prev_keyword = null;
                                         break :write;
                                     },
+                                    .import => {
+                                        if (strings.eqlComptime(remain[0..i], "as")) {
+                                            const code = ColorCode.magenta;
+                                            try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                                            break :write;
+                                        }
+
+                                        if (strings.eqlComptime(remain[0..i], "from")) {
+                                            const code = ColorCode.magenta;
+                                            try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                                            prev_keyword = null;
+
+                                            break :write;
+                                        }
+                                    },
                                     else => {},
                                 }
-                            } else if (i < remain.len and remain[i] == '(') {
-                                try writer.print(Output.prettyFmt("<r><b><i>{s}<r>", true), .{remain[0..i]});
-                                break :write;
                             }
 
                             try writer.writeAll(remain[0..i]);
@@ -452,9 +459,18 @@ pub const fmt = struct {
                             try writer.writeAll(remain[0..i]);
                             remain = remain[i..];
                         },
-                        '}', '[', ']', '{' => {
+                        '}', '{' => {
+                            // support potentially highlighting "from" in an import statement
+                            if (!((prev_keyword orelse Keyword.@"continue") == .import)) {
+                                prev_keyword = null;
+                            }
+
+                            try writer.writeAll(remain[0..1]);
+                            remain = remain[1..];
+                        },
+                        '[', ']' => {
                             prev_keyword = null;
-                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..1]});
+                            try writer.writeAll(remain[0..1]);
                             remain = remain[1..];
                         },
                         ';' => {

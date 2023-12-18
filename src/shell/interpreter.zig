@@ -2663,7 +2663,6 @@ pub const Builtin = struct {
         which: Which,
         rm: Rm,
         mv: Mv,
-        ls: Ls,
     },
 
     const Kind = enum {

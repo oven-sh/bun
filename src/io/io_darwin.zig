@@ -111,7 +111,7 @@ pub const Waker = struct {
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
         bun.JSC.markBinding(@src());
         assert(kq > -1);
-        var machport_buf = try allocator.alloc(u8, 1024);
+        const machport_buf = try allocator.alloc(u8, 1024);
         const machport = io_darwin_create_machport(
             machport_buf.ptr,
             kq,

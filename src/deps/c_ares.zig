@@ -228,7 +228,7 @@ pub const struct_hostent = extern struct {
     ) ares_host_callback {
         return &struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
@@ -245,7 +245,7 @@ pub const struct_hostent = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
@@ -253,14 +253,14 @@ pub const struct_hostent = extern struct {
 
                 var start: [*c]struct_hostent = undefined;
                 if (comptime strings.eqlComptime(lookup_name, "ns")) {
-                    var result = ares_parse_ns_reply(buffer, buffer_length, &start);
+                    const result = ares_parse_ns_reply(buffer, buffer_length, &start);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
                         return;
                     }
                     function(this, null, timeouts, start);
                 } else if (comptime strings.eqlComptime(lookup_name, "ptr")) {
-                    var result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, std.os.AF.INET, &start);
+                    const result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, std.os.AF.INET, &start);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
                         return;
@@ -270,7 +270,7 @@ pub const struct_hostent = extern struct {
                     var addrttls: [256]struct_ares_addrttl = undefined;
                     var naddrttls: i32 = 256;
 
-                    var result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
+                    const result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
                         return;
@@ -322,7 +322,7 @@ pub const struct_nameinfo = extern struct {
     ) ares_nameinfo_callback {
         return &struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
@@ -383,7 +383,7 @@ pub const AddrInfo = extern struct {
         {
             defer arena.deinit();
 
-            var allocator = arena.allocator();
+            const allocator = arena.allocator();
             var j: u32 = 0;
             var current: ?*AddrInfo_node = addr_info.node;
             while (current) |this_node| : (current = this_node.next) {
@@ -411,12 +411,12 @@ pub const AddrInfo = extern struct {
     }
 
     pub inline fn name(this: *const AddrInfo) []const u8 {
-        var name_ = this.name_ orelse return "";
+        const name_ = this.name_ orelse return "";
         return bun.span(name_);
     }
 
     pub inline fn cnames(this: *const AddrInfo) []const AddrInfo_node {
-        var cnames_ = this.cnames_ orelse return &.{};
+        const cnames_ = this.cnames_ orelse return &.{};
         return bun.span(cnames_);
     }
 
@@ -430,7 +430,7 @@ pub const AddrInfo = extern struct {
     ) ares_addrinfo_callback {
         return &struct {
             pub fn handleAddrInfo(ctx: ?*anyopaque, status: c_int, timeouts: c_int, addr_info: ?*AddrInfo) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
 
                 function(this, Error.get(status), timeouts, addr_info);
             }
@@ -463,7 +463,7 @@ pub const Channel = opaque {
         }
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
-                var container = bun.cast(*Container, ctx.?);
+                const container = bun.cast(*Container, ctx.?);
                 Container.onDNSSocketState(container, @as(i32, @intCast(socket)), readable != 0, writable != 0);
             }
         };
@@ -569,7 +569,7 @@ pub const Channel = opaque {
         for (hints[0..@min(hints.len, 2)], 0..) |hint, i| {
             hints_buf[i] = hint;
         }
-        var hints_: [*c]const AddrInfo_hints = if (hints.len > 0) &hints_buf else null;
+        const hints_: [*c]const AddrInfo_hints = if (hints.len > 0) &hints_buf else null;
         ares_getaddrinfo(this, host_ptr, port_ptr, hints_, AddrInfo.callbackWrapper(Type, callback), ctx);
     }
 
@@ -645,7 +645,7 @@ pub const Channel = opaque {
     }
 };
 
-var ares_has_loaded = std.atomic.Atomic(bool).init(false);
+var ares_has_loaded = std.atomic.Value(bool).init(false);
 fn libraryInit() void {
     if (ares_has_loaded.swap(true, .Monotonic))
         return;
@@ -739,7 +739,7 @@ pub const struct_ares_caa_reply = extern struct {
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         var count: usize = 0;
         var caa: ?*struct_ares_caa_reply = this;
         while (caa != null) : (caa = caa.?.next) {
@@ -784,14 +784,14 @@ pub const struct_ares_caa_reply = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
 
                 var start: [*c]struct_ares_caa_reply = undefined;
-                var result = ares_parse_caa_reply(buffer, buffer_length, &start);
+                const result = ares_parse_caa_reply(buffer, buffer_length, &start);
                 if (result != ARES_SUCCESS) {
                     function(this, Error.get(result), timeouts, null);
                     return;
@@ -817,7 +817,7 @@ pub const struct_ares_srv_reply = extern struct {
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         var count: usize = 0;
         var srv: ?*struct_ares_srv_reply = this;
         while (srv != null) : (srv = srv.?.next) {
@@ -869,14 +869,14 @@ pub const struct_ares_srv_reply = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
 
                 var srv_start: [*c]struct_ares_srv_reply = undefined;
-                var result = ares_parse_srv_reply(buffer, buffer_length, &srv_start);
+                const result = ares_parse_srv_reply(buffer, buffer_length, &srv_start);
                 if (result != ARES_SUCCESS) {
                     function(this, Error.get(result), timeouts, null);
                     return;
@@ -900,7 +900,7 @@ pub const struct_ares_mx_reply = extern struct {
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         var count: usize = 0;
         var mx: ?*struct_ares_mx_reply = this;
         while (mx != null) : (mx = mx.?.next) {
@@ -943,14 +943,14 @@ pub const struct_ares_mx_reply = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
 
                 var start: [*c]struct_ares_mx_reply = undefined;
-                var result = ares_parse_mx_reply(buffer, buffer_length, &start);
+                const result = ares_parse_mx_reply(buffer, buffer_length, &start);
                 if (result != ARES_SUCCESS) {
                     function(this, Error.get(result), timeouts, null);
                     return;
@@ -974,7 +974,7 @@ pub const struct_ares_txt_reply = extern struct {
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         var count: usize = 0;
         var txt: ?*struct_ares_txt_reply = this;
         while (txt != null) : (txt = txt.?.next) {
@@ -1013,14 +1013,14 @@ pub const struct_ares_txt_reply = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
 
                 var srv_start: [*c]struct_ares_txt_reply = undefined;
-                var result = ares_parse_txt_reply(buffer, buffer_length, &srv_start);
+                const result = ares_parse_txt_reply(buffer, buffer_length, &srv_start);
                 if (result != ARES_SUCCESS) {
                     function(this, Error.get(result), timeouts, null);
                     return;
@@ -1054,7 +1054,7 @@ pub const struct_ares_naptr_reply = extern struct {
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         var count: usize = 0;
         var naptr: ?*struct_ares_naptr_reply = this;
         while (naptr != null) : (naptr = naptr.?.next) {
@@ -1111,14 +1111,14 @@ pub const struct_ares_naptr_reply = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
 
                 var naptr_start: [*c]struct_ares_naptr_reply = undefined;
-                var result = ares_parse_naptr_reply(buffer, buffer_length, &naptr_start);
+                const result = ares_parse_naptr_reply(buffer, buffer_length, &naptr_start);
                 if (result != ARES_SUCCESS) {
                     function(this, Error.get(result), timeouts, null);
                     return;
@@ -1146,7 +1146,7 @@ pub const struct_ares_soa_reply = extern struct {
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
 
         return this.toJS(globalThis, allocator);
     }
@@ -1182,14 +1182,14 @@ pub const struct_ares_soa_reply = extern struct {
     ) ares_callback {
         return &struct {
             pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
+                const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
 
                 var soa_start: [*c]struct_ares_soa_reply = undefined;
-                var result = ares_parse_soa_reply(buffer, buffer_length, &soa_start);
+                const result = ares_parse_soa_reply(buffer, buffer_length, &soa_start);
                 if (result != ARES_SUCCESS) {
                     function(this, Error.get(result), timeouts, null);
                     return;
@@ -1516,9 +1516,9 @@ pub export fn Bun__canonicalizeIP(
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
-    var script_ctx = globalThis.bunVM();
+    const script_ctx = globalThis.bunVM();
     var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
-    var addr_arg = args.nextEat().?;
+    const addr_arg = args.nextEat().?;
 
     if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
         const addr_slice = addr.toSlice(bun.default_allocator);

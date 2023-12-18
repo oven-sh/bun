@@ -55,7 +55,7 @@ pub const Subprocess = struct {
         stdout,
         stderr,
     }) = .{},
-    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
+    has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     this_jsvalue: JSC.JSValue = .zero,
 
     ipc_mode: IPCMode,
@@ -77,7 +77,7 @@ pub const Subprocess = struct {
     };
 
     pub const WaitThreadPoll = struct {
-        ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         poll_ref: Async.KeepAlive = .{},
     };
 
@@ -118,7 +118,7 @@ pub const Subprocess = struct {
         @fence(.SeqCst);
         if (comptime Environment.isDebug) {
             log("updateHasPendingActivity() {any} -> {any}", .{
-                this.has_pending_activity.value,
+                this.has_pending_activity.raw,
                 this.hasPendingActivityNonThreadsafe(),
             });
         }
@@ -134,7 +134,7 @@ pub const Subprocess = struct {
     }
 
     pub fn ref(this: *Subprocess) void {
-        var vm = this.globalThis.bunVM();
+        const vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
@@ -160,7 +160,7 @@ pub const Subprocess = struct {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess, comptime deactivate_poll_ref: bool) void {
-        var vm = this.globalThis.bunVM();
+        const vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
@@ -343,7 +343,7 @@ pub const Subprocess = struct {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
                     this.pipe.buffer.readAll();
 
-                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    const bytes = this.pipe.buffer.internal_buffer.slice();
                     this.pipe.buffer.internal_buffer = .{};
 
                     if (bytes.len > 0) {
@@ -760,9 +760,9 @@ pub const Subprocess = struct {
             if (this.auto_sizer) |auto_sizer| {
                 while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
                     var stack_buffer: [8096]u8 = undefined;
-                    var stack_buf: []u8 = stack_buffer[0..];
+                    const stack_buf: []u8 = stack_buffer[0..];
                     var buf_to_use = stack_buf;
-                    var available = this.internal_buffer.available();
+                    const available = this.internal_buffer.available();
                     if (available.len >= stack_buf.len) {
                         buf_to_use = available;
                     }
@@ -801,7 +801,7 @@ pub const Subprocess = struct {
                 }
             } else {
                 while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
-                    var buf_to_use = this.internal_buffer.available();
+                    const buf_to_use = this.internal_buffer.available();
 
                     const result = this.fifo.read(buf_to_use, this.fifo.to_read);
 
@@ -1234,7 +1234,7 @@ pub const Subprocess = struct {
                     var arg0 = first_cmd.toSlice(globalThis, allocator);
                     defer arg0.deinit();
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                    const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
                         globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                         return .zero;
                     };
@@ -1759,7 +1759,7 @@ pub const Subprocess = struct {
             },
         };
         if (ipc_mode != .none) {
-            var ptr = socket.ext(*Subprocess);
+            const ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
             subprocess.ipc.writeVersionPacket();
         }
@@ -1779,7 +1779,7 @@ pub const Subprocess = struct {
 
         if (comptime !is_sync) {
             if (!WaiterThread.shouldUseWaiterThread()) {
-                var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+                const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
                 switch (subprocess.poll.poll_ref.?.register(
                     jsc_vm.event_loop_handle.?,
@@ -1843,7 +1843,7 @@ pub const Subprocess = struct {
         subprocess.closeIO(.stdin);
 
         if (!WaiterThread.shouldUseWaiterThread()) {
-            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
@@ -1997,7 +1997,7 @@ pub const Subprocess = struct {
         }
 
         if (!sync and this.hasExited()) {
-            var vm = this.globalThis.bunVM();
+            const vm = this.globalThis.bunVM();
 
             // prevent duplicate notifications
             switch (this.poll) {
@@ -2416,7 +2416,7 @@ pub const Subprocess = struct {
         lifecycle_script_concurrent_queue: LifecycleScriptTaskQueue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
         lifecycle_script_queue: std.ArrayList(*LifecycleScriptSubprocess) = std.ArrayList(*LifecycleScriptSubprocess).init(bun.default_allocator),
-        started: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
         eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
 
@@ -2468,7 +2468,7 @@ pub const Subprocess = struct {
             subprocess: *Subprocess,
 
             pub fn runFromJSThread(self: *@This()) void {
-                var result = self.result;
+                const result = self.result;
                 var subprocess = self.subprocess;
                 _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                 bun.default_allocator.destroy(self);
@@ -2484,13 +2484,13 @@ pub const Subprocess = struct {
                 process.poll = .{
                     .wait_thread = .{
                         .poll_ref = .{},
-                        .ref_count = std.atomic.Atomic(u32).init(1),
+                        .ref_count = std.atomic.Value(u32).init(1),
                     },
                 };
                 process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
             }
 
-            var task = bun.default_allocator.create(WaitTask) catch unreachable;
+            const task = bun.default_allocator.create(WaitTask) catch unreachable;
             task.* = WaitTask{
                 .subprocess = process,
             };
@@ -2506,7 +2506,7 @@ pub const Subprocess = struct {
         }
 
         pub fn appendLifecycleScriptSubprocess(lifecycle_script: *LifecycleScriptSubprocess) void {
-            var task = bun.default_allocator.create(LifecycleScriptWaitTask) catch unreachable;
+            const task = bun.default_allocator.create(LifecycleScriptWaitTask) catch unreachable;
             task.* = LifecycleScriptWaitTask{
                 .lifecycle_script_subprocess = lifecycle_script,
             };
@@ -2549,7 +2549,7 @@ pub const Subprocess = struct {
                     _ = this.queue.orderedRemove(i);
                     queue = this.queue.items;
 
-                    var task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
+                    const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
                     task.* = WaitPidResultTask{
                         .result = result,
                         .subprocess = process,
@@ -2649,7 +2649,7 @@ pub const Subprocess = struct {
                 } else {
                     var mask = std.os.empty_sigset;
                     var signal: c_int = std.os.SIG.CHLD;
-                    var rc = std.c.sigwait(&mask, &signal);
+                    const rc = std.c.sigwait(&mask, &signal);
                     _ = rc;
                 }
             }

@@ -76,8 +76,8 @@ pub const String = extern struct {
     }
 
     pub fn isUndefined(this: *const String) bool {
-        var num: u64 = undefined;
-        var bytes = @as(u64, @bitCast(this.bytes));
+        const num: u64 = undefined;
+        const bytes = @as(u64, @bitCast(this.bytes));
         return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
     }
 
@@ -334,7 +334,7 @@ pub const String = extern struct {
                 &[_]u8{};
         }
         pub fn allocate(this: *Builder, allocator: Allocator) !void {
-            var ptr_ = try allocator.alloc(u8, this.cap);
+            const ptr_ = try allocator.alloc(u8, this.cap);
             this.ptr = ptr_.ptr;
         }
 
@@ -432,7 +432,7 @@ pub const String = extern struct {
                 std.debug.assert(this.ptr != null); // must call allocate first
             }
 
-            var string_entry = this.string_pool.getOrPut(hash) catch unreachable;
+            const string_entry = this.string_pool.getOrPut(hash) catch unreachable;
             if (!string_entry.found_existing) {
                 bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
                 const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
@@ -468,7 +468,7 @@ pub const String = extern struct {
 test "String works" {
     {
         var buf: string = "hello world";
-        var world: string = buf[6..];
+        const world: string = buf[6..];
         var str = String.init(
             buf,
             world,
@@ -477,8 +477,8 @@ test "String works" {
     }
 
     {
-        var buf: string = "hello";
-        var world: string = buf;
+        const buf: string = "hello";
+        const world: string = buf;
         var str = String.init(
             buf,
             world,
@@ -488,8 +488,8 @@ test "String works" {
     }
 
     {
-        var buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
-        var world: string = buf;
+        const buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
+        const world: string = buf;
         var str = String.init(
             buf,
             world,
@@ -794,8 +794,8 @@ pub const Version = extern struct {
             var rhs_itr = strings.split(rhs_str, ".");
 
             while (true) {
-                var lhs_part = lhs_itr.next();
-                var rhs_part = rhs_itr.next();
+                const lhs_part = lhs_itr.next();
+                const rhs_part = rhs_itr.next();
 
                 if (lhs_part == null and rhs_part == null) return .eq;
 
@@ -1499,8 +1499,8 @@ pub const Query = struct {
         pub fn eql(lhs: *const List, rhs: *const List) bool {
             if (!lhs.head.eql(&rhs.head)) return false;
 
-            var lhs_next = lhs.next orelse return rhs.next == null;
-            var rhs_next = rhs.next orelse return false;
+            const lhs_next = lhs.next orelse return rhs.next == null;
+            const rhs_next = rhs.next orelse return false;
 
             return lhs_next.eql(rhs_next);
         }

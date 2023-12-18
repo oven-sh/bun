@@ -202,7 +202,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.
-            var globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
+            const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
                 .Pointer => this.globalThis,
                 .Optional => brk: {
                     if (this.globalThis) |global| {

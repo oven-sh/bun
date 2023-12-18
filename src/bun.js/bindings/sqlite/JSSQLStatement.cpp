@@ -1425,14 +1425,13 @@ JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChe
     }
 }
 
-constexpr JSC::DFG::AbstractHeapKind readKinds[4] = { JSC::DFG::MiscFields, JSC::DFG::HeapObjectCount };
-constexpr JSC::DFG::AbstractHeapKind writeKinds[4] = { JSC::DFG::SideState, JSC::DFG::HeapObjectCount };
-
 static const JSC::DOMJIT::Signature DOMJITSignatureForjsSQLStatementExecuteStatementFunctionGet(
     jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking,
     JSSQLStatement::info(),
-    JSC::DOMJIT::Effect::forReadWriteKinds(readKinds, writeKinds),
-    JSC::SpecOther);
+    // We use HeapRange::top() because MiscFields and SideState and HeapObjectIdentity were not enough to tell the compiler that it cannot skip calling the function.
+    // https://github.com/oven-sh/bun/issues/7694
+    JSC::DOMJIT::Effect::forDef(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecFinalObject);
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

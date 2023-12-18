@@ -307,12 +307,6 @@ pub const fmt = struct {
                                         break :write;
                                     },
                                     .import => {
-                                        if (strings.eqlComptime(remain[0..i], "as")) {
-                                            const code = ColorCode.magenta;
-                                            try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
-                                            break :write;
-                                        }
-
                                         if (strings.eqlComptime(remain[0..i], "from")) {
                                             const code = ColorCode.magenta;
                                             try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });

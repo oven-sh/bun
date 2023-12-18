@@ -1084,10 +1084,16 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
 pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     while (true) {
+        // if (comptime Environment.allow_assert)
+        //     log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
         if (Maybe(void).errnoSys(sys.renameat(from_dir, from, to_dir, to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
+        if (comptime Environment.allow_assert)
+            log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return Maybe(void).success;
     }
     unreachable;

@@ -337,8 +337,11 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
-const ShellGlobTask = @import("../shell/interpreter.zig").ShellGlobTask;
-const AsyncRmTask = @import("../shell/interpreter.zig").Builtin.Rm.AsyncRmTask;
+const shell_interpreter = @import("../shell/interpreter.zig");
+const ShellGlobTask = shell_interpreter.ShellGlobTask;
+const ShellRmTask = shell_interpreter.Builtin.Rm.ShellRmTask;
+const ShellMvCheckTargetTask = shell_interpreter.Builtin.Mv.ShellMvCheckTargetTask;
+const ShellMvBatchedTask = shell_interpreter.Builtin.Mv.ShellMvBatchedTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -402,7 +405,9 @@ pub const Task = TaggedPointerUnion(.{
     JSC.Subprocess.WaiterThread.WaitPidResultTask,
     bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
     ShellGlobTask,
-    AsyncRmTask,
+    ShellRmTask,
+    ShellMvCheckTargetTask,
+    ShellMvBatchedTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -687,8 +692,16 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                .AsyncRmTask => {
-                    var shell_rm_task: *AsyncRmTask = task.get(AsyncRmTask).?;
+                .ShellMvBatchedTask => {
+                    var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
+                    shell_mv_batched_task.task.runFromJS();
+                },
+                .ShellMvCheckTargetTask => {
+                    var shell_mv_check_target_task: *ShellMvCheckTargetTask = task.get(ShellMvCheckTargetTask).?;
+                    shell_mv_check_target_task.task.runFromJS();
+                },
+                .ShellRmTask => {
+                    var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
                     shell_rm_task.runFromJs();
                     shell_rm_task.deinit();
                 },

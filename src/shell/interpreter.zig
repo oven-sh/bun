@@ -3655,6 +3655,28 @@ pub const Builtin = struct {
                                         if (this.opts.recursive) {
                                             this.opts.remove_empty_dirs = true;
                                         }
+
+                                        if (this.opts.prompt_behaviour != .never) {
+                                            const buf = "rm: \"-i\" is not supported yet";
+                                            if (this.bltn.stderr.needsIO()) {
+                                                parse_opts.state = .{
+                                                    .wait_write_err = BufferedWriter{
+                                                        .fd = this.bltn.stderr.fd,
+                                                        .remain = buf,
+                                                        .parent = BufferedWriter.ParentPtr.init(this),
+                                                    },
+                                                };
+                                                parse_opts.state.wait_write_err.writeAllowBlocking(false);
+                                                continue;
+                                            }
+
+                                            if (this.bltn.writeNoIO(.stderr, buf).asErr()) |e|
+                                                return Maybe(void).initErr(e);
+
+                                            this.bltn.done(1);
+                                            return Maybe(void).success;
+                                        }
+
                                         const filepath_args_start = idx;
                                         const filepath_args = parse_opts.args_slice[filepath_args_start..];
 
@@ -3819,7 +3841,7 @@ pub const Builtin = struct {
                     this.state.exec.state.waiting_but_errored.error_writer != null));
             }
 
-            if (this.state.exec.state == .waiting_but_errored) {
+            if (this.state == .exec and this.state.exec.state == .waiting_but_errored) {
                 if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks) {
                     this.state = .{ .err = this.state.exec.err.? };
                     _ = this.next();

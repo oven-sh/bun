@@ -1121,10 +1121,13 @@ const IO = struct {
 pub const Script = struct {
     base: State,
     node: *const ast.Script,
-    idx: usize,
-    currently_executing: ?ChildPtr,
+    // currently_executing: ?ChildPtr,
     io: IO,
-    state: union(enum) {},
+    state: union(enum) {
+        normal: struct {
+            idx: usize = 0,
+        },
+    } = .{ .normal = .{} },
 
     pub const ChildPtr = struct {
         val: *Stmt,
@@ -1139,35 +1142,45 @@ pub const Script = struct {
     fn init(interpreter: *Interpreter, node: *const ast.Script, io: IO) !*Script {
         var script = try interpreter.allocator.create(Script);
         errdefer interpreter.allocator.destroy(script);
-        script.base = .{ .kind = .script, .interpreter = interpreter };
-        script.node = node;
-        script.idx = 0;
-        script.io = io;
+        script.* = .{
+            .base = .{ .kind = .script, .interpreter = interpreter },
+            .node = node,
+            .io = io,
+        };
         return script;
     }
 
     fn start(this: *Script) !void {
-        if (bun.Environment.allow_assert) {
-            std.debug.assert(this.idx == 0);
-        }
-
         if (this.node.stmts.len == 0)
             return this.finish(0);
+        this.next();
+    }
 
-        const stmt_node = &this.node.stmts[0];
-
-        var stmt = try Stmt.init(this.base.interpreter, stmt_node, this, this.io);
-        try stmt.start();
+    fn next(this: *Script) void {
+        switch (this.state) {
+            .normal => {
+                if (this.state.normal.idx >= this.node.stmts.len) return;
+                const stmt_node = &this.node.stmts[this.state.normal.idx];
+                this.state.normal.idx += 1;
+                var stmt = Stmt.init(this.base.interpreter, stmt_node, this, this.io) catch bun.outOfMemory();
+                stmt.start() catch bun.outOfMemory();
+                return;
+            },
+        }
     }
 
     fn finish(this: *Script, exit_code: u8) void {
+        log("SCRIPT DONE YO!", .{});
         this.base.interpreter.finish(exit_code);
     }
 
     fn childDone(this: *Script, child: ChildPtr, exit_code: u8) void {
-        log("SCRIPT DONE YO!", .{});
         child.deinit();
-        this.finish(exit_code);
+        if (this.state.normal.idx >= this.node.stmts.len) {
+            this.finish(exit_code);
+            return;
+        }
+        this.next();
     }
 };
 
@@ -2466,6 +2479,7 @@ pub const BufferedWriter = struct {
             Builtin.Cd,
             Builtin.Which,
             Builtin.Rm,
+            Builtin.Pwd,
         };
         ptr: Repr,
         const Repr = TaggedPointerUnion(Types);
@@ -2489,6 +2503,7 @@ pub const BufferedWriter = struct {
             if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Which)) return this.ptr.as(Builtin.Which).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Rm)) return this.ptr.as(Builtin.Rm).onBufferedWriterDone(bw, e);
+            if (this.ptr.is(Builtin.Pwd)) return this.ptr.as(Builtin.Pwd).onBufferedWriterDone(bw, e);
             @panic("Invalid ptr tag");
         }
     };
@@ -2640,7 +2655,7 @@ pub const Builtin = struct {
         @"export": Export,
         cd: Cd,
         echo: Echo,
-        pwd,
+        pwd: Pwd,
         which: Which,
         rm: Rm,
     },
@@ -2763,7 +2778,7 @@ pub const Builtin = struct {
             .cd => this.callImplWithType(Cd, Ret, "cd", field, args_),
             .which => this.callImplWithType(Which, Ret, "which", field, args_),
             .rm => this.callImplWithType(Rm, Ret, "rm", field, args_),
-            .pwd => @panic("FIXME TODO"),
+            .pwd => this.callImplWithType(Pwd, Ret, "pwd", field, args_),
         };
     }
 
@@ -2921,7 +2936,11 @@ pub const Builtin = struct {
                     },
                 };
             },
-            else => @panic("FIXME TODO"),
+            .pwd => {
+                cmd.exec.bltn.impl = .{
+                    .pwd = Pwd{ .bltn = &cmd.exec.bltn },
+                };
+            },
         }
     }
 
@@ -3497,6 +3516,108 @@ pub const Builtin = struct {
 
         pub fn deinit(this: *Cd) void {
             log("({s}) deinit", .{@tagName(.cd)});
+            _ = this;
+        }
+    };
+
+    pub const Pwd = struct {
+        bltn: *Builtin,
+        state: union(enum) {
+            idle,
+            waiting_io: struct {
+                kind: enum { stdout, stderr },
+                writer: BufferedWriter,
+            },
+            err: Syscall.Error,
+            done,
+        } = .idle,
+
+        pub fn start(this: *Pwd) Maybe(void) {
+            const args = this.bltn.argsSlice();
+            if (args.len > 0) {
+                const msg = "pwd: too many arguments";
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .{
+                        .waiting_io = .{
+                            .kind = .stderr,
+                            .writer = BufferedWriter{
+                                .fd = this.bltn.stderr.fd,
+                                .remain = msg,
+                                .parent = BufferedWriter.ParentPtr.init(this),
+                            },
+                        },
+                    };
+                    this.state.waiting_io.writer.writeIfPossible(false);
+                    return Maybe(void).success;
+                }
+
+                if (this.bltn.writeNoIO(.stderr, msg).asErr()) |e| {
+                    return .{ .err = e };
+                }
+
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            const prev_cwd = this.bltn.parentCmd().base.interpreter.prev_cwd;
+            const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{prev_cwd[0..prev_cwd.len]});
+            if (this.bltn.stdout.needsIO()) {
+                this.state = .{
+                    .waiting_io = .{
+                        .kind = .stdout,
+                        .writer = BufferedWriter{
+                            .fd = this.bltn.stdout.fd,
+                            .remain = buf,
+                            .parent = BufferedWriter.ParentPtr.init(this),
+                        },
+                    },
+                };
+                this.state.waiting_io.writer.writeIfPossible(false);
+                return Maybe(void).success;
+            }
+
+            this.state = .done;
+            this.bltn.done(0);
+            return Maybe(void).success;
+        }
+
+        pub fn next(this: *Pwd) void {
+            while (!(this.state == .err or this.state == .done)) {
+                switch (this.state) {
+                    .waiting_io => return,
+                    .idle, .done, .err => unreachable,
+                }
+            }
+
+            if (this.state == .done) {
+                this.bltn.done(0);
+                return;
+            }
+
+            if (this.state == .err) {
+                this.bltn.done(this.state.err.errno);
+                return;
+            }
+        }
+
+        pub fn onBufferedWriterDone(this: *Pwd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .waiting_io);
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.next();
+                return;
+            }
+
+            this.state = .done;
+
+            this.next();
+        }
+
+        pub fn deinit(this: *Pwd) void {
             _ = this;
         }
     };

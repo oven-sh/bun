@@ -11605,7 +11605,7 @@ fn NewParser_(
                 .with_statement => "With statements",
                 .delete_bare_name => "\"delete\" of a bare identifier",
                 .for_in_var_init => "Variable initializers within for-in loops",
-                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail}),
+                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name \"{s}\"", .{detail}),
                 .reserved_word => try std.fmt.allocPrint(p.allocator, "\"{s}\" is a reserved word and", .{detail}),
                 .legacy_octal_literal => "Legacy octal literals",
                 .legacy_octal_escape => "Legacy octal escape sequences",
@@ -11642,7 +11642,7 @@ fn NewParser_(
                 notes[0] = logger.rangeData(p.source, where, why);
                 try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), notes);
             } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with esm due to strict mode", .{text}));
+                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with the ESM output format due to strict mode", .{text}));
             }
         }
 
@@ -16529,6 +16529,7 @@ fn NewParser_(
                         .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call == expr.data.e_call and p.then_catch_chain.has_catch,
                     };
 
+                    const target_was_identifier_before_visit = e_.target.data == .e_identifier;
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
@@ -16538,6 +16539,38 @@ fn NewParser_(
                     switch (e_.target.data) {
                         .e_identifier => |ident| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+
+                            // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
+                            // become "eval(x)" after we visit the target due to dead code elimination,
+                            // but that doesn't mean it should become a direct eval.
+                            //
+                            // Note that "eval?.(x)" is considered an indirect eval. There was debate
+                            // about this after everyone implemented it as a direct eval, but the
+                            // language committee said it was indirect and everyone had to change it:
+                            // https://github.com/tc39/ecma262/issues/2062.
+                            if (e_.optional_chain == null and
+                                target_was_identifier_before_visit and
+                                strings.eqlComptime(
+                                p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
+                                "eval",
+                            )) {
+                                e_.is_direct_eval = true;
+
+                                // Pessimistically assume that if this looks like a CommonJS module
+                                // (e.g. no "export" keywords), a direct call to "eval" means that
+                                // code could potentially access "module" or "exports".
+                                if (p.options.bundle and !p.is_file_considered_to_have_esm_exports) {
+                                    p.recordUsage(p.module_ref);
+                                    p.recordUsage(p.exports_ref);
+                                }
+
+                                var scope_iter: ?*js_ast.Scope = p.current_scope;
+                                while (scope_iter) |scope| : (scope_iter = scope.parent) {
+                                    scope.contains_direct_eval = true;
+                                }
+
+                                // TODO: Log a build note for this like esbuild does
+                            }
                         },
                         .e_dot => |dot| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;

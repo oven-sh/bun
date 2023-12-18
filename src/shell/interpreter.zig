@@ -3654,7 +3654,70 @@ pub const Builtin = struct {
         bltn: *Builtin,
         opts: Opts = .{},
 
-        state: union(enum) {},
+        state: union(enum) {
+            idle,
+            exec: struct {
+                filepath_args: []const [*:0]const u8,
+                err: ?Syscall.Error = null,
+            },
+            waiting_write_err: BufferedWriter,
+            done,
+        },
+
+        const ShellLsTask = struct {
+            const print = bun.Output.scoped(.ShellLsTask, false);
+
+            ls: *Ls,
+            opts: Opts,
+
+            root_task: DirTask,
+            root_path: [:0]const u8 = &[0:0]u8{},
+
+            err_mutex: bun.Lock = bun.Lock.init(),
+            err: ?Syscall.Error = null,
+
+            event_loop: *JSC.EventLoop,
+            concurrent_task: JSC.ConcurrentTask = .{},
+            task: JSC.WorkPoolTask = .{
+                .callback = workPoolCallback,
+            },
+
+            const DirTask = struct {
+                path: [:0]const u8,
+                output_buffer: std.ArrayList(u8),
+            };
+
+            pub fn schedule(this: *@This()) void {
+                JSC.WorkPool.schedule(&this.task);
+            }
+
+            pub fn run(this: *ShellLsTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {
+                _ = is_absolute;
+
+                switch (Syscall.open(dir_task.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                    .err => |e| {
+                        switch (e.getErrno()) {
+                            bun.C.E.NOENT => {
+                                return .{ .err = this.errorWithPath(e, dir_task.path) };
+                            },
+                            bun.C.E.NOTDIR => {},
+                        }
+                    },
+                }
+            }
+
+            // fn writeOutput(
+
+            fn errorWithPath(this: *ShellLsTask, err: Syscall.Error, path: [:0]const u8) Syscall.Error {
+                _ = this;
+                return err.withPath(bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+            }
+
+            pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+                var this: *ShellLsTask = @fieldParentPtr(ShellLsTask, "task", task);
+                this.root_task.runFromThreadPoolImpl();
+            }
+        };
 
         const Opts = struct {
             /// `-a`, `--all`
@@ -5174,13 +5237,6 @@ pub const Builtin = struct {
                 pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
                     var this: *DirTask = @fieldParentPtr(DirTask, "task", task);
                     this.runFromThreadPoolImpl();
-                }
-
-                fn runFromThreadPoolAsRoot(this: *DirTask) void {
-                    _ = this;
-
-                    // Check that the resolved path does not point to the root directory
-                    {}
                 }
 
                 fn runFromThreadPoolImpl(this: *DirTask) void {

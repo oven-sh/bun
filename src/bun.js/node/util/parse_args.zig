@@ -127,7 +127,7 @@ const OptionToken = struct {
         if (this.optgroup_idx) |optgroup_idx| {
             const raw = this.raw.asBunString(globalThis);
             var buf: [8]u8 = undefined;
-            var str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
+            const str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
             return String.fromUTF8(str).toJSConst(globalThis);
         } else {
             switch (this.parse_type) {
@@ -445,7 +445,7 @@ fn tokenizeArgs(
             // isShortOptionGroup
             .short_option_group => {
                 // Expand -fXzy to -f -X -z -y
-                var original_arg_idx = index;
+                const original_arg_idx = index;
                 const arg_len = arg.length();
                 for (1..arg_len) |idx_in_optgroup| {
                     const short_option = arg.substringWithLen(idx_in_optgroup, idx_in_optgroup + 1);
@@ -515,9 +515,9 @@ fn tokenizeArgs(
 
             .lone_long_option => {
                 // e.g. '--foo'
-                var long_option = arg.substring(2);
+                const long_option = arg.substring(2);
                 var value: ?JSValue = null;
-                var option_idx = findOptionByLongName(long_option, options);
+                const option_idx = findOptionByLongName(long_option, options);
                 const option_type: OptionValueType = if (option_idx) |idx| options[idx].type else .boolean;
                 if (option_type == .string and index + 1 < num_args) {
                     // e.g. '--foo', "bar"
@@ -600,7 +600,7 @@ const ParseArgsState = struct {
                     globalThis.vm().throwError(globalThis, err);
                     return error.ParseError;
                 }
-                var value = token.value.asJSValue(globalThis);
+                const value = token.value.asJSValue(globalThis);
                 this.positionals.push(globalThis, value);
             },
             .@"option-terminator" => {},
@@ -616,9 +616,9 @@ const ParseArgsState = struct {
             };
 
             // reuse JSValue for the kind names: "positional", "option", "option-terminator"
-            var kind_idx = @intFromEnum(token_generic);
-            var kind_jsvalue = this.kinds_jsvalues[kind_idx] orelse kindval: {
-                var val = String.static(@as(string, @tagName(token_generic))).toJSConst(globalThis);
+            const kind_idx = @intFromEnum(token_generic);
+            const kind_jsvalue = this.kinds_jsvalues[kind_idx] orelse kindval: {
+                const val = String.static(@as(string, @tagName(token_generic))).toJSConst(globalThis);
                 this.kinds_jsvalues[kind_idx] = val;
                 break :kindval val;
             };
@@ -723,9 +723,9 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
     log("Phase 1+2: tokenize args (args.len={d})", .{args.end - args.start});
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
-    var values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
-    var positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
-    var tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
+    const values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
+    const positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
+    const tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
 
     var state = ParseArgsState{
         .globalThis = globalThis,

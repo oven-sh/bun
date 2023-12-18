@@ -339,13 +339,10 @@ String CryptoKeyOKP::generateJwkX() const
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        // TODO(@paperdave 2023-10-19): i removed WTFMove from ed25519PublicFromPrivate() as per MSVC compiler error.
-        // We need to evaluate if that is the proper fix here.
-        return Bun::base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
+        return Bun::base64URLEncodeToString(WTFMove(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    // TODO(@paperdave 2023-10-19): see above
-    return Bun::base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
+    return Bun::base64URLEncodeToString(WTFMove(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const

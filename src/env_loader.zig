@@ -57,7 +57,7 @@ pub const Loader = struct {
         return strings.eqlComptime(env, "production");
     }
 
-    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
+    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
@@ -168,14 +168,63 @@ pub const Loader = struct {
         }
         return http_proxy;
     }
+
+    var did_load_ccache_path: bool = false;
+
+    pub fn loadCCachePath(this: *Loader, fs: *Fs.FileSystem) void {
+        if (did_load_ccache_path) {
+            return;
+        }
+        did_load_ccache_path = true;
+        loadCCachePathImpl(this, fs) catch {};
+    }
+
+    fn loadCCachePathImpl(this: *Loader, fs: *Fs.FileSystem) !void {
+
+        // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
+        // cmake can use it to hopefully speed things up
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const ccache_path = bun.which(
+            &buf,
+            this.map.get("PATH") orelse return,
+            fs.top_level_dir,
+            "ccache",
+        ) orelse "";
+
+        if (ccache_path.len > 0) {
+            const cxx_gop = try this.map.getOrPutWithoutValue("CMAKE_CXX_COMPILER_LAUNCHER");
+            if (!cxx_gop.found_existing) {
+                cxx_gop.key_ptr.* = try this.allocator.dupe(u8, cxx_gop.key_ptr.*);
+                cxx_gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, ccache_path),
+                    .conditional = false,
+                };
+            }
+            const c_gop = try this.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
+            if (!c_gop.found_existing) {
+                c_gop.key_ptr.* = try this.allocator.dupe(u8, c_gop.key_ptr.*);
+                c_gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, ccache_path),
+                    .conditional = false,
+                };
+            }
+        }
+    }
+
+    var node_path_to_use_set_once: []const u8 = "";
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
-        var buf: Fs.PathBuffer = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         var node_path_to_use = override_node;
         if (node_path_to_use.len == 0) {
-            var node = this.getNodePath(fs, &buf) orelse return false;
-            node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
+            if (node_path_to_use_set_once.len > 0) {
+                node_path_to_use = node_path_to_use_set_once;
+            } else {
+                const node = this.getNodePath(fs, &buf) orelse return false;
+                node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
+            }
         }
+        node_path_to_use_set_once = node_path_to_use;
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);
         return true;
@@ -218,7 +267,7 @@ pub const Loader = struct {
         behavior: Api.DotEnvBehavior,
         prefix: string,
         allocator: std.mem.Allocator,
-    ) ![]u8 {
+    ) !void {
         var iter = this.map.iter();
         var key_count: usize = 0;
         var string_map_hashes = try allocator.alloc(u64, framework_defaults.keys.len);
@@ -273,7 +322,7 @@ pub const Loader = struct {
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                var key_allocator = key_fixed_allocator.allocator();
+                const key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
@@ -288,7 +337,7 @@ pub const Loader = struct {
                                 else
                                     &[_]u8{},
                             };
-                            var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                            const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
@@ -312,7 +361,7 @@ pub const Loader = struct {
                                         &[_]u8{},
                                 };
 
-                                var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                                const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
@@ -338,7 +387,7 @@ pub const Loader = struct {
                                 &[_]u8{},
                         };
 
-                        var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                        const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                         _ = try to_string.getOrPutValue(
                             key,
@@ -355,14 +404,12 @@ pub const Loader = struct {
         }
 
         for (framework_defaults.keys, 0..) |key, i| {
-            var value = framework_defaults.values[i];
+            const value = framework_defaults.values[i];
 
             if (!to_string.contains(key) and !to_json.contains(key)) {
                 _ = try to_json.getOrPutValue(key, value);
             }
         }
-
-        return key_buf;
     }
 
     pub fn init(map: *Map, allocator: std.mem.Allocator) Loader {
@@ -380,8 +427,8 @@ pub const Loader = struct {
         for (std.os.environ) |_env| {
             var env = bun.span(_env);
             if (strings.indexOfChar(env, '=')) |i| {
-                var key = env[0..i];
-                var value = env[i + 1 ..];
+                const key = env[0..i];
+                const value = env[i + 1 ..];
                 if (key.len > 0) {
                     this.map.put(key, value) catch unreachable;
                 }
@@ -431,7 +478,7 @@ pub const Loader = struct {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         var i: usize = env_files.len;
         while (i > 0) : (i -= 1) {
-            var arg_value = std.mem.trim(u8, env_files[i - 1], " ");
+            const arg_value = std.mem.trim(u8, env_files[i - 1], " ");
             if (arg_value.len > 0) { // ignore blank args
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
@@ -453,7 +500,7 @@ pub const Loader = struct {
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
     ) !void {
-        var dir_handle: std.fs.Dir = std.fs.cwd();
+        const dir_handle: std.fs.Dir = std.fs.cwd();
 
         switch (comptime suffix) {
             .development => {
@@ -964,7 +1011,7 @@ const Parser = struct {
                 continue;
             };
             const value = this.parseValue(is_process);
-            var entry = map.map.getOrPut(key) catch unreachable;
+            const entry = map.map.getOrPut(key) catch unreachable;
             if (entry.found_existing) {
                 if (entry.index < count) {
                     // Allow keys defined later in the same file to override keys defined earlier
@@ -1013,7 +1060,11 @@ pub const Map = struct {
         value: string,
         conditional: bool,
     };
-    pub const HashTable = bun.StringArrayHashMap(HashTableValue);
+    // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
+    // An issue with this exact implementation is unicode characters can technically appear in these
+    // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
+    // some strings collide.
+    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
 
     const GetOrPutResult = HashTable.GetOrPutResult;
 
@@ -1048,9 +1099,9 @@ pub const Map = struct {
             if (!entry.value_ptr.conditional) {
                 // TODO(@paperdave): this crashes on windows. i remember there being a merge conflict with these two implementations. not sure what we should keep
                 if (Environment.isWindows) {
-                    try env_map.put(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
+                    try env_map.put(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
                 } else {
-                    try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
+                    try env_map.putMove(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
                 }
             }
         }

@@ -93,7 +93,7 @@ pub fn exit(code: u8) noreturn {
     runExitCallbacks();
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);
-    std.c._exit(code);
+    std.c.exit(@intCast(code));
 }
 
 pub const AllocatorConfiguration = struct {

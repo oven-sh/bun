@@ -11,8 +11,8 @@ has_exec() {
   which "$1" >/dev/null 2>&1 || return 1
 }
 fail() {
+  has_failure=1
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
-  exit 1
 }
 
 LLVM_VERSION=16
@@ -32,6 +32,7 @@ for type in CC CXX; do
   ) || fail "LLVM ${LLVM_VERSION} is required. Detected $type as '$compiler'"
 done
 
+has_exec "zig" || fail "'zig' is missing"
 has_exec "bun" || fail "you need an existing copy of 'bun' in your path to build bun"
 has_exec "cmake" || fail "'cmake' is missing"
 has_exec "ninja" || fail "'ninja' is missing"
@@ -46,6 +47,10 @@ has_exec "pkg-config" || fail "'pkg-config' is missing"
 has_exec "automake" || fail "'automake' is missing"
 has_exec "perl" || fail "'perl' is missing"
 has_exec "ruby" || fail "'ruby' is missing"
+
+if [ -n "$has_failure" ]; then
+  exit 1
+fi
 
 rm -f .vscode/clang++
 ln -s "$CXX" .vscode/clang++

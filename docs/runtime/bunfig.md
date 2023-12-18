@@ -313,7 +313,7 @@ frozenLockfile = false
 
 ### `install.dryRun`
 
-Whether to install optional dependencies. Default `false`. When true, it's equivalent to setting `--dry-run` on all `bun install` commands.
+Whether `bun install` will actually install dependencies. Default `false`. When true, it's equivalent to setting `--dry-run` on all `bun install` commands.
 
 ```toml
 [install]

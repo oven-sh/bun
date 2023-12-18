@@ -937,7 +937,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlob
 
 static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName)
 {
-
+#if !OS(WINDOWS)
     // macOS output:
     // {
     //   header: {
@@ -1515,6 +1515,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         return report;
     }
+#else // !OS(WINDOWS)
+    return jsString(vm, String("Not implemented. blame @paperdave"_s));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

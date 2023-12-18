@@ -15,8 +15,6 @@ const NodeFSFunction = fn (
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue;
 
-pub const toJSTrait = std.meta.trait.hasFn("toJS");
-pub const fromJSTrait = std.meta.trait.hasFn("fromJS");
 const NodeFSFunctionEnum = JSC.Node.DeclEnum(JSC.Node.NodeFS);
 
 fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {

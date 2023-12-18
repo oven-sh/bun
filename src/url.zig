@@ -521,7 +521,7 @@ pub const QueryStringMap = struct {
             this.i += 1;
 
             var remainder_hashes = slice.items(.name_hash)[this.i..];
-            var remainder_values = slice.items(.value)[this.i..];
+            const remainder_values = slice.items(.value)[this.i..];
 
             var target_i: usize = 1;
             var current_i: usize = 0;
@@ -647,7 +647,7 @@ pub const QueryStringMap = struct {
             try writer.writeAll(name_slice);
             buf_writer_pos += @as(u32, @truncate(name_slice.len));
 
-            var name_hash: u64 = bun.hash(name_slice);
+            const name_hash: u64 = bun.hash(name_slice);
 
             value.length = PercentEncoding.decode(Writer, writer, result.rawValue(scanner.pathname.pathname)) catch continue;
             value.offset = buf_writer_pos;
@@ -733,8 +733,8 @@ pub const QueryStringMap = struct {
                 if (Environment.allow_assert) std.debug.assert(!result.name_needs_decoding);
                 if (Environment.allow_assert) std.debug.assert(!result.value_needs_decoding);
 
-                var name = result.name;
-                var value = result.value;
+                const name = result.name;
+                const value = result.value;
                 const name_hash: u64 = bun.hash(result.rawName(query_string));
                 list.appendAssumeCapacity(Param{ .name = name, .value = value, .name_hash = name_hash });
             }
@@ -748,7 +748,7 @@ pub const QueryStringMap = struct {
         }
 
         var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
-        var writer = buf.writer();
+        const writer = buf.writer();
         var buf_writer_pos: u32 = 0;
 
         var list_slice = list.slice();
@@ -896,7 +896,7 @@ pub const FormData = struct {
         allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, encoding: Encoding) !*AsyncFormData {
-            var this = try allocator.create(AsyncFormData);
+            const this = try allocator.create(AsyncFormData);
             this.* = AsyncFormData{
                 .encoding = switch (encoding) {
                     .Multipart => .{
@@ -1052,7 +1052,7 @@ pub const FormData = struct {
     ) !JSC.JSValue {
         const form_data_value = JSC.DOMFormData.create(globalThis);
         form_data_value.ensureStillAlive();
-        var form = JSC.DOMFormData.fromJS(form_data_value) orelse {
+        const form = JSC.DOMFormData.fromJS(form_data_value) orelse {
             log("failed to create DOMFormData.fromJS", .{});
             return error.@"failed to parse multipart data";
         };
@@ -1061,11 +1061,11 @@ pub const FormData = struct {
             form: *JSC.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
-                var value_str = field.value.slice(buf);
+                const value_str = field.value.slice(buf);
                 var key = JSC.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
-                    var filename_str = field.filename.slice(buf);
+                    const filename_str = field.filename.slice(buf);
 
                     var blob = JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
@@ -1385,7 +1385,7 @@ pub const Scanner = struct {
         loop: while (true) {
             if (this.i >= this.query_string.len) return null;
 
-            var slice = this.query_string[this.i..];
+            const slice = this.query_string[this.i..];
             relative_i = 0;
             var name = Api.StringPointer{ .offset = @as(u32, @truncate(this.i)), .length = 0 };
             var value = Api.StringPointer{ .offset = 0, .length = 0 };
@@ -1523,7 +1523,7 @@ test "PercentEncoding.decode" {
     @memset(&buffer, 0);
 
     var stream = std.io.fixedBufferStream(&buffer);
-    var writer = stream.writer();
+    const writer = stream.writer();
     const Writer = @TypeOf(writer);
 
     {
@@ -1658,7 +1658,7 @@ test "QueryStringMap Iterator" {
     var map = (try QueryStringMap.init(std.testing.allocator, url)) orelse return try std.testing.expect(false);
     defer map.deinit();
     var buf_: [48]string = undefined;
-    var buf = buf_[0..48];
+    const buf = buf_[0..48];
     var iter = map.iter();
 
     var result: QueryStringMap.Iterator.Result = iter.next(buf) orelse return try expect(false);

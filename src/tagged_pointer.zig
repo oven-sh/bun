@@ -92,40 +92,8 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     };
 }
 
-pub fn TagTypeStructWithTypeMap(comptime Types: anytype) struct {
-    tag_type: type,
-    ty_map: TypeMap(Types),
-} {
-    const Fields: []const std.builtin.Type.StructField = std.meta.fields(@TypeOf(Types));
-    var enumFields: [Fields.len]std.builtin.Type.EnumField = undefined;
-    var decls = [_]std.builtin.Type.Declaration{};
-    var typeMap: TypeMap(Types) = undefined;
-
-    inline for (Fields, 0..) |field, i| {
-        const name = comptime typeBaseName(@typeName(field.default_value.?));
-        enumFields[i] = .{
-            .name = name,
-            .value = 1024 - i,
-        };
-        typeMap[i] = .{ .value = 1024 - i, .ty = field.default_value.?, .name = name };
-    }
-
-    return .{
-        .tag_type = @Type(.{
-            .Enum = .{
-                .tag_type = TagSize,
-                .fields = &enumFields,
-                .decls = &decls,
-                .is_exhaustive = false,
-            },
-        }),
-        .ty_map = typeMap,
-    };
-}
-
 pub fn TaggedPointerUnion(comptime Types: anytype) type {
-    const result =
-        if (std.meta.trait.isIndexable(@TypeOf(Types))) TagTypeEnumWithTypeMap(Types) else TagTypeStructWithTypeMap(Types);
+    const result = TagTypeEnumWithTypeMap(Types);
 
     const TagType: type = result.tag_type;
 
@@ -153,7 +121,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         const This = @This();
         fn assert_type(comptime Type: type) void {
-            var name = comptime typeBaseName(@typeName(Type));
+            const name = comptime typeBaseName(@typeName(Type));
             if (!comptime @hasField(Tag, name)) {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
@@ -237,7 +205,7 @@ test "TaggedPointerUnion" {
     //     wrong: bool = true,
     // };
     const Union = TaggedPointerUnion(.{ IntPrimitive, StringPrimitive, Object });
-    var str = try default_allocator.create(StringPrimitive);
+    const str = try default_allocator.create(StringPrimitive);
     str.* = StringPrimitive{ .val = "hello!" };
     var un = Union.init(str);
     try std.testing.expect(un.is(StringPrimitive));
@@ -283,7 +251,7 @@ test "TaggedPointer" {
         const what = try std.fmt.allocPrint(default_allocator, "hiiii {d}", .{i});
         hello_struct_ptr.* = Hello{ .what = what };
         try std.testing.expectEqualStrings(TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to()).get(Hello).what, what);
-        var this = TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to());
+        const this = TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to());
         try std.testing.expect(this.data == i);
         try std.testing.expect(this.data != i + 1);
     }

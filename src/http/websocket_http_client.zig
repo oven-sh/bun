@@ -215,8 +215,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop: *bun.Async.Loop = @alignCast(@ptrCast(loop_));
-            var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
+            const loop: *bun.Async.Loop = @alignCast(@ptrCast(loop_));
+            const ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
             if (vm.event_loop_handle) |other| {
                 std.debug.assert(other == loop);
@@ -260,7 +260,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             std.debug.assert(global.bunVM().event_loop_handle != null);
 
             var client_protocol_hash: u64 = 0;
-            var body = buildRequestBody(
+            const body = buildRequestBody(
                 global.bunVM(),
                 pathname,
                 ssl,
@@ -924,10 +924,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         const WebSocket = @This();
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
-            var vm = global.bunVM();
-            var loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
+            const vm = global.bunVM();
+            const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
 
-            var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
+            const ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
             if (comptime Environment.isPosix) {
                 if (vm.event_loop_handle) |other| {
@@ -992,7 +992,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             log("onHandshake({d})", .{success});
 
             if (this.outgoing_websocket) |ws| {
-                var reject_unauthorized = ws.rejectUnauthorized();
+                const reject_unauthorized = ws.rejectUnauthorized();
                 if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
                     this.outgoing_websocket = null;
                     ws.didAbruptClose(ErrorCode.failed_to_connect);
@@ -1502,7 +1502,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return false;
             }
             const expected = @as(usize, @intCast(wrote));
-            var readable = this.send_buffer.readableSlice(0);
+            const readable = this.send_buffer.readableSlice(0);
             if (readable.ptr == out_buf.ptr) {
                 this.send_buffer.discard(expected);
             }
@@ -1520,7 +1520,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             header.final = true;
             header.opcode = .Pong;
 
-            var to_mask = this.ping_frame_bytes[6..][0..this.ping_len];
+            const to_mask = this.ping_frame_bytes[6..][0..this.ping_len];
 
             header.mask = true;
             header.len = @as(u7, @truncate(this.ping_len));
@@ -1557,7 +1557,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             header.mask = true;
             header.len = @as(u7, @truncate(body_len + 2));
             final_body_bytes[0..2].* = header.slice();
-            var mask_buf: *[4]u8 = final_body_bytes[2..6];
+            const mask_buf: *[4]u8 = final_body_bytes[2..6];
             final_body_bytes[6..8].* = if (native_endian == .big) @bitCast(code) else @bitCast(@byteSwap(code));
 
             var reason = bun.String.empty;
@@ -1756,8 +1756,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data: [*]u8,
             buffered_data_len: usize,
         ) callconv(.C) ?*anyopaque {
-            var tcp = @as(*uws.Socket, @ptrCast(input_socket));
-            var ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
+            const tcp = @as(*uws.Socket, @ptrCast(input_socket));
+            const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
             var adopted = Socket.adopt(
                 tcp,
                 ctx,
@@ -1775,9 +1775,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             adopted.receive_buffer.ensureTotalCapacity(2048) catch return null;
             adopted.poll_ref.ref(globalThis.bunVM());
 
-            var buffered_slice: []u8 = buffered_data[0..buffered_data_len];
+            const buffered_slice: []u8 = buffered_data[0..buffered_data_len];
             if (buffered_slice.len > 0) {
-                var initial_data = bun.default_allocator.create(InitialDataHandler) catch unreachable;
+                const initial_data = bun.default_allocator.create(InitialDataHandler) catch unreachable;
                 initial_data.* = .{
                     .adopted = adopted,
                     .slice = buffered_slice,

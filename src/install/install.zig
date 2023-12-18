@@ -8871,13 +8871,6 @@ pub const PackageManager = struct {
 
                     had_any_diffs = had_any_diffs or manager.summary.hasDiffs();
 
-                    if (manager.options.enable.frozen_lockfile and had_any_diffs) {
-                        if (comptime log_level != .silent) {
-                            Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
-                        }
-                        Global.crash();
-                    }
-
                     if (manager.summary.new_trusted_dependencies.count() > 0) {
                         needs_new_lockfile = true;
                     }
@@ -9148,6 +9141,14 @@ pub const PackageManager = struct {
 
         if (manager.options.global) {
             try manager.setupGlobalDir(&ctx);
+        }
+
+        if (did_meta_hash_change and manager.options.enable.frozen_lockfile) {
+            if (comptime log_level != .silent) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
+                Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
+            }
+            Global.crash();
         }
 
         // It's unnecessary work to re-save the lockfile if there are no changes

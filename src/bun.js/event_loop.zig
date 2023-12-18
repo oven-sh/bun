@@ -339,6 +339,7 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
+const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -398,6 +399,7 @@ pub const Task = TaggedPointerUnion(.{
     Lchown,
     Unlink,
     WaitPidResultTask,
+    TimerReference,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -919,6 +921,11 @@ pub const EventLoop = struct {
                     var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                    var any: *TimerReference = task.get(TimerReference).?;
+                    any.runFromJSThread();
+                },
+
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else {

@@ -92,6 +92,8 @@ pub const Loop = struct {
             @compileError("Epoll is Linux-Only");
         }
 
+        this.updateNow();
+
         while (true) {
 
             // Process pending requests
@@ -127,22 +129,12 @@ pub const Loop = struct {
                             this.active -= 1;
                             close.onDone(close.ctx);
                         },
+                        .timer_cancelled => {},
                         .timer => |timer| {
                             while (true) {
                                 switch (timer.state) {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
-                                        if (Timer.less({}, timer, &.{ .next = this.cached_now })) {
-                                            if (timer.fire() == .rearm) {
-                                                if (timer.reset) |reset| {
-                                                    timer.next = reset;
-                                                    timer.reset = null;
-                                                    continue;
-                                                }
-                                            }
-
-                                            break;
-                                        }
                                         this.timers.insert(timer);
                                     },
                                     .ACTIVE => {
@@ -174,7 +166,9 @@ pub const Loop = struct {
                     @as(u64, @intCast(this.cached_now.tv_nsec)) / std.time.ns_per_ms;
                 const ms_next = @as(u64, @intCast(t.next.tv_sec)) * std.time.ms_per_s +
                     @as(u64, @intCast(t.next.tv_nsec)) / std.time.ns_per_ms;
-                break :timeout @as(i32, @intCast(ms_next -| ms_now));
+                const out = @as(i32, @intCast(ms_next -| ms_now));
+
+                break :timeout @max(out, 0);
             };
 
             var events: [256]EventType = undefined;
@@ -230,6 +224,8 @@ pub const Loop = struct {
             @compileError("Kqueue is MacOS-Only");
         }
 
+        this.updateNow();
+
         while (true) {
             var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.default_allocator);
             var events_list: std.ArrayList(EventType) = std.ArrayList(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
@@ -270,6 +266,7 @@ pub const Loop = struct {
                                 &events_list.items.ptr[i],
                             );
                         },
+
                         .close => |close| {
                             if (close.poll.flags.contains(.poll_readable) or close.poll.flags.contains(.poll_writable)) {
                                 const i = events_list.items.len;
@@ -285,22 +282,12 @@ pub const Loop = struct {
                             }
                             close.onDone(close.ctx);
                         },
+                        .timer_cancelled => {},
                         .timer => |timer| {
                             while (true) {
                                 switch (timer.state) {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
-                                        if (Timer.less({}, timer, &.{ .next = this.cached_now })) {
-                                            if (timer.fire() == .rearm) {
-                                                if (timer.reset) |reset| {
-                                                    timer.next = reset;
-                                                    timer.reset = null;
-                                                    continue;
-                                                }
-                                            }
-
-                                            break;
-                                        }
                                         this.timers.insert(timer);
                                     },
                                     .ACTIVE => {
@@ -330,6 +317,15 @@ pub const Loop = struct {
                 var out: std.os.timespec = undefined;
                 out.tv_sec = t.next.tv_sec -| this.cached_now.tv_sec;
                 out.tv_nsec = t.next.tv_nsec -| this.cached_now.tv_nsec;
+
+                if (out.tv_nsec < 0) {
+                    out.tv_sec -= 1;
+                    out.tv_nsec += std.time.ns_per_s;
+                }
+
+                if (out.tv_sec < 0) {
+                    break :timeout null;
+                }
 
                 break :timeout out;
             };
@@ -390,11 +386,15 @@ pub const Loop = struct {
     }
 
     fn updateNow(this: *Loop) void {
+        updateTimespec(&this.cached_now);
+    }
+
+    pub fn updateTimespec(timespec: *os.timespec) void {
         if (comptime Environment.isLinux) {
-            const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, &this.cached_now);
+            const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
         } else if (comptime Environment.isMac) {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, &this.cached_now) catch {};
+            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
         } else {
             @compileError("TODO: implement poll for this platform");
         }
@@ -416,6 +416,7 @@ pub const Action = union(enum) {
     writable: FileAction,
     close: CloseAction,
     timer: *Timer,
+    timer_cancelled: void,
 
     pub const FileAction = struct {
         fd: bun.FileDescriptor,
@@ -482,6 +483,8 @@ const Pollable = struct {
     }
 };
 
+const TimerReference = bun.JSC.BunTimer.Timeout.TimerReference;
+
 pub const Timer = struct {
     /// The absolute time to fire this timer next.
     next: os.timespec,
@@ -501,10 +504,12 @@ pub const Timer = struct {
 
     pub const Tag = enum {
         TimerCallback,
+        TimerReference,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
+                .TimerReference => TimerReference,
             };
         }
     };
@@ -557,9 +562,25 @@ pub const Timer = struct {
     };
 
     pub fn fire(this: *Timer) Arm {
+        if (comptime Environment.allow_assert) {
+            if (comptime Environment.isPosix) {
+                const timer = std.time.Instant{ .timestamp = this.next };
+                var now = std.time.Instant{ .timestamp = undefined };
+                Loop.updateTimespec(&now.timestamp);
+
+                if (timer.order(now) != .lt) {
+                    bun.Output.panic("Timer fired {} too early", .{bun.fmt.fmtDuration(timer.since(now))});
+                }
+            }
+        }
+
         switch (this.tag) {
             inline else => |t| {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
+                if (comptime @hasDecl(t.Type(), "callback")) {
+                    return container.callback();
+                }
+
                 return container.callback(container);
             },
         }

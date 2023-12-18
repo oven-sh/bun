@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, beforeEach } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
@@ -64,6 +64,20 @@ it("Dirent.name setter", () => {
   expect(dirent.name).toBeUndefined();
   dirent.name = "hello";
   expect(dirent.name).toBe("hello");
+});
+
+it("Dirent.path setter", () => {
+  const dirent = Object.create(Dirent.prototype);
+  expect(dirent.path).toBeUndefined();
+  dirent.path = "hello";
+  expect(dirent.path).toBe("hello");
+});
+
+it("Dirent.parentPath setter", () => {
+  const dirent = Object.create(Dirent.prototype);
+  expect(dirent.parentPath).toBeUndefined();
+  dirent.parentPath = "hello";
+  expect(dirent.parentPath).toBe("hello");
 });
 
 it("writeFileSync in append should not truncate the file", () => {
@@ -2468,4 +2482,46 @@ it.if(isWindows)("writing to windows hidden file is possible", () => {
   writeFileSync("file.txt", "Hello World");
   const content = readFileSync("file.txt", "utf8");
   expect(content).toBe("Hello World");
+});
+
+describe("Dirent name and path values", () => {
+  const dirPath = `${tmpdir()}/Bun-fs-readdir-dirent`;
+  beforeEach(() => {
+    rmSync(dirPath, { recursive: true });
+    mkdirSync(dirPath, { recursive: true });
+  });
+  describe("nonrecursive readdir", () => {
+    it("should return the correct name and path values for directory", () => {
+      const path = join(dirPath, 'directory');
+      mkdirSync(path, { recursive: true });
+      const entries = readdirSync(dirPath, { withFileTypes: true });
+      expect(entries[0].name).toBe('directory');
+      expect(entries[0].path).toBe(dirPath);
+    });
+    it("should return the correct name and path values for file", () => {
+      const path = join(dirPath, 'file.txt')
+      writeFileSync(path, 'Hello World');
+      const entries = readdirSync(dirPath, { withFileTypes: true });
+      expect(entries[0].name).toBe('file.txt');
+      expect(entries[0].path).toBe(dirPath);
+    });
+  });
+  describe("recursive readdirSync", () => {
+    it("should return the correct path values for directory and subdirectory", () => {
+      const path = join(dirPath, 'directory', 'subdirectory');
+      mkdirSync(path, { recursive: true });
+      const entries = readdirSync(dirPath, { recursive: true, withFileTypes: true });
+      expect(entries.find(e => e.name === 'directory').path).toBe(dirPath);
+      expect(entries.find(e => e.name === 'subdirectory').path).toBe(join(dirPath, 'directory'));
+    });
+  });
+  describe("recursive readdir async", () => {
+    it("should return the correct path values for directory and subdirectory", async () => {
+      const path = join(dirPath, 'directory', 'subdirectory');
+      mkdirSync(path, { recursive: true });
+      const entries = await promises.readdir(dirPath, { recursive: true, withFileTypes: true });
+      expect(entries.find(e => e.name === 'directory').path).toBe(dirPath);
+      expect(entries.find(e => e.name === 'subdirectory').path).toBe(join(dirPath, 'directory'));
+    });
+  });
 });

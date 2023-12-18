@@ -2663,6 +2663,7 @@ pub const Builtin = struct {
         which: Which,
         rm: Rm,
         mv: Mv,
+        ls: Ls,
     },
 
     const Kind = enum {
@@ -3243,6 +3244,399 @@ pub const Builtin = struct {
         }
     };
 
+    /// 1 arg  => returns absolute path of the arg (not found becomes exit code 1)
+    /// N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
+    pub const Which = struct {
+        bltn: *Builtin,
+
+        state: union(enum) {
+            idle,
+            one_arg: struct {
+                writer: BufferedWriter,
+            },
+            multi_args: struct {
+                args_slice: []const [*:0]const u8,
+                arg_idx: usize,
+                had_not_found: bool = false,
+                state: union(enum) {
+                    none,
+                    waiting_write: BufferedWriter,
+                },
+            },
+            done,
+            err: Syscall.Error,
+        } = .idle,
+
+        pub fn start(this: *Which) Maybe(void) {
+            const args = this.bltn.argsSlice();
+            if (args.len == 0) {
+                if (!this.bltn.stdout.needsIO()) {
+                    switch (this.bltn.writeNoIO(.stdout, "\n")) {
+                        .err => |e| {
+                            return Maybe(void).initErr(e);
+                        },
+                        .result => {},
+                    }
+                    this.bltn.done(1);
+                    return Maybe(void).success;
+                }
+                this.state = .{
+                    .one_arg = .{
+                        .writer = BufferedWriter{
+                            .fd = this.bltn.stdout.fd,
+                            .remain = "\n",
+                            .parent = BufferedWriter.ParentPtr.init(this),
+                        },
+                    },
+                };
+                this.state.one_arg.writer.writeAllowBlocking(false);
+                return Maybe(void).success;
+            }
+
+            if (!this.bltn.stdout.needsIO()) {
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
+                var had_not_found = false;
+                for (args) |arg_raw| {
+                    const arg = arg_raw[0..std.mem.len(arg_raw)];
+                    var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                        had_not_found = true;
+                        const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
+                        switch (this.bltn.writeNoIO(.stdout, buf)) {
+                            .err => |e| return Maybe(void).initErr(e),
+                            .result => {},
+                        }
+                        continue;
+                    };
+
+                    switch (this.bltn.writeNoIO(.stdout, resolved)) {
+                        .err => |e| return Maybe(void).initErr(e),
+                        .result => {},
+                    }
+                }
+                this.bltn.done(@intFromBool(had_not_found));
+                return Maybe(void).success;
+            }
+
+            this.state = .{
+                .multi_args = .{
+                    .args_slice = args,
+                    .arg_idx = 0,
+                    .state = .none,
+                },
+            };
+            this.next();
+            return Maybe(void).success;
+        }
+
+        pub fn next(this: *Which) void {
+            var multiargs = &this.state.multi_args;
+            if (multiargs.arg_idx >= multiargs.args_slice.len) {
+                // Done
+                this.bltn.done(@intFromBool(multiargs.had_not_found));
+                return;
+            }
+
+            const arg_raw = multiargs.args_slice[multiargs.arg_idx];
+            const arg = arg_raw[0..std.mem.len(arg_raw)];
+
+            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
+
+            var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
+                multiargs.had_not_found = true;
+                multiargs.state = .{
+                    .waiting_write = BufferedWriter{
+                        .fd = this.bltn.stdout.fd,
+                        .remain = buf,
+                        .parent = BufferedWriter.ParentPtr.init(this),
+                    },
+                };
+                multiargs.state.waiting_write.writeIfPossible(false);
+                // yield execution
+                return;
+            };
+
+            const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
+            multiargs.state = .{
+                .waiting_write = BufferedWriter{
+                    .fd = this.bltn.stdout.fd,
+                    .remain = buf,
+                    .parent = BufferedWriter.ParentPtr.init(this),
+                },
+            };
+            multiargs.state.waiting_write.writeIfPossible(false);
+            return;
+        }
+
+        fn argComplete(this: *Which) void {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
+            }
+
+            this.state.multi_args.arg_idx += 1;
+            this.state.multi_args.state = .none;
+            this.next();
+        }
+
+        pub fn onBufferedWriterDone(this: *Which, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .one_arg or
+                    (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.bltn.done(e.?.errno);
+                return;
+            }
+
+            if (this.state == .one_arg) {
+                // Calling which with on arguments returns exit code 1
+                this.bltn.done(1);
+                return;
+            }
+
+            this.argComplete();
+        }
+
+        pub fn deinit(this: *Which) void {
+            log("({s}) deinit", .{@tagName(.which)});
+            _ = this;
+        }
+    };
+
+    /// Some additional behaviour beyond basic `cd <dir>`:
+    /// - `cd` by itself or `cd ~` will always put the user in their home directory.
+    /// - `cd ~username` will put the user in the home directory of the specified user
+    /// - `cd -` will put the user in the previous directory
+    pub const Cd = struct {
+        bltn: *Builtin,
+        state: union(enum) {
+            idle,
+            waiting_write_stderr: struct {
+                buffered_writer: BufferedWriter,
+            },
+            done,
+            err: Syscall.Error,
+        } = .idle,
+
+        fn writeStderrNonBlocking(this: *Cd, buf: []u8) void {
+            this.state = .{
+                .waiting_write_stderr = .{
+                    .buffered_writer = BufferedWriter{
+                        .fd = this.bltn.stderr.fd,
+                        .remain = buf,
+                        .parent = BufferedWriter.ParentPtr.init(this),
+                    },
+                },
+            };
+            this.state.waiting_write_stderr.buffered_writer.writeIfPossible(false);
+        }
+
+        pub fn start(this: *Cd) Maybe(void) {
+            const args = this.bltn.argsSlice();
+            if (args.len > 1) {
+                const buf = this.bltn.fmtErrorArena(.cd, "too many arguments", .{});
+                this.writeStderrNonBlocking(buf);
+                // yield execution
+                return Maybe(void).success;
+            }
+
+            const first_arg = args[0][0..std.mem.len(args[0]) :0];
+            switch (first_arg[0]) {
+                '-' => {
+                    switch (this.bltn.parentCmd().base.interpreter.changePrevCwd()) {
+                        .result => {},
+                        .err => |err| {
+                            return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.interpreter.prev_cwd);
+                        },
+                    }
+                },
+                '~' => {
+                    const homedir = this.bltn.parentCmd().base.interpreter.getHomedir();
+                    switch (this.bltn.parentCmd().base.interpreter.changeCwd(homedir)) {
+                        .result => {},
+                        .err => |err| return this.handleChangeCwdErr(err, homedir),
+                    }
+                },
+                else => {
+                    switch (this.bltn.parentCmd().base.interpreter.changeCwd(first_arg)) {
+                        .result => {},
+                        .err => |err| return this.handleChangeCwdErr(err, first_arg),
+                    }
+                },
+            }
+            this.bltn.done(0);
+            return Maybe(void).success;
+        }
+
+        fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: [:0]const u8) Maybe(void) {
+            const errno: usize = @intCast(err.errno);
+
+            switch (errno) {
+                @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
+                    const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                    if (!this.bltn.stderr.needsIO()) {
+                        switch (this.bltn.writeNoIO(.stderr, buf)) {
+                            .err => |e| return Maybe(void).initErr(e),
+                            .result => {},
+                        }
+                        this.state = .done;
+                        this.bltn.done(1);
+                        // yield execution
+                        return Maybe(void).success;
+                    }
+
+                    this.writeStderrNonBlocking(buf);
+                    return Maybe(void).success;
+                },
+                @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
+                    const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                    if (!this.bltn.stderr.needsIO()) {
+                        switch (this.bltn.writeNoIO(.stderr, buf)) {
+                            .err => |e| return Maybe(void).initErr(e),
+                            .result => {},
+                        }
+                        this.state = .done;
+                        this.bltn.done(1);
+                        // yield execution
+                        return Maybe(void).success;
+                    }
+
+                    this.writeStderrNonBlocking(buf);
+                    return Maybe(void).success;
+                },
+                else => return Maybe(void).success,
+            }
+        }
+
+        pub fn onBufferedWriterDone(this: *Cd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .waiting_write_stderr);
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.bltn.done(e.?.errno);
+                return;
+            }
+
+            this.state = .done;
+            this.bltn.done(0);
+        }
+
+        pub fn deinit(this: *Cd) void {
+            log("({s}) deinit", .{@tagName(.cd)});
+            _ = this;
+        }
+    };
+
+    pub const Pwd = struct {
+        bltn: *Builtin,
+        state: union(enum) {
+            idle,
+            waiting_io: struct {
+                kind: enum { stdout, stderr },
+                writer: BufferedWriter,
+            },
+            err: Syscall.Error,
+            done,
+        } = .idle,
+
+        pub fn start(this: *Pwd) Maybe(void) {
+            const args = this.bltn.argsSlice();
+            if (args.len > 0) {
+                const msg = "pwd: too many arguments";
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .{
+                        .waiting_io = .{
+                            .kind = .stderr,
+                            .writer = BufferedWriter{
+                                .fd = this.bltn.stderr.fd,
+                                .remain = msg,
+                                .parent = BufferedWriter.ParentPtr.init(this),
+                            },
+                        },
+                    };
+                    this.state.waiting_io.writer.writeIfPossible(false);
+                    return Maybe(void).success;
+                }
+
+                if (this.bltn.writeNoIO(.stderr, msg).asErr()) |e| {
+                    return .{ .err = e };
+                }
+
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            const prev_cwd = this.bltn.parentCmd().base.interpreter.prev_cwd;
+            const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{prev_cwd[0..prev_cwd.len]});
+            if (this.bltn.stdout.needsIO()) {
+                this.state = .{
+                    .waiting_io = .{
+                        .kind = .stdout,
+                        .writer = BufferedWriter{
+                            .fd = this.bltn.stdout.fd,
+                            .remain = buf,
+                            .parent = BufferedWriter.ParentPtr.init(this),
+                        },
+                    },
+                };
+                this.state.waiting_io.writer.writeIfPossible(false);
+                return Maybe(void).success;
+            }
+
+            this.state = .done;
+            this.bltn.done(0);
+            return Maybe(void).success;
+        }
+
+        pub fn next(this: *Pwd) void {
+            while (!(this.state == .err or this.state == .done)) {
+                switch (this.state) {
+                    .waiting_io => return,
+                    .idle, .done, .err => unreachable,
+                }
+            }
+
+            if (this.state == .done) {
+                this.bltn.done(0);
+                return;
+            }
+
+            if (this.state == .err) {
+                this.bltn.done(this.state.err.errno);
+                return;
+            }
+        }
+
+        pub fn onBufferedWriterDone(this: *Pwd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter;
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.state == .waiting_io);
+            }
+
+            if (e != null) {
+                this.state = .{ .err = e.? };
+                this.next();
+                return;
+            }
+
+            this.state = .done;
+
+            this.next();
+        }
+
+        pub fn deinit(this: *Pwd) void {
+            _ = this;
+        }
+    };
+
     pub const Mv = struct {
         bltn: *Builtin,
         opts: Opts = .{},
@@ -3759,399 +4153,6 @@ pub const Builtin = struct {
             }
 
             return .continue_parsing;
-        }
-    };
-
-    /// 1 arg  => returns absolute path of the arg (not found becomes exit code 1)
-    /// N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
-    pub const Which = struct {
-        bltn: *Builtin,
-
-        state: union(enum) {
-            idle,
-            one_arg: struct {
-                writer: BufferedWriter,
-            },
-            multi_args: struct {
-                args_slice: []const [*:0]const u8,
-                arg_idx: usize,
-                had_not_found: bool = false,
-                state: union(enum) {
-                    none,
-                    waiting_write: BufferedWriter,
-                },
-            },
-            done,
-            err: Syscall.Error,
-        } = .idle,
-
-        pub fn start(this: *Which) Maybe(void) {
-            const args = this.bltn.argsSlice();
-            if (args.len == 0) {
-                if (!this.bltn.stdout.needsIO()) {
-                    switch (this.bltn.writeNoIO(.stdout, "\n")) {
-                        .err => |e| {
-                            return Maybe(void).initErr(e);
-                        },
-                        .result => {},
-                    }
-                    this.bltn.done(1);
-                    return Maybe(void).success;
-                }
-                this.state = .{
-                    .one_arg = .{
-                        .writer = BufferedWriter{
-                            .fd = this.bltn.stdout.fd,
-                            .remain = "\n",
-                            .parent = BufferedWriter.ParentPtr.init(this),
-                        },
-                    },
-                };
-                this.state.one_arg.writer.writeAllowBlocking(false);
-                return Maybe(void).success;
-            }
-
-            if (!this.bltn.stdout.needsIO()) {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
-                var had_not_found = false;
-                for (args) |arg_raw| {
-                    const arg = arg_raw[0..std.mem.len(arg_raw)];
-                    var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
-                        had_not_found = true;
-                        const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
-                        switch (this.bltn.writeNoIO(.stdout, buf)) {
-                            .err => |e| return Maybe(void).initErr(e),
-                            .result => {},
-                        }
-                        continue;
-                    };
-
-                    switch (this.bltn.writeNoIO(.stdout, resolved)) {
-                        .err => |e| return Maybe(void).initErr(e),
-                        .result => {},
-                    }
-                }
-                this.bltn.done(@intFromBool(had_not_found));
-                return Maybe(void).success;
-            }
-
-            this.state = .{
-                .multi_args = .{
-                    .args_slice = args,
-                    .arg_idx = 0,
-                    .state = .none,
-                },
-            };
-            this.next();
-            return Maybe(void).success;
-        }
-
-        pub fn next(this: *Which) void {
-            var multiargs = &this.state.multi_args;
-            if (multiargs.arg_idx >= multiargs.args_slice.len) {
-                // Done
-                this.bltn.done(@intFromBool(multiargs.had_not_found));
-                return;
-            }
-
-            const arg_raw = multiargs.args_slice[multiargs.arg_idx];
-            const arg = arg_raw[0..std.mem.len(arg_raw)];
-
-            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
-
-            var resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
-                const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
-                multiargs.had_not_found = true;
-                multiargs.state = .{
-                    .waiting_write = BufferedWriter{
-                        .fd = this.bltn.stdout.fd,
-                        .remain = buf,
-                        .parent = BufferedWriter.ParentPtr.init(this),
-                    },
-                };
-                multiargs.state.waiting_write.writeIfPossible(false);
-                // yield execution
-                return;
-            };
-
-            const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
-            multiargs.state = .{
-                .waiting_write = BufferedWriter{
-                    .fd = this.bltn.stdout.fd,
-                    .remain = buf,
-                    .parent = BufferedWriter.ParentPtr.init(this),
-                },
-            };
-            multiargs.state.waiting_write.writeIfPossible(false);
-            return;
-        }
-
-        fn argComplete(this: *Which) void {
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
-            }
-
-            this.state.multi_args.arg_idx += 1;
-            this.state.multi_args.state = .none;
-            this.next();
-        }
-
-        pub fn onBufferedWriterDone(this: *Which, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .one_arg or
-                    (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
-            }
-
-            if (e != null) {
-                this.state = .{ .err = e.? };
-                this.bltn.done(e.?.errno);
-                return;
-            }
-
-            if (this.state == .one_arg) {
-                // Calling which with on arguments returns exit code 1
-                this.bltn.done(1);
-                return;
-            }
-
-            this.argComplete();
-        }
-
-        pub fn deinit(this: *Which) void {
-            log("({s}) deinit", .{@tagName(.which)});
-            _ = this;
-        }
-    };
-
-    /// Some additional behaviour beyond basic `cd <dir>`:
-    /// - `cd` by itself or `cd ~` will always put the user in their home directory.
-    /// - `cd ~username` will put the user in the home directory of the specified user
-    /// - `cd -` will put the user in the previous directory
-    pub const Cd = struct {
-        bltn: *Builtin,
-        state: union(enum) {
-            idle,
-            waiting_write_stderr: struct {
-                buffered_writer: BufferedWriter,
-            },
-            done,
-            err: Syscall.Error,
-        } = .idle,
-
-        fn writeStderrNonBlocking(this: *Cd, buf: []u8) void {
-            this.state = .{
-                .waiting_write_stderr = .{
-                    .buffered_writer = BufferedWriter{
-                        .fd = this.bltn.stderr.fd,
-                        .remain = buf,
-                        .parent = BufferedWriter.ParentPtr.init(this),
-                    },
-                },
-            };
-            this.state.waiting_write_stderr.buffered_writer.writeIfPossible(false);
-        }
-
-        pub fn start(this: *Cd) Maybe(void) {
-            const args = this.bltn.argsSlice();
-            if (args.len > 1) {
-                const buf = this.bltn.fmtErrorArena(.cd, "too many arguments", .{});
-                this.writeStderrNonBlocking(buf);
-                // yield execution
-                return Maybe(void).success;
-            }
-
-            const first_arg = args[0][0..std.mem.len(args[0]) :0];
-            switch (first_arg[0]) {
-                '-' => {
-                    switch (this.bltn.parentCmd().base.interpreter.changePrevCwd()) {
-                        .result => {},
-                        .err => |err| {
-                            return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.interpreter.prev_cwd);
-                        },
-                    }
-                },
-                '~' => {
-                    const homedir = this.bltn.parentCmd().base.interpreter.getHomedir();
-                    switch (this.bltn.parentCmd().base.interpreter.changeCwd(homedir)) {
-                        .result => {},
-                        .err => |err| return this.handleChangeCwdErr(err, homedir),
-                    }
-                },
-                else => {
-                    switch (this.bltn.parentCmd().base.interpreter.changeCwd(first_arg)) {
-                        .result => {},
-                        .err => |err| return this.handleChangeCwdErr(err, first_arg),
-                    }
-                },
-            }
-            this.bltn.done(0);
-            return Maybe(void).success;
-        }
-
-        fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: [:0]const u8) Maybe(void) {
-            const errno: usize = @intCast(err.errno);
-
-            switch (errno) {
-                @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
-                    const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
-                    if (!this.bltn.stderr.needsIO()) {
-                        switch (this.bltn.writeNoIO(.stderr, buf)) {
-                            .err => |e| return Maybe(void).initErr(e),
-                            .result => {},
-                        }
-                        this.state = .done;
-                        this.bltn.done(1);
-                        // yield execution
-                        return Maybe(void).success;
-                    }
-
-                    this.writeStderrNonBlocking(buf);
-                    return Maybe(void).success;
-                },
-                @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
-                    const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
-                    if (!this.bltn.stderr.needsIO()) {
-                        switch (this.bltn.writeNoIO(.stderr, buf)) {
-                            .err => |e| return Maybe(void).initErr(e),
-                            .result => {},
-                        }
-                        this.state = .done;
-                        this.bltn.done(1);
-                        // yield execution
-                        return Maybe(void).success;
-                    }
-
-                    this.writeStderrNonBlocking(buf);
-                    return Maybe(void).success;
-                },
-                else => return Maybe(void).success,
-            }
-        }
-
-        pub fn onBufferedWriterDone(this: *Cd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .waiting_write_stderr);
-            }
-
-            if (e != null) {
-                this.state = .{ .err = e.? };
-                this.bltn.done(e.?.errno);
-                return;
-            }
-
-            this.state = .done;
-            this.bltn.done(0);
-        }
-
-        pub fn deinit(this: *Cd) void {
-            log("({s}) deinit", .{@tagName(.cd)});
-            _ = this;
-        }
-    };
-
-    pub const Pwd = struct {
-        bltn: *Builtin,
-        state: union(enum) {
-            idle,
-            waiting_io: struct {
-                kind: enum { stdout, stderr },
-                writer: BufferedWriter,
-            },
-            err: Syscall.Error,
-            done,
-        } = .idle,
-
-        pub fn start(this: *Pwd) Maybe(void) {
-            const args = this.bltn.argsSlice();
-            if (args.len > 0) {
-                const msg = "pwd: too many arguments";
-                if (this.bltn.stderr.needsIO()) {
-                    this.state = .{
-                        .waiting_io = .{
-                            .kind = .stderr,
-                            .writer = BufferedWriter{
-                                .fd = this.bltn.stderr.fd,
-                                .remain = msg,
-                                .parent = BufferedWriter.ParentPtr.init(this),
-                            },
-                        },
-                    };
-                    this.state.waiting_io.writer.writeIfPossible(false);
-                    return Maybe(void).success;
-                }
-
-                if (this.bltn.writeNoIO(.stderr, msg).asErr()) |e| {
-                    return .{ .err = e };
-                }
-
-                this.bltn.done(1);
-                return Maybe(void).success;
-            }
-
-            const prev_cwd = this.bltn.parentCmd().base.interpreter.prev_cwd;
-            const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{prev_cwd[0..prev_cwd.len]});
-            if (this.bltn.stdout.needsIO()) {
-                this.state = .{
-                    .waiting_io = .{
-                        .kind = .stdout,
-                        .writer = BufferedWriter{
-                            .fd = this.bltn.stdout.fd,
-                            .remain = buf,
-                            .parent = BufferedWriter.ParentPtr.init(this),
-                        },
-                    },
-                };
-                this.state.waiting_io.writer.writeIfPossible(false);
-                return Maybe(void).success;
-            }
-
-            this.state = .done;
-            this.bltn.done(0);
-            return Maybe(void).success;
-        }
-
-        pub fn next(this: *Pwd) void {
-            while (!(this.state == .err or this.state == .done)) {
-                switch (this.state) {
-                    .waiting_io => return,
-                    .idle, .done, .err => unreachable,
-                }
-            }
-
-            if (this.state == .done) {
-                this.bltn.done(0);
-                return;
-            }
-
-            if (this.state == .err) {
-                this.bltn.done(this.state.err.errno);
-                return;
-            }
-        }
-
-        pub fn onBufferedWriterDone(this: *Pwd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
-            if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(this.state == .waiting_io);
-            }
-
-            if (e != null) {
-                this.state = .{ .err = e.? };
-                this.next();
-                return;
-            }
-
-            this.state = .done;
-
-            this.next();
-        }
-
-        pub fn deinit(this: *Pwd) void {
-            _ = this;
         }
     };
 

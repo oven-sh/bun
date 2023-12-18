@@ -804,11 +804,7 @@ pub const fmt = struct {
                 if (frac > 0) {
                     var decimal_buf = [_]u8{ '.', 0 };
                     _ = std.fmt.formatIntBuf(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
-                    var end: usize = 4;
-                    while (end > 1) : (end -= 1) {
-                        if (decimal_buf[end - 1] != '0') break;
-                    }
-                    buf_writer.writeAll(decimal_buf[0..end]) catch unreachable;
+                    buf_writer.writeAll(&decimal_buf) catch unreachable;
                 }
                 buf_writer.writeAll(unit.sep) catch unreachable;
                 return std.fmt.formatBuf(fbs.getWritten(), opts, writer);

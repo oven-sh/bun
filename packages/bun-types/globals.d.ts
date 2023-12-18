@@ -807,7 +807,7 @@ declare var WebSocket: typeof globalThis extends {
   WebSocket: infer T;
 }
   ? T
-  : Bun._WebSocket;
+  : typeof import("ws");
 
 declare namespace Bun {
   type _Crypto = typeof globalThis extends {

@@ -87,7 +87,6 @@ const tsConfig = {
     allowSyntheticDefaultImports: true,
     forceConsistentCasingInFileNames: true,
     allowJs: true,
-    types: ["bun-types"],
   },
 };
 

@@ -302,6 +302,10 @@ const writableStream = new WritableStream();
   var b!: ResponseInit;
   b.status;
 }
+{
+  const ws = new WebSocket("ws://www.host.com/path");
+  ws.send("asdf");
+}
 
 atob("asf");
 btoa("asdf");

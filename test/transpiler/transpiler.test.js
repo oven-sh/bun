@@ -3314,6 +3314,104 @@ console.log("boop");
 `,
     );
   });
+  describe("parse removeComments", () => {
+    const transpiler = (removeComments, minifyWhitespace = false) =>
+      new Bun.Transpiler({
+        loader: "ts",
+        minifyWhitespace,
+        ...(removeComments === null
+          ? {}
+          : {
+              tsconfig: { compilerOptions: { removeComments } },
+            }),
+      });
+    const tsCodeWithComments = `import { Foo } from "./foo";
+// Single-line comment
+  /*
+     Multi-line comment
+         with multiple lines
+    */
+/** Inline doc comment */
+class Example extends Foo{
+  // Single-line comment inside a class
+  private exampleProperty: number; /* Inline comment after a statement */
+  constructor() {
+    super();
+    /* Block comment inside a method */
+    console.log('Constructor'); // Comment at the end of a line
+  }
+  /**
+           * Method description
+* @returns void
+   */
+  exampleMethod(): void {
+    // Test
+  }
+}
+// Comment after class declaration
+`;
+    const jsCodeWithoutComment = `import {Foo} from "./foo";
+
+class Example extends Foo {
+  exampleProperty;
+  constructor() {
+    super();
+    console.log("Constructor");
+  }
+  exampleMethod() {
+  }
+}
+`;
+    const jsCodeWithComments = `import {Foo} from "./foo";
+// Single-line comment
+/*
+ Multi-line comment
+ with multiple lines
+ */
+/** Inline doc comment */
+
+class Example extends Foo {
+  exampleProperty;
+  constructor() {
+    // Single-line comment inside a class
+    /* Inline comment after a statement */
+    super();
+    /* Block comment inside a method */
+    console.log("Constructor");
+    // Comment at the end of a line
+  }
+  exampleMethod() {
+    /**
+     * Method description
+     * @returns void
+     */
+    // Test
+  }
+}
+// Comment after class declaration
+`;
+    const jsCodeMinified =
+      'import{Foo} from"./foo";class Example extends Foo{exampleProperty;constructor(){super();console.log("Constructor")}exampleMethod(){}}';
+    it("parse ts default config (without comment)", () => {
+      const code = transpiler(null).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeWithoutComment);
+    });
+    it("parse ts with comments", () => {
+      const code = transpiler(false).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeWithComments);
+    });
+    it("parse ts without comment", () => {
+      const code = transpiler(true).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeWithoutComment);
+    });
+    it("parse ts minified", () => {
+      let code = transpiler(true, true).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeMinified);
+
+      code = transpiler(false, true).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeMinified);
+    });
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

@@ -58,6 +58,8 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
+    remove_comments: bool = true,
+
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -96,6 +98,10 @@ pub const TSConfigJSON = struct {
 
         if (this.jsx_flags.contains(.development)) {
             out.development = this.jsx.development;
+        }
+
+        if (this.jsx_flags.contains(.remove_comments)) {
+            out.remove_comments = this.jsx.remove_comments;
         }
 
         return out;
@@ -176,6 +182,14 @@ pub const TSConfigJSON = struct {
                         result.jsx.runtime = runtime;
                         result.jsx_flags.insert(.runtime);
                     }
+                }
+            }
+
+            // https://www.typescriptlang.org/tsconfig#removeComments
+            if (compiler_opts.expr.asProperty("removeComments")) |remove_comments_prop| {
+                if (remove_comments_prop.expr.asBool()) |val| {
+                    result.jsx.remove_comments = val;
+                    result.jsx_flags.insert(.remove_comments);
                 }
             }
 

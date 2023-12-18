@@ -53,7 +53,7 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         var timer = std.time.Timer.start() catch unreachable;
         const file = cwd.openFileZ(lockfile_path, .{ .mode = .read_only }) catch break :npm;
         defer file.close();
-        var data = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+        const data = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .migrating, .value = err } };
         };
         const lockfile = migrateNPMLockfile(this, allocator, log, data, lockfile_path) catch |err| {
@@ -340,7 +340,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 const version_str = version_prop.?.asString(allocator) orelse return error.InvalidNPMLockfile;
                 count += "-.tgz".len + version_str.len;
 
-                var resolved_url = allocator.alloc(u8, count) catch unreachable;
+                const resolved_url = allocator.alloc(u8, count) catch unreachable;
                 var remain = resolved_url;
                 @memcpy(remain[0..registry.url.href.len], registry.url.href);
                 remain = remain[registry.url.href.len..];
@@ -745,7 +745,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
                             const id = found.new_package_id;
 
-                            var is_workspace = resolutions[id].tag == .workspace;
+                            const is_workspace = resolutions[id].tag == .workspace;
 
                             dependencies_buf[0] = Dependency{
                                 .name = dep_name,

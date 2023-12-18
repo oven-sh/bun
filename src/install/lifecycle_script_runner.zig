@@ -28,7 +28,7 @@ pub const LifecycleScriptSubprocess = struct {
     manager: *PackageManager,
     envp: [:null]?[*:0]u8,
 
-    pub var alive_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0);
+    pub var alive_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
 
     /// A "nothing" struct that lets us reuse the same pointer
     /// but with a different tag for the file poll
@@ -180,7 +180,7 @@ pub const LifecycleScriptSubprocess = struct {
         try bun.CLI.RunCommand.replacePackageManagerRun(&copy_script, original_script.script);
         try copy_script.append(0);
 
-        var combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
+        const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
         var argv = [_]?[*:0]const u8{
             shell_bin,

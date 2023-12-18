@@ -193,7 +193,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinit(this: *FilePoll) void {
-        var vm = JSC.VirtualMachine.get();
+        const vm = JSC.VirtualMachine.get();
         this.deinitWithVM(vm);
     }
 
@@ -249,7 +249,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        var loop = vm.event_loop_handle.?;
+        const loop = vm.event_loop_handle.?;
         this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
     }
 

@@ -15,7 +15,7 @@ const single_threaded = builtin.single_threaded;
 const assert = std.debug.assert;
 const testing = std.testing;
 
-const Atomic = std.atomic.Atomic;
+const Atomic = std.atomic.Value;
 const spinLoopHint = std.atomic.spinLoopHint;
 
 /// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
@@ -30,7 +30,7 @@ const spinLoopHint = std.atomic.spinLoopHint;
 pub fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
     if (single_threaded) {
         // check whether the caller should block
-        if (ptr.loadUnchecked() != expect) {
+        if (ptr.raw != expect) {
             return;
         }
 

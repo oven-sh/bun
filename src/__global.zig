@@ -102,7 +102,7 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
     if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
         const act = std.os.Sigaction{
             .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
-            .mask = 0,
+            .mask = std.os.empty_sigset,
             .flags = 0,
         };
         std.os.sigaction(@intCast(sig), &act, null) catch {};

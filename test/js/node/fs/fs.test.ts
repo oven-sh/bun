@@ -991,7 +991,7 @@ describe("stat", () => {
 
   it("stat returns ENOENT", () => {
     try {
-      statSync("${tmpdir()}/doesntexist");
+      statSync(`${tmpdir()}/doesntexist`);
       throw "statSync should throw";
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");

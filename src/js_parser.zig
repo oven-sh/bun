@@ -1088,7 +1088,7 @@ pub const ImportScanner = struct {
 
                     if (p.options.bundle) {
                         if (st.star_name_loc != null and existing_items.count() > 0) {
-                            var sorted = try allocator.alloc(string, existing_items.count());
+                            const sorted = try allocator.alloc(string, existing_items.count());
                             defer allocator.free(sorted);
                             for (sorted, existing_items.keys()) |*result, alias| {
                                 result.* = alias;
@@ -1785,7 +1785,7 @@ pub const SideEffects = enum(u1) {
                         for (properties_slice) |prop_| {
                             var prop = prop_;
                             if (prop_.kind != .spread) {
-                                var value = simpifyUnusedExpr(p, prop.value.?);
+                                const value = simpifyUnusedExpr(p, prop.value.?);
                                 if (value != null) {
                                     prop.value = value;
                                 } else if (!prop.flags.contains(.is_computed)) {
@@ -1839,7 +1839,7 @@ pub const SideEffects = enum(u1) {
                     if (item.data == .e_spread) {
                         var end: usize = 0;
                         for (items) |item__| {
-                            var item_ = item__;
+                            const item_ = item__;
                             if (item_.data != .e_missing) {
                                 items[end] = item_;
                                 end += 1;
@@ -2606,6 +2606,7 @@ const AwaitOrYield = enum(u3) {
 // arrow expressions.
 const FnOrArrowDataParse = struct {
     async_range: logger.Range = logger.Range.None,
+    needs_async_loc: logger.Loc = logger.Loc.Empty,
     allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_super_call: bool = false,
@@ -2947,7 +2948,7 @@ pub const Parser = struct {
         p.lexer.track_comments = this.options.features.minify_identifiers;
         p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
-        var result: js_ast.Result = undefined;
+        const result: js_ast.Result = undefined;
         _ = result;
         try p.prepareForVisitPass();
 
@@ -2960,7 +2961,7 @@ pub const Parser = struct {
             final_expr = try p.callRuntime(expr.loc, runtime_api_call, args);
         }
 
-        var ns_export_part = js_ast.Part{
+        const ns_export_part = js_ast.Part{
             .can_be_removed_if_unused = true,
         };
 
@@ -2971,7 +2972,7 @@ pub const Parser = struct {
             },
             .loc = expr.loc,
         };
-        var part = js_ast.Part{
+        const part = js_ast.Part{
             .stmts = stmts,
             .symbol_uses = p.symbol_uses,
         };
@@ -3047,11 +3048,11 @@ pub const Parser = struct {
                         return data.len;
                     }
                 };
-                var writer = std.io.Writer(fakeWriter, anyerror, fakeWriter.writeAll){
+                const writer = std.io.Writer(fakeWriter, anyerror, fakeWriter.writeAll){
                     .context = fakeWriter{},
                 };
                 var buffered_writer = std.io.bufferedWriter(writer);
-                var actual = buffered_writer.writer();
+                const actual = buffered_writer.writer();
                 for (self.log.msgs.items) |msg| {
                     var m: logger.Msg = msg;
                     m.writeFormat(actual, true) catch {};
@@ -3111,7 +3112,7 @@ pub const Parser = struct {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
                     return js_ast.Result{
@@ -3221,7 +3222,7 @@ pub const Parser = struct {
                         }
                     },
                     .s_import, .s_export_from, .s_export_star => {
-                        var parts_list = if (p.options.bundle)
+                        const parts_list = if (p.options.bundle)
                             // Move imports (and import-like exports) to the top of the file to
                             // ensure that if they are converted to a require() call, the effects
                             // will take place before any other statements are evaluated.
@@ -3369,7 +3370,7 @@ pub const Parser = struct {
             }
         }
 
-        var did_import_fast_refresh = false;
+        const did_import_fast_refresh = false;
         _ = did_import_fast_refresh;
 
         // This is a workaround for broken module environment checks in packages like lodash-es
@@ -3378,7 +3379,7 @@ pub const Parser = struct {
 
         if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
             if (p.imports_to_convert_from_require.items.len > 0) {
-                var all_stmts = p.allocator.alloc(Stmt, p.imports_to_convert_from_require.items.len) catch unreachable;
+                const all_stmts = p.allocator.alloc(Stmt, p.imports_to_convert_from_require.items.len) catch unreachable;
                 before.ensureUnusedCapacity(p.imports_to_convert_from_require.items.len) catch unreachable;
 
                 var remaining_stmts = all_stmts;
@@ -3409,8 +3410,8 @@ pub const Parser = struct {
             }
 
             if (p.commonjs_named_exports.count() > 0) {
-                var export_refs = p.commonjs_named_exports.values();
-                var export_names = p.commonjs_named_exports.keys();
+                const export_refs = p.commonjs_named_exports.values();
+                const export_names = p.commonjs_named_exports.keys();
 
                 break_optimize: {
                     if (!p.commonjs_named_exports_deoptimized) {
@@ -3458,7 +3459,7 @@ pub const Parser = struct {
             //
             if (parts.items.len == 1 and parts.items[0].stmts.len == 1) {
                 var part = &parts.items[0];
-                var stmt: Stmt = part.stmts[0];
+                const stmt: Stmt = part.stmts[0];
                 if (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate == 1) {
                     if (stmt.data == .s_expr) {
                         const value: Expr = stmt.data.s_expr.value;
@@ -3628,7 +3629,7 @@ pub const Parser = struct {
                 // note: export_star_import_records are not filled in yet
 
                 if (before.items.len > 0 and p.import_records.items.len == 1) {
-                    var export_star_redirect: ?*S.ExportStar = brk: {
+                    const export_star_redirect: ?*S.ExportStar = brk: {
                         var export_star: ?*S.ExportStar = null;
                         for (before.items) |part| {
                             for (part.stmts) |stmt| {
@@ -3740,7 +3741,7 @@ pub const Parser = struct {
                 }
             } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
                 if (p.options.legacy_transform_require_to_import or p.options.features.dynamic_require) {
-                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                    const args = p.allocator.alloc(Expr, 2) catch unreachable;
 
                     if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
                         p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
@@ -3823,7 +3824,7 @@ pub const Parser = struct {
             var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
             var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
             if (uses_dirname) {
-                // var __dirname = import.meta.dir
+                // var __dirname = import.meta
                 decls[0] = .{
                     .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
                     .value = p.newExpr(
@@ -4042,7 +4043,7 @@ pub const Parser = struct {
             const after_len = after.items.len;
             const parts_len = parts.items.len;
 
-            var _parts = try p.allocator.alloc(
+            const _parts = try p.allocator.alloc(
                 js_ast.Part,
                 before_len +
                     after_len +
@@ -4076,7 +4077,7 @@ pub const Parser = struct {
         // p.popScope();
 
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (p.macro_call_count != 0) {
                     // disable this for:
@@ -5125,7 +5126,7 @@ fn NewParser_(
                     }
 
                     if (first_none_part < parts_.len) {
-                        var stmts_list = p.allocator.alloc(Stmt, stmts_count) catch unreachable;
+                        const stmts_list = p.allocator.alloc(Stmt, stmts_count) catch unreachable;
                         var stmts_remain = stmts_list;
 
                         for (parts_) |part| {
@@ -5148,7 +5149,7 @@ fn NewParser_(
 
             while (parts_.len > 1) {
                 var parts_end: usize = 0;
-                var last_end = parts_.len;
+                const last_end = parts_.len;
 
                 for (parts_) |part| {
                     const is_dead = part.can_be_removed_if_unused and can_remove_part: {
@@ -5251,8 +5252,8 @@ fn NewParser_(
         };
 
         fn clearSymbolUsagesFromDeadPart(p: *P, part: js_ast.Part) void {
-            var symbol_use_refs = part.symbol_uses.keys();
-            var symbol_use_values = part.symbol_uses.values();
+            const symbol_use_refs = part.symbol_uses.keys();
+            const symbol_use_values = part.symbol_uses.values();
             var symbols = p.symbols.items;
 
             for (symbol_use_refs, symbol_use_values) |ref, prev| {
@@ -5478,7 +5479,7 @@ fn NewParser_(
                     };
                 }
 
-                var gpe = p.module_scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
+                const gpe = p.module_scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
 
                 // I don't think this happens?
                 if (gpe.found_existing) {
@@ -5595,12 +5596,12 @@ fn NewParser_(
 
         fn logArrowArgErrors(p: *P, errors: *DeferredArrowArgErrors) void {
             if (errors.invalid_expr_await.len > 0) {
-                var r = errors.invalid_expr_await;
+                const r = errors.invalid_expr_await;
                 p.log.addRangeError(p.source, r, "Cannot use an \"await\" expression here") catch unreachable;
             }
 
             if (errors.invalid_expr_yield.len > 0) {
-                var r = errors.invalid_expr_yield;
+                const r = errors.invalid_expr_yield;
                 p.log.addRangeError(p.source, r, "Cannot use a \"yield\" expression here") catch unreachable;
             }
         }
@@ -5702,9 +5703,9 @@ fn NewParser_(
             if (comptime is_internal)
                 import_record.path.namespace = "runtime";
             import_record.is_internal = is_internal;
-            var import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
+            const import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
-            var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
+            const clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
             var declared_symbols = DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(allocator, imports.len + 1);
@@ -5762,7 +5763,7 @@ fn NewParser_(
         }
 
         fn substituteSingleUseSymbolInStmt(p: *P, stmt: Stmt, ref: Ref, replacement: Expr) bool {
-            var expr: *Expr = brk: {
+            const expr: *Expr = brk: {
                 switch (stmt.data) {
                     .s_expr => |exp| {
                         break :brk &exp.value;
@@ -6603,7 +6604,7 @@ fn NewParser_(
                                 {
                                     // Silently merge this symbol into the existing symbol
                                     symbol.link = member_in_scope.ref;
-                                    var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash.?) catch unreachable;
+                                    const entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash.?) catch unreachable;
                                     entry.value_ptr.* = member_in_scope;
                                     entry.key_ptr.* = name;
                                     continue :nextMember;
@@ -6641,13 +6642,13 @@ fn NewParser_(
                                 // If this is a catch identifier, silently merge the existing symbol
                                 // into this symbol but continue hoisting past this catch scope
                                 existing_symbol.link = value.ref;
-                                var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash.?) catch unreachable;
+                                const entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash.?) catch unreachable;
                                 entry.value_ptr.* = value;
                                 entry.key_ptr.* = name;
                             }
 
                             if (_scope.kindStopsHoisting()) {
-                                var entry = _scope.getOrPutMemberWithHash(allocator, name, hash.?) catch unreachable;
+                                const entry = _scope.getOrPutMemberWithHash(allocator, name, hash.?) catch unreachable;
                                 entry.value_ptr.* = value;
                                 entry.key_ptr.* = name;
                                 break;
@@ -6838,7 +6839,7 @@ fn NewParser_(
                             }) catch unreachable;
                             continue;
                         }
-                        var value = &item.value.?;
+                        const value = &item.value.?;
                         const tup = p.convertExprToBindingAndInitializer(value, invalid_loc, false);
                         const initializer = tup.expr orelse item.initializer;
                         const is_spread = item.kind == .spread or item.flags.contains(.is_spread);
@@ -6881,7 +6882,7 @@ fn NewParser_(
                 else => {},
             }
 
-            var bind = p.convertExprToBinding(expr.*, invalid_log);
+            const bind = p.convertExprToBinding(expr.*, invalid_log);
             if (initializer) |initial| {
                 const equalsRange = p.source.rangeOfOperatorBefore(initial.loc, "=");
                 if (is_spread) {
@@ -7347,7 +7348,7 @@ fn NewParser_(
 
             // The name is optional for "export default function() {}" pseudo-statements
             if (!opts.is_name_optional or p.lexer.token == T.t_identifier) {
-                var nameLoc = p.lexer.loc();
+                const nameLoc = p.lexer.loc();
                 nameText = p.lexer.identifier;
                 try p.lexer.expect(T.t_identifier);
                 // Difference
@@ -7365,13 +7366,14 @@ fn NewParser_(
 
             // Introduce a fake block scope for function declarations inside if statements
             var ifStmtScopeIndex: usize = 0;
-            var hasIfScope = opts.lexical_decl == .allow_fn_inside_if;
+            const hasIfScope = opts.lexical_decl == .allow_fn_inside_if;
             if (hasIfScope) {
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            var scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+            const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
             var func = try p.parseFn(name, FnOrArrowDataParse{
+                .needs_async_loc = loc,
                 .async_range = asyncRange orelse logger.Range.None,
                 .has_async_range = asyncRange != null,
                 .allow_await = if (is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -7437,8 +7439,8 @@ fn NewParser_(
 
         fn popAndDiscardScope(p: *P, scope_index: usize) void {
             // Move up to the parent scope
-            var to_discard = p.current_scope;
-            var parent = to_discard.parent orelse unreachable;
+            const to_discard = p.current_scope;
+            const parent = to_discard.parent orelse unreachable;
 
             p.current_scope = parent;
 
@@ -7447,7 +7449,7 @@ fn NewParser_(
 
             var children = parent.children;
             // Remove the last child from the parent scope
-            var last = children.len - 1;
+            const last = children.len - 1;
             if (children.slice()[last] != to_discard) {
                 p.panic("Internal error", .{});
             }
@@ -7486,6 +7488,9 @@ fn NewParser_(
                 AwaitOrYield.forbid_all
             else
                 AwaitOrYield.allow_ident;
+
+            // Don't suggest inserting "async" before anything if "await" is found
+            p.fn_or_arrow_data_parse.needs_async_loc = logger.Loc.Empty;
 
             // If "super()" is allowed in the body, it's allowed in the arguments
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
@@ -7526,7 +7531,7 @@ fn NewParser_(
                 }
 
                 var is_typescript_ctor_field = false;
-                var is_identifier = p.lexer.token == T.t_identifier;
+                const is_identifier = p.lexer.token == T.t_identifier;
                 var text = p.lexer.identifier;
                 var arg = try p.parseBinding();
                 var ts_metadata = TypeScript.Metadata.default;
@@ -8877,7 +8882,7 @@ fn NewParser_(
         }
 
         fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
-            var identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
+            const identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
 
             const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
 
@@ -9133,7 +9138,7 @@ fn NewParser_(
                             }
 
                             if (p.lexer.isContextualKeyword("async")) {
-                                var asyncRange = p.lexer.range();
+                                const asyncRange = p.lexer.range();
                                 try p.lexer.next();
                                 if (p.lexer.has_newline_before) {
                                     try p.log.addRangeError(p.source, asyncRange, "Unexpected newline after \"async\"");
@@ -9188,7 +9193,7 @@ fn NewParser_(
                                 return error.SyntaxError;
                             }
 
-                            var defaultLoc = p.lexer.loc();
+                            const defaultLoc = p.lexer.loc();
                             try p.lexer.next();
 
                             // TypeScript decorators only work on class declarations
@@ -9219,7 +9224,7 @@ fn NewParser_(
                                     } else {
                                         defaultName = try p.createDefaultName(defaultLoc);
                                     }
-                                    var value = js_ast.StmtOrExpr{ .stmt = stmt };
+                                    const value = js_ast.StmtOrExpr{ .stmt = stmt };
                                     return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                                 }
 
@@ -9239,7 +9244,7 @@ fn NewParser_(
                                     .is_name_optional = true,
                                     .lexical_decl = .allow_all,
                                 };
-                                var stmt = try p.parseStmt(&_opts);
+                                const stmt = try p.parseStmt(&_opts);
 
                                 const default_name: js_ast.LocRef = default_name_getter: {
                                     switch (stmt.data) {
@@ -9273,7 +9278,7 @@ fn NewParser_(
 
                             const is_identifier = p.lexer.token == .t_identifier;
                             const name = p.lexer.identifier;
-                            var expr = try p.parseExpr(.comma);
+                            const expr = try p.parseExpr(.comma);
 
                             // Handle the default export of an abstract class in TypeScript
                             if (is_typescript_enabled and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eqlComptime(name, "abstract")) {
@@ -9359,7 +9364,7 @@ fn NewParser_(
                                 namespace_ref = try p.storeNameInRef(name);
                             }
 
-                            var import_record_index = p.addImportRecord(
+                            const import_record_index = p.addImportRecord(
                                 ImportKind.stmt,
                                 path.loc,
                                 path.text,
@@ -9799,7 +9804,7 @@ fn NewParser_(
                     }
 
                     var decls: G.Decl.List = .{};
-                    var init_loc = p.lexer.loc();
+                    const init_loc = p.lexer.loc();
                     var is_var = false;
                     switch (p.lexer.token) {
                         // for (var )
@@ -9964,7 +9969,7 @@ fn NewParser_(
                                 try p.lexer.unexpected();
                                 return error.SyntaxError;
                             }
-                            var importClause = try p.parseImportClause();
+                            const importClause = try p.parseImportClause();
                             if (comptime is_typescript_enabled) {
                                 if (importClause.had_type_only_imports and importClause.items.len == 0) {
                                     try p.lexer.expectContextualKeyword("from");
@@ -10157,7 +10162,7 @@ fn NewParser_(
                     // Parse either an async function, an async expression, or a normal expression
                     var expr: Expr = Expr{ .loc = loc, .data = Expr.Data{ .e_missing = .{} } };
                     if (is_identifier and strings.eqlComptime(p.lexer.raw(), "async")) {
-                        var async_range = p.lexer.range();
+                        const async_range = p.lexer.range();
                         try p.lexer.next();
                         if (p.lexer.token == .t_function and !p.lexer.has_newline_before) {
                             try p.lexer.next();
@@ -10197,7 +10202,7 @@ fn NewParser_(
                                         },
                                         else => {},
                                     }
-                                    var stmt = try p.parseStmt(&nestedOpts);
+                                    const stmt = try p.parseStmt(&nestedOpts);
                                     return p.s(S.Label{ .name = _name, .stmt = stmt }, loc);
                                 }
                             },
@@ -10331,7 +10336,7 @@ fn NewParser_(
 
         fn discardScopesUpTo(p: *P, scope_index: usize) void {
             // Remove any direct children from their parent
-            var scope = p.current_scope;
+            const scope = p.current_scope;
             var children = scope.children;
 
             for (p.scopes_in_order.items[scope_index..]) |_child| {
@@ -11610,7 +11615,7 @@ fn NewParser_(
                 // },
             };
 
-            var scope = p.current_scope;
+            const scope = p.current_scope;
             if (p.isStrictMode()) {
                 var why: string = "";
                 var where: logger.Range = logger.Range.None;
@@ -11731,7 +11736,7 @@ fn NewParser_(
             var ref = try p.newSymbol(kind, name);
 
             const scope = p.current_scope;
-            var entry = try scope.members.getOrPut(p.allocator, name);
+            const entry = try scope.members.getOrPut(p.allocator, name);
             if (entry.found_existing) {
                 const existing = entry.value_ptr.*;
                 var symbol: *Symbol = &p.symbols.items[existing.ref.innerIndex()];
@@ -11833,6 +11838,7 @@ fn NewParser_(
             }
 
             const func = try p.parseFn(name, FnOrArrowDataParse{
+                .needs_async_loc = loc,
                 .async_range = async_range,
                 .allow_await = if (is_async) .allow_expr else .allow_ident,
                 .allow_yield = if (is_generator) .allow_expr else .allow_ident,
@@ -11848,8 +11854,8 @@ fn NewParser_(
         }
 
         fn parseFnBody(p: *P, data: *FnOrArrowDataParse) !G.FnBody {
-            var oldFnOrArrowData = p.fn_or_arrow_data_parse;
-            var oldAllowIn = p.allow_in;
+            const oldFnOrArrowData = p.fn_or_arrow_data_parse;
+            const oldAllowIn = p.allow_in;
             p.fn_or_arrow_data_parse = data.*;
             p.allow_in = true;
 
@@ -11900,7 +11906,7 @@ fn NewParser_(
             var old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_parse);
 
             p.fn_or_arrow_data_parse = data.*;
-            var expr = try p.parseExpr(Level.comma);
+            const expr = try p.parseExpr(Level.comma);
             p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
 
             var stmts = try p.allocator.alloc(Stmt, 1);
@@ -11941,7 +11947,7 @@ fn NewParser_(
         // We can handle errors via the log.
         // We'll have to deal with @wasmHeapGrow or whatever that thing is.
         pub inline fn mm(self: *P, comptime ast_object_type: type, instance: anytype) *ast_object_type {
-            var obj = self.allocator.create(ast_object_type) catch unreachable;
+            const obj = self.allocator.create(ast_object_type) catch unreachable;
             obj.* = instance;
             return obj;
         }
@@ -12002,8 +12008,10 @@ fn NewParser_(
                                 async_range.loc,
                             ) };
                             _ = p.pushScopeForParsePass(.function_args, async_range.loc) catch unreachable;
-                            var data = FnOrArrowDataParse{};
-                            var arrow_body = try p.parseArrowBody(args, &data);
+                            var data = FnOrArrowDataParse{
+                                .needs_async_loc = async_range.loc,
+                            };
+                            const arrow_body = try p.parseArrowBody(args, &data);
                             p.popScope();
                             return p.newExpr(arrow_body, async_range.loc);
                         }
@@ -12019,7 +12027,7 @@ fn NewParser_(
                                 B.Identifier{
                                     .ref = ref,
                                 },
-                                async_range.loc,
+                                p.lexer.loc(),
                             ) };
                             try p.lexer.next();
 
@@ -12028,6 +12036,7 @@ fn NewParser_(
 
                             var data = FnOrArrowDataParse{
                                 .allow_await = .allow_expr,
+                                .needs_async_loc = args[0].binding.loc,
                             };
                             var arrowBody = try p.parseArrowBody(args, &data);
                             arrowBody.is_async = true;
@@ -12272,7 +12281,7 @@ fn NewParser_(
         }
 
         pub fn addImportRecordByRangeAndPath(p: *P, kind: ImportKind, range: logger.Range, path: fs.Path) u32 {
-            var index = p.import_records.items.len;
+            const index = p.import_records.items.len;
             const record = ImportRecord{
                 .kind = kind,
                 .range = range,
@@ -12385,7 +12394,7 @@ fn NewParser_(
 
         pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
             var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_missing = E.Missing{} } };
-            var key_range = p.lexer.range();
+            const key_range = p.lexer.range();
             var is_computed = false;
 
             switch (p.lexer.token) {
@@ -12553,14 +12562,14 @@ fn NewParser_(
 
                             _ = try p.pushScopeForParsePass(.class_static_init, loc);
                             var _parse_opts = ParseStatementOptions{};
-                            var stmts = try p.parseStmtsUpTo(.t_close_brace, &_parse_opts);
+                            const stmts = try p.parseStmtsUpTo(.t_close_brace, &_parse_opts);
 
                             p.popScope();
 
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
                             try p.lexer.expect(.t_close_brace);
 
-                            var block = p.allocator.create(
+                            const block = p.allocator.create(
                                 G.ClassStaticBlock,
                             ) catch unreachable;
 
@@ -12779,6 +12788,7 @@ fn NewParser_(
 
                 var func = try p.parseFn(null, FnOrArrowDataParse{
                     .async_range = opts.async_range,
+                    .needs_async_loc = key.loc,
                     .has_async_range = !opts.async_range.isEmpty(),
                     .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                     .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -12918,7 +12928,7 @@ fn NewParser_(
                 }
             }
 
-            var body_loc = p.lexer.loc();
+            const body_loc = p.lexer.loc();
             try p.lexer.expect(T.t_open_brace);
             var properties = ListManaged(G.Property).init(p.allocator);
 
@@ -13020,7 +13030,7 @@ fn NewParser_(
         pub fn parseTemplateParts(p: *P, include_raw: bool) ![]E.TemplatePart {
             var parts = ListManaged(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
             // Allow "in" inside template literals
-            var oldAllowIn = p.allow_in;
+            const oldAllowIn = p.allow_in;
             p.allow_in = true;
 
             parseTemplatePart: while (true) {
@@ -13901,7 +13911,7 @@ fn NewParser_(
                     const import_hash_name = clause.original_name;
 
                     if (strings.eqlComptime(clause.alias, "default")) {
-                        var non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
+                        const non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
                         clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
                         record.contains_default_alias = true;
                     }
@@ -14053,7 +14063,11 @@ fn NewParser_(
                                         return p.newExpr(E.Await{ .value = value }, loc);
                                     }
                                 },
-                                else => {},
+                                .allow_ident => {
+                                    p.lexer.prev_token_was_await_keyword = true;
+                                    p.lexer.await_keyword_loc = name_range.loc;
+                                    p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                                },
                             }
                         },
 
@@ -14107,9 +14121,10 @@ fn NewParser_(
                         _ = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
                         defer p.popScope();
 
-                        var fn_or_arrow_data = FnOrArrowDataParse{};
-                        const ret = p.newExpr(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
-                        return ret;
+                        var fn_or_arrow_data = FnOrArrowDataParse{
+                            .needs_async_loc = loc,
+                        };
+                        return p.newExpr(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
                     }
 
                     const ref = p.storeNameInRef(name) catch unreachable;
@@ -14575,7 +14590,7 @@ fn NewParser_(
         fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {
             const result = try p.findSymbol(loc, parts[0]);
 
-            var value = p.handleIdentifier(
+            const value = p.handleIdentifier(
                 loc,
                 E.Identifier{
                     .ref = result.ref,
@@ -14649,7 +14664,7 @@ fn NewParser_(
             }
 
             // allow "in" inside call arguments;
-            var old_allow_in = p.allow_in;
+            const old_allow_in = p.allow_in;
             p.allow_in = true;
 
             p.lexer.preserve_all_comments_before = true;
@@ -14718,7 +14733,7 @@ fn NewParser_(
                 p.needs_jsx_import = true;
             }
 
-            var tag = try JSXTag.parse(P, p);
+            const tag = try JSXTag.parse(P, p);
 
             // The tag may have TypeScript type arguments: "<Foo<T>/>"
             if (is_typescript_enabled) {
@@ -14748,7 +14763,7 @@ fn NewParser_(
                         .t_identifier => {
                             defer i += 1;
                             // Parse the prop name
-                            var key_range = p.lexer.range();
+                            const key_range = p.lexer.range();
                             const prop_name_literal = p.lexer.identifier;
                             const special_prop = E.JSXElement.SpecialProp.Map.get(prop_name_literal) orelse E.JSXElement.SpecialProp.any;
                             try p.lexer.nextInsideJSXElement();
@@ -15029,7 +15044,7 @@ fn NewParser_(
             if (p.relocated_top_level_vars.items.len > 0) {
                 var already_declared = RefMap{};
                 var already_declared_allocator_stack = std.heap.stackFallback(1024, allocator);
-                var already_declared_allocator = already_declared_allocator_stack.get();
+                const already_declared_allocator = already_declared_allocator_stack.get();
                 defer if (already_declared_allocator_stack.fixed_buffer_allocator.end_index >= 1023) already_declared.deinit(already_declared_allocator);
 
                 for (p.relocated_top_level_vars.items) |*local| {
@@ -15042,7 +15057,7 @@ fn NewParser_(
                         local.ref = symbol.link;
                     }
                     const ref = local.ref orelse continue;
-                    var declaration_entry = try already_declared.getOrPut(already_declared_allocator, ref);
+                    const declaration_entry = try already_declared.getOrPut(already_declared_allocator, ref);
                     if (!declaration_entry.found_existing) {
                         const decls = try allocator.alloc(G.Decl, 1);
                         decls[0] = Decl{
@@ -15560,7 +15575,7 @@ fn NewParser_(
 
                                 const num_props = e_.properties.len;
                                 if (num_props > 0) {
-                                    var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
+                                    const props = p.allocator.alloc(G.Property, num_props) catch unreachable;
                                     bun.copy(G.Property, props, e_.properties.slice());
                                     args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                 } else {
@@ -15601,7 +15616,7 @@ fn NewParser_(
 
                                 {
                                     var last_child: u32 = 0;
-                                    var children = e_.children.slice()[0..children_count];
+                                    const children = e_.children.slice()[0..children_count];
                                     for (children) |child| {
                                         e_.children.ptr[last_child] = p.visitExpr(child);
                                         // if tree-shaking removes the element, we must also remove it here.
@@ -15938,10 +15953,10 @@ fn NewParser_(
                         // operators in JavaScript are left-associative and the problematic edge
                         // cases we're trying to avoid crashing on have lots of left-associative
                         // binary operators chained together without parentheses (e.g. "1+2+...").
-                        var left = v.e.left;
+                        const left = v.e.left;
                         const left_in = v.left_in;
 
-                        var left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
+                        const left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
 
                         // Stop iterating if iteration doesn't apply to the left node. This checks
                         // the assignment target because "visitExprInOut" has additional behavior
@@ -16382,7 +16397,7 @@ fn NewParser_(
                     if (in.assign_target != .none) {
                         p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
-                    var items = e_.items.slice();
+                    const items = e_.items.slice();
                     var spread_item_count: usize = 0;
                     for (items) |*item| {
                         switch (item.data) {
@@ -16771,7 +16786,7 @@ fn NewParser_(
                     p.fn_only_data_visit.is_inside_async_arrow_fn = e_.is_async or p.fn_only_data_visit.is_inside_async_arrow_fn;
 
                     p.pushScopeForVisitPass(.function_args, expr.loc) catch unreachable;
-                    var dupe = p.allocator.dupe(Stmt, e_.body.stmts) catch unreachable;
+                    const dupe = p.allocator.dupe(Stmt, e_.body.stmts) catch unreachable;
 
                     p.visitArgs(e_.args, VisitArgsOpts{
                         .has_rest_arg = e_.has_rest_arg,
@@ -16846,7 +16861,7 @@ fn NewParser_(
                 duplicate_args_check = StringVoidMap.get(bun.default_allocator);
             }
 
-            var duplicate_args_check_ptr: ?*StringVoidMap = if (duplicate_args_check != null)
+            const duplicate_args_check_ptr: ?*StringVoidMap = if (duplicate_args_check != null)
                 &duplicate_args_check.?.data
             else
                 null;
@@ -17690,7 +17705,7 @@ fn NewParser_(
 
                                     // We are doing `module.exports = { ... }`
                                     // lets rewrite it to a series of what will become export assignemnts
-                                    var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
+                                    const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
@@ -17796,7 +17811,7 @@ fn NewParser_(
                                     return null;
                                 }
 
-                                var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
                                         .other,
@@ -18134,7 +18149,7 @@ fn NewParser_(
                             }
 
                             if (mark_for_replace) {
-                                var entry = p.options.features.replace_exports.getPtr("default").?;
+                                const entry = p.options.features.replace_exports.getPtr("default").?;
                                 if (entry.* == .replace) {
                                     data.value.expr = entry.replace;
                                 } else {
@@ -18166,7 +18181,7 @@ fn NewParser_(
                                     }
 
                                     if (mark_for_replace) {
-                                        var entry = p.options.features.replace_exports.getPtr("default").?;
+                                        const entry = p.options.features.replace_exports.getPtr("default").?;
                                         if (entry.* == .replace) {
                                             data.value = .{ .expr = entry.replace };
                                         } else {
@@ -18194,7 +18209,7 @@ fn NewParser_(
                                         return;
 
                                     if (mark_for_replace) {
-                                        var entry = p.options.features.replace_exports.getPtr("default").?;
+                                        const entry = p.options.features.replace_exports.getPtr("default").?;
                                         if (entry.* == .replace) {
                                             data.value = .{ .expr = entry.replace };
                                         } else {
@@ -18758,7 +18773,7 @@ fn NewParser_(
                     {
                         p.pushScopeForVisitPass(.block, data.body_loc) catch unreachable;
                         defer p.popScope();
-                        var old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
+                        const old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
                         p.fn_or_arrow_data_visit.is_inside_switch = true;
                         defer p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_Swsitch;
                         var i: usize = 0;
@@ -19986,7 +20001,7 @@ fn NewParser_(
 
                     current_expr.* = try p.checkIfDefinedHelper(dot_identifier);
 
-                    var root = p.newExpr(
+                    const root = p.newExpr(
                         E.If{
                             .yes = p.newExpr(
                                 E.Identifier{
@@ -20332,7 +20347,7 @@ fn NewParser_(
             p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named \"{s}\"", .{name}) catch unreachable;
 
             // Allocate an "unbound" symbol
-            var ref = p.newSymbol(.unbound, name) catch unreachable;
+            const ref = p.newSymbol(.unbound, name) catch unreachable;
 
             // Track how many times we've referenced this symbol
             p.recordUsage(ref);
@@ -20395,8 +20410,8 @@ fn NewParser_(
                     var property = &class.properties[i];
 
                     if (property.kind == .class_static_block) {
-                        var old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
-                        var old_fn_only_data = p.fn_only_data_visit;
+                        const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+                        const old_fn_only_data = p.fn_only_data_visit;
                         p.fn_or_arrow_data_visit = .{};
                         p.fn_only_data_visit = .{
                             .is_this_nested = true,
@@ -20647,13 +20662,13 @@ fn NewParser_(
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
 
-            var initial_scope: *Scope = if (comptime Environment.allow_assert) p.current_scope else undefined;
+            const initial_scope: *Scope = if (comptime Environment.allow_assert) p.current_scope else undefined;
 
             {
 
                 // Save the current control-flow liveness. This represents if we are
                 // currently inside an "if (false) { ... }" block.
-                var old_is_control_flow_dead = p.is_control_flow_dead;
+                const old_is_control_flow_dead = p.is_control_flow_dead;
                 defer p.is_control_flow_dead = old_is_control_flow_dead;
 
                 var before = ListManaged(Stmt).init(p.allocator);
@@ -20734,7 +20749,7 @@ fn NewParser_(
                                     continue;
                                 }
 
-                                var gpe = fn_stmts.getOrPut(name_ref) catch unreachable;
+                                const gpe = fn_stmts.getOrPut(name_ref) catch unreachable;
                                 var index = gpe.value_ptr.*;
                                 if (!gpe.found_existing) {
                                     index = @as(u32, @intCast(let_decls.items.len));
@@ -20866,7 +20881,7 @@ fn NewParser_(
                 // Inlined constants are not removed if they are in a top-level scope or
                 // if they are exported (which could be in a nested TypeScript namespace).
                 if (p.const_values.count() > 0) {
-                    var items: []Stmt = stmts.items;
+                    const items: []Stmt = stmts.items;
                     for (items) |*stmt| {
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
@@ -20946,7 +20961,7 @@ fn NewParser_(
                         // should have visited all the uses of "let" and "const" declarations
                         // by now since they are scoped to this block which we just finished
                         // visiting.
-                        var prev_statement = &output.items[output.items.len - 1];
+                        const prev_statement = &output.items[output.items.len - 1];
                         switch (prev_statement.data) {
                             .s_local => {
                                 var local = prev_statement.data.s_local;
@@ -20954,7 +20969,7 @@ fn NewParser_(
                                     break;
                                 }
 
-                                var last: *Decl = local.decls.last().?;
+                                const last: *Decl = local.decls.last().?;
                                 // The variable must be initialized, since we will be substituting
                                 // the value into the usage.
                                 if (last.value == null)
@@ -21054,7 +21069,7 @@ fn NewParser_(
                                 prev_stmt.data.s_local.kind == .k_var)
                             {
                                 var prev_local = prev_stmt.data.s_local;
-                                var bin_assign = s_expr.value.data.e_binary;
+                                const bin_assign = s_expr.value.data.e_binary;
 
                                 if (bin_assign.left.data == .e_identifier) {
                                     var decl = &prev_local.decls.slice()[0];
@@ -21184,7 +21199,7 @@ fn NewParser_(
             const scope_index = try p.pushScopeForParsePass(.function_args, loc);
 
             // Allow "in" inside parentheses
-            var oldAllowIn = p.allow_in;
+            const oldAllowIn = p.allow_in;
             p.allow_in = true;
 
             // Forbid "await" and "yield", but only for arrow functions
@@ -21427,7 +21442,7 @@ fn NewParser_(
                     p.import_records_for_current_part.clearRetainingCapacity();
                     p.declared_symbols.clearRetainingCapacity();
 
-                    var result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != .none);
+                    const result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != .none);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
 
@@ -21514,7 +21529,7 @@ fn NewParser_(
                     }
 
                     var new_stmts_list = allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
-                    var final_stmts_list = allocator.alloc(Stmt, final_part_stmts_count) catch unreachable;
+                    const final_stmts_list = allocator.alloc(Stmt, final_part_stmts_count) catch unreachable;
                     var remaining_final_stmts = final_stmts_list;
                     var imports_list = new_stmts_list[0..imports_count];
 
@@ -21608,7 +21623,7 @@ fn NewParser_(
                         total_stmts_count += part.stmts.len;
                     }
 
-                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
+                    const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
                     {
                         var remaining_stmts = stmts_to_copy;
                         for (parts) |part| {
@@ -21645,7 +21660,7 @@ fn NewParser_(
 
                 .none => {
                     if (p.options.features.hot_module_reloading and p.options.features.allow_runtime) {
-                        var named_exports_count: usize = p.named_exports.count();
+                        const named_exports_count: usize = p.named_exports.count();
                         const named_imports: js_ast.Ast.NamedImports = p.named_imports;
 
                         // To transform to something HMR'able, we must:
@@ -21755,7 +21770,7 @@ fn NewParser_(
                         const new_call_args_count: usize = if (p.options.features.react_fast_refresh) 3 else 2;
                         var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
                         var new_call_args = call_args[0..new_call_args_count];
-                        var hmr_module_ident = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
+                        const hmr_module_ident = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
 
                         new_call_args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(p.options.filepath_hash_for_hmr)) }, logger.Loc.Empty);
                         // This helps us provide better error messages
@@ -21808,9 +21823,9 @@ fn NewParser_(
                             export_name_string_length += named_export.key_ptr.len + "$$hmr_".len;
                         }
 
-                        var export_name_string_all = try allocator.alloc(u8, export_name_string_length);
+                        const export_name_string_all = try allocator.alloc(u8, export_name_string_length);
                         var export_name_string_remainder = export_name_string_all;
-                        var hmr_module_exports_dot = p.newExpr(
+                        const hmr_module_exports_dot = p.newExpr(
                             E.Dot{
                                 .target = hmr_module_ident,
                                 .name = "exports",
@@ -21821,7 +21836,7 @@ fn NewParser_(
                         var exports_decls = decls[first_decl.len..];
                         named_exports_iter = p.named_exports.iterator();
                         var update_function_args = try allocator.alloc(G.Arg, 1);
-                        var exports_ident = p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
+                        const exports_ident = p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
                         update_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
 
                         while (named_exports_iter.next()) |named_export| {
@@ -21839,7 +21854,7 @@ fn NewParser_(
                             bun.copy(u8, export_name_string, "$$hmr_");
                             bun.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
 
-                            var name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
+                            const name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
 
                             var body_stmts = export_all_function_body_stmts[named_export_i .. named_export_i + 1];
                             body_stmts[0] = p.s(
@@ -21863,7 +21878,7 @@ fn NewParser_(
                                 .name = .{ .ref = name_ref, .loc = logger.Loc.Empty },
                             };
 
-                            var decl_value = p.newExpr(
+                            const decl_value = p.newExpr(
                                 E.Dot{ .target = hmr_module_exports_dot, .name = named_export.key_ptr.*, .name_loc = logger.Loc.Empty },
                                 logger.Loc.Empty,
                             );
@@ -21938,7 +21953,7 @@ fn NewParser_(
 
                         const is_async = !p.top_level_await_keyword.isEmpty();
 
-                        var func = p.newExpr(
+                        const func = p.newExpr(
                             E.Function{
                                 .func = .{
                                     .body = .{ .loc = logger.Loc.Empty, .stmts = part_stmts[0 .. part_stmts_i + 1] },
@@ -22080,7 +22095,7 @@ fn NewParser_(
 
                 // Each part tracks the other parts it depends on within this file
                 for (parts, 0..) |*part, part_index| {
-                    var decls = &part.declared_symbols;
+                    const decls = &part.declared_symbols;
                     const ctx = Ctx{
                         .allocator = p.allocator,
                         .top_level_symbols_to_parts = top_level,
@@ -22185,7 +22200,7 @@ fn NewParser_(
             this: *P,
         ) anyerror!void {
             var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
-            var scope = try allocator.create(Scope);
+            const scope = try allocator.create(Scope);
             scope.* = Scope{
                 .members = @TypeOf(scope.members){},
                 .children = @TypeOf(scope.children){},
@@ -22340,7 +22355,7 @@ pub fn newLazyExportAST(
     comptime runtime_api_call: []const u8,
 ) anyerror!?js_ast.Ast {
     var temp_log = logger.Log.init(allocator);
-    var log = &temp_log;
+    const log = &temp_log;
     var parser = Parser{
         .options = opts,
         .allocator = allocator,

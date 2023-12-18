@@ -28,7 +28,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     if (std.fs.path.isAbsolute(bin)) {
         bun.copy(u8, buf, bin);
         buf[bin.len] = 0;
-        var binZ: [:0]u8 = buf[0..bin.len :0];
+        const binZ: [:0]u8 = buf[0..bin.len :0];
         if (bun.sys.isExecutableFilePath(binZ)) return binZ;
 
         // note that directories are often executable
@@ -138,8 +138,8 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
 
 test "which" {
     var buf: bun.fs.PathBuffer = undefined;
-    var realpath = bun.getenvZ("PATH") orelse unreachable;
-    var whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
+    const realpath = bun.getenvZ("PATH") orelse unreachable;
+    const whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
     try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");
     try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "baconnnnnn"));
     try std.testing.expect(null != which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "zig"));

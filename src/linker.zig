@@ -119,8 +119,8 @@ pub const Linker = struct {
         fd: ?FileDescriptorType,
     ) !string {
         if (Bundler.isCacheEnabled) {
-            var hashed = bun.hash(file_path.text);
-            var hashed_result = try this.hashed_filenames.getOrPut(hashed);
+            const hashed = bun.hash(file_path.text);
+            const hashed_result = try this.hashed_filenames.getOrPut(hashed);
             if (hashed_result.found_existing) {
                 return hashed_result.value_ptr.*;
             }
@@ -130,7 +130,7 @@ pub const Linker = struct {
         const hash_name = modkey.hashName(file_path.text);
 
         if (Bundler.isCacheEnabled) {
-            var hashed = bun.hash(file_path.text);
+            const hashed = bun.hash(file_path.text);
             try this.hashed_filenames.put(hashed, try this.allocator.dupe(u8, hash_name));
         }
 
@@ -692,7 +692,7 @@ pub const Linker = struct {
                 }
 
                 if (strings.eqlComptime(namespace, "bun") or strings.eqlComptime(namespace, "file") or namespace.len == 0) {
-                    var relative_name = linker.fs.relative(source_dir, source_path);
+                    const relative_name = linker.fs.relative(source_dir, source_path);
                     return Fs.Path.initWithPretty(source_path, relative_name);
                 } else {
                     return Fs.Path.initWithNamespace(source_path, namespace);
@@ -705,7 +705,7 @@ pub const Linker = struct {
                 if (use_hashed_name) {
                     var basepath = Fs.Path.init(source_path);
                     const basename = try linker.getHashedFilename(basepath, null);
-                    var dir = basepath.name.dirWithTrailingSlash();
+                    const dir = basepath.name.dirWithTrailingSlash();
                     var _pretty = try linker.allocator.alloc(u8, dir.len + basename.len + basepath.name.ext.len);
                     bun.copy(u8, _pretty, dir);
                     var remaining_pretty = _pretty[dir.len..];
@@ -754,12 +754,12 @@ pub const Linker = struct {
                         base = base[0..dot];
                     }
 
-                    var dirname = std.fs.path.dirname(base) orelse "";
+                    const dirname = std.fs.path.dirname(base) orelse "";
 
                     var basename = std.fs.path.basename(base);
 
                     if (use_hashed_name) {
-                        var basepath = Fs.Path.init(source_path);
+                        const basepath = Fs.Path.init(source_path);
 
                         if (linker.options.serve) {
                             var hash_buf: [64]u8 = undefined;

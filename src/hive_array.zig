@@ -121,12 +121,12 @@ test "HiveArray" {
     var a = HiveArray(Int, size).init();
 
     {
-        var b = a.get().?;
+        const b = a.get().?;
         try testing.expect(a.get().? != b);
         try testing.expectEqual(a.indexOf(b), 0);
         try testing.expect(a.put(b));
         try testing.expect(a.get().? == b);
-        var c = a.get().?;
+        const c = a.get().?;
         c.* = 123;
         var d: Int = 12345;
         try testing.expect(a.put(&d) == false);
@@ -137,7 +137,7 @@ test "HiveArray" {
     {
         var i: u63 = 0;
         while (i < size) {
-            var b = a.get().?;
+            const b = a.get().?;
             try testing.expectEqual(a.indexOf(b), i);
             try testing.expect(a.put(b));
             try testing.expect(a.get().? == b);

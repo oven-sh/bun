@@ -461,7 +461,7 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const normalized_from = if (platform.isAbsolute(from)) brk: {
-        var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
+        const path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_from_buf[0] = platform.separator();
         break :brk relative_from_buf[0 .. path.len + 1];
@@ -475,7 +475,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
     );
 
     const normalized_to = if (platform.isAbsolute(to)) brk: {
-        var path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
+        const path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_to_buf[0] = platform.separator();
         break :brk relative_to_buf[0 .. path.len + 1];
@@ -502,7 +502,7 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
 fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
     if (path.len < 2) return .{ 0, 0 };
     // with drive letter
-    var c = path[0];
+    const c = path[0];
     if (path[1] == ':') {
         if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
             return .{ 2, 0 };
@@ -538,7 +538,7 @@ pub fn windowsFilesystemRoot(path: []const u8) []const u8 {
     if (path.len < 3)
         return if (isSepAny(path[0])) path[0..1] else path[0..0];
     // with drive letter
-    var c = path[0];
+    const c = path[0];
     if (path[1] == ':' and isSepAny(path[2])) {
         if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
             return path[0..3];
@@ -960,7 +960,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 }
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    var joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
+    const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
     std.debug.assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
@@ -1072,7 +1072,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
             continue;
         }
 
-        var part = _part;
+        const part = _part;
 
         if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
             temp_buf[out] = _platform.separator();
@@ -1084,7 +1084,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     }
 
     const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
-        var outdir = temp_buf[0 .. i + 1];
+        const outdir = temp_buf[0 .. i + 1];
         if (_platform == .windows or _platform == .loose) {
             for (outdir) |*c| {
                 if (c.* == '\\') {
@@ -1597,7 +1597,7 @@ test "joinStringBuf" {
     };
     inline for (fixtures) |fixture| {
         const expected = fixture[1];
-        var buf = try default_allocator.alloc(u8, 2048);
+        const buf = try default_allocator.alloc(u8, 2048);
         _ = t.expect(expected, joinStringBuf(buf, fixture[0], .posix), @src());
     }
 }

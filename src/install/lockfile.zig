@@ -216,7 +216,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
         std.io.getStdIn();
 
     defer file.close();
-    var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+    const buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
     };
 
@@ -380,7 +380,7 @@ pub const Tree = struct {
             }
 
             this.tree_id += 1;
-            var relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
+            const relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
             return .{
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
@@ -428,8 +428,8 @@ pub const Tree = struct {
             const end = @as(Id, @truncate(this.list.len));
             var i: Id = 0;
             var total: u32 = 0;
-            var trees = this.list.items(.tree);
-            var dependencies = this.list.items(.dependencies);
+            const trees = this.list.items(.tree);
+            const dependencies = this.list.items(.dependencies);
 
             while (i < end) : (i += 1) {
                 total += trees[i].dependencies.len;
@@ -594,7 +594,7 @@ pub fn maybeCloneFilteringRootPackages(
     const old_root_dependencies_list = old.packages.items(.dependencies)[0];
     var old_root_resolutions = old.packages.items(.resolutions)[0];
     const root_dependencies = old_root_dependencies_list.get(old.buffers.dependencies.items);
-    var resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
+    const resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
     var any_changes = false;
     const end = @as(PackageID, @truncate(old.packages.len));
 
@@ -646,7 +646,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
         {
             var temp_buf: [513]u8 = undefined;
 
-            var root_deps: []Dependency = root_deps_list.mut(old.buffers.dependencies.items);
+            const root_deps: []Dependency = root_deps_list.mut(old.buffers.dependencies.items);
             const old_resolutions_list_lists = old.packages.items(.resolutions);
             const old_resolutions_list = old_resolutions_list_lists[0];
             const old_resolutions: []const PackageID = old_resolutions_list.get(old.buffers.resolutions.items);
@@ -658,7 +658,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            var buf = switch (exact_versions) {
+                            const buf = switch (exact_versions) {
                                 false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
                                 true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
                             };
@@ -771,12 +771,12 @@ pub fn cleanWithLogger(
     // Step 1. Recreate the lockfile with only the packages that are still alive
     const root = old.rootPackage() orelse return error.NoPackage;
 
-    var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
+    const package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
     @memset(
         package_id_mapping,
         invalid_package_id,
     );
-    var clone_queue_ = PendingResolutions.init(old.allocator);
+    const clone_queue_ = PendingResolutions.init(old.allocator);
     var cloner = Cloner{
         .old = old,
         .lockfile = new,
@@ -957,7 +957,7 @@ const Cloner = struct {
     fn hoist(this: *Cloner) anyerror!void {
         if (this.lockfile.packages.len == 0) return;
 
-        var allocator = this.lockfile.allocator;
+        const allocator = this.lockfile.allocator;
         var slice = this.lockfile.packages.slice();
         var builder = Tree.Builder{
             .name_hashes = slice.items(.name_hash),
@@ -1013,7 +1013,7 @@ pub const Printer = struct {
         @setCold(true);
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
-        var path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
+        const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
 
         var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
         var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1021,9 +1021,9 @@ pub const Printer = struct {
         var lockfile_path: stringZ = "";
 
         if (!std.fs.path.isAbsolute(path)) {
-            var cwd = try bun.getcwd(&lockfile_path_buf1);
+            const cwd = try bun.getcwd(&lockfile_path_buf1);
             var parts = [_]string{path};
-            var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
+            const lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
             lockfile_path_buf2[lockfile_path__.len] = 0;
             lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
         } else if (path.len > 0) {
@@ -1075,7 +1075,7 @@ pub const Printer = struct {
             .ok => {},
         }
 
-        var writer = Output.writer();
+        const writer = Output.writer();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
         Output.flush();
     }
@@ -1092,13 +1092,13 @@ pub const Printer = struct {
             .max_concurrent_lifecycle_scripts = 1,
         };
 
-        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+        const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
         var env_loader: *DotEnv.Loader = brk: {
-            var map = try allocator.create(DotEnv.Map);
+            const map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
-            var loader = try allocator.create(DotEnv.Loader);
+            const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
@@ -1147,7 +1147,7 @@ pub const Printer = struct {
             const resolutions_buffer: []const PackageID = this.lockfile.buffers.resolutions.items;
             const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
             const string_buf = this.lockfile.buffers.string_bytes.items;
-            var id_map = try default_allocator.alloc(DependencyID, this.updates.len);
+            const id_map = try default_allocator.alloc(DependencyID, this.updates.len);
             @memset(id_map, invalid_package_id);
             defer if (id_map.len > 0) default_allocator.free(id_map);
 
@@ -1396,7 +1396,7 @@ pub const Printer = struct {
                         resolutions = resolutions[k + 1 ..];
                     }
 
-                    var dependency_versions = requested_version_start[0..j];
+                    const dependency_versions = requested_version_start[0..j];
                     if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThanWithTag);
                     try requested_versions.put(i, dependency_versions);
                 }
@@ -1618,7 +1618,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    var file = tmpfile.file();
+    const file = tmpfile.file();
     {
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
         defer bytes.deinit();
@@ -1762,10 +1762,10 @@ pub fn getPackageID(
 }
 
 pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !void {
-    var gpe = try this.package_index.getOrPut(name_hash);
+    const gpe = try this.package_index.getOrPut(name_hash);
 
     if (gpe.found_existing) {
-        var index: *PackageIndex.Entry = gpe.value_ptr;
+        const index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
             .PackageID => |existing_id| {
@@ -1937,7 +1937,7 @@ pub const StringBuilder = struct {
             std.debug.assert(this.ptr != null); // must call allocate first
         }
 
-        var string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
+        const string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
         if (!string_entry.found_existing) {
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
@@ -2099,7 +2099,7 @@ pub const OverrideMap = struct {
 
         for (expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
-            var k = key.asString(lockfile.allocator).?;
+            const k = key.asString(lockfile.allocator).?;
             if (k.len == 0) {
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
                 continue;
@@ -2546,7 +2546,7 @@ pub const Package = extern struct {
                 .auto,
             );
 
-            var json_file_fd = try bun.sys.openat(
+            const json_file_fd = try bun.sys.openat(
                 bun.toFD(node_modules.fd),
                 bun.path.joinZ([_]string{ subpath, "package.json" }, .auto),
                 std.os.O.RDONLY,
@@ -2681,10 +2681,10 @@ pub const Package = extern struct {
         new.buffers.resolutions.items = new.buffers.resolutions.items.ptr[0..end];
 
         new.buffers.extern_strings.items.len += new_extern_string_count;
-        var new_extern_strings = new.buffers.extern_strings.items[new.buffers.extern_strings.items.len - new_extern_string_count ..];
+        const new_extern_strings = new.buffers.extern_strings.items[new.buffers.extern_strings.items.len - new_extern_string_count ..];
 
-        var dependencies: []Dependency = new.buffers.dependencies.items[prev_len..end];
-        var resolutions: []PackageID = new.buffers.resolutions.items[prev_len..end];
+        const dependencies: []Dependency = new.buffers.dependencies.items[prev_len..end];
+        const resolutions: []PackageID = new.buffers.resolutions.items[prev_len..end];
 
         const id = @as(PackageID, @truncate(new.packages.len));
         const new_package = try new.appendPackageWithID(
@@ -2779,7 +2779,7 @@ pub const Package = extern struct {
         {
             string_builder.count(package_json.name);
             string_builder.count(package_json.version);
-            var dependencies = package_json.dependencies.map.values();
+            const dependencies = package_json.dependencies.map.values();
             for (dependencies) |dep| {
                 if (dep.behavior.isEnabled(features)) {
                     dep.count(package_json.dependencies.source_buf, @TypeOf(&string_builder), &string_builder);
@@ -2934,7 +2934,7 @@ pub const Package = extern struct {
         try resolutions_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
         try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
         extern_strings_list.items.len += bin_extern_strings_count;
-        var extern_strings_slice = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
+        const extern_strings_slice = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
 
         // -- Cloning
         {
@@ -3160,7 +3160,7 @@ pub const Package = extern struct {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
                                 var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                var package_json_path = Path.joinZBuf(
+                                const package_json_path = Path.joinZBuf(
                                     &local_buf,
                                     &[_]string{ path, "package.json" },
                                     .auto,
@@ -3290,7 +3290,7 @@ pub const Package = extern struct {
         value_loc: logger.Loc,
     ) !?Dependency {
         const external_version = string_builder.append(String, version);
-        var buf = lockfile.buffers.string_bytes.items;
+        const buf = lockfile.buffers.string_bytes.items;
         const sliced = external_version.sliced(buf);
 
         var dependency_version = Dependency.parseWithOptionalTag(
@@ -3412,7 +3412,7 @@ pub const Package = extern struct {
                 dependency_version.literal = path;
                 dependency_version.value.workspace = path;
 
-                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
                 const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
 
                 if (workspace_version) |ver| {
@@ -3458,7 +3458,7 @@ pub const Package = extern struct {
 
         // `peerDependencies` may be specified on existing dependencies
         if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
-            var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
+            const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
                 if (comptime group.behavior.isOptional()) {
@@ -3523,7 +3523,7 @@ pub const Package = extern struct {
         }
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
-            var entry = try self.map.getOrPut(key);
+            const entry = try self.map.getOrPut(key);
             if (!entry.found_existing) {
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
             } else {
@@ -3618,15 +3618,15 @@ pub const Package = extern struct {
         if (arr.items.len == 0) return 0;
 
         var fallback = std.heap.stackFallback(1024, allocator);
-        var workspace_allocator = fallback.get();
-        var workspace_name_buf = allocator.create([1024]u8) catch unreachable;
+        const workspace_allocator = fallback.get();
+        const workspace_name_buf = allocator.create([1024]u8) catch unreachable;
         defer allocator.destroy(workspace_name_buf);
 
         const orig_msgs_len = log.msgs.items.len;
 
         var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
         defer asterisked_workspace_paths.deinit();
-        var filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
+        const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
         defer allocator.destroy(filepath_buf);
 
         for (arr.slice()) |item| {
@@ -3730,7 +3730,7 @@ pub const Package = extern struct {
 
         if (asterisked_workspace_paths.items.len > 0) {
             // max path bytes is not enough in real codebases
-            var second_buf = allocator.create([4096]u8) catch unreachable;
+            const second_buf = allocator.create([4096]u8) catch unreachable;
             var second_buf_fixed = std.heap.FixedBufferAllocator.init(second_buf);
             defer allocator.destroy(second_buf);
 
@@ -3788,7 +3788,7 @@ pub const Package = extern struct {
                     if (entry.kind(&Fs.FileSystem.instance.fs, true) != .dir) continue;
 
                     var parts = [2]string{ entry.dir, entry.base() };
-                    var entry_path = Path.joinAbsStringBufZ(
+                    const entry_path = Path.joinAbsStringBufZ(
                         Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
                         filepath_buf,
                         &parts,
@@ -4295,7 +4295,7 @@ pub const Package = extern struct {
                 for (workspace_names.values(), workspace_names.keys()) |entry, path| {
 
                     // workspace names from their package jsons. duplicates not allowed
-                    var gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
+                    const gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
                     if (gop.found_existing) {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
@@ -4317,7 +4317,7 @@ pub const Package = extern struct {
                             for (workspace_names.values(), workspace_names.keys()) |value, note_path| {
                                 if (note_path.ptr == path.ptr) continue;
                                 if (strings.eql(value.name, entry.name)) {
-                                    var note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
+                                    const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
 
                                     const note_src = src: {
                                         var workspace_file = std.fs.openFileAbsoluteZ(note_abs_path, .{ .mode = .read_only }) catch {
@@ -4341,7 +4341,7 @@ pub const Package = extern struct {
                             break :notes notes[0..i];
                         };
 
-                        var abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
+                        const abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
 
                         const src = src: {
                             var workspace_file = std.fs.openFileAbsoluteZ(abs_path, .{ .mode = .read_only }) catch {
@@ -4660,7 +4660,7 @@ pub const Package = extern struct {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
 
                 comptime assertNoUninitializedPadding(@TypeOf(value));
-                var bytes = std.mem.sliceAsBytes(value);
+                const bytes = std.mem.sliceAsBytes(value);
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
                     @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
@@ -4842,7 +4842,7 @@ const Buffers = struct {
             // Dependencies have to be converted to .toExternal first
             // We store pointers in Version.Value, so we can't just write it directly
             if (comptime strings.eqlComptime(name, "dependencies")) {
-                var remaining = this.dependencies.items;
+                const remaining = this.dependencies.items;
 
                 // It would be faster to buffer these instead of one big allocation
                 var to_clone = try std.ArrayListUnmanaged(Dependency.External).initCapacity(allocator, remaining.len);
@@ -4854,7 +4854,7 @@ const Buffers = struct {
 
                 try writeArray(StreamType, stream, Writer, writer, []Dependency.External, to_clone.items);
             } else {
-                var list = @field(this, name);
+                const list = @field(this, name);
                 const items = list.items;
                 const Type = @TypeOf(items);
                 if (comptime Type == Tree) {
@@ -4938,7 +4938,7 @@ const Buffers = struct {
             // }
         }
 
-        var external_dependency_list = external_dependency_list_.items;
+        const external_dependency_list = external_dependency_list_.items;
         // Dependencies are serialized separately.
         // This is unfortunate. However, not using pointers for Semver Range's make the code a lot more complex.
         this.dependencies = try DependencyList.initCapacity(allocator, external_dependency_list.len);
@@ -4954,7 +4954,7 @@ const Buffers = struct {
 
         {
             var external_deps = external_dependency_list.ptr;
-            var dependencies = this.dependencies.items;
+            const dependencies = this.dependencies.items;
             if (comptime Environment.allow_assert) std.debug.assert(external_dependency_list.len == dependencies.len);
             for (dependencies) |*dep| {
                 dep.* = Dependency.toDependency(external_deps[0], extern_context);
@@ -5122,13 +5122,13 @@ pub const Serializer = struct {
     ) !void {
         var reader = stream.reader();
         var header_buf_: [header_bytes.len]u8 = undefined;
-        var header_buf = header_buf_[0..try reader.readAll(&header_buf_)];
+        const header_buf = header_buf_[0..try reader.readAll(&header_buf_)];
 
         if (!strings.eqlComptime(header_buf, header_bytes)) {
             return error.InvalidLockfile;
         }
 
-        var format = try reader.readInt(u32, .little);
+        const format = try reader.readInt(u32, .little);
         if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
@@ -5153,7 +5153,7 @@ pub const Serializer = struct {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
 
-        var has_workspace_name_hashes = false;
+        const has_workspace_name_hashes = false;
         // < Bun v1.0.4 stopped right here when reading the lockfile
         // So we add an extra 8 byte tag to say "hey, there's more data here"
         {
@@ -5259,7 +5259,7 @@ pub const Serializer = struct {
                     defer lockfile.overrides.map = map;
 
                     try map.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
-                    var override_versions_external = try Lockfile.Buffers.readArray(
+                    const override_versions_external = try Lockfile.Buffers.readArray(
                         stream,
                         allocator,
                         std.ArrayListUnmanaged(Dependency.External),
@@ -5354,7 +5354,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
     var has_scripts = false;
 
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
-        var scripts = @field(this.scripts, field_name);
+        const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
             if (script.script.len > 0) {
                 string_builder.fmtCount("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
@@ -5390,7 +5390,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
     if (has_scripts) {
         _ = string_builder.append(scripts_begin);
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
-            var scripts = @field(this.scripts, field_name);
+            const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
                 if (script.script.len > 0) {
                     _ = string_builder.fmt("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
@@ -5739,7 +5739,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 defer w.endObject() catch {};
 
                 inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
-                    var script = @field(pkg.scripts, field_name).slice(sb);
+                    const script = @field(pkg.scripts, field_name).slice(sb);
                     if (script.len > 0) {
                         try w.objectField(field_name);
                         try w.write(script);

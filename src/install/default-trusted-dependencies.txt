@@ -381,7 +381,6 @@ pprof
 pre-commit
 pre-push
 prisma
-protobufjs
 protoc
 protoc-gen-grpc-web
 puppeteer

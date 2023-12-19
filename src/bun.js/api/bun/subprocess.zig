@@ -196,6 +196,7 @@ pub const Subprocess = struct {
 
     const Readable = union(enum) {
         fd: bun.FileDescriptor,
+        memfd: bun.FileDescriptor,
 
         pipe: Pipe,
         inherit: void,
@@ -275,6 +276,7 @@ pub const Subprocess = struct {
                 },
                 .path => Readable{ .ignore = {} },
                 .blob, .fd => Readable{ .fd = bun.toFD(fd) },
+                .memfd => Readable{ .memfd = stdio.memfd },
                 .array_buffer => Readable{
                     .pipe = .{
                         .buffer = BufferedOutput.initWithSlice(bun.toFD(fd), stdio.array_buffer.slice()),
@@ -293,7 +295,7 @@ pub const Subprocess = struct {
 
         pub fn close(this: *Readable) void {
             switch (this.*) {
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                 },
                 .pipe => {
@@ -305,7 +307,7 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                 },
                 .pipe => {
@@ -322,6 +324,9 @@ pub const Subprocess = struct {
 
         pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
             switch (this.*) {
+                // should only be reachable when the entire output is buffered.
+                .memfd => return this.toBufferedValue(globalThis),
+
                 .fd => |fd| {
                     return JSValue.jsNumber(fd);
                 },
@@ -338,6 +343,18 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .fd => |fd| {
                     return JSValue.jsNumber(fd);
+                },
+                .memfd => |fd| {
+                    if (comptime !Environment.isPosix) {
+                        Output.panic("memfd is only supported on Linux", .{});
+                    }
+
+                    const result = JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
+                    if (result == .zero) {
+                        this.* = .{ .closed = {} };
+                    }
+
+                    return result;
                 },
                 .pipe => {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
@@ -923,6 +940,7 @@ pub const Subprocess = struct {
         },
         fd: bun.FileDescriptor,
         buffered_input: BufferedInput,
+        memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
 
@@ -997,7 +1015,8 @@ pub const Subprocess = struct {
                     }
                     return Writable{ .buffered_input = buffered_input };
                 },
-                .fd => {
+
+                .memfd, .fd => {
                     return Writable{ .fd = bun.toFD(fd) };
                 },
                 .inherit => {
@@ -1013,7 +1032,7 @@ pub const Subprocess = struct {
             return switch (this) {
                 .pipe => |pipe| pipe.toJS(globalThis),
                 .fd => |fd| JSValue.jsNumber(fd),
-                .ignore => JSValue.jsUndefined(),
+                .memfd, .ignore => JSValue.jsUndefined(),
                 .inherit => JSValue.jsUndefined(),
                 .buffered_input => JSValue.jsUndefined(),
                 .pipe_to_readable_stream => this.pipe_to_readable_stream.readable_stream.value,
@@ -1028,7 +1047,7 @@ pub const Subprocess = struct {
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
@@ -1046,7 +1065,7 @@ pub const Subprocess = struct {
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
@@ -1575,6 +1594,24 @@ pub const Subprocess = struct {
             env_array.capacity = env_array.items.len;
         }
 
+        inline for (0..stdio.len) |fd_index| {
+            if (stdio[fd_index].canUseMemfd()) {
+                stdio[fd_index].useMemfd(fd_index);
+            }
+        }
+        var should_close_memfd = Environment.isLinux;
+
+        defer {
+            if (should_close_memfd) {
+                inline for (0..stdio.len) |fd_index| {
+                    if (stdio[fd_index] == .memfd) {
+                        _ = bun.sys.close(stdio[fd_index].memfd);
+                        stdio[fd_index] = .ignore;
+                    }
+                }
+            }
+        }
+
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
@@ -1830,6 +1867,8 @@ pub const Subprocess = struct {
                 subprocess.stderr.pipe.buffer.readAll();
             }
         }
+
+        should_close_memfd = false;
 
         if (comptime !is_sync) {
             return out;
@@ -2129,6 +2168,88 @@ pub const Subprocess = struct {
         blob: JSC.WebCore.AnyBlob,
         pipe: ?JSC.WebCore.ReadableStream,
         array_buffer: JSC.ArrayBuffer.Strong,
+        memfd: bun.FileDescriptor,
+
+        pub fn canUseMemfd(this: *const @This()) bool {
+            if (comptime !Environment.isLinux) {
+                return false;
+            }
+
+            return switch (this.*) {
+                .blob => !this.blob.needsToReadFile(),
+                .memfd, .array_buffer => true,
+                .pipe => |pipe| pipe == null,
+                else => false,
+            };
+        }
+
+        pub fn byteSlice(this: *const @This()) []const u8 {
+            return switch (this.*) {
+                .blob => this.blob.slice(),
+                .array_buffer => |array_buffer| array_buffer.slice(),
+                else => "",
+            };
+        }
+
+        pub fn useMemfd(this: *@This(), index: u32) void {
+            const label = switch (index) {
+                0 => "stdin",
+                1 => "stdout",
+                2 => "stderr",
+                else => "memory_file",
+            };
+
+            // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
+            const rc = std.os.linux.memfd_create(label, 0);
+            switch (std.os.linux.getErrno(rc)) {
+                .SUCCESS => {},
+                else => |errno| {
+                    log("Failed to create memfd: {s}", .{@tagName(errno)});
+                    return;
+                },
+            }
+
+            const fd = bun.toFD(rc);
+
+            var remain = this.byteSlice();
+
+            if (remain.len > 0)
+                // Hint at the size of the file
+                _ = bun.sys.ftruncate(fd, @intCast(remain.len));
+
+            // Dump all the bytes in there
+            var written: isize = 0;
+            while (remain.len > 0) {
+                switch (bun.sys.pwrite(fd, remain, written)) {
+                    .err => |err| {
+                        if (err.getErrno() == .AGAIN) {
+                            continue;
+                        }
+
+                        Output.debugWarn("Failed to write to memfd: {s}", .{@tagName(err.getErrno())});
+                        _ = bun.sys.close(fd);
+                        return;
+                    },
+                    .result => |result| {
+                        if (result == 0) {
+                            Output.debugWarn("Failed to write to memfd: EOF", .{});
+                            _ = bun.sys.close(fd);
+                            return;
+                        }
+                        written += @intCast(result);
+                        remain = remain[result..];
+                    },
+                }
+            }
+
+            switch (this.*) {
+                .array_buffer => this.array_buffer.deinit(),
+                .blob => this.blob.detach(),
+                else => {},
+            }
+
+            this.* = .{ .memfd = fd };
+        }
 
         pub fn isPiped(self: Stdio) bool {
             return switch (self) {
@@ -2152,6 +2273,9 @@ pub const Subprocess = struct {
                     try actions.close(pipe_fd[1 - idx]);
                 },
                 .fd => |fd| {
+                    try actions.dup2(fd, std_fileno);
+                },
+                .memfd => |fd| {
                     try actions.dup2(fd, std_fileno);
                 },
                 .path => |pathlike| {
@@ -2198,6 +2322,7 @@ pub const Subprocess = struct {
                     .flags = uv.UV_IGNORE,
                     .data = undefined,
                 },
+                .memfd => unreachable,
             };
         }
 

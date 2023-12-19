@@ -400,6 +400,40 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
+
+    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const stat = switch (bun.sys.fstat(fd)) {
+            .err => |err| {
+                globalObject.throwValue(err.toJSC(globalObject));
+                _ = bun.sys.close(fd);
+                return .zero;
+            },
+            .result => |fstat| fstat,
+        };
+
+        const size = stat.size;
+
+        if (size == 0) {
+            _ = bun.sys.close(fd);
+            return createBuffer(globalObject, "");
+        }
+
+        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.SHARED | 0, fd, 0);
+        _ = bun.sys.close(fd);
+
+        switch (result) {
+            .result => |buf| {
+                return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
+            },
+            .err => |err| {
+                globalObject.throwValue(err.toJSC(globalObject));
+
+                return .zero;
+            },
+        }
+    }
+
     pub const Strong = struct {
         array_buffer: ArrayBuffer,
         held: JSC.Strong = .{},

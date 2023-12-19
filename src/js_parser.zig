@@ -435,7 +435,6 @@ pub const TypeScript = struct {
             .t_greater_than_greater_than_equals,
             .t_greater_than_greater_than_greater_than,
             .t_greater_than_greater_than_greater_than_equals,
-            .t_end_of_file,
             => false,
 
             // We favor the type argument list interpretation when it is immediately followed by

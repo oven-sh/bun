@@ -893,13 +893,10 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
-    , globalEventScope(*new Bun::GlobalScope(m_scriptExecutionContext))
+    , globalEventScope(adoptRef(*new Bun::GlobalScope(m_scriptExecutionContext)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
-    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
-    globalEventScope.relaxAdoptionRequirement();
 }
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId)
@@ -910,13 +907,10 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
-    , globalEventScope(*new Bun::GlobalScope(m_scriptExecutionContext))
+    , globalEventScope(adoptRef(*new Bun::GlobalScope(m_scriptExecutionContext)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
-    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
-    globalEventScope.relaxAdoptionRequirement();
 }
 
 GlobalObject::~GlobalObject()
@@ -934,11 +928,6 @@ GlobalObject::~GlobalObject()
 void GlobalObject::destroy(JSCell* cell)
 {
     static_cast<GlobalObject*>(cell)->GlobalObject::~GlobalObject();
-}
-
-WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext()
-{
-    return m_scriptExecutionContext;
 }
 
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const

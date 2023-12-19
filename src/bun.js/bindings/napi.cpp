@@ -182,15 +182,16 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 static uint32_t getPropertyAttributes(napi_property_attributes attributes)
 {
     uint32_t result = 0;
-    if (!(attributes & napi_key_configurable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
 
-    if (!(attributes & napi_key_enumerable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_enumerable))) {
         result |= JSC::PropertyAttribute::DontEnum;
+        ;
     }
 
-    if (!(attributes & napi_key_writable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_writable))) {
         // result |= JSC::PropertyAttribute::ReadOnly;
     }
 

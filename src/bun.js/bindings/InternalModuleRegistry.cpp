@@ -26,6 +26,9 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #endif
 }
 
+#define ASSERT_INTERNAL_MODULE(result, moduleName) \
+    ASSERT_WITH_MESSAGE(result&& jsDynamicCast<JSObject*>(result), "Expected \"%s\" to export a JSObject", moduleName.utf8().data());
+
 // The `INTERNAL_MODULE_REGISTRY_GENERATE` macro handles inlining code to compile and run a
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
@@ -65,10 +68,6 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     return result;
 
 #if BUN_DEBUG
-#define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
-    if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
-        printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
-    }
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
@@ -90,10 +89,6 @@ JSValue initializeInternalModuleFromDisk(
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
     return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
-
-#define ASSERT_INTERNAL_MODULE(result, moduleName) \
-    {                                              \
-    }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
     INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleId, urlString)
 #endif

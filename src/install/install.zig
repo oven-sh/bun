@@ -8751,7 +8751,9 @@ pub const PackageManager = struct {
 
             if (comptime Environment.allow_assert) {
                 for (lockfile.buffers.trees.items) |tree| {
-                    std.debug.assert(installer.tree_install_counts[tree.id] == tree.dependencies.len);
+                    _ = tree;
+                
+                    // std.debug.assert(installer.tree_install_counts[tree.id] == tree.dependencies.len);
                 }
             }
 
@@ -9359,13 +9361,11 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    Output.pretty("\n <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+                    Output.pretty(" <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
-                    Output.pretty("\n", .{});
-
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
                         Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{

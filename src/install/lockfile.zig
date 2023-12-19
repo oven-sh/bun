@@ -1128,6 +1128,8 @@ pub const Printer = struct {
     }
 
     pub const Tree = struct {
+        /// - Prints an empty newline with no diffs
+        /// - Prints a leading and trailing blank newline with diffs
         pub fn print(
             this: *Printer,
             comptime Writer: type,
@@ -1153,6 +1155,8 @@ pub const Printer = struct {
 
             visited.set(0);
             const end = @as(PackageID, @truncate(resolved.len));
+
+            try writer.writeAll("\n");
 
             var had_printed_new_install = false;
             if (this.successfully_installed) |installed| {
@@ -1181,7 +1185,6 @@ pub const Printer = struct {
                     if (!installed.isSet(package_id)) continue;
 
                     if (!had_printed_new_install) {
-                        try writer.writeAll("\n");
                         had_printed_new_install = true;
                     }
 
@@ -1248,7 +1251,7 @@ pub const Printer = struct {
                 }
             }
 
-            if (had_printed_new_install or this.updates.len > 0) {
+            if (had_printed_new_install) {
                 try writer.writeAll("\n");
             }
 

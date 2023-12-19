@@ -2239,7 +2239,12 @@ it("should install latest with prereleases", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-0", "", " 1 package installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([
+    "",
+    " + baz@1.0.0-0",
+    "",
+    " 1 package installed",
+  ]);
   expect(await exited).toBe(0);
   await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
   await rm(join(package_dir, "bun.lockb"), { recursive: true, force: true });
@@ -2266,7 +2271,12 @@ it("should install latest with prereleases", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-8", "", " 1 package installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([
+    "",
+    " + baz@1.0.0-8",
+    "",
+    " 1 package installed",
+  ]);
   expect(await exited).toBe(0);
 
   await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
@@ -2294,7 +2304,12 @@ it("should install latest with prereleases", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-0", "", " 1 package installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([
+    "",
+    " + baz@1.0.0-0",
+    "",
+    " 1 package installed",
+  ]);
   expect(await exited).toBe(0);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -3375,7 +3390,6 @@ it("should handle bitbucket git dependencies", async () => {
       "",
       ` installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
-      "",
       " 1 package installed",
     ]);
     expect(await exited).toBe(0);
@@ -3454,7 +3468,6 @@ it("should handle gitlab git dependencies", async () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       ` installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
-      "",
       "",
       " 1 package installed",
     ]);
@@ -3563,7 +3576,7 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
+  expect(out.split(/\r?\n/)).toEqual(["", " + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -5089,6 +5102,7 @@ it("should handle tarball URL", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + baz@${root_url}/baz-0.0.3.tgz`,
     "",
     " 1 package installed",
@@ -5137,6 +5151,7 @@ it("should handle tarball path", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + baz@${join(import.meta.dir, "baz-0.0.3.tgz")}`,
     "",
     " 1 package installed",
@@ -5184,6 +5199,7 @@ it("should handle tarball URL with aliasing", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + bar@${root_url}/baz-0.0.3.tgz`,
     "",
     " 1 package installed",
@@ -5232,6 +5248,7 @@ it("should handle tarball path with aliasing", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + bar@${join(import.meta.dir, "baz-0.0.3.tgz")}`,
     "",
     " 1 package installed",
@@ -5289,6 +5306,7 @@ it("should de-duplicate dependencies alongside tarball URL", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + @barn/moo@${root_url}/moo-0.1.0.tgz`,
     " + bar@0.0.2",
     "",
@@ -5372,6 +5390,7 @@ it("should handle tarball URL with existing lockfile", async () => {
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + @barn/moo@${root_url}/moo-0.1.0.tgz`,
     "",
     " 3 packages installed",
@@ -5433,6 +5452,7 @@ it("should handle tarball URL with existing lockfile", async () => {
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + @barn/moo@${root_url}/moo-0.1.0.tgz`,
     "",
     " 3 packages installed",
@@ -5515,6 +5535,7 @@ it("should handle tarball path with existing lockfile", async () => {
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + @barn/moo@${join(import.meta.dir, "moo-0.1.0.tgz")}`,
     "",
     " 3 packages installed",
@@ -5575,6 +5596,7 @@ it("should handle tarball path with existing lockfile", async () => {
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + @barn/moo@${join(import.meta.dir, "moo-0.1.0.tgz")}`,
     "",
     " 3 packages installed",
@@ -5651,7 +5673,12 @@ it("should handle devDependencies from folder", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([" + moo@moo", "", " 2 packages installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + moo@moo",
+    "",
+    " 2 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
@@ -6171,7 +6198,7 @@ cache = false
   expect(err2).not.toContain("error:");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["[] done", ""]);
+  expect(out2.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["", "[] done", ""]);
   expect(await exited2).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);

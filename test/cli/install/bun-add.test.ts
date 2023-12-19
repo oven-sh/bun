@@ -1611,7 +1611,6 @@ it("should add dependencies to workspaces directly", async () => {
     "",
     ` installed foo@${relative(package_dir, add_dir)}`,
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
@@ -1675,7 +1674,6 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` installed foo@${add_path}`,
-    "",
     "",
     " 1 package installed",
   ]);

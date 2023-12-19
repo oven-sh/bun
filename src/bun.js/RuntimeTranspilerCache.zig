@@ -210,21 +210,34 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                var vecs: [3]std.os.iovec = .{
-                    .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                    .{ .iov_base = @constCast(output_bytes.ptr), .iov_len = output_bytes.len },
-                    .{ .iov_base = @constCast(sourcemap.ptr), .iov_len = sourcemap.len },
-                };
+                const vecs: []const std.os.iovec_const = if (output_bytes.len > 0)
+                    &.{
+                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
+                        .{ .iov_base = output_bytes.ptr, .iov_len = output_bytes.len },
+                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                    }
+                else
+                    &.{
+                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
+                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                    };
 
                 var position: isize = 0;
                 const end_position = Metadata.size + output_bytes.len + sourcemap.len;
-                std.debug.assert(end_position == @as(i64, @intCast(vecs[0].iov_len + vecs[1].iov_len + vecs[2].iov_len)));
+
+                if(bun.Environment.allow_assert) {
+                    var total: usize = 0;
+                    for (vecs) |v| {
+                        std.debug.assert(v.iov_len > 0);
+                        total += v.iov_len;
+                    }
+                    std.debug.assert(end_position == total);
+                }
                 std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
                 bun.C.preallocate_file(bun.fdcast(tmpfile.fd), 0, @intCast(end_position)) catch {};
-                const current_vecs: []std.os.iovec = vecs[0..];
                 while (position < end_position) {
-                    const written = try bun.sys.pwritev(tmpfile.fd, current_vecs, position).unwrap();
+                    const written = try bun.sys.pwritev(tmpfile.fd, vecs, position).unwrap();
                     if (written <= 0) {
                         return error.WriteFailed;
                     }
@@ -249,7 +262,9 @@ pub const RuntimeTranspilerCache = struct {
 
             std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
-            this.output_code =
+            this.output_code = if(this.metadata.output_byte_length == 0)
+                .{ .string = bun.String.empty }
+            else
                 switch (this.metadata.output_encoding) {
                 .utf8 => brk: {
                     const utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
@@ -350,10 +365,7 @@ pub const RuntimeTranspilerCache = struct {
         buf: *[bun.MAX_PATH_BYTES]u8,
         input_hash: u64,
     ) ![:0]const u8 {
-        const cache_dir = getCacheDir(buf);
-        if (cache_dir.len == 0) {
-            return "";
-        }
+        const cache_dir = try getCacheDir(buf);
         buf[cache_dir.len] = std.fs.path.sep;
         const cache_filename_len = try writeCacheFilename(buf[cache_dir.len + 1 ..], input_hash);
         buf[cache_dir.len + 1 + cache_filename_len] = 0;
@@ -413,21 +425,19 @@ pub const RuntimeTranspilerCache = struct {
     threadlocal var runtime_transpiler_cache: ?[:0]const u8 = null;
     pub var is_disabled = false;
 
-    fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
-        if (is_disabled) return "";
-
-        if (runtime_transpiler_cache) |path| {
-            @memcpy(buf[0..path.len], path);
-            buf[path.len] = 0;
-            return buf[0..path.len :0];
-        }
-
-        const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
-        runtime_transpiler_cache = path;
-        if (path.len == 0) {
-            is_disabled = true;
-            return "";
-        }
+    fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
+        if (is_disabled) return error.Disabled;
+        const path = runtime_transpiler_cache orelse path: {
+            const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
+            if (path.len == 0) {
+                is_disabled = true;
+                return error.Disabled;
+            }
+            runtime_transpiler_cache = path;
+            break :path path;
+        };
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
         return path;
     }
 
@@ -523,6 +533,7 @@ pub const RuntimeTranspilerCache = struct {
         };
 
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
+        debug("filename to put into: '{s}'", .{cache_file_path});
 
         if (cache_file_path.len == 0) {
             return;

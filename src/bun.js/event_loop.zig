@@ -340,6 +340,7 @@ const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
+const TimerMap = JSC.BunTimer.TimerObject.TimerMap;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -400,6 +401,7 @@ pub const Task = TaggedPointerUnion(.{
     Unlink,
     WaitPidResultTask,
     TimerReference,
+    TimerMap,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -939,6 +941,15 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
                     var any: *TimerReference = task.get(TimerReference).?;
+                    var next_ = any.next;
+                    any.runFromJSThread();
+                    while (next_) |next| {
+                        next_ = next.next;
+                        next.runFromJSThread();
+                    }
+                },
+                @field(Task.Tag, typeBaseName(@typeName(TimerMap))) => {
+                    var any: *TimerMap = task.get(TimerMap).?;
                     any.runFromJSThread();
                 },
 

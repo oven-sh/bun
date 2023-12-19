@@ -3272,8 +3272,8 @@ pub const Timer = struct {
                 Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
             }
 
-            const result = callback.callWithGlobalThis(
-                globalThis,
+            globalThis.queueMicrotask(
+                callback,
                 args,
             );
 
@@ -3281,50 +3281,318 @@ pub const Timer = struct {
                 Debugger.didDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
             }
 
-            if (result.isEmptyOrUndefinedOrNull() or !result.isCell()) {
-                this.deinit();
-                return;
-            }
+            this.deinit();
 
-            if (result.isAnyError()) {
-                vm.onUnhandledError(globalThis, result);
-                this.deinit();
-                return;
-            }
+            // if (result.isEmptyOrUndefinedOrNull() or !result.isCell()) {
+            //     this.deinit();
+            //     return;
+            // }
 
-            if (result.asAnyPromise()) |promise| {
-                switch (promise.status(globalThis.vm())) {
-                    .Rejected => {
-                        this.deinit();
-                        vm.onUnhandledError(globalThis, promise.result(globalThis.vm()));
-                    },
-                    .Fulfilled => {
-                        this.deinit();
+            // if (result.isAnyError()) {
+            //     vm.onUnhandledError(globalThis, result);
+            //     this.deinit();
+            //     return;
+            // }
 
-                        // get the value out of the promise
-                        _ = promise.result(globalThis.vm());
-                    },
-                    .Pending => {
-                        result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);
-                    },
-                }
-            } else {
-                this.deinit();
-            }
+            // if (result.asAnyPromise()) |promise| {
+            //     switch (promise.status(globalThis.vm())) {
+            //         .Rejected => {
+            //             this.deinit();
+            //             vm.onUnhandledError(globalThis, promise.result(globalThis.vm()));
+            //         },
+            //         .Fulfilled => {
+            //             this.deinit();
+
+            //             // get the value out of the promise
+            //             _ = promise.result(globalThis.vm());
+            //         },
+            //         .Pending => {
+            //             result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);
+            //         },
+            //     }
+            // } else {
+            //     this.deinit();
+            // }
         }
     };
+
+    fn msToTimespec(ms: usize) std.os.timespec {
+        var now: std.os.timespec = undefined;
+        // std.time.Instant.now uses a different clock on macOS than monotonic
+        bun.io.Loop.updateTimespec(&now);
+
+        var increment = std.os.timespec{
+            // nanosecond from ms milliseconds
+            .tv_nsec = if (ms > 0) @intCast((ms % std.time.ms_per_s) *| std.time.ns_per_ms) else 0,
+            .tv_sec = @intCast(ms / std.time.ms_per_s),
+        };
+
+        increment.tv_nsec +|= now.tv_nsec;
+        increment.tv_sec +|= now.tv_sec;
+
+        if (increment.tv_nsec >= std.time.ns_per_s) {
+            increment.tv_nsec -= std.time.ns_per_s;
+            increment.tv_sec +|= 1;
+        }
+
+        return increment;
+    }
+
+    fn msExpiryToTimespec(ms: usize) std.os.timespec {
+        return std.os.timespec{
+            // nanosecond from ms milliseconds
+            .tv_nsec = @intCast((ms % std.time.ms_per_s) *| std.time.ns_per_ms),
+            .tv_sec = @intCast(ms / std.time.ms_per_s),
+        };
+    }
 
     pub const TimerObject = struct {
         id: i32 = -1,
         kind: Timeout.Kind = .setTimeout,
         ref_count: u16 = 1,
         interval: i32 = 0,
+        expiry: u64 = 0,
         // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
         has_cleaned_up: bool = false,
+        heap: bun.io.heap.IntrusiveField(TimerObject) = .{},
+        keep_alive: Async.KeepAlive = Async.KeepAlive.init(),
 
         pub usingnamespace JSC.Codegen.JSTimeout;
 
-        pub fn init(globalThis: *JSGlobalObject, id: i32, kind: Timeout.Kind, interval: i32, callback: JSValue, arguments: JSValue) JSValue {
+        pub const TimerObjectHeap = bun.io.heap.Intrusive(TimerObject, void, isLessThan);
+
+        fn isLessThan(_: void, a: *TimerObject, b: *TimerObject) bool {
+            return a.expiry < b.expiry;
+        }
+
+        pub const TimerMap = struct {
+            object: JSC.Strong = .{},
+            count: u32 = 0,
+            heap: TimerObjectHeap = .{
+                .context = {},
+            },
+
+            current_min_timestamp: u64 = 0,
+
+            pub const ScheduledTimer = struct {
+                request: bun.io.Request = .{
+                    .callback = &onRequest,
+                },
+
+                timer: bun.io.Timer = .{
+                    .next = std.mem.zeroes(std.os.timespec),
+                    .tag = .ScheduledTimer,
+                },
+
+                map: *TimerMap,
+
+                pub fn callback(this: *ScheduledTimer) bun.io.Timer.Arm {
+                    var vm = @fieldParentPtr(JSC.VirtualMachine, "timer_heap", this.map);
+                    vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this.map));
+                    bun.default_allocator.destroy(this);
+
+                    return .{ .disarm = {} };
+                }
+
+                fn onRequest(req: *bun.io.Request) bun.io.Action {
+                    var this: *ScheduledTimer = @fieldParentPtr(ScheduledTimer, "request", req);
+                    return bun.io.Action{
+                        .timer = &this.timer,
+                    };
+                }
+            };
+
+            pub fn cancel(this: *TimerMap, jsc_vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, id: u32) void {
+                if (this.count == 0) return;
+
+                const value = this.object.get().?.getDirectIndex(globalObject, id);
+
+                if (value.isEmptyOrUndefinedOrNull()) {
+                    return;
+                }
+
+                if (value.as(TimerObject)) |timer| {
+                    timer.has_cleaned_up = true;
+                    jsc_vm.timer_heap.heap.remove(timer);
+                    this.object.get().?.putIndex(globalObject, id, .undefined);
+                    this.count -= 1;
+                    if (this.count == 0) {
+                        this.object.deinit();
+                    } else {
+                        this.scheduleNextTimer(jsc_vm, msToTimespec(0));
+                    }
+                    return;
+                }
+            }
+
+            pub fn insert(this: *TimerMap, jsc_vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, id: u32, timer_js: JSC.JSValue, timer_object: *TimerObject) void {
+                if (this.count == 0) {
+                    this.object = JSC.Strong.create(JSC.JSValue.createEmptyObject(globalObject, 32), globalObject);
+                }
+
+                this.object.get().?.putIndex(globalObject, id, timer_js);
+                this.count += 1;
+
+                const now: std.os.timespec = msToTimespec(@intCast(timer_object.interval));
+                timer_object.expiry = timespecToMs(now);
+                jsc_vm.timer_heap.heap.insert(timer_object);
+
+                this.scheduleNextTimer(jsc_vm, now);
+            }
+
+            pub fn popLessThan(this: *TimerMap, globalObject: *JSC.JSGlobalObject, expiry: u64) ?struct {
+                /// timer object
+                JSValue,
+
+                *TimerObject,
+                /// callback
+                JSValue,
+                /// arguments
+                JSValue,
+            } {
+                if (this.heap.peek()) |element| {
+                    if (element.expiry < expiry) {
+                        _ = this.heap.deleteMin();
+                        const el = this.object.get().?.getDirectIndex(globalObject, @intCast(element.id));
+                        if (el.isEmptyOrUndefinedOrNull()) {
+                            return null;
+                        }
+                        if (element.kind != .setInterval) {
+                            this.count -= 1;
+                            this.object.get().?.putIndex(globalObject, @intCast(element.id), .undefined);
+                        }
+
+                        return .{
+                            el,
+                            element,
+                            TimerObject.callbackGetCached(el) orelse .undefined,
+                            TimerObject.argumentsGetCached(el) orelse .undefined,
+                        };
+                    }
+                }
+
+                return null;
+            }
+
+            fn timespecToMs(ts: std.os.timespec) u64 {
+                const max = std.math.maxInt(u64);
+                const s_ns = std.math.mul(
+                    u64,
+                    @as(u64, @intCast(ts.tv_sec)),
+                    std.time.ns_per_s,
+                ) catch return max;
+                return std.math.add(u64, s_ns, @as(u64, @intCast(ts.tv_nsec))) catch
+                    max;
+            }
+
+            pub fn runFromJSThread(this: *TimerMap) void {
+                const now = msToTimespec(0);
+                const ns = timespecToMs(now);
+
+                const jsc_vm = @fieldParentPtr(JSC.VirtualMachine, "timer_heap", this);
+
+                this.flushPendingTimers(jsc_vm, jsc_vm.global, ns);
+            }
+
+            pub fn scheduleNextTimer(this: *TimerMap, vm: *JSC.VirtualMachine, now: std.os.timespec) void {
+                _ = vm;
+
+                const next = this.heap.peek() orelse return;
+
+                const now_ns = brk: {
+                    const max = std.math.maxInt(u64);
+                    const s_ns = std.math.mul(
+                        u64,
+                        @as(u64, @intCast(now.tv_sec)),
+                        std.time.ns_per_s,
+                    ) catch break :brk max;
+                    break :brk std.math.add(u64, s_ns, @as(u64, @intCast(now.tv_nsec))) catch
+                        max;
+                };
+
+                if (this.current_min_timestamp == 0 or this.current_min_timestamp > next.expiry or now_ns > next.expiry) {
+                    this.current_min_timestamp = next.expiry;
+                    const timer = bun.default_allocator.create(ScheduledTimer) catch bun.outOfMemory();
+                    timer.* = .{
+                        .map = this,
+                    };
+                    timer.timer.next = now;
+                    bun.io.Loop.get().schedule(&timer.request);
+                }
+            }
+
+            pub fn flushPendingTimers(this: *TimerMap, jsc_vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, until_expiry: u64) void {
+                while (this.count > 0) {
+                    const timer_value, const timer_object, const cb, const arguments = this.popLessThan(globalObject, until_expiry) orelse return;
+                    timer_value.ensureStillAlive();
+
+                    if (timer_object.kind == .setInterval) {
+                        var now: std.os.timespec = undefined;
+                        // std.time.Instant.now uses a different clock on macOS than monotonic
+                        bun.io.Loop.updateTimespec(&now);
+
+                        const interval_ms: u64 = @intCast(timer_object.interval);
+                        now.tv_nsec += @intCast(interval_ms * 1000000);
+                        now.tv_sec += @intCast(@as(u64, @intCast(now.tv_nsec)) / 1000000000);
+                        now.tv_nsec = @rem(now.tv_nsec, 1000000000);
+
+                        timer_object.expiry = timespecToMs(now);
+                        this.heap.insert(timer_object);
+                        this.scheduleNextTimer(jsc_vm, now);
+                    } else {
+                        timer_object.keep_alive.unref(jsc_vm);
+                    }
+
+                    var args_buf: [8]JSC.JSValue = undefined;
+                    var args: []JSC.JSValue = &.{};
+                    var args_needs_deinit = false;
+                    defer if (args_needs_deinit) bun.default_allocator.free(args);
+
+                    if (!arguments.isEmptyOrUndefinedOrNull()) {
+                        // Bun.sleep passes a Promise
+                        if (arguments.jsType() == .JSPromise) {
+                            args_buf[0] = arguments;
+                            args = args_buf[0..1];
+                        } else {
+                            const count = arguments.getLength(globalObject);
+                            if (count > 0) {
+                                if (count > args_buf.len) {
+                                    args = bun.default_allocator.alloc(JSC.JSValue, count) catch unreachable;
+                                    args_needs_deinit = true;
+                                } else {
+                                    args = args_buf[0..count];
+                                }
+                                var arg = args.ptr;
+                                var i: u32 = 0;
+                                while (i < count) : (i += 1) {
+                                    arg[0] = JSC.JSObject.getIndex(arguments, globalObject, @as(u32, @truncate(i)));
+                                    arg += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    if (jsc_vm.isInspectorEnabled()) {
+                        Debugger.willDispatchAsyncCall(globalObject, .DOMTimer, Timeout.ID.asyncID(.{ .id = timer_object.id, .kind = timer_object.kind }));
+                    }
+                    timer_value.ensureStillAlive();
+                    const result = cb.callWithGlobalThis(globalObject, args);
+
+                    if (jsc_vm.isInspectorEnabled()) {
+                        Debugger.didDispatchAsyncCall(globalObject, .DOMTimer, Timeout.ID.asyncID(.{ .id = timer_object.id, .kind = timer_object.kind }));
+                    }
+
+                    if (result.isAnyError()) {
+                        jsc_vm.onUnhandledError(globalObject, result);
+                        return;
+                    }
+
+                    jsc_vm.drainMicrotasks();
+                }
+            }
+        };
+
+        pub fn init(globalThis: *JSGlobalObject, id: i32, kind: Timeout.Kind, interval: i32, callback: JSValue, arguments: JSValue, out: **TimerObject) JSValue {
             var timer = globalThis.allocator().create(TimerObject) catch unreachable;
             timer.* = .{
                 .id = id,
@@ -3336,6 +3604,7 @@ pub const Timer = struct {
             TimerObject.argumentsSetCached(timer_js, globalThis, arguments);
             TimerObject.callbackSetCached(timer_js, globalThis, callback);
             timer_js.ensureStillAlive();
+            out.* = timer;
             return timer_js;
         }
 
@@ -3518,6 +3787,7 @@ pub const Timer = struct {
             },
             interval: i32 = -1,
             concurrent_task: JSC.ConcurrentTask = undefined,
+            next: ?*TimerReference = null,
 
             pub const Pool = bun.HiveArray(TimerReference, 1024).Fallback;
 
@@ -3577,28 +3847,6 @@ pub const Timer = struct {
                 this.timer.state = .PENDING;
                 this.timer.next = msToTimespec(@intCast(@max(interval orelse this.interval, 1)));
                 bun.io.Loop.get().schedule(&this.request);
-            }
-
-            fn msToTimespec(ms: usize) std.os.timespec {
-                var now: std.os.timespec = undefined;
-                // std.time.Instant.now uses a different clock on macOS than monotonic
-                bun.io.Loop.updateTimespec(&now);
-
-                var increment = std.os.timespec{
-                    // nanosecond from ms milliseconds
-                    .tv_nsec = @intCast((ms % std.time.ms_per_s) *| std.time.ns_per_ms),
-                    .tv_sec = @intCast(ms / std.time.ms_per_s),
-                };
-
-                increment.tv_nsec +|= now.tv_nsec;
-                increment.tv_sec +|= now.tv_sec;
-
-                if (increment.tv_nsec >= std.time.ns_per_s) {
-                    increment.tv_nsec -= std.time.ns_per_s;
-                    increment.tv_sec +|= 1;
-                }
-
-                return increment;
             }
         };
 
@@ -3904,11 +4152,11 @@ pub const Timer = struct {
         const interval: i32 = 0;
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+        var timer_object: *TimerObject = undefined;
+        const timer_js = TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments, &timer_object);
+        timer_js.ensureStillAlive();
 
-        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
-            return JSValue.jsUndefined();
-
-        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
+        return timer_js;
     }
 
     comptime {
@@ -3924,8 +4172,9 @@ pub const Timer = struct {
         arguments: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        const id = globalThis.bunVM().timer.last_id;
-        globalThis.bunVM().timer.last_id +%= 1;
+        var vm = globalThis.bunVM();
+        const id = vm.timer.last_id;
+        vm.timer.last_id +%= 1;
 
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
@@ -3935,10 +4184,12 @@ pub const Timer = struct {
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
-        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
-            return JSValue.jsUndefined();
-
-        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
+        var timer_object: *TimerObject = undefined;
+        const timer_js = TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments, &timer_object);
+        timer_js.ensureStillAlive();
+        vm.timer_heap.insert(vm, globalThis, @intCast(id), timer_js, timer_object);
+        timer_object.keep_alive.ref(vm);
+        return timer_js;
     }
     pub fn setInterval(
         globalThis: *JSGlobalObject,
@@ -3947,8 +4198,9 @@ pub const Timer = struct {
         arguments: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        const id = globalThis.bunVM().timer.last_id;
-        globalThis.bunVM().timer.last_id +%= 1;
+        const vm = globalThis.bunVM();
+        const id = vm.timer.last_id;
+        vm.timer.last_id +%= 1;
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
@@ -3958,10 +4210,13 @@ pub const Timer = struct {
             countdown.coerce(i32, globalThis),
             1,
         );
-        Timer.set(id, globalThis, wrappedCallback, interval, arguments, true) catch
-            return JSValue.jsUndefined();
 
-        return TimerObject.init(globalThis, id, .setInterval, interval, wrappedCallback, arguments);
+        var timer_object: *TimerObject = undefined;
+        const timer_js = TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments, &timer_object);
+        timer_js.ensureStillAlive();
+        vm.timer_heap.insert(vm, globalThis, @intCast(id), timer_js, timer_object);
+        timer_object.keep_alive.ref(vm);
+        return timer_js;
     }
 
     pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {

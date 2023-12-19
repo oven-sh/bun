@@ -3,7 +3,7 @@ const std = @import("std");
 const sys = bun.sys;
 const linux = std.os.linux;
 const Environment = bun.Environment;
-const heap = @import("./heap.zig");
+pub const heap = @import("./heap.zig");
 const JSC = bun.JSC;
 
 const log = bun.Output.scoped(.loop, false);
@@ -391,7 +391,7 @@ pub const Loop = struct {
         }
 
         if (prev_event_loop) |event_loop| {
-            event_loop.enqueueTaskConcurrentBatch(current_batch);
+            event_loop.enqueueTaskConcurrent(current_batch.front.?);
         }
     }
 
@@ -494,6 +494,7 @@ const Pollable = struct {
 };
 
 const TimerReference = bun.JSC.BunTimer.Timeout.TimerReference;
+const ScheduledTimer = bun.JSC.BunTimer.TimerObject.TimerMap.ScheduledTimer;
 
 pub const Timer = struct {
     /// The absolute time to fire this timer next.
@@ -515,11 +516,13 @@ pub const Timer = struct {
     pub const Tag = enum {
         TimerCallback,
         TimerReference,
+        ScheduledTimer,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
                 .TimerReference => TimerReference,
+                .ScheduledTimer => ScheduledTimer,
             };
         }
     };
@@ -587,13 +590,14 @@ pub const Timer = struct {
         switch (this.tag) {
             inline else => |t| {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
-                if (comptime @hasDecl(t.Type(), "callback")) {
+                if (comptime t.Type() == ScheduledTimer) {
+                    return container.callback();
+                } else if (comptime @hasDecl(t.Type(), "callback")) {
                     const concurrent_task = container.concurrent_task.from(container, .manual_deinit);
                     if (event_loop.*) |loop| {
                         // If they are different event loops, we have to drain the batch right here.
                         if (loop != container.event_loop) {
-                            loop.enqueueTaskConcurrentBatch(batch.*);
-                            batch.* = .{};
+                            loop.enqueueTaskConcurrent(batch.front.?);
                             event_loop.* = container.event_loop;
                         }
 
@@ -605,13 +609,12 @@ pub const Timer = struct {
                         event_loop.* = container.event_loop;
                     }
 
-                    if (batch.last) |last| {
-                        std.debug.assert(last.next == null);
-                        last.next = concurrent_task;
+                    if (batch.last) |last_task| {
+                        var last = @fieldParentPtr(t.Type(), "concurrent_task", last_task);
+                        last.next = container;
                     }
 
                     batch.last = concurrent_task;
-
                     batch.count += 1;
                     return container.callback();
                 }

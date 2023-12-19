@@ -498,6 +498,8 @@ pub const VirtualMachine = struct {
     hot_reload: bun.CLI.Command.HotReload = .none,
     jsc: *JSC.VM = undefined,
 
+    timer_heap: bun.JSC.BunTimer.TimerObject.TimerMap = .{},
+
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
     hide_bun_stackframes: bool = true,

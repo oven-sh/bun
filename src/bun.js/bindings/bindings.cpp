@@ -2417,8 +2417,8 @@ CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject*
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
-    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
-    array->putDirectIndex(arg1, arg2, value2);
+    JSC::JSObject* object = value.getObject();
+    object->putDirectIndex(arg1, arg2, value2);
 }
 
 CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue3)

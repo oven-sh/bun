@@ -903,3 +903,4 @@ pub const FilePoll = struct {
 };
 
 pub const Waker = bun.AsyncIO.Waker;
+pub const Timer = bun.io.Timer;

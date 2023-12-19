@@ -218,7 +218,7 @@ pub const LifecycleScriptSubprocess = struct {
                     try actions.inherit(bun.STDERR_FD);
                 } else {
                     try actions.dup2(bun.STDOUT_FD, bun.STDOUT_FD);
-                    try actions.dup2(bun.STDOUT_FD, bun.STDOUT_FD);
+                    try actions.dup2(bun.STDERR_FD, bun.STDERR_FD);
                 }
             }
 

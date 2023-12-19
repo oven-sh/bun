@@ -713,6 +713,10 @@ pub inline fn startsWithChar(self: string, char: u8) bool {
 }
 
 pub inline fn endsWithChar(self: string, char: u8) bool {
+    return self.len > 0 and self[self.len - 1] == char;
+}
+
+pub inline fn endsWithCharOrIsZeroLength(self: string, char: u8) bool {
     return self.len == 0 or self[self.len - 1] == char;
 }
 

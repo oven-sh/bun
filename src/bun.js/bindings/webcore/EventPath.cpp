@@ -262,7 +262,7 @@ EventPath::EventPath(Node& originalTarget, Event& event)
 //         bool movedOutOfShadowTree = depth < currentDepthAllowed;
 //         if (movedOutOfShadowTree)
 //             currentDepthAllowed = depth;
-//         path.uncheckedAppend(currentContext.currentTarget());
+//         path.unsafeAppendWithoutCapacityCheck(currentContext.currentTarget());
 //     };
 
 //     auto currentDepthAllowed = currentTargetDepth;

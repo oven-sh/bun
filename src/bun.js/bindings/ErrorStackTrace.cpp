@@ -293,9 +293,9 @@ bool JSCStackFrame::calculateSourcePositions()
      * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset rather than m_codeBlock->expressionRangeForBytecodeOffset
      * in order get the "raw" offsets and avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column numbers,
      * (we don't need the column number from it, and we'll calculate the line "fixes" ourselves). */
-    int startOffset = 0;
-    int endOffset = 0;
-    int divotPoint = 0;
+    unsigned startOffset = 0;
+    unsigned endOffset = 0;
+    unsigned divotPoint = 0;
     unsigned line = 0;
     unsigned unusedColumn = 0;
     m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(bytecodeIndex, divotPoint, startOffset, endOffset, line, unusedColumn);

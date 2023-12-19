@@ -45,7 +45,8 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
                 Identifier(),                                                               \
                 ImplementationVisibility::Public,                                           \
                 ConstructorKind::None,                                                      \
-                ConstructAbility::CannotConstruct)                                          \
+                ConstructAbility::CannotConstruct,                                          \
+                InlineAttribute::None)                                                      \
                 ->link(vm, nullptr, source),                                                \
             static_cast<JSC::JSGlobalObject*>(globalObject));                               \
                                                                                             \

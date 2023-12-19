@@ -20,8 +20,6 @@
 
 #include "config.h"
 
-#if ENABLE(CHANNEL_MESSAGING)
-
 #include "JSMessageChannel.h"
 
 #include "ActiveDOMObject.h"
@@ -319,5 +317,3 @@ MessageChannel* JSMessageChannel::toWrapped(JSC::VM&, JSC::JSValue value)
 }
 
 }
-
-#endif // ENABLE(CHANNEL_MESSAGING)

@@ -1411,7 +1411,7 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     for (uint32_t i = 0; i < count; i++) {
         WTF::String name = Zig::toStringCopy(buf, arg1[i]);
         WTF::String value = Zig::toStringCopy(buf, arg2[i]);
-        pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
+        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
@@ -3678,9 +3678,9 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
      * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
      * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
      * ourselves). */
-    int startOffset = 0;
-    int endOffset = 0;
-    int divotPoint = 0;
+    unsigned startOffset = 0;
+    unsigned endOffset = 0;
+    unsigned divotPoint = 0;
     unsigned line = 0;
     unsigned unusedColumn = 0;
     m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(

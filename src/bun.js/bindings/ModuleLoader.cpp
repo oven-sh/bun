@@ -74,11 +74,10 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-        auto* object = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId));
-        if (!object) {
-            return;
-        }
+        JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, void());
+        auto* object = requireResult.getObject();
+        ASSERT(object);
 
         JSC::EnsureStillAliveScope stillAlive(object);
 

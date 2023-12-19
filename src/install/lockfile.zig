@@ -3087,6 +3087,10 @@ pub const Package = extern struct {
 
             if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
                 summary.overrides_changed = true;
+
+                if (PackageManager.verbose_install) {
+                    Output.prettyErrorln("Overrides changed since last install", .{});
+                }
             } else {
                 for (
                     from_lockfile.overrides.map.keys(),
@@ -3096,6 +3100,9 @@ pub const Package = extern struct {
                 ) |from_k, *from_override, to_k, *to_override| {
                     if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
                         summary.overrides_changed = true;
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("Overrides changed since last install", .{});
+                        }
                         break;
                     }
                 }
@@ -3186,6 +3193,15 @@ pub const Package = extern struct {
                                     update_requests,
                                     null,
                                 );
+
+                                if (PackageManager.verbose_install and (diff.add + diff.remove + diff.update) > 0) {
+                                    Output.prettyErrorln("Workspace package \"{s}\" has added <green>{d}<r> dependencies, removed <red>{d}<r> dependencies, and updated <cyan>{d}<r> dependencies", .{
+                                        path,
+                                        diff.add,
+                                        diff.remove,
+                                        diff.update,
+                                    });
+                                }
 
                                 break :brk !diff.hasDiffs();
                             } else false,

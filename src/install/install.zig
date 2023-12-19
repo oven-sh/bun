@@ -8417,7 +8417,6 @@ pub const PackageManager = struct {
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
             );
-            this.lockfile = this.lockfile;
         }
 
         const root_lifecycle_scripts_count = brk: {

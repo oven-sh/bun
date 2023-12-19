@@ -225,7 +225,7 @@ pub const RuntimeTranspilerCache = struct {
                 var position: isize = 0;
                 const end_position = Metadata.size + output_bytes.len + sourcemap.len;
 
-                if(bun.Environment.allow_assert) {
+                if (bun.Environment.allow_assert) {
                     var total: usize = 0;
                     for (vecs) |v| {
                         std.debug.assert(v.iov_len > 0);
@@ -262,10 +262,9 @@ pub const RuntimeTranspilerCache = struct {
 
             std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
-            this.output_code = if(this.metadata.output_byte_length == 0)
+            this.output_code = if (this.metadata.output_byte_length == 0)
                 .{ .string = bun.String.empty }
-            else
-                switch (this.metadata.output_encoding) {
+            else switch (this.metadata.output_encoding) {
                 .utf8 => brk: {
                     const utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
                     errdefer output_code_allocator.free(utf8);

@@ -914,7 +914,7 @@ pub const Encoder = struct {
             },
             .ucs2, .utf16le => {
                 // Avoid incomplete characters
-                if (len % 2 == 0) return ZigString.Empty.toValue(global);
+                if (len / 2 == 0) return ZigString.Empty.toValue(global);
 
                 var output, const chars = bun.String.createUninitialized(.utf16, len / 2);
                 defer output.deref();

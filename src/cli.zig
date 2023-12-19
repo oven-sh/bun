@@ -41,29 +41,7 @@ const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const Reporter = @import("./report.zig");
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const Cli = struct {
-    pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
-        var log = logger.Log.init(allocator);
-
-        var panicker = MainPanicHandler.init(&log);
-        MainPanicHandler.Singleton = &panicker;
-        Command.start(allocator, &log) catch |err| {
-            switch (err) {
-                else => {
-                    if (Output.enable_ansi_colors_stderr) {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
-
-                    Reporter.globalError(err, @errorReturnTrace());
-                },
-            }
-        };
-    }
-
-    pub var cmd: ?Command.Tag = null;
-};
+pub var command_tag: ?Command.Tag = null;
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
@@ -1104,7 +1082,7 @@ pub const Command = struct {
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
-            Cli.cmd = command;
+            command_tag = command;
             var ctx = _ctx;
             ctx.log = log;
             ctx.start_time = bun.start_time;

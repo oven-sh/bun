@@ -41,7 +41,7 @@ pub fn main() void {
         bun.win32.STDOUT_FD = stdout.encode();
         bun.win32.STDERR_FD = stderr.encode();
 
-        // This fixes printing unicode characters
+        // This allows printing utf8 data
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
 
         var output = Output.Source.init(.{ .handle = stdout.system() }, .{ .handle = stderr.system() });
@@ -58,5 +58,13 @@ pub fn main() void {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 
-    bun.CLI.Cli.start(bun.default_allocator, MainPanicHandler);
+    var log = bun.logger.Log.init(bun.default_allocator);
+
+    var panicker = MainPanicHandler.init(&log);
+    MainPanicHandler.Singleton = &panicker;
+
+    bun.CLI.Command.start(bun.default_allocator, &log) catch |err| {
+        log.printForLogLevel(Output.errorWriter()) catch {};
+        @import("./report.zig").globalError(err, @errorReturnTrace());
+    };
 }

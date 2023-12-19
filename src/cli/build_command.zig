@@ -458,7 +458,7 @@ pub const BuildCommand = struct {
                 if (write_summary and log.errors == 0) {
                     Output.prettyln("\n", .{});
                     Output.printElapsedStdoutTrim(
-                        @as(f64, @floatFromInt((@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))))),
+                        @as(f64, @floatFromInt((@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bun.start_time)), @as(i64, std.time.ns_per_ms))))),
                     );
                     if (this_bundler.options.transform_only) {
                         Output.prettyln(" <green>transpile<r>", .{});
@@ -487,7 +487,7 @@ fn exitOrWatch(code: u8, watch: bool) void {
 fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_code_length: usize, reachable_file_count: usize, output_files: []const options.OutputFile) void {
     const padding_buf = [_]u8{' '} ** 16;
 
-    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms));
+    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.start_time)), @as(i64, std.time.ns_per_ms));
 
     const bundle_elapsed = if (minified)
         bundle_until_now - @as(i64, @intCast(@as(u63, @truncate(minify_duration))))

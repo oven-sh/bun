@@ -57,15 +57,13 @@ pub const Version = struct {
     pub fn name(this: Version) ?string {
         if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
             if (strings.eqlComptime(this.tag, "canary")) {
-                const Cli = @import("../cli.zig");
-
                 return std.fmt.allocPrint(
                     bun.default_allocator,
                     "bun-canary-timestamp-{any}",
                     .{
                         bun.fmt.hexIntLower(
                             bun.hash(
-                                std.mem.asBytes(&Cli.start_time),
+                                std.mem.asBytes(&bun.start_time),
                             ),
                         ),
                     },

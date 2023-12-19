@@ -109,7 +109,7 @@ pub fn printMetadata() void {
     @setCold(true);
     crash_report_writer.generateFile();
 
-    const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
+    const cmd_label: string = if (bun.CLI.command_tag) |tag| @tagName(tag) else "Unknown";
 
     const platform = comptime Environment.os.displayString();
     const arch = comptime if (Environment.isAarch64)

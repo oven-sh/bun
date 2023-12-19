@@ -3314,6 +3314,11 @@ console.log("boop");
 `,
     );
   });
+
+  it("can parse 'a<b>' as typescript", () => {
+    ts.expectPrinted("a<b>", "a");
+    expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

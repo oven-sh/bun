@@ -16,35 +16,47 @@ extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 pub extern "C" var _environ: ?*anyopaque;
 pub extern "C" var environ: ?*anyopaque;
 
+const bun = @import("root").bun;
+const Output = bun.Output;
+const Environment = bun.Environment;
+
 pub fn main() void {
-    const bun = @import("root").bun;
-    const Output = bun.Output;
-    const Environment = bun.Environment;
+    bun.start_time = std.time.nanoTimestamp();
 
     if (Environment.isRelease and Environment.isPosix)
-        CrashReporter.start() catch unreachable;
+        CrashReporter.start() catch {};
+
     if (Environment.isWindows) {
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
-        bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
-        bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
-        bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
+
+        // load standard in, out, err as libuv file descriptors.
+        const process_parameters = std.os.windows.peb().ProcessParameters;
+
+        const stdin = bun.FDImpl.fromSystem(process_parameters.hStdInput).makeLibUVOwned();
+        const stdout = bun.FDImpl.fromSystem(process_parameters.hStdOutput).makeLibUVOwned();
+        const stderr = bun.FDImpl.fromSystem(process_parameters.hStdError).makeLibUVOwned();
+
+        bun.win32.STDIN_FD = stdin.encode();
+        bun.win32.STDOUT_FD = stdout.encode();
+        bun.win32.STDERR_FD = stderr.encode();
 
         // This fixes printing unicode characters
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+
+        var output = Output.Source.init(.{ .handle = stdout.system() }, .{ .handle = stderr.system() });
+        Output.Source.set(&output);
+    } else {
+        const stdout = std.io.getStdOut();
+        const stderr = std.io.getStdErr();
+        var output = Output.Source.init(stdout, stderr);
+        Output.Source.set(&output);
     }
 
-    bun.start_time = std.time.nanoTimestamp();
-
-    const stdout = std.io.getStdOut();
-    const stderr = std.io.getStdErr();
-    var output_source = Output.Source.init(stdout, stderr);
-
-    Output.Source.set(&output_source);
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 
-    bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
+    bun.CLI.Cli.start(bun.default_allocator, MainPanicHandler);
 }

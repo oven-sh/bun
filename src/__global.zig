@@ -59,16 +59,61 @@ else if (Environment.isAarch64)
 else
     "unknown";
 
-pub inline fn getStartTime() i128 {
-    if (Environment.isTest) return 0;
-    return @import("root").bun.start_time;
-}
+/// Like std.Thread.setName but auto-truncate, and only works on the current thread.
+/// The u8 -> u16 conversion is ascii-only
+pub fn setThreadName(name: [:0]const u8) void {
+    var truncated_name = switch (bun.OSPathSlice) {
+        [:0]const u8 => if (name.len > std.Thread.max_name_len) brk: {
+            var truncated_name: [std.Thread.max_name_len + 1]u8 = undefined;
+            @memcpy(truncated_name[0 .. std.Thread.max_name_len - 3], name[0 .. std.Thread.max_name_len - 3]);
+            truncated_name[std.Thread.max_name_len - 3 ..].* = "...\x00".*;
+            break :brk truncated_name[0..std.Thread.max_name_len :0];
+        } else name,
 
-pub fn setThreadName(name: StringTypes.stringZ) void {
-    if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
-    } else if (Environment.isMac) {
-        _ = std.c.pthread_setname_np(name);
+        [:0]const u16 => brk: {
+            var truncated_name: [std.Thread.max_name_len + 1]u16 = undefined;
+            // ascii only
+            if (name.len > std.Thread.max_name_len) {
+                bun.strings.copyU8IntoU16(
+                    truncated_name[0 .. std.Thread.max_name_len - 3],
+                    name[0 .. std.Thread.max_name_len - 3],
+                );
+                truncated_name[std.Thread.max_name_len - 3 ..].* = .{ '.', '.', '.', 0 };
+                break :brk truncated_name[0..std.Thread.max_name_len :0];
+            } else {
+                bun.strings.copyU8IntoU16(&truncated_name, name);
+                truncated_name[name.len] = 0;
+                break :brk truncated_name[0..name.len :0];
+            }
+        },
+
+        else => comptime unreachable,
+    };
+
+    switch (Environment.os) {
+        .linux => _ = std.os.prctl(.SET_NAME, .{@intFromPtr(truncated_name.ptr)}) catch 0,
+        .mac => _ = std.c.pthread_setname_np(truncated_name),
+        .windows => {
+            const byte_len = truncated_name.len * 2;
+
+            // Note: NT allocates its own copy, no use-after-free here.
+            const unicode_string = std.os.windows.UNICODE_STRING{
+                .Length = @intCast(byte_len),
+                .MaximumLength = @intCast(byte_len),
+                .Buffer = truncated_name.ptr,
+            };
+
+            // zig var -> const false positive
+            _ = &truncated_name;
+
+            _ = std.os.windows.ntdll.NtSetInformationThread(
+                std.os.windows.kernel32.GetCurrentThread(),
+                .ThreadNameInformation,
+                &unicode_string,
+                @sizeOf(std.os.windows.UNICODE_STRING),
+            );
+        },
+        else => @compileError("TODO: implement setThreadName"),
     }
 }
 

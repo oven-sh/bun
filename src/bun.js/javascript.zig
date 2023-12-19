@@ -971,7 +971,7 @@ pub const VirtualMachine = struct {
             if (comptime Environment.allow_assert)
                 debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
-                    .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
+                    .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.start_time))),
                 }});
 
             Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection);

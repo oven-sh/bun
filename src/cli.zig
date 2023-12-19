@@ -39,22 +39,15 @@ const Router = @import("./router.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const Reporter = @import("./report.zig");
-pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
-    var wait_group: sync.WaitGroup = undefined;
-    var log_: logger.Log = undefined;
-    pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) void {
-        start_time = std.time.nanoTimestamp();
-        log_ = logger.Log.init(allocator);
+    pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
+        var log = logger.Log.init(allocator);
 
-        var log = &log_;
-
-        var panicker = MainPanicHandler.init(log);
+        var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
-        Command.start(allocator, log) catch |err| {
+        Command.start(allocator, &log) catch |err| {
             switch (err) {
                 else => {
                     if (Output.enable_ansi_colors_stderr) {
@@ -1114,7 +1107,7 @@ pub const Command = struct {
             Cli.cmd = command;
             var ctx = _ctx;
             ctx.log = log;
-            ctx.start_time = start_time;
+            ctx.start_time = bun.start_time;
             ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
@@ -1277,7 +1270,7 @@ pub const Command = struct {
                 var ctx = Command.Context{
                     .args = std.mem.zeroes(Api.TransformOptions),
                     .log = log,
-                    .start_time = start_time,
+                    .start_time = bun.start_time,
                     .allocator = bun.default_allocator,
                 };
 

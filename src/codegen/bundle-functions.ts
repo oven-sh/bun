@@ -282,6 +282,9 @@ for (const { basename, functions } of files) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
+const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${
+      fn.directives.alwaysInline ? "Always" : "None"
+    };
 const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
@@ -403,6 +406,7 @@ for (const { basename, functions, internal } of files) {
 extern const char* s_${name};
 extern const int s_${name}Length;
 extern const JSC::ConstructAbility s_${name}ConstructAbility;
+extern const JSC::InlineAttribute s_${name}InlineAttribute;
 extern const JSC::ConstructorKind s_${name}ConstructorKind;
 extern const JSC::ImplementationVisibility s_${name}ImplementationVisibility;
 
@@ -471,7 +475,7 @@ inline JSC::UnlinkedFunctionExecutable* ${basename}BuiltinsWrapper::name##Execut
         JSC::Identifier executableName = functionName##PublicName();\\
         if (overriddenName)\\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute), this, &m_##name##Executable);\\
     }\\
     return m_##name##Executable.get();\\
 }

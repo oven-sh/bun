@@ -1124,6 +1124,35 @@ pub const Map = struct {
         });
     }
 
+    pub inline fn putAllocKeyAndValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
+        const gop = try this.map.getOrPut(key);
+        gop.value_ptr.* = .{
+            .value = try allocator.dupe(u8, value),
+            .conditional = false,
+        };
+        if (!gop.found_existing) {
+            gop.key_ptr.* = try allocator.dupe(u8, key);
+        }
+    }
+
+    pub inline fn putAllocKey(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
+        const gop = try this.map.getOrPut(key);
+        gop.value_ptr.* = .{
+            .value = value,
+            .conditional = false,
+        };
+        if (!gop.found_existing) {
+            gop.key_ptr.* = try allocator.dupe(u8, key);
+        }
+    }
+
+    pub inline fn putAllocValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
+        try this.map.put(key, .{
+            .value = try allocator.dupe(u8, value),
+            .conditional = false,
+        });
+    }
+
     pub inline fn getOrPutWithoutValue(this: *Map, key: string) !GetOrPutResult {
         return this.map.getOrPut(key);
     }

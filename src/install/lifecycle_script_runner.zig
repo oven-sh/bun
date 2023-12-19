@@ -552,13 +552,13 @@ pub const LifecycleScriptSubprocess = struct {
             });
         }
 
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
+
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
                 Lockfile.Scripts.names[list.first_index],
                 @errorName(err),
             });
         };
-
-        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
     }
 };

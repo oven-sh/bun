@@ -66,6 +66,7 @@ it("should link and unlink workspace package", async () => {
   expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + boba@workspace:packages/boba",
     " + moo@workspace:packages/moo",
     "",

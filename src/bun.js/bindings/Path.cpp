@@ -38,7 +38,7 @@ using namespace JSC;
     arguments.reserveInitialCapacity(argCount); \
      if (argCount) { \
         for (uint16_t i = 0; i < argCount; ++i) { \
-            arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i))); \
+            arguments.unsafeAppendWithoutCapacityCheck(JSC::JSValue::encode(callFrame->uncheckedArgument(i))); \
         } \
      } \
     auto clientData = WebCore::clientData(vm); \

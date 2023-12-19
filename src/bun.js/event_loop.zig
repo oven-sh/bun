@@ -342,6 +342,7 @@ const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const shell_interpreter = @import("../shell/interpreter.zig");
 const ShellGlobTask = shell_interpreter.ShellGlobTask;
 const ShellRmTask = shell_interpreter.Builtin.Rm.ShellRmTask;
+const ShellLsTask = shell_interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = shell_interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = shell_interpreter.Builtin.Mv.ShellMvBatchedTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
@@ -410,6 +411,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellRmTask,
     ShellMvCheckTargetTask,
     ShellMvBatchedTask,
+    ShellLsTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -691,6 +693,11 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                .ShellLsTask => {
+                    var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
+                    shell_ls_task.runFromJS();
+                    shell_ls_task.deinit();
+                },
                 .ShellMvBatchedTask => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
                     shell_mv_batched_task.task.runFromJS();

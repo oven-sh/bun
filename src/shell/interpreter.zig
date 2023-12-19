@@ -2482,6 +2482,7 @@ pub const BufferedWriter = struct {
             Builtin.Rm,
             Builtin.Pwd,
             Builtin.Mv,
+            Builtin.Ls,
         };
         ptr: Repr,
         const Repr = TaggedPointerUnion(Types);
@@ -2507,6 +2508,7 @@ pub const BufferedWriter = struct {
             if (this.ptr.is(Builtin.Rm)) return this.ptr.as(Builtin.Rm).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Pwd)) return this.ptr.as(Builtin.Pwd).onBufferedWriterDone(bw, e);
             if (this.ptr.is(Builtin.Mv)) return this.ptr.as(Builtin.Mv).onBufferedWriterDone(bw, e);
+            if (this.ptr.is(Builtin.Ls)) return this.ptr.as(Builtin.Ls).onBufferedWriterDone(bw, e);
             @panic("Invalid ptr tag");
         }
     };
@@ -3302,7 +3304,7 @@ pub const Builtin = struct {
                         },
                     },
                 };
-                this.state.one_arg.writer.writeAllowBlocking(false);
+                this.state.one_arg.writer.writeIfPossible(false);
                 return Maybe(void).success;
             }
 
@@ -3657,34 +3659,189 @@ pub const Builtin = struct {
         state: union(enum) {
             idle,
             exec: struct {
-                filepath_args: []const [*:0]const u8,
                 err: ?Syscall.Error = null,
+                task_count: usize,
+                tasks_done: usize = 0,
+                output_queue: std.DoublyLinkedList(BlockingOutput) = .{},
             },
             waiting_write_err: BufferedWriter,
             done,
         } = .idle,
 
-        pub fn start(this: *Ls) Maybe(void) {
-            _ = this; // autofix
+        const BlockingOutput = struct {
+            writer: BufferedWriter,
+            arr: std.ArrayList(u8),
 
+            pub fn deinit(this: *BlockingOutput) void {
+                this.arr.deinit();
+            }
+        };
+
+        pub fn start(this: *Ls) Maybe(void) {
+            this.next();
             return Maybe(void).success;
+        }
+
+        pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: u8) Maybe(void) {
+            if (this.bltn.stderr.needsIO()) {
+                this.state = .{
+                    .waiting_write_err = BufferedWriter{
+                        .fd = this.bltn.stderr.fd,
+                        .remain = buf,
+                        .parent = BufferedWriter.ParentPtr.init(this),
+                    },
+                };
+                this.state.waiting_write_err.writeIfPossible(false);
+                return Maybe(void).success;
+            }
+
+            if (this.bltn.writeNoIO(.stderr, buf).asErr()) |e| {
+                return .{ .err = e };
+            }
+
+            this.bltn.done(exit_code);
+            return Maybe(void).success;
+        }
+
+        fn next(this: *Ls) void {
+            while (!(this.state == .done)) {
+                switch (this.state) {
+                    .idle => {
+                        // Will be null if called with no args, in which case we just run once with "." directory
+                        const paths: ?[]const [*:0]const u8 = switch (this.parseOpts()) {
+                            .ok => |paths| paths,
+                            .err => |e| {
+                                const buf = switch (e) {
+                                    .illegal_option => |opt_str| this.bltn.fmtErrorArena(.ls, "illegal option -- {s}\n", .{opt_str}),
+                                    .show_usage => Builtin.Kind.ls.usageString(),
+                                };
+
+                                _ = this.writeFailingError(buf, 1);
+                                return;
+                            },
+                        };
+
+                        const task_count = if (paths) |p| p.len else 1;
+
+                        this.state = .{
+                            .exec = .{
+                                .task_count = task_count,
+                            },
+                        };
+
+                        if (paths) |p| {
+                            for (p) |path_raw| {
+                                const path = path_raw[0..std.mem.len(path_raw) :0];
+                                var task = ShellLsTask.create(this, this.opts, path, null);
+                                task.schedule();
+                            }
+                        } else {
+                            var task = ShellLsTask.create(this, this.opts, ".", null);
+                            task.schedule();
+                        }
+                    },
+                    .exec => {
+                        // It's done
+                        if (this.state.exec.tasks_done >= this.state.exec.task_count and this.state.exec.output_queue.len == 0) {
+                            this.state = .done;
+                            this.bltn.done(0);
+                            return;
+                        }
+                        return;
+                    },
+                    .waiting_write_err => {
+                        return;
+                    },
+                    .done => unreachable,
+                }
+            }
+
+            this.bltn.done(0);
+            return;
         }
 
         pub fn deinit(this: *Ls) void {
             _ = this; // autofix
         }
 
-        const ShellLsTask = struct {
-            const print = bun.Output.scoped(.ShellLsTask, false);
+        pub fn queueBlockingOutput(this: *Ls, bo: BlockingOutput) void {
+            const node = bun.default_allocator.create(std.DoublyLinkedList(BlockingOutput).Node) catch bun.outOfMemory();
+            node.* = .{
+                .data = bo,
+            };
+            this.state.exec.output_queue.append(node);
 
+            // Need to start it
+            if (this.state.exec.output_queue.len == 1) {
+                this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
+            }
+        }
+
+        pub fn onBufferedWriterDone(this: *Ls, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
+            _ = bufwriter; // autofix
+            _ = e; // autofix
+
+            if (this.state == .waiting_write_err) {
+                // if (e) |err| return this.bltn.done(1);
+                return this.bltn.done(1);
+            }
+
+            var queue = &this.state.exec.output_queue;
+            var first = queue.popFirst().?;
+            defer {
+                first.data.deinit();
+                bun.default_allocator.destroy(first);
+            }
+            if (first.next) |next_writer| {
+                next_writer.data.writer.writeIfPossible(false);
+            }
+
+            this.next();
+        }
+
+        pub fn onAsyncTaskDone(this: *Ls, task: *ShellLsTask) void {
+            // TODO check for error, print that (but still want to print task output)
+            this.state.exec.tasks_done += 1;
+            const output = task.takeOutput();
+
+            if (this.bltn.stdout.needsIO()) {
+                const blocking_output: BlockingOutput = .{
+                    .writer = BufferedWriter{
+                        .fd = this.bltn.stdout.fd,
+                        .remain = output.items[0..],
+                        .parent = BufferedWriter.ParentPtr.init(this),
+                    },
+                    .arr = output,
+                };
+                this.queueBlockingOutput(blocking_output);
+                if (this.state == .done) return;
+                return this.next();
+            }
+
+            defer output.deinit();
+
+            if (this.bltn.writeNoIO(.stdout, output.items[0..]).asErr()) |e| {
+                _ = e; // autofix
+
+                @panic("FIXME uh oh");
+            }
+
+            return this.next();
+        }
+
+        pub const ShellLsTask = struct {
+            const print = bun.Output.scoped(.ShellLsTask, false);
             ls: *Ls,
             opts: Opts,
 
-            root_task: DirTask,
-            root_path: [:0]const u8 = &[0:0]u8{},
-
-            err_mutex: bun.Lock = bun.Lock.init(),
+            is_root: bool = true,
+            /// Should be allocated with bun.default_allocator
+            path: [:0]const u8 = &[0:0]u8{},
+            /// Should use bun.default_allocator
+            output: std.ArrayList(u8),
+            is_absolute: bool = false,
             err: ?Syscall.Error = null,
+            result_kind: enum { file, dir, idk } = .idk,
 
             event_loop: *JSC.EventLoop,
             concurrent_task: JSC.ConcurrentTask = .{},
@@ -3692,31 +3849,121 @@ pub const Builtin = struct {
                 .callback = workPoolCallback,
             },
 
-            const DirTask = struct {
-                path: [:0]const u8,
-                output_buffer: std.ArrayList(u8),
-            };
-
             pub fn schedule(this: *@This()) void {
                 JSC.WorkPool.schedule(&this.task);
             }
 
-            pub fn run(this: *ShellLsTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {
-                _ = is_absolute;
+            pub fn create(ls: *Ls, opts: Opts, path: [:0]const u8, event_loop: ?*JSC.EventLoop) *ShellLsTask {
+                const task = bun.default_allocator.create(ShellLsTask) catch bun.outOfMemory();
+                task.* = ShellLsTask{
+                    .ls = ls,
+                    .opts = opts,
+                    .path = bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory(),
+                    .output = std.ArrayList(u8).init(bun.default_allocator),
+                    .event_loop = event_loop orelse JSC.VirtualMachine.get().eventLoop(),
+                };
+                return task;
+            }
 
-                switch (Syscall.open(dir_task.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+            pub fn enqueue(this: *ShellLsTask, path: [:0]const u8) void {
+                const new_path = this.join(
+                    bun.default_allocator,
+                    &[_][]const u8{
+                        this.path[0..this.path.len],
+                        path[0..path.len],
+                    },
+                    this.is_absolute,
+                );
+
+                var subtask = ShellLsTask.create(this.ls, this.opts, new_path, this.event_loop);
+                subtask.is_root = false;
+                subtask.schedule();
+            }
+
+            inline fn join(this: *ShellLsTask, alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {
+                _ = this; // autofix
+                if (!is_absolute) {
+                    // If relative paths enabled, stdlib join is preferred over
+                    // ResolvePath.joinBuf because it doesn't try to normalize the path
+                    return std.fs.path.joinZ(alloc, subdir_parts) catch bun.outOfMemory();
+                }
+
+                const out = alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)) catch bun.outOfMemory();
+
+                return out;
+            }
+
+            pub fn run(this: *ShellLsTask) void {
+                const fd = switch (Syscall.open(this.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
                     .err => |e| {
                         switch (e.getErrno()) {
                             bun.C.E.NOENT => {
-                                return .{ .err = this.errorWithPath(e, dir_task.path) };
+                                this.err = this.errorWithPath(e, this.path);
                             },
-                            bun.C.E.NOTDIR => {},
+                            bun.C.E.NOTDIR => {
+                                this.result_kind = .file;
+                                this.addEntry(this.path);
+                            },
+                            else => {
+                                this.err = this.errorWithPath(e, this.path);
+                            },
                         }
+                        return;
                     },
+                    .result => |fd| fd,
+                };
+
+                defer {
+                    _ = Syscall.close(fd);
                 }
+
+                if (!this.is_root) {
+                    const writer = this.output.writer();
+                    std.fmt.format(writer, "{s}:\n", .{this.path}) catch |e| OOM(e);
+                }
+
+                const dir = std.fs.Dir{ .fd = fd };
+                var iterator = DirIterator.iterate(dir);
+                var entry = iterator.next();
+
+                while (switch (entry) {
+                    .err => |e| {
+                        this.err = this.errorWithPath(e, this.path);
+                        return;
+                    },
+                    .result => |ent| ent,
+                }) |current| : (entry = iterator.next()) {
+                    this.addEntry(current.name.sliceAssumeZ());
+                    if (current.kind == .directory and this.opts.recursive) {
+                        this.enqueue(current.name.sliceAssumeZ());
+                    }
+                }
+                print("run done", .{});
             }
 
-            // fn writeOutput(
+            fn shouldSkipEntry(this: *ShellLsTask, name: [:0]const u8) bool {
+                if (this.opts.show_all) return false;
+                if (this.opts.show_almost_all) {
+                    if (comptime bun.Environment.isWindows) {
+                        const nameutf16 = @as([*]const u16, @ptrCast(name.ptr))[0 .. name.len / 2];
+                        if (bun.strings.eqlComptimeUTF16(nameutf16[0..1], ".") or bun.strings.eqlComptimeUTF16(nameutf16[0..2], "..")) return true;
+                    } else {
+                        if (bun.strings.eqlComptime(name[0..1], ".") or bun.strings.eqlComptime(name[0..2], "..")) return true;
+                    }
+                }
+                return false;
+            }
+
+            // TODO more complex output like multi-column
+            fn addEntry(this: *ShellLsTask, name: [:0]const u8) void {
+                const skip = this.shouldSkipEntry(name);
+                print("Entry: (skip={}) {s} :: {s}", .{ skip, this.path, name });
+                if (skip) return;
+                this.output.ensureUnusedCapacity(name.len + 1) catch bun.outOfMemory();
+                this.output.appendSlice(name) catch bun.outOfMemory();
+                // FIXME TODO non ascii/utf-8
+                this.output.append('\n') catch bun.outOfMemory();
+            }
 
             fn errorWithPath(this: *ShellLsTask, err: Syscall.Error, path: [:0]const u8) Syscall.Error {
                 _ = this;
@@ -3725,7 +3972,26 @@ pub const Builtin = struct {
 
             pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
                 var this: *ShellLsTask = @fieldParentPtr(ShellLsTask, "task", task);
-                this.root_task.runFromThreadPoolImpl();
+                this.run();
+                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+            }
+
+            pub fn takeOutput(this: *ShellLsTask) std.ArrayList(u8) {
+                const ret = this.output;
+                this.output = std.ArrayList(u8).init(bun.default_allocator);
+                return ret;
+            }
+
+            pub fn runFromJS(this: *ShellLsTask) void {
+                print("runFromJS", .{});
+                this.ls.onAsyncTaskDone(this);
+            }
+
+            pub fn deinit(this: *ShellLsTask) void {
+                print("deinit", .{});
+                bun.default_allocator.free(this.path);
+                this.output.deinit();
+                bun.default_allocator.destroy(this);
             }
         };
 
@@ -3736,7 +4002,7 @@ pub const Builtin = struct {
 
             /// `-A`, `--almost-all`
             /// Do not list implied . and ..
-            show_almost_all: bool = false,
+            show_almost_all: bool = true,
 
             /// `--author`
             /// With -l, print the author of each file
@@ -3977,27 +4243,15 @@ pub const Builtin = struct {
             };
         };
 
-        pub fn parseOpts(this: *Ls) Result(void, Opts.ParseError) {
-            const filepath_args = switch (this.parseFlags()) {
-                .ok => |args| args,
-                .err => |e| return .{ .err = e },
-            };
-
-            if (filepath_args.len < 2) {
-                return .{ .err = .show_usage };
-            }
-
-            this.args.sources = filepath_args[0 .. filepath_args.len - 1];
-            this.args.target = filepath_args[filepath_args.len - 1][0..std.mem.len(filepath_args[filepath_args.len - 1]) :0];
-
-            return .ok;
+        pub fn parseOpts(this: *Ls) Result(?[]const [*:0]const u8, Opts.ParseError) {
+            return this.parseFlags();
         }
 
-        pub fn parseFlags(this: *Mv) Result([]const [*:0]const u8, Opts.ParseError) {
+        pub fn parseFlags(this: *Ls) Result(?[]const [*:0]const u8, Opts.ParseError) {
             const args = this.bltn.argsSlice();
             var idx: usize = 0;
             if (args.len == 0) {
-                return .{ .err = .show_usage };
+                return .{ .ok = null };
             }
 
             while (idx < args.len) : (idx += 1) {
@@ -4549,7 +4803,7 @@ pub const Builtin = struct {
             exec.tasks_done += 1;
             if (exec.tasks_done >= exec.task_count) {
                 if (exec.err) |err| {
-                    const buf = this.bltn.fmtErrorArena(.mv, "{s}\n", .{err.toSystemError().message.byteSlice()});
+                    const buf = this.bltn.fmtErrorArena(.ls, "{s}\n", .{err.toSystemError().message.byteSlice()});
                     _ = this.writeFailingError(buf, err.errno);
                     return;
                 }
@@ -4837,7 +5091,7 @@ pub const Builtin = struct {
                                                         .parent = BufferedWriter.ParentPtr.init(this),
                                                     },
                                                 };
-                                                parse_opts.state.wait_write_err.writeAllowBlocking(false);
+                                                parse_opts.state.wait_write_err.writeIfPossible(false);
                                                 continue;
                                             }
 

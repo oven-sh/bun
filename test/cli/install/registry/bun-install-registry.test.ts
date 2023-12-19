@@ -1063,6 +1063,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + workspace-1@workspace:packages/workspace-1",
         "",
         " 1 package installed",
@@ -1579,6 +1580,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).toContain("Saved lockfile");
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + pkg1@workspace:packages/pkg1",
         " + pkg2@workspace:packages/pkg2",
         "",
@@ -1913,6 +1915,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + lifecycle-postinstall@1.0.0",
         "",
         // @ts-ignore
@@ -2277,6 +2280,7 @@ for (const forceWaiterThread of [false, true]) {
         expect(err).not.toContain("error:");
         const out = await new Response(stdout).text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           " + node-gyp@1.5.0",
           "",
           expect.stringContaining("1 package installed"),
@@ -2313,6 +2317,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + lifecycle-install-test@github:dylan-conway/lifecycle-install-test#3ba6af5",
         "",
         expect.stringContaining("1 package installed"),
@@ -2391,6 +2396,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + uses-what-bin-slow@1.0.0",
         "",
         " 2 packages installed",
@@ -2473,6 +2479,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + uses-what-bin@1.0.0",
         " + what-bin@1.5.0",
         "",
@@ -2535,6 +2542,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + uses-what-bin@1.5.0",
         " + what-bin@1.0.0",
         "",
@@ -2755,6 +2763,7 @@ describe("semver", () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         ` + dep-with-tags@${expected}`,
         "",
         " 1 package installed",
@@ -2920,6 +2929,7 @@ for (let i = 0; i < prereleaseTests.length; i++) {
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           ` + ${depName}@${expected}`,
           "",
           " 1 package installed",

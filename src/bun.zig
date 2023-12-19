@@ -824,8 +824,9 @@ pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
-pub const OSPathSliceWithoutSentinel = if (Environment.isWindows) []const u16 else []const u8;
+pub const OSPathChar = if (Environment.isWindows) u16 else u8;
+pub const OSPathSlice = [:0]const OSPathChar;
+pub const OSPathSliceWithoutSentinel = []const OSPathChar;
 pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 pub const WPathBuffer = [MAX_PATH_BYTES / 2]u16;
 

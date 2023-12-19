@@ -62,28 +62,28 @@ else
 /// Like std.Thread.setName but auto-truncate, and only works on the current thread.
 /// The u8 -> u16 conversion is ascii-only
 pub fn setThreadName(name: [:0]const u8) void {
-    var truncated_name = switch (bun.OSPathSlice) {
-        [:0]const u8 => if (name.len > std.Thread.max_name_len) brk: {
-            var truncated_name: [std.Thread.max_name_len + 1]u8 = undefined;
-            @memcpy(truncated_name[0 .. std.Thread.max_name_len - 3], name[0 .. std.Thread.max_name_len - 3]);
-            truncated_name[std.Thread.max_name_len - 3 ..].* = "...\x00".*;
-            break :brk truncated_name[0..std.Thread.max_name_len :0];
+    var buf: [std.Thread.max_name_len + 1]bun.OSPathChar = undefined;
+
+    var truncated_name = switch (bun.OSPathChar) {
+        u8 => if (name.len > std.Thread.max_name_len) brk: {
+            @memcpy(buf[0 .. std.Thread.max_name_len - 3], name[0 .. std.Thread.max_name_len - 3]);
+            buf[std.Thread.max_name_len - 3 ..].* = "...\x00".*;
+            break :brk buf[0..std.Thread.max_name_len :0];
         } else name,
 
-        [:0]const u16 => brk: {
-            var truncated_name: [std.Thread.max_name_len + 1]u16 = undefined;
+        u16 => brk: {
             // ascii only
             if (name.len > std.Thread.max_name_len) {
                 bun.strings.copyU8IntoU16(
-                    truncated_name[0 .. std.Thread.max_name_len - 3],
+                    buf[0 .. std.Thread.max_name_len - 3],
                     name[0 .. std.Thread.max_name_len - 3],
                 );
-                truncated_name[std.Thread.max_name_len - 3 ..].* = .{ '.', '.', '.', 0 };
-                break :brk truncated_name[0..std.Thread.max_name_len :0];
+                buf[std.Thread.max_name_len - 3 ..].* = .{ '.', '.', '.', 0 };
+                break :brk buf[0..std.Thread.max_name_len :0];
             } else {
-                bun.strings.copyU8IntoU16(&truncated_name, name);
-                truncated_name[name.len] = 0;
-                break :brk truncated_name[0..name.len :0];
+                bun.strings.copyU8IntoU16(&buf, name);
+                buf[name.len] = 0;
+                break :brk buf[0..name.len :0];
             }
         },
 

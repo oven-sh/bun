@@ -8463,9 +8463,10 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
-        var lockfile = this.lockfile;
+        const original_lockfile = this.lockfile;
+        defer this.lockfile = original_lockfile;
         if (!this.options.local_package_features.dev_dependencies) {
-            lockfile = try lockfile.maybeCloneFilteringRootPackages(
+            this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
             );
@@ -8500,7 +8501,7 @@ pub const PackageManager = struct {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             download_node = root_node.start(ProgressStrings.download(), 0);
 
-            install_node = root_node.start(ProgressStrings.install(), lockfile.packages.len);
+            install_node = root_node.start(ProgressStrings.install(), this.lockfile.packages.len);
             scripts_node = root_node.start(ProgressStrings.script(), root_lifecycle_scripts_count);
             this.downloads_node = &download_node;
             this.scripts_node = &scripts_node;
@@ -8552,7 +8553,7 @@ pub const PackageManager = struct {
         var summary = PackageInstall.Summary{};
 
         {
-            var iterator = Lockfile.Tree.Iterator.init(lockfile);
+            var iterator = Lockfile.Tree.Iterator.init(this.lockfile);
             if (comptime Environment.isPosix) {
                 Bin.Linker.ensureUmask();
             }
@@ -8560,10 +8561,10 @@ pub const PackageManager = struct {
                 // These slices potentially get resized during iteration
                 // so we want to make sure they're not accessible to the rest of this function
                 // to make mistakes harder
-                var parts = lockfile.packages.slice();
+                var parts = this.lockfile.packages.slice();
 
                 const completed_trees, const tree_ids_to_trees_the_id_depends_on, const tree_install_counts = trees: {
-                    const trees = lockfile.buffers.trees.items;
+                    const trees = this.lockfile.buffers.trees.items;
                     const completed_trees = try Bitset.initEmpty(this.allocator, trees.len);
                     var tree_ids_to_trees_the_id_depends_on = try Bitset.List.initEmpty(this.allocator, trees.len, trees.len);
 
@@ -8618,7 +8619,7 @@ pub const PackageManager = struct {
                     .root_node_modules_folder = node_modules_folder,
                     .names = parts.items(.name),
                     .resolutions = parts.items(.resolution),
-                    .lockfile = lockfile,
+                    .lockfile = this.lockfile,
                     .node = &install_node,
                     .node_modules_folder = node_modules_folder,
                     .progress = progress,
@@ -8629,7 +8630,7 @@ pub const PackageManager = struct {
                     .force_install = options.enable.force_install,
                     .successfully_installed = try Bitset.initEmpty(
                         this.allocator,
-                        lockfile.packages.len,
+                        this.lockfile.packages.len,
                     ),
                     .tree_iterator = &iterator,
                     .command_ctx = ctx,
@@ -8750,10 +8751,8 @@ pub const PackageManager = struct {
             }
 
             if (comptime Environment.allow_assert) {
-                for (lockfile.buffers.trees.items) |tree| {
-                    _ = tree;
-                
-                    // std.debug.assert(installer.tree_install_counts[tree.id] == tree.dependencies.len);
+                for (this.lockfile.buffers.trees.items) |tree| {
+                    std.debug.assert(installer.tree_install_counts[tree.id] == tree.dependencies.len);
                 }
             }
 
@@ -8925,13 +8924,6 @@ pub const PackageManager = struct {
                     );
 
                     had_any_diffs = had_any_diffs or manager.summary.hasDiffs();
-
-                    if (manager.options.enable.frozen_lockfile and had_any_diffs) {
-                        if (comptime log_level != .silent) {
-                            Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
-                        }
-                        Global.crash();
-                    }
 
                     if (manager.summary.new_trusted_dependencies.count() > 0) {
                         needs_new_lockfile = true;
@@ -9195,7 +9187,7 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        if (needs_clean_lockfile or manager.options.enable.force_save_lockfile) {
+        if (needs_clean_lockfile or manager.options.enable.force_save_lockfile or manager.options.enable.frozen_lockfile) {
             did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
                 PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
             );
@@ -9203,6 +9195,14 @@ pub const PackageManager = struct {
 
         if (manager.options.global) {
             try manager.setupGlobalDir(&ctx);
+        }
+
+        if (did_meta_hash_change and manager.options.enable.frozen_lockfile) {
+            if (comptime log_level != .silent) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
+                Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
+            }
+            Global.crash();
         }
 
         // It's unnecessary work to re-save the lockfile if there are no changes

@@ -348,13 +348,8 @@ pub const Subprocess = struct {
                     if (comptime !Environment.isPosix) {
                         Output.panic("memfd is only supported on Linux", .{});
                     }
-
-                    const result = JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
-                    if (result == .zero) {
-                        this.* = .{ .closed = {} };
-                    }
-
-                    return result;
+                    this.* = .{ .closed = {} };
+                    return JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
                 },
                 .pipe => {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
@@ -1016,7 +1011,11 @@ pub const Subprocess = struct {
                     return Writable{ .buffered_input = buffered_input };
                 },
 
-                .memfd, .fd => {
+                .memfd => {
+                    return Writable{ .memfd = stdio.memfd };
+                },
+
+                .fd => {
                     return Writable{ .fd = bun.toFD(fd) };
                 },
                 .inherit => {
@@ -1595,7 +1594,7 @@ pub const Subprocess = struct {
         }
 
         inline for (0..stdio.len) |fd_index| {
-            if (stdio[fd_index].canUseMemfd()) {
+            if (stdio[fd_index].canUseMemfd(is_sync)) {
                 stdio[fd_index].useMemfd(fd_index);
             }
         }
@@ -1929,6 +1928,7 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+
         return sync_value;
     }
 
@@ -2170,7 +2170,7 @@ pub const Subprocess = struct {
         array_buffer: JSC.ArrayBuffer.Strong,
         memfd: bun.FileDescriptor,
 
-        pub fn canUseMemfd(this: *const @This()) bool {
+        pub fn canUseMemfd(this: *const @This(), is_sync: bool) bool {
             if (comptime !Environment.isLinux) {
                 return false;
             }
@@ -2178,7 +2178,7 @@ pub const Subprocess = struct {
             return switch (this.*) {
                 .blob => !this.blob.needsToReadFile(),
                 .memfd, .array_buffer => true,
-                .pipe => |pipe| pipe == null,
+                .pipe => |pipe| pipe == null and is_sync,
                 else => false,
             };
         }
@@ -2193,14 +2193,17 @@ pub const Subprocess = struct {
 
         pub fn useMemfd(this: *@This(), index: u32) void {
             const label = switch (index) {
-                0 => "stdin",
-                1 => "stdout",
-                2 => "stderr",
-                else => "memory_file",
+                0 => "spawn_stdio_stdin",
+                1 => "spawn_stdio_stdout",
+                2 => "spawn_stdio_stderr",
+                else => "spawn_stdio_memory_file",
             };
 
             // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
             const rc = std.os.linux.memfd_create(label, 0);
+
+            log("memfd_create({s}) = {d}", .{ label, rc });
+
             switch (std.os.linux.getErrno(rc)) {
                 .SUCCESS => {},
                 else => |errno| {

@@ -1660,14 +1660,14 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
         munmap(p, length);
     }));
 
-    auto* buffer = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);
+    auto* view = JSC::JSUint8Array::create(globalObject, structure, WTFMove(buffer), 0, length);
 
-    if (UNLIKELY(!buffer)) {
+    if (UNLIKELY(!view)) {
         throwOutOfMemoryError(globalObject, scope);
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    return JSC::JSValue::encode(buffer);
+    return JSC::JSValue::encode(view);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

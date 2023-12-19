@@ -1071,7 +1071,7 @@ pub const RunCommand = struct {
                     const file_: anyerror!std.fs.File = brk: {
                         if (std.fs.path.isAbsolute(script_name_to_search)) {
                             var resolver = resolve_path.PosixToWinNormalizer{};
-                            break :brk bun.openFile(try resolver.resolveCWDZ(script_name_to_search), .{ .mode = .read_only });
+                            break :brk bun.openFile(try resolver.resolveCWD(script_name_to_search), .{ .mode = .read_only });
                         } else {
                             const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                             path_buf[cwd.len] = std.fs.path.sep_posix;

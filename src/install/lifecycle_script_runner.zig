@@ -213,8 +213,13 @@ pub const LifecycleScriptSubprocess = struct {
                 try actions.dup2(fdsOut[1], bun.STDOUT_FD);
                 try actions.dup2(fdsErr[1], bun.STDERR_FD);
             } else {
-                try actions.inherit(bun.STDOUT_FD);
-                try actions.inherit(bun.STDERR_FD);
+                if (comptime Environment.isMac) {
+                    try actions.inherit(bun.STDOUT_FD);
+                    try actions.inherit(bun.STDERR_FD);
+                } else {
+                    try actions.dup2(bun.STDOUT_FD, bun.STDOUT_FD);
+                    try actions.dup2(bun.STDOUT_FD, bun.STDOUT_FD);
+                }
             }
 
             try actions.chdir(cwd);

@@ -1557,11 +1557,11 @@ pub const NAPI_MODULE_VERSION = @as(c_int, 1);
 ///
 // TODO: write a script to generate this struct. ideally it wouldn't even need to be committed to source.
 const V8API = if (!bun.Environment.isWindows) struct {
-    extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
-    extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
-    extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
-    extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
-    extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+    pub extern fn _ZN2v87Isolate10GetCurrentEv() *anyopaque;
+    pub extern fn _ZN2v87Isolate13TryGetCurrentEv() *anyopaque;
+    pub extern fn _ZN2v87Isolate17GetCurrentContextEv() *anyopaque;
+    pub extern fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
+    pub extern fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1569,11 +1569,11 @@ const V8API = if (!bun.Environment.isWindows) struct {
     // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
     //
     // Bug @paperdave if you get stuck here
-    extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
-    extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
-    extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VJSGlobalObject@JSC@@@2@XZ"() *anyopaque;
-    extern fn @"?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
-    extern fn @"?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+    pub extern fn @"?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    pub extern fn @"?GetCurrent@Isolate@v8@@SAPEAV12@XZ"() *anyopaque;
+    pub extern fn @"?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VJSGlobalObject@JSC@@@2@XZ"() *anyopaque;
+    pub extern fn @"?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
+    pub extern fn @"?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

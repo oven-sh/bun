@@ -2558,7 +2558,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.only("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
+    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -2640,7 +2640,7 @@ require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
   expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");
 });
 
-describe.only("copy old node_modules into subdirectory of new node_modules", () => {
+describe("copy old node_modules into subdirectory of new node_modules", () => {
   // these node_modules were created with npm/yarn/pnpm with a simple package
   var tests = ["npm", "yarn1", "yarn234", "pnpm"];
   for (const packageManager of tests) {

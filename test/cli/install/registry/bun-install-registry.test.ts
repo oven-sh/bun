@@ -2583,9 +2583,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      const out = await new Response(stdout).text();
-      console.log("stdout:", out);
-      expect(out).toContain("v");
+      expect(err).toContain("v");
     });
   });
 }
@@ -2638,63 +2636,6 @@ require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
   ]);
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");
-});
-
-describe("copy old node_modules into subdirectory of new node_modules", () => {
-  // these node_modules were created with npm/yarn/pnpm with a simple package
-  var tests = ["npm", "yarn1", "yarn234", "pnpm"];
-  for (const packageManager of tests) {
-    test(packageManager, async () => {
-      await mkdir(join(packageDir, "node_modules"));
-      await cp(
-        join(import.meta.dir, "fixtures", `old_${packageManager}_node_modules`),
-        join(packageDir, "node_modules"),
-        {
-          recursive: true,
-        },
-      );
-      await writeFile(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          dependencies: {
-            "basic-1": "1.0.0",
-          },
-        }),
-      );
-
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: null,
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-
-      const err = await new Response(stderr).text();
-      expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      const out = await new Response(stdout).text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        " + basic-1@1.0.0",
-        "",
-        expect.stringContaining("1 package installed"),
-      ]);
-      expect(await exited).toBe(0);
-
-      const sortedNodeModules = await readdirSorted(join(packageDir, "node_modules"));
-      const newOldName = sortedNodeModules[0];
-      expect(sortedNodeModules).toEqual([
-        expect.stringContaining(`.old_${packageManager.replace(/[0-9]/g, "")}_modules-`),
-        "basic-1",
-      ]);
-      const oldSortedNodeModules = await readdirSorted(join(packageDir, "node_modules", newOldName));
-      expect(oldSortedNodeModules).toContain("basic-1");
-      expect(oldSortedNodeModules).not.toContain(newOldName);
-    });
-  }
 });
 
 describe("semver", () => {

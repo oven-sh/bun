@@ -457,6 +457,7 @@ pub const fmt = struct {
                         '}', '{' => {
                             // support potentially highlighting "from" in an import statement
                             if (!((prev_keyword orelse Keyword.@"continue") == .import)) {
+                            if ((prev_keyword orelse Keyword.@"continue") != .import) {
                                 prev_keyword = null;
                             }
 

@@ -9,13 +9,13 @@ const Output = bun.Output;
 const Global = bun.Global;
 const JSC = bun.JSC;
 const WaiterThread = JSC.Subprocess.WaiterThread;
+const Timer = std.time.Timer;
 
 pub const LifecycleScriptSubprocess = struct {
-    script_name: []const u8,
     package_name: []const u8,
 
     scripts: [6]?Lockfile.Scripts.Entry,
-    current_script_index: usize = 0,
+    current_script_index: u8 = 0,
 
     finished_fds: u8 = 0,
 
@@ -27,6 +27,10 @@ pub const LifecycleScriptSubprocess = struct {
     stderr: OutputReader = .{},
     manager: *PackageManager,
     envp: [:null]?[*:0]u8,
+
+    timer: ?Timer = null,
+
+    pub const min_milliseconds_to_log = 500;
 
     pub var alive_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
 
@@ -81,7 +85,7 @@ pub const LifecycleScriptSubprocess = struct {
             switch (this.poll.register(this.subprocess().manager.uws_event_loop, .readable, true)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.subprocess().script_name,
+                        this.subprocess().scriptName(),
                         this.subprocess().package_name,
                         err.errno,
                         @tagName(err.getErrno()),
@@ -109,6 +113,11 @@ pub const LifecycleScriptSubprocess = struct {
         }
     };
 
+    pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
+        std.debug.assert(this.current_script_index < Lockfile.Scripts.names.len);
+        return Lockfile.Scripts.names[this.current_script_index];
+    }
+
     pub fn onOutputDone(this: *LifecycleScriptSubprocess) void {
         std.debug.assert(this.finished_fds < 2);
         this.finished_fds += 1;
@@ -126,7 +135,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.finished_fds += 1;
 
         Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-            this.script_name,
+            this.scriptName(),
             this.package_name,
             err.errno,
             @tagName(err.getErrno()),
@@ -140,7 +149,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
     }
 
-    pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: usize) !void {
+    pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
         if (Environment.isWindows) {
             @panic("TODO");
         }
@@ -152,7 +161,6 @@ pub const LifecycleScriptSubprocess = struct {
         const original_script = this.scripts[next_script_index].?;
         const cwd = original_script.cwd;
         const env = manager.env;
-        const name = Lockfile.Scripts.names[next_script_index];
 
         if (manager.scripts_node) |scripts_node| {
             if (manager.finished_installing.load(.Monotonic)) {
@@ -167,7 +175,6 @@ pub const LifecycleScriptSubprocess = struct {
             }
         }
 
-        this.script_name = name;
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.waitpid_result = null;
@@ -184,7 +191,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         var argv = [_]?[*:0]const u8{
             shell_bin,
-            "-c",
+            if (Environment.isWindows) "/c" else "-c",
             combined_script,
             null,
         };
@@ -215,6 +222,9 @@ pub const LifecycleScriptSubprocess = struct {
                 _ = bun.sys.close(fdsOut[1]);
                 _ = bun.sys.close(fdsErr[1]);
             }
+
+            this.timer = Timer.start() catch null;
+
             switch (PosixSpawn.spawnZ(
                 argv[0].?,
                 actions,
@@ -224,7 +234,7 @@ pub const LifecycleScriptSubprocess = struct {
             )) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
-                        name,
+                        this.scriptName(),
                         err.errno,
                         @tagName(err.getErrno()),
                     });
@@ -281,7 +291,7 @@ pub const LifecycleScriptSubprocess = struct {
                         _ = std.os.linux.waitpid(pid, &status, 0);
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
-                            name,
+                            this.scriptName(),
                             err,
                             @tagName(err),
                         });
@@ -360,7 +370,7 @@ pub const LifecycleScriptSubprocess = struct {
             switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.script_name,
+                        this.scriptName(),
                         this.package_name,
                         err.errno,
                         @tagName(err.getErrno()),
@@ -386,7 +396,7 @@ pub const LifecycleScriptSubprocess = struct {
         _ = alive_count.fetchSub(1, .Monotonic);
         if (result.pid == 0) {
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                this.script_name,
+                this.scriptName(),
                 this.package_name,
                 0,
                 "Unknown",
@@ -398,6 +408,8 @@ pub const LifecycleScriptSubprocess = struct {
         }
         if (std.os.W.IFEXITED(result.status)) {
             std.debug.assert(this.finished_fds <= 2);
+            const maybe_duration = if (this.timer) |*t| t.read() else null;
+
             if (this.finished_fds < 2) {
                 this.waitpid_result = result;
                 return;
@@ -406,8 +418,8 @@ pub const LifecycleScriptSubprocess = struct {
             const code = std.os.W.EXITSTATUS(result.status);
             if (code > 0) {
                 this.printOutput();
-                Output.errGeneric("<b>{s}<r> script from \"<b>{s}<r>\" exited with code {d}<r>", .{
-                    this.script_name,
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
+                    this.scriptName(),
                     this.package_name,
                     code,
                 });
@@ -424,11 +436,24 @@ pub const LifecycleScriptSubprocess = struct {
                 }
             }
 
+            if (maybe_duration) |nanos| {
+                if (nanos > min_milliseconds_to_log * std.time.ns_per_ms) {
+                    this.manager.lifecycle_script_time_log.appendConcurrent(
+                        this.manager.lockfile.allocator,
+                        .{
+                            .package_name = this.package_name,
+                            .script_id = this.current_script_index,
+                            .duration = nanos,
+                        },
+                    );
+                }
+            }
+
             for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                 if (this.scripts[new_script_index] != null) {
                     this.resetPolls();
-                    this.spawnNextScript(new_script_index) catch |err| {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                    this.spawnNextScript(@intCast(new_script_index)) catch |err| {
+                        Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
                             Lockfile.Scripts.names[new_script_index],
                             @errorName(err),
                         });
@@ -444,6 +469,7 @@ pub const LifecycleScriptSubprocess = struct {
             if (this.finished_fds == 2) {
                 this.deinit();
             }
+
             return;
         }
         if (std.os.W.IFSIGNALED(result.status)) {
@@ -455,7 +481,7 @@ pub const LifecycleScriptSubprocess = struct {
             }
             this.printOutput();
             Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
-                this.script_name,
+                this.scriptName(),
                 this.package_name,
                 bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
@@ -470,14 +496,19 @@ pub const LifecycleScriptSubprocess = struct {
             }
             this.printOutput();
             Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by {}<r>", .{
-                this.script_name,
+                this.scriptName(),
                 this.package_name,
                 bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
             Global.raiseIgnoringPanicHandler(signal);
         }
 
-        std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{ this.script_name, this.package_name, result.pid, result.status });
+        std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{
+            this.scriptName(),
+            this.package_name,
+            result.pid,
+            result.status,
+        });
     }
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {

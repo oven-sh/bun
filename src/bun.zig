@@ -769,6 +769,69 @@ pub const fmt = struct {
         const Formatter = HexIntFormatter(@TypeOf(value), false);
         return Formatter{ .value = value };
     }
+
+    const FormatDurationData = struct {
+        ns: u64,
+        negative: bool = false,
+    };
+
+    /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
+    fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
+        var buf: [24]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        var buf_writer = fbs.writer();
+        if (data.negative) {
+            buf_writer.writeByte('-') catch unreachable;
+        }
+
+        var ns_remaining = data.ns;
+        inline for (.{
+            .{ .ns = 365 * std.time.ns_per_day, .sep = 'y' },
+            .{ .ns = std.time.ns_per_week, .sep = 'w' },
+            .{ .ns = std.time.ns_per_day, .sep = 'd' },
+            .{ .ns = std.time.ns_per_hour, .sep = 'h' },
+            .{ .ns = std.time.ns_per_min, .sep = 'm' },
+        }) |unit| {
+            if (ns_remaining >= unit.ns) {
+                const units = ns_remaining / unit.ns;
+                std.fmt.formatInt(units, 10, .lower, .{}, buf_writer) catch unreachable;
+                buf_writer.writeByte(unit.sep) catch unreachable;
+                ns_remaining -= units * unit.ns;
+                if (ns_remaining == 0)
+                    return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+            }
+        }
+
+        inline for (.{
+            .{ .ns = std.time.ns_per_s, .sep = "s" },
+            .{ .ns = std.time.ns_per_ms, .sep = "ms" },
+            .{ .ns = std.time.ns_per_us, .sep = "us" },
+        }) |unit| {
+            const kunits = ns_remaining * 1000 / unit.ns;
+            if (kunits >= 1000) {
+                std.fmt.formatInt(kunits / 1000, 10, .lower, .{}, buf_writer) catch unreachable;
+                const frac = @divFloor(kunits % 1000, 100);
+                if (frac > 0) {
+                    var decimal_buf = [_]u8{ '.', 0 };
+                    _ = std.fmt.formatIntBuf(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
+                    buf_writer.writeAll(&decimal_buf) catch unreachable;
+                }
+                buf_writer.writeAll(unit.sep) catch unreachable;
+                return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+            }
+        }
+
+        std.fmt.formatInt(ns_remaining, 10, .lower, .{}, buf_writer) catch unreachable;
+        buf_writer.writeAll("ns") catch unreachable;
+        return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+    }
+
+    /// Return a Formatter for number of nanoseconds according to its magnitude:
+    /// [#y][#w][#d][#h][#m]#[.###][n|u|m]s
+    pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal) {
+        return .{ .data = FormatDurationData{ .ns = ns } };
+    }
 };
 
 pub const Output = @import("./output.zig");

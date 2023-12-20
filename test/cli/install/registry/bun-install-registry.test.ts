@@ -76,6 +76,7 @@ test("basic 1", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + basic-1@1.0.0",
     "",
     " 1 package installed",
@@ -103,6 +104,7 @@ test("basic 1", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + basic-1@1.0.0",
     "",
     " 1 package installed",
@@ -140,6 +142,7 @@ test("dependency from root satisfies range from dependency", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + no-deps@1.0.0",
     " + one-range-dep@1.0.0",
     "",
@@ -168,6 +171,7 @@ test("dependency from root satisfies range from dependency", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + no-deps@1.0.0",
     " + one-range-dep@1.0.0",
     "",
@@ -205,6 +209,7 @@ test("package added after install", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + one-range-dep@1.0.0",
     "",
     " 2 packages installed",
@@ -246,6 +251,7 @@ test("package added after install", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + no-deps@1.0.0",
     "",
     " 2 packages installed",
@@ -281,6 +287,7 @@ test("package added after install", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + no-deps@1.0.0",
     " + one-range-dep@1.0.0",
     "",
@@ -315,6 +322,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + uses-what-bin@1.5.0",
     " + what-bin@1.0.0",
     "",
@@ -339,6 +347,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + uses-what-bin@1.5.0",
     " + what-bin@1.0.0",
     "",
@@ -386,6 +395,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + dep-loop-entry@1.0.0",
     " + dep-with-tags@3.0.0",
     " + dev-deps@1.0.0",
@@ -421,6 +431,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + dep-loop-entry@1.0.0",
     " + dep-with-tags@3.0.0",
     " + dev-deps@1.0.0",
@@ -934,6 +945,7 @@ describe("workspaces", async () => {
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           " + pkg1@workspace:packages/pkg1",
           " + pkg2@workspace:packages/pkg2",
           "",
@@ -956,6 +968,7 @@ describe("workspaces", async () => {
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           " + pkg1@workspace:packages/pkg1",
           " + pkg2@workspace:packages/pkg2",
           "",
@@ -981,6 +994,7 @@ describe("workspaces", async () => {
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           " + pkg1@workspace:packages/pkg1",
           " + pkg2@workspace:packages/pkg2",
           "",
@@ -1003,6 +1017,7 @@ describe("workspaces", async () => {
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           " + pkg1@workspace:packages/pkg1",
           " + pkg2@workspace:packages/pkg2",
           "",
@@ -1052,6 +1067,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + workspace-1@workspace:packages/workspace-1",
         "",
         " 1 package installed",
@@ -1076,6 +1092,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + workspace-1@workspace:packages/workspace-1",
         "",
         " 1 package installed",
@@ -1104,6 +1121,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + workspace-1@workspace:packages/workspace-1",
         "",
         " 1 package installed",
@@ -1128,6 +1146,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + workspace-1@workspace:packages/workspace-1",
         "",
         " 1 package installed",
@@ -1163,6 +1182,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + what-bin@1.5.0",
     "",
     " 1 package installed",
@@ -1191,6 +1211,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + what-bin@1.5.0",
     "",
     expect.stringContaining("1 package installed"),
@@ -1239,6 +1260,7 @@ test("missing package on reinstall, some with binaries", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + dep-loop-entry@1.0.0",
     " + dep-with-tags@3.0.0",
     " + dev-deps@1.0.0",
@@ -1287,6 +1309,7 @@ test("missing package on reinstall, some with binaries", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + dep-loop-entry@1.0.0",
     " + left-pad@1.0.0",
     " + native@1.0.0",
@@ -1425,6 +1448,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + all-lifecycle-scripts@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
@@ -1477,6 +1501,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + all-lifecycle-scripts@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
@@ -1564,6 +1589,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).toContain("Saved lockfile");
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + pkg1@workspace:packages/pkg1",
         " + pkg2@workspace:packages/pkg2",
         "",
@@ -1665,6 +1691,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + all-lifecycle-scripts@1.0.0",
         "",
         " 1 package installed",
@@ -1752,6 +1779,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + what-bin@1.0.0",
         "",
         " 1 package installed",
@@ -1807,6 +1835,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + what-bin@1.0.0",
         "",
         " 1 package installed",
@@ -1898,6 +1927,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + lifecycle-postinstall@1.0.0",
         "",
         // @ts-ignore
@@ -1922,6 +1952,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(stdout).toBeDefined();
       out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + lifecycle-postinstall@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
@@ -1978,6 +2009,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + another-init-cwd@1.0.0",
         " + lifecycle-init-cwd@1.0.0",
         "",
@@ -2048,6 +2080,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("hello");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + lifecycle-failing-postinstall@1.0.0",
         "",
         " 1 package installed",
@@ -2083,6 +2116,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + binding-gyp-scripts@1.5.0",
         "",
         expect.stringContaining("2 packages installed"),
@@ -2116,6 +2150,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + binding-gyp-scripts@1.5.0",
         "",
         expect.stringContaining("2 packages installed"),
@@ -2168,6 +2203,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + node-gyp@1.5.0",
         "",
         expect.stringContaining("1 package installed"),
@@ -2224,6 +2260,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + node-gyp@1.5.0",
         "",
         expect.stringContaining("1 package installed"),
@@ -2262,6 +2299,7 @@ for (const forceWaiterThread of [false, true]) {
         expect(err).not.toContain("error:");
         const out = await new Response(stdout).text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           " + node-gyp@1.5.0",
           "",
           expect.stringContaining("1 package installed"),
@@ -2298,6 +2336,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + lifecycle-install-test@github:dylan-conway/lifecycle-install-test#3ba6af5",
         "",
         expect.stringContaining("1 package installed"),
@@ -2376,6 +2415,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + uses-what-bin-slow@1.0.0",
         "",
         " 2 packages installed",
@@ -2458,6 +2498,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("error:");
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + uses-what-bin@1.0.0",
         " + what-bin@1.5.0",
         "",
@@ -2520,6 +2561,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + uses-what-bin@1.5.0",
         " + what-bin@1.0.0",
         "",
@@ -2602,6 +2644,7 @@ require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");
   expect(err).not.toContain("error:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + what-bin@1.0.0",
     "",
     expect.stringContaining("1 package installed"),
@@ -2739,6 +2782,7 @@ describe("semver", () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         ` + dep-with-tags@${expected}`,
         "",
         " 1 package installed",
@@ -2904,6 +2948,7 @@ for (let i = 0; i < prereleaseTests.length; i++) {
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
           ` + ${depName}@${expected}`,
           "",
           " 1 package installed",
@@ -3080,6 +3125,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + dragon-test-1-d@1.0.0",
       " + dragon-test-1-e@1.0.0",
       "",
@@ -3170,6 +3216,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + dragon-test-2-b@workspace:dragon-test-2-b",
       " + dragon-test-2-a@workspace:dragon-test-2-a",
       "",
@@ -3222,6 +3269,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + dragon-test-3-a@1.0.0",
       "",
       " 3 packages installed",
@@ -3289,6 +3337,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + my-workspace@workspace:my-workspace",
       "",
       " 3 packages installed",
@@ -3368,6 +3417,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + a@workspace:packages/a",
       " + b@workspace:packages/b",
       "",
@@ -3502,6 +3552,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + a@workspace:packages/a",
       " + b@workspace:packages/b",
       " + c@workspace:packages/c",
@@ -3547,6 +3598,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + dragon-test-7-a@1.0.0",
       " + dragon-test-7-b@2.0.0",
       " + dragon-test-7-c@3.0.0",
@@ -3630,6 +3682,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + dragon-test-8-a@1.0.0",
       " + dragon-test-8-b@1.0.0",
       " + dragon-test-8-c@1.0.0",
@@ -3670,6 +3723,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + first@1.0.0",
       " + no-deps@1.0.0",
       " + second@1.0.0",
@@ -3747,6 +3801,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + a@workspace:packages/a",
       " + b@workspace:packages/b",
       " + c@workspace:packages/c",
@@ -3809,6 +3864,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + pkg-a@workspace:pkg-a",
       " + pkg-b@workspace:pkg-b",
       "",
@@ -3862,6 +3918,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + no-deps@1.0.0",
       " + peer-deps-fixed@1.0.0",
       "",
@@ -3902,6 +3959,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + no-deps@2.0.0",
       " + peer-deps-fixed@1.0.0",
       "",
@@ -3942,6 +4000,7 @@ describe("yarn tests", () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("incorrect peer dependency");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
         " + provides-peer-deps-1-0-0@1.0.0",
         " + provides-peer-deps-2-0-0@1.0.0",
         "",
@@ -4047,6 +4106,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + provides-peer-deps-1-0-0@1.0.0",
       " + provides-peer-deps-1-0-0-too@1.0.0",
       "",
@@ -4107,6 +4167,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + forward-peer-deps@1.0.0",
       " + forward-peer-deps-too@1.0.0",
       " + no-deps@1.0.0",
@@ -4169,6 +4230,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + no-deps@1.0.0",
       " + peer-deps@1.0.0",
       " + peer-deps-too@1.0.0",
@@ -4224,6 +4286,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
       " + no-deps-scripted@1.0.0",
       " + one-dep-scripted@1.5.0",
       "",

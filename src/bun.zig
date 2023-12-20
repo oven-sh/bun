@@ -1627,16 +1627,68 @@ pub const SignalCode = enum(u8) {
         return null;
     }
 
+    pub fn description(signal: SignalCode) ?[]const u8 {
+        // Description names copied from fish
+        // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
+        return switch (signal) {
+            .SIGHUP => "Terminal hung up",
+            .SIGINT => "Quit request",
+            .SIGQUIT => "Quit request",
+            .SIGILL => "Illegal instruction",
+            .SIGTRAP => "Trace or breakpoint trap",
+            .SIGABRT => "Abort",
+            .SIGBUS => "Misaligned address error",
+            .SIGFPE => "Floating point exception",
+            .SIGKILL => "Forced quit",
+            .SIGUSR1 => "User defined signal 1",
+            .SIGUSR2 => "User defined signal 2",
+            .SIGSEGV => "Address boundary error",
+            .SIGPIPE => "Broken pipe",
+            .SIGALRM => "Timer expired",
+            .SIGTERM => "Polite quit request",
+            .SIGCHLD => "Child process status changed",
+            .SIGCONT => "Continue previously stopped process",
+            .SIGSTOP => "Forced stop",
+            .SIGTSTP => "Stop request from job control (^Z)",
+            .SIGTTIN => "Stop from terminal input",
+            .SIGTTOU => "Stop from terminal output",
+            .SIGURG => "Urgent socket condition",
+            .SIGXCPU => "CPU time limit exceeded",
+            .SIGXFSZ => "File size limit exceeded",
+            .SIGVTALRM => "Virtual timefr expired",
+            .SIGPROF => "Profiling timer expired",
+            .SIGWINCH => "Window size change",
+            .SIGIO => "I/O on asynchronous file descriptor is possible",
+            .SIGSYS => "Bad system call",
+            .SIGPWR => "Power failure",
+            else => null,
+        };
+    }
+
     pub fn from(value: anytype) SignalCode {
         return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
-    pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        if (self.name()) |str| {
-            try std.fmt.format(writer, "code {d} ({s})", .{ @intFromEnum(self), str });
-        } else {
-            try std.fmt.format(writer, "code {d}", .{@intFromEnum(self)});
+    // This wrapper struct is lame, what if bun's color formatter was more versitile
+    const Fmt = struct {
+        signal: SignalCode,
+        enable_ansi_colors: bool,
+        pub fn format(this: Fmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const signal = this.signal;
+            switch (this.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    if (signal.name()) |str| if (signal.description()) |desc| {
+                        try writer.print(Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors), .{ str, desc });
+                        return;
+                    };
+                    try writer.print("code {d}", .{@intFromEnum(signal)});
+                },
+            }
         }
+    };
+
+    pub fn fmt(signal: SignalCode, enable_ansi_colors: bool) Fmt {
+        return .{ .signal = signal, .enable_ansi_colors = enable_ansi_colors };
     }
 };
 

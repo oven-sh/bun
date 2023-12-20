@@ -406,10 +406,10 @@ pub const LifecycleScriptSubprocess = struct {
             const code = std.os.W.EXITSTATUS(result.status);
             if (code > 0) {
                 this.printOutput();
-                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
+                Output.errGeneric("<b>{s}<r> script from \"<b>{s}<r>\" exited with code {d}<r>", .{
                     this.script_name,
                     this.package_name,
-                    bun.SignalCode.from(code),
+                    code,
                 });
                 this.deinit();
                 Output.flush();
@@ -454,13 +454,12 @@ pub const LifecycleScriptSubprocess = struct {
                 return;
             }
             this.printOutput();
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
                 this.script_name,
                 this.package_name,
-                bun.SignalCode.from(signal),
+                bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
-            Output.flush();
-            Global.exit(1);
+            Global.raiseIgnoringPanicHandler(signal);
         }
         if (std.os.W.IFSTOPPED(result.status)) {
             const signal = std.os.W.STOPSIG(result.status);
@@ -470,13 +469,12 @@ pub const LifecycleScriptSubprocess = struct {
                 return;
             }
             this.printOutput();
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by signal {any}<r>", .{
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by {}<r>", .{
                 this.script_name,
                 this.package_name,
-                bun.SignalCode.from(signal),
+                bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
-            Output.flush();
-            Global.exit(1);
+            Global.raiseIgnoringPanicHandler(signal);
         }
 
         std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{ this.script_name, this.package_name, result.pid, result.status });

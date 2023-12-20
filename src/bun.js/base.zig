@@ -400,6 +400,92 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
+
+    // 4 MB or so is pretty good for mmap()
+    const mmap_threshold = 1024 * 1024 * 4;
+
+    /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
+    /// Do not use this for pipes, however tempting it may seem.
+    pub fn toJSBufferFromFd(fd: bun.FileDescriptor, size: usize, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const buffer_value = Bun__createUint8ArrayForCopy(globalObject, null, size, true);
+        if (buffer_value == .zero) {
+            return .zero;
+        }
+
+        var array_buffer = buffer_value.asArrayBuffer(globalObject) orelse @panic("Unexpected");
+        var bytes = array_buffer.byteSlice();
+
+        buffer_value.ensureStillAlive();
+
+        var read: isize = 0;
+        while (bytes.len > 0) {
+            switch (bun.sys.pread(fd, bytes, read)) {
+                .result => |amount| {
+                    bytes = bytes[amount..];
+                    read += @intCast(amount);
+
+                    if (amount == 0) {
+                        if (bytes.len > 0) {
+                            @memset(bytes, 0);
+                        }
+                        break;
+                    }
+                },
+                .err => |err| {
+                    globalObject.throwValue(err.toJSC(globalObject));
+                    return .zero;
+                },
+            }
+        }
+
+        buffer_value.ensureStillAlive();
+
+        return buffer_value;
+    }
+
+    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const stat = switch (bun.sys.fstat(fd)) {
+            .err => |err| {
+                globalObject.throwValue(err.toJSC(globalObject));
+                _ = bun.sys.close(fd);
+                return .zero;
+            },
+            .result => |fstat| fstat,
+        };
+
+        const size = stat.size;
+
+        if (size == 0) {
+            _ = bun.sys.close(fd);
+            return createBuffer(globalObject, "");
+        }
+
+        // mmap() is kind of expensive to do
+        // It creates a new memory mapping.
+        // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
+        // So we clone it when it's small.
+        if (size < mmap_threshold) {
+            const result = toJSBufferFromFd(fd, @intCast(size), globalObject);
+            _ = bun.sys.close(fd);
+            return result;
+        }
+
+        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.SHARED | 0, fd, 0);
+        _ = bun.sys.close(fd);
+
+        switch (result) {
+            .result => |buf| {
+                return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
+            },
+            .err => |err| {
+                globalObject.throwValue(err.toJSC(globalObject));
+
+                return .zero;
+            },
+        }
+    }
+
     pub const Strong = struct {
         array_buffer: ArrayBuffer,
         held: JSC.Strong = .{},

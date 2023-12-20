@@ -263,26 +263,6 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub fn spawnPackageScripts(
-        manager: *PackageManager,
-        list: Lockfile.Package.Scripts.List,
-        envp: [:null]?[*:0]u8,
-    ) !void {
-        var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
-        lifecycle_subprocess.scripts = list.items;
-        lifecycle_subprocess.manager = manager;
-        lifecycle_subprocess.envp = envp;
-
-        lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                Lockfile.Scripts.names[list.first_index],
-                @errorName(err),
-            });
-        };
-
-        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
-    }
-
     pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,
@@ -833,7 +813,7 @@ pub const RunCommand = struct {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
-                                    if (!strings.endsWithChar(value.dir, std.fs.path.sep)) {
+                                    if (!strings.endsWithCharOrIsZeroLength(value.dir, std.fs.path.sep)) {
                                         dir_slice = path_buf[0 .. value.dir.len + 1];
                                     }
                                     has_copied = true;
@@ -1090,12 +1070,10 @@ pub const RunCommand = struct {
                     }
 
                     var file_path = script_name_to_search;
-                    var must_normalize = false;
                     const file_: anyerror!std.fs.File = brk: {
                         if (std.fs.path.isAbsolute(script_name_to_search)) {
-                            // TODO(@paperdave): i dont think this is correct
-                            must_normalize = Environment.isWindows;
-                            break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
+                            var resolver = resolve_path.PosixToWinNormalizer{};
+                            break :brk bun.openFile(try resolver.resolveCWD(script_name_to_search), .{ .mode = .read_only });
                         } else {
                             const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                             path_buf[cwd.len] = std.fs.path.sep_posix;
@@ -1104,7 +1082,7 @@ pub const RunCommand = struct {
                                 path_buf[0 .. cwd.len + 1],
                                 &path_buf2,
                                 &parts,
-                                .loose,
+                                .auto,
                             );
                             if (file_path.len == 0) break :possibly_open_with_bun_js;
                             path_buf2[file_path.len] = 0;
@@ -1152,11 +1130,6 @@ pub const RunCommand = struct {
 
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-                    if (must_normalize) {
-                        if (comptime Environment.isWindows) {
-                            std.mem.replaceScalar(u8, out_path, std.fs.path.sep_windows, std.fs.path.sep_posix);
-                        }
-                    }
                     Run.boot(ctx, out_path) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

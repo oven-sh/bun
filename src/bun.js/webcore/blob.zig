@@ -1670,7 +1670,6 @@ pub const Blob = struct {
                                     } else {
                                         self.opened_fd = bun.toFD(@as(i32, @intCast(req.result.value)));
                                         std.debug.assert(bun.uvfdcast(self.opened_fd) == req.result.value);
-                                        std.debug.print("wtf {}????\n", .{bun.FDImpl.decode(self.opened_fd)});
                                     }
                                 }
                                 Callback(self, self.opened_fd);
@@ -2525,7 +2524,6 @@ pub const Blob = struct {
                 }
 
                 this.read_off += @intCast(req.result.value);
-                std.debug.print("uh this.read_off = {d}\n", .{this.read_off});
 
                 this.queueRead();
             }

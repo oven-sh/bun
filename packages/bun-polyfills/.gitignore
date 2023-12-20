@@ -167,6 +167,7 @@ dist
 # Misc
 
 _*
+*.so
 .old
 .vscode
 !build

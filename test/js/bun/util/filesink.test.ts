@@ -69,7 +69,7 @@ describe("FileSink", () => {
     return path;
   }
 
-  for (let isPipe of [true, false] as const) {
+  for (let isPipe of [!process.env.BUN_POLYFILLS_TEST_RUNNER, false] as const) {
     describe(isPipe ? "pipe" : "file", () => {
       for (const [input, expected, label] of fixtures) {
         var getPathOrFd = () => (isPipe ? getFd(label) : getPath(label));

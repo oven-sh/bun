@@ -1,9 +1,17 @@
-import { version } from '../modules/bun.js';
+import type { BunFile } from 'bun';
+import { version, readableStreamToFormData } from '../modules/bun.js';
 import './console.js';
 import './process.js';
+import './htmlrewriter.js';
 import os from 'node:os';
 
-//? NodeJS Blob doesn't implement Blob.json(), so we need to polyfill it.
+//? Yet another globalThis alias, because why not right?
+Object.defineProperty(globalThis, 'self', {
+    get() { return globalThis; }, set(_) { },
+    enumerable: true, configurable: true,
+});
+
+//? NodeJS Blob doesn't implement these, so we need to polyfill them.
 Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
     try {
         return JSON.parse(await this.text()) as T;
@@ -12,12 +20,42 @@ Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
         throw err;
     }
 };
+Blob.prototype.formData = async function formData(this: Blob): Promise<FormData> {
+    if (this.type.startsWith('multipart/form-data;')) {
+        return new Response(this.stream(), {
+            headers:
+                //? Good one Node: https://github.com/nodejs/node/issues/42266
+                { 'Content-Type': this.type.replace('webkitformboundary', 'WebkitFormBoundary') }
+        }).formData() as Promise<FormData>;
+    } else if (this.type === 'application/x-www-form-urlencoded') {
+        return readableStreamToFormData(this.stream());
+    } else {
+        throw new TypeError('Blob type is not well-formed multipart/form-data or application/x-www-form-urlencoded');
+    }
+};
+Reflect.set(Blob.prototype, 'readable', undefined /*satisfies BunFile['readable']*/);
+Reflect.set(Blob.prototype, 'lastModified', -1 satisfies BunFile['lastModified']);
+Reflect.set(Blob.prototype, 'exists', (async function exists() {
+    return true;
+}) satisfies BunFile['exists']);
+Reflect.set(Blob.prototype, 'writer', (function writer() {
+    throw new TypeError('Blob is detached');
+}) satisfies BunFile['writer']);
+
+//? NodeJS File doesn't implement these either
+File.prototype.json = Blob.prototype.json;
+File.prototype.formData = Blob.prototype.formData;
 
 //? navigator global object polyfill
 Reflect.set(globalThis, 'navigator', {
     userAgent: `Bun/${version}`,
     hardwareConcurrency: os.cpus().length,
 });
+
+//? reportError function polyfill
+Reflect.set(globalThis, 'reportError', function reportError(err: any): void {
+    console.error(err);
+} satisfies typeof reportError);
 
 //? method only available in Bun
 // this isn't quite accurate, but it shouldn't break anything and is currently here just for matching bun and node types

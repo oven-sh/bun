@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "module": "esnext",
+    "module": "nodenext",
     "target": "esnext",
     "moduleResolution": "nodenext",
     "moduleDetection": "force",
@@ -10,6 +10,7 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
     "inlineSourceMap": true,
     "allowJs": true,
     "outDir": "dist",

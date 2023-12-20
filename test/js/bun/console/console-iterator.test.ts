@@ -16,7 +16,7 @@ describe("should work for static input", () => {
   for (let input of inputs) {
     it(input.replaceAll("\n", "\\n"), () => {
       const { stdout } = spawnSync({
-        cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.ts"],
+        cmd: [bunExe(), ...process.execArgv, import.meta.dir + "/" + "console-iterator-run.ts"],
         stdin: Buffer.from(input),
         env: {
           BUN_DEBUG_QUIET_LOGS: "1",
@@ -41,7 +41,7 @@ describe("should work for streaming input", () => {
   for (let input of inputs) {
     it(input.replaceAll("\n", "\\n"), async () => {
       const proc = spawn({
-        cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.ts"],
+        cmd: [bunExe(), ...process.execArgv, import.meta.dir + "/" + "console-iterator-run.ts"],
         stdin: "pipe",
         stdout: "pipe",
         env: {
@@ -65,7 +65,7 @@ describe("should work for streaming input", () => {
 // https://github.com/oven-sh/bun/issues/5175
 it("can use the console iterator more than once", async () => {
   const proc = spawn({
-    cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run-2.ts"],
+    cmd: [bunExe(), ...process.execArgv, import.meta.dir + "/" + "console-iterator-run-2.ts"],
     stdin: "pipe",
     stdout: "pipe",
     env: {

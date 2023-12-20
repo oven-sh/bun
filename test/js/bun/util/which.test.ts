@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 
 import { which } from "bun";
-import { mkdtempSync, rmSync, chmodSync, mkdirSync, unlinkSync, realpathSync } from "node:fs";
+import { writeFileSync, rmSync, chmodSync, mkdirSync, unlinkSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -76,13 +76,12 @@ test("which", () => {
 });
 
 function writeFixture(path: string) {
-  var fs = require("fs");
   try {
-    fs.unlinkSync(path);
+    unlinkSync(path);
   } catch (e) {}
 
   var script_name = path;
   var script_content = "echo Hello world!";
-  fs.writeFileSync(script_name, script_content);
-  fs.chmodSync(script_name, "755");
+  writeFileSync(script_name, script_content);
+  chmodSync(script_name, "755");
 }

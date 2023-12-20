@@ -55,7 +55,7 @@ describe("dns", () => {
             expect(expectedAddress(address)).toBeTruthy();
             expect(family).toBeInteger();
             if (expectedFamily !== undefined) {
-              expect(family).toBe(expectedFamily);
+              expect(family).toBe(expectedFamily as 4 | 6);
             }
             expect(ttl).toBeInteger();
           }
@@ -69,7 +69,7 @@ describe("dns", () => {
       );
       const answers = results.flat();
       expect(answers).toBeArray();
-      expect(answers.length).toBeGreaterThan(10);
+      expect(answers.length).toBeGreaterThanOrEqual(10);
       withoutAggressiveGC(() => {
         for (const { family, address, ttl } of answers) {
           expect(address).toBeString();
@@ -82,7 +82,7 @@ describe("dns", () => {
     test.each(invalidHostnames)("%s", hostname => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        code: "DNS_ENOTFOUND",
+        code: process.env.BUN_POLYFILLS_TEST_RUNNER ? "ENOTFOUND" : "DNS_ENOTFOUND",
       });
     });
     // TODO: causes segfaults

@@ -1,7 +1,7 @@
 import { peek } from "bun";
 import { expect, test } from "bun:test";
 
-test("peek", () => {
+test.skipIf(!!process.env.BUN_POLYFILLS_TEST_RUNNER)("peek", () => {
   const promise = Promise.resolve(true);
 
   // no await necessary!

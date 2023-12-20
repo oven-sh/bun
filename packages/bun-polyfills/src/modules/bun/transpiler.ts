@@ -1,6 +1,6 @@
 import type { JavaScriptLoader, TranspilerOptions, Transpiler as BunTranspiler, Import } from 'bun';
+import type { Message } from 'bun-wasm/schema';
 import { transformSync, scan, init } from 'bun-wasm';
-import { Message } from 'bun-wasm/schema';
 import $ from 'chalk';
 
 await init();
@@ -78,7 +78,7 @@ function formatBuildErrors(buildErrors: Message[], caller: Transpiler[keyof Tran
         const loc = err.data.location;
         const str = `${$.redBright('error')}${$.gray(':')} ${$.bold(err.data.text)}\n` +
         (loc
-            ? `${highlightErrorChar(loc.line_text, loc.offset)}\n` +
+            ? `${highlightErrorChar(loc.line_text, loc.column)}\n` +
                 $.redBright.bold('^'.padStart(loc.column)) + '\n' +
                 `${$.bold(loc.file)}${$.gray(':')}${$.yellowBright(loc.line)}${$.gray(':')}${$.yellowBright(loc.column)} ${$.gray(loc.offset)}`
             : ''

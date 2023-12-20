@@ -1,6 +1,5 @@
 import type jsc from 'bun:jsc';
 import v8 from 'node:v8';
-//import { setRandomSeed, getRandomSeed } from './mathrandom.js';
 import { NotImplementedError, getCallSites } from '../utils/errors.js';
 import { gc } from './bun.js';
 
@@ -8,10 +7,13 @@ const STUB = () => void 0;
 
 function jscSerialize(value: any, options?: { binaryType: 'nodebuffer'; }): Buffer;
 function jscSerialize(value: any, options?: { binaryType?: 'arraybuffer'; }): SharedArrayBuffer;
-function jscSerialize(value: any, options?: { binaryType?: string }): Buffer | SharedArrayBuffer {
-    const serialized = v8.serialize(value);
+function jscSerialize(value: any, options?: { binaryType?: string; }): Buffer | SharedArrayBuffer {
+    const serialized = v8.serialize(value instanceof SharedArrayBuffer ? new Uint8Array(value) : value);
     if (options?.binaryType === 'nodebuffer') return serialized;
-    else return new SharedArrayBuffer(serialized.byteLength);
+    const sab = new SharedArrayBuffer(serialized.byteLength);
+    const sabView = new Uint8Array(sab);
+    sabView.set(serialized);
+    return sab;
 }
 // TODO: Investigate ways of making these the actual JSC serialization format (probably Bun WASM)
 // TODO: whilst this works for common use-cases like Node <-> Node it still does not make it
@@ -59,9 +61,6 @@ export const startRemoteDebugger = STUB satisfies typeof jsc.startRemoteDebugger
 //! this is a really poor polyfill but it's better than nothing
 export const getProtectedObjects = (() => { return [globalThis]; }) satisfies typeof jsc.getProtectedObjects;
 
-export const getRandomSeed = 0; // TODO
-export const setRandomSeed = 0; // TODO
-
 export const heapSize = (() => { return v8.getHeapStatistics().used_heap_size; }) satisfies typeof jsc.heapSize;
 export const heapStats = (() => {
     const stats = v8.getHeapStatistics();
@@ -83,7 +82,7 @@ export const isRope = (() => false) satisfies typeof jsc.isRope;
 
 export const memoryUsage = (() => {
     const stats = v8.getHeapStatistics();
-    const resUse = process.resourceUsage();
+    const resUse = (process as unknown as NodeJS.Process).resourceUsage();
     return {
         current: stats.malloced_memory,
         peak: stats.peak_malloced_memory,
@@ -106,6 +105,8 @@ export const reoptimizationRetryCount = ((...args) => args.length ? 0 : void 0 a
 export const profile = (() => {
     throw new NotImplementedError('jsc.profile is not polyfillable', STUB, true);
 }) satisfies typeof jsc.profile;
-export const optimizeNextInvocation = (() => {
-    throw new NotImplementedError('jsc.optimizeNextInvocation is not polyfillable', STUB, true);
-}) satisfies typeof jsc.optimizeNextInvocation;
+export const optimizeNextInvocation = STUB satisfies typeof jsc.optimizeNextInvocation; // no-op
+
+export { setRandomSeed, getRandomSeed } from '../global/mathrandom.js';
+
+export * as default from './jsc.js';

@@ -80,7 +80,7 @@ it("Bun.file not found returns ENOENT", async () => {
   await gcTick();
 });
 
-it("Bun.write file not found returns ENOENT, issue#6336", async () => {
+it("Bun.write file not found returns ENOENT, issue #6336", async () => {
   const dst = Bun.file(path.join(tmpdir(), "does/not/exist.txt"));
   try {
     await gcTick();
@@ -330,7 +330,7 @@ it("#2674", async () => {
   const file = path.join(import.meta.dir, "big-stdout.js");
 
   const { stderr, stdout, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "run", file],
+    cmd: [bunExe(), ...process.execArgv, file],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -359,13 +359,13 @@ if (process.platform === "linux") {
       const dest = join(tempdir, "Bun.write.dest.blob");
 
       try {
-        fs.writeFileSync(src, buffer.buffer);
+        fs.writeFileSync(src, buffer);
 
         expect(fs.existsSync(dest)).toBe(false);
 
         const { exitCode } = Bun.spawnSync({
           stdio: ["inherit", "inherit", "inherit"],
-          cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
+          cmd: [bunExe(), ...process.execArgv, join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
           env: {
             ...bunEnv,
             BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
@@ -394,13 +394,13 @@ if (process.platform === "linux") {
       const dest = join(tempdir, "Bun.write.dest.blob");
 
       try {
-        fs.writeFileSync(src, buffer.buffer);
+        fs.writeFileSync(src, buffer);
 
         expect(fs.existsSync(dest)).toBe(false);
 
         const { exitCode } = Bun.spawnSync({
           stdio: ["inherit", "inherit", "inherit"],
-          cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
+          cmd: [bunExe(), ...process.execArgv, join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
           env: {
             ...bunEnv,
             BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
@@ -426,7 +426,7 @@ describe("ENOENT", () => {
         await Bun.write(file, "contents", ...opts);
         expect(fs.existsSync(file)).toBe(true);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { force: true, recursive: true });
       }
     });
   };
@@ -441,8 +441,8 @@ describe("ENOENT", () => {
       const dir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/ENOENT`;
       const file = join(dir, "file");
       try {
-        expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
-          "No such file or directory",
+        expect(async () => await Bun.write(file, "contents", { createPath: false })).rejects.toThrow(
+          process.env.BUN_POLYFILLS_TEST_RUNNER ? /^ENOENT:/ : "No such file or directory",
         );
         expect(fs.existsSync(file)).toBe(false);
       } finally {
@@ -452,9 +452,15 @@ describe("ENOENT", () => {
 
     it("throws when given a file descriptor", async () => {
       const file = Bun.file(123);
-      expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
-        "Cannot create a directory for a file descriptor",
-      );
+      if (process.env.BUN_POLYFILLS_TEST_RUNNER) {
+        expect(async () => await Bun.write(file, "contents", { createPath: true })).rejects.toThrow(
+          "Cannot create a directory for a file descriptor",
+        );
+      } else {
+        expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+          "Cannot create a directory for a file descriptor",
+        );
+      }
     });
   });
 });

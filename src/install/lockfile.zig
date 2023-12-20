@@ -1128,6 +1128,8 @@ pub const Printer = struct {
     }
 
     pub const Tree = struct {
+        /// - Prints an empty newline with no diffs
+        /// - Prints a leading and trailing blank newline with diffs
         pub fn print(
             this: *Printer,
             comptime Writer: type,
@@ -1154,6 +1156,9 @@ pub const Printer = struct {
             visited.set(0);
             const end = @as(PackageID, @truncate(resolved.len));
 
+            try writer.writeAll("\n");
+
+            var had_printed_new_install = false;
             if (this.successfully_installed) |installed| {
                 var dep_id = resolutions_list[0].off;
                 const dep_end = dep_id + resolutions_list[0].len;
@@ -1178,6 +1183,10 @@ pub const Printer = struct {
                     }
 
                     if (!installed.isSet(package_id)) continue;
+
+                    if (!had_printed_new_install) {
+                        had_printed_new_install = true;
+                    }
 
                     if (PackageManager.instance.formatLaterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
                         const fmt = comptime brk: {
@@ -1242,12 +1251,16 @@ pub const Printer = struct {
                 }
             }
 
-            if (this.updates.len > 0) {
+            if (had_printed_new_install) {
                 try writer.writeAll("\n");
             }
 
+            if (bun.Environment.allow_assert) had_printed_new_install = false;
+
             for (id_map) |dependency_id| {
                 if (dependency_id == invalid_package_id) continue;
+                if (bun.Environment.allow_assert) had_printed_new_install = true;
+
                 const name = dependencies_buffer[dependency_id].name;
                 const package_id = resolutions_buffer[dependency_id];
                 const bin = bins[package_id];
@@ -1256,16 +1269,10 @@ pub const Printer = struct {
 
                 switch (bin.tag) {
                     .none, .dir => {
-                        const fmt = comptime brk: {
-                            if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                            } else {
-                                break :brk Output.prettyFmt("<r> installed {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                            }
-                        };
+                        const fmt = comptime Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
 
                         try writer.print(
-                            comptime Output.prettyFmt(fmt, enable_ansi_colors),
+                            fmt,
                             .{
                                 package_name,
                                 resolved[package_id].fmt(string_buf),
@@ -1280,16 +1287,10 @@ pub const Printer = struct {
                             .extern_string_buf = this.lockfile.buffers.extern_strings.items,
                         };
 
-                        const fmt = comptime brk: {
-                            if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> <green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
-                            } else {
-                                break :brk Output.prettyFmt("<r> installed {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
-                            }
-                        };
+                        const fmt = comptime Output.prettyFmt("<r> <green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
 
                         try writer.print(
-                            comptime Output.prettyFmt(fmt, enable_ansi_colors),
+                            fmt,
                             .{
                                 package_name,
                                 resolved[package_id].fmt(string_buf),
@@ -1307,6 +1308,11 @@ pub const Printer = struct {
                     },
                 }
             }
+
+            // updates.len > 0 is a simpler check than to keep track of a boolean
+            // this assert ensures it is accurate.
+            if (bun.Environment.allow_assert)
+                std.debug.assert(had_printed_new_install == (this.updates.len > 0));
 
             if (this.updates.len > 0) {
                 try writer.writeAll("\n");

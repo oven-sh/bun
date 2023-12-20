@@ -1889,9 +1889,12 @@ pub const PackageManager = struct {
     preallocated_network_tasks: PreallocatedNetworkTasks = .{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
+
+    /// items are only inserted into this if they took more than 500ms
+    lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
+
     pending_lifecycle_script_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     finished_installing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
     total_scripts: usize = 0,
 
     root_lifecycle_scripts: ?Package.Scripts.List = null,
@@ -1941,6 +1944,56 @@ pub const PackageManager = struct {
 
     const TimePasser = struct {
         pub var last_time: c_longlong = -1;
+    };
+
+    pub const LifecycleScriptTimeLog = struct {
+        const Entry = struct {
+            package_name: []const u8,
+            script_id: u8,
+
+            // nanosecond duration
+            duration: u64,
+        };
+
+        mutex: std.Thread.Mutex = .{},
+        list: std.ArrayListUnmanaged(Entry) = .{},
+
+        pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
+            log.mutex.lock();
+            defer log.mutex.unlock();
+            log.list.append(allocator, entry) catch bun.outOfMemory();
+        }
+
+        /// this can be called if .start was never called
+        pub fn printAndDeinit(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator) void {
+            if (Environment.isDebug) {
+                if (!log.mutex.tryLock()) @panic("LifecycleScriptTimeLog.print is not intended to be thread-safe");
+                log.mutex.unlock();
+            }
+
+            if (log.list.items.len > 0) {
+                const longest: Entry = longest: {
+                    var i: usize = 0;
+                    var longest: u64 = log.list.items[0].duration;
+                    for (log.list.items[1..], 1..) |item, j| {
+                        if (item.duration > longest) {
+                            i = j;
+                            longest = item.duration;
+                        }
+                    }
+                    break :longest log.list.items[i];
+                };
+
+                // extra \n will print a blank line after this one
+                Output.warn("{s}'s {s} script took {}\n\n", .{
+                    longest.package_name,
+                    Lockfile.Scripts.names[longest.script_id],
+                    bun.fmt.fmtDurationOneDecimal(longest.duration),
+                });
+                Output.flush();
+            }
+            log.list.deinit(allocator);
+        }
     };
 
     pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
@@ -2466,7 +2519,7 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        var bytes: string = "#!/usr/bin/env sh\nbun x node-gyp \"$@\"";
+        var bytes: string = "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})";
         var index: usize = 0;
         while (index < bytes.len) {
             switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
@@ -2486,16 +2539,21 @@ pub const PackageManager = struct {
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
-        try PATH.appendSlice(this.temp_dir_name);
+        try PATH.appendSlice(strings.withoutTrailingSlash(this.temp_dir_name));
         try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const path_to_ignore = try std.fmt.bufPrint(&path_buf, "{s}" ++ &[_]u8{std.fs.path.sep} ++ "{s}", .{
+        const node_gyp_abs_dir = try bun.fmt.bufPrint(&path_buf, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
-            this.node_gyp_tempdir_name,
+            strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
         });
-        try this.env.map.put("BUN_WHICH_IGNORE_CWD", try this.allocator.dupe(u8, path_to_ignore));
+        try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
+
+        path_buf[node_gyp_abs_dir.len] = std.fs.path.sep;
+        @memcpy(path_buf[node_gyp_abs_dir.len + 1 ..][0.."node-gyp".len], "node-gyp");
+        const npm_config_node_gyp = path_buf[0 .. node_gyp_abs_dir.len + 1 + "node-gyp".len];
+        try this.env.map.putAllocKeyAndValue(this.allocator, "npm_config_node_gyp", npm_config_node_gyp);
     }
 
     pub var instance: PackageManager = undefined;
@@ -8482,6 +8540,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
+
         var skip_delete = skip_verify_installed_version_number;
 
         if (options.enable.force_install) {
@@ -8497,6 +8556,7 @@ pub const PackageManager = struct {
             //     }
             // }
         }
+
         var summary = PackageInstall.Summary{};
 
         {
@@ -9276,6 +9336,8 @@ pub const PackageManager = struct {
                     },
                 }
 
+                manager.lifecycle_script_time_log.printAndDeinit(manager.lockfile.allocator);
+
                 if (!did_meta_hash_change) {
                     manager.summary.remove = 0;
                     manager.summary.add = 0;
@@ -9291,7 +9353,7 @@ pub const PackageManager = struct {
                             @truncate(manager.package_json_updates.len),
                         ),
                     );
-                    Output.pretty("\n <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
+                    Output.pretty(" <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
@@ -9306,13 +9368,11 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    Output.pretty("\n <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+                    Output.pretty(" <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
-                    Output.pretty("\n", .{});
-
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
                         Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
@@ -9361,26 +9421,18 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        var uses_node_gyp = false;
         var any_scripts = false;
-        for (list.items) |_item| {
-            if (_item) |item| {
+        for (list.items) |maybe_item| {
+            if (maybe_item != null) {
                 any_scripts = true;
-                // to be safe, add the temporary script for any usage
-                // of the string `node-gyp`.
-                if (strings.containsComptime(item.script, "node-gyp")) {
-                    uses_node_gyp = true;
-                    break;
-                }
+                break;
             }
         }
         if (!any_scripts) {
             return;
         }
 
-        if (uses_node_gyp) {
-            try this.ensureTempNodeGypScript();
-        }
+        try this.ensureTempNodeGypScript();
 
         const cwd = list.first().cwd;
         const this_bundler = try this.configureEnvForScripts(ctx, log_level);
@@ -9413,7 +9465,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
     }
 };
 

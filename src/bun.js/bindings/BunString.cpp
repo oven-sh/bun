@@ -92,13 +92,6 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     return JSValue(Zig::toJSStringGC(bunString.impl.zig, globalObject));
 }
 
-// JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t length)
-// {
-//     if (bunString.tag == BunStringTag::WTFStringImpl) {
-//         ASSERT(bunString.impl.wtf->refCount() > 0 && !bunString.impl.wtf->isEmpty());
-//     }
-//     return jsSubstring(globalObject, jsUndefined(), bunString.toWTFString(BunString::ZeroCopy), 0, length);
-// }
 BunString toString(const char* bytes, size_t length)
 {
     return BunString__fromBytes(bytes, length);

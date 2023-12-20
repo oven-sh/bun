@@ -425,12 +425,12 @@ pub const RuntimeTranspilerCache = struct {
     pub var is_disabled = false;
 
     fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
-        if (is_disabled) return error.Disabled;
+        if (is_disabled) return error.CacheDisabled;
         const path = runtime_transpiler_cache orelse path: {
             const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
             if (path.len == 0) {
                 is_disabled = true;
-                return error.Disabled;
+                return error.CacheDisabled;
             }
             runtime_transpiler_cache = path;
             break :path path;
@@ -452,9 +452,7 @@ pub const RuntimeTranspilerCache = struct {
 
         var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
-        if (cache_file_path.len == 0) {
-            return error.CacheDisabled;
-        }
+        std.debug.assert(cache_file_path.len > 0);
         return fromFileWithCacheFilePath(
             bun.PathString.init(cache_file_path),
             input_hash,

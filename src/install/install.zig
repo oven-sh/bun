@@ -2519,7 +2519,7 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        var bytes: string = "#!/usr/bin/env sh\nbun x node-gyp \"$@\"";
+        var bytes: string = "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})";
         var index: usize = 0;
         while (index < bytes.len) {
             switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
@@ -2539,16 +2539,21 @@ pub const PackageManager = struct {
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
-        try PATH.appendSlice(this.temp_dir_name);
+        try PATH.appendSlice(strings.withoutTrailingSlash(this.temp_dir_name));
         try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const path_to_ignore = try std.fmt.bufPrint(&path_buf, "{s}" ++ &[_]u8{std.fs.path.sep} ++ "{s}", .{
+        const node_gyp_abs_dir = try bun.fmt.bufPrint(&path_buf, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
-            this.node_gyp_tempdir_name,
+            strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
         });
-        try this.env.map.put("BUN_WHICH_IGNORE_CWD", try this.allocator.dupe(u8, path_to_ignore));
+        try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
+
+        path_buf[node_gyp_abs_dir.len] = std.fs.path.sep;
+        @memcpy(path_buf[node_gyp_abs_dir.len + 1 ..][0.."node-gyp".len], "node-gyp");
+        const npm_config_node_gyp = path_buf[0 .. node_gyp_abs_dir.len + 1 + "node-gyp".len];
+        try this.env.map.putAllocKeyAndValue(this.allocator, "npm_config_node_gyp", npm_config_node_gyp);
     }
 
     pub var instance: PackageManager = undefined;
@@ -8535,6 +8540,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
+
         var skip_delete = skip_verify_installed_version_number;
 
         if (options.enable.force_install) {
@@ -8550,6 +8556,7 @@ pub const PackageManager = struct {
             //     }
             // }
         }
+
         var summary = PackageInstall.Summary{};
 
         {
@@ -9414,25 +9421,18 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        var uses_node_gyp = false;
         var any_scripts = false;
         for (list.items) |maybe_item| {
-            if (maybe_item) |item| {
+            if (maybe_item != null) {
                 any_scripts = true;
-                // to be safe, add the temporary script for any usage
-                // of the string `node-gyp`.
-                if (strings.containsComptime(item.script, "node-gyp")) {
-                    uses_node_gyp = true;
-                    break;
-                }
+                break;
             }
         }
         if (!any_scripts) {
             return;
         }
-        if (uses_node_gyp) {
-            try this.ensureTempNodeGypScript();
-        }
+
+        try this.ensureTempNodeGypScript();
 
         const cwd = list.first().cwd;
         const this_bundler = try this.configureEnvForScripts(ctx, log_level);
@@ -9465,7 +9465,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
     }
 };
 

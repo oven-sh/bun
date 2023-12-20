@@ -1198,7 +1198,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   expect(await file(join(package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
   expect(await file(join(package_dir, "foo2.txt")).text()).toBe("foo2!");
@@ -1350,7 +1350,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   expect(await file(join(package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
   expect(await file(join(package_dir, "foo.txt")).text()).toBe("foo!");

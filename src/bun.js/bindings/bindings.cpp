@@ -294,7 +294,8 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                         JSValue otherValue = otherArray->getIndex(globalObject, n);
                         ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                         Vector<std::pair<JSValue, JSValue>, 16> stack;
-                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                        MarkedArgumentBuffer gcBuffer;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, &scope, true)) {
                             found = true;
                             break;
                         }
@@ -443,7 +444,7 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
+bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
 
@@ -486,8 +487,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     RELEASE_ASSERT(v1.isCell());
     RELEASE_ASSERT(v2.isCell());
 
-    size_t length = stack.size();
-    size_t originalLength = length;
+    const size_t length = stack.size();
+    const auto originalGCBufferSize = gcBuffer.size();
     for (size_t i = 0; i < length; i++) {
         auto values = stack.at(i);
         if (JSC::JSValue::strictEqual(globalObject, values.first, v1)) {
@@ -497,9 +498,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if (addToStack) {
+        gcBuffer.append(v1);
+        gcBuffer.append(v2);
         stack.append({ v1, v2 });
     }
-    auto removeFromStack = WTF::makeScopeExit([&] { if (addToStack) { stack.remove(originalLength); } });
+    auto removeFromStack = WTF::makeScopeExit([&] {
+        if (addToStack) {
+            stack.remove(length);
+            while (gcBuffer.size() > originalGCBufferSize)
+                gcBuffer.removeLast();
+        }
+    });
 
     JSCell* c1 = v1.asCell();
     JSCell* c2 = v2.asCell();
@@ -524,8 +533,59 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
+        bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
+
+        // This code is loosely based on
+        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
+            auto* bucket = set1->head();
+            while (bucket) {
+                if (!bucket->deleted()) {
+                    auto key = bucket->key();
+                    RETURN_IF_EXCEPTION(*scope, false);
+                    auto** bucket2ptr = set2->findBucket(globalObject, key);
+
+                    if (bucket2ptr && (*bucket2ptr)->deleted()) {
+                        bucket2ptr = nullptr;
+                    }
+
+                    if (!bucket2ptr) {
+                        auto findDeepEqualKey = [&]() -> bool {
+                            auto* bucket = set2->head();
+                            while (bucket) {
+                                if (!bucket->deleted()) {
+                                    auto key2 = bucket->key();
+                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+                                        return true;
+                                    }
+                                }
+                                bucket = bucket->next();
+                            }
+
+                            return false;
+                        };
+
+                        if (!findDeepEqualKey()) {
+                            return false;
+                        }
+                    }
+                }
+                bucket = bucket->next();
+            }
+
+            return true;
+        }
+
+        // This code path can be triggered when it is a class that extends from Set.
+        //
+        //    class MySet extends Set {}
+        //
         IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
         bool isEqual = true;
+
+        // https://github.com/oven-sh/bun/issues/7736
+        DeferGC deferGC(vm);
+
         while (true) {
             JSValue next1 = iteratorStep(globalObject, iterationRecord1);
             if (next1.isFalse()) {
@@ -547,7 +607,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(*scope, false);
 
                 // set has unique values, no need to count
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, stack, scope, false)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
                     found = true;
                     if (!nextValue1.isPrimitive()) {
                         stack.append({ nextValue1, nextValue2 });
@@ -581,8 +641,67 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
+        bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
+
+        // This code is loosely based on
+        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
+            auto* bucket = map1->head();
+            while (bucket) {
+                if (!bucket->deleted()) {
+                    auto key = bucket->key();
+                    auto value = bucket->value();
+                    RETURN_IF_EXCEPTION(*scope, false);
+                    auto** bucket2ptr = map2->findBucket(globalObject, key);
+                    JSMap::BucketType* bucket2 = nullptr;
+
+                    if (bucket2ptr) {
+                        bucket2 = *bucket2ptr;
+
+                        if (bucket2->deleted()) {
+                            bucket2 = nullptr;
+                        }
+                    }
+
+                    if (!bucket2) {
+                        auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
+                            auto* bucket = map2->head();
+                            while (bucket) {
+                                if (!bucket->deleted()) {
+                                    auto key2 = bucket->key();
+                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+                                        return bucket;
+                                    }
+                                }
+                                bucket = bucket->next();
+                            }
+
+                            return nullptr;
+                        };
+
+                        bucket2 = findDeepEqualKey();
+                    }
+
+                    if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
+                        return false;
+                    }
+                }
+                bucket = bucket->next();
+            }
+
+            return true;
+        }
+
+        // This code path can be triggered when it is a class that extends from Map.
+        //
+        //    class MyMap extends Map {}
+        //
         IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
         bool isEqual = true;
+
+        // https://github.com/oven-sh/bun/issues/7736
+        DeferGC deferGC(vm);
+
         while (true) {
             JSValue next1 = iteratorStep(globalObject, iterationRecord1);
             if (next1.isFalse()) {
@@ -605,8 +724,11 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             RETURN_IF_EXCEPTION(*scope, false);
 
             bool found = false;
+
             IterationRecord iterationRecord2 = iteratorForIterable(globalObject, v2);
+
             while (true) {
+
                 JSValue next2 = iteratorStep(globalObject, iterationRecord2);
                 if (UNLIKELY(next2.isFalse())) {
                     break;
@@ -627,8 +749,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 JSValue value2 = nextValueObject2->getIndex(globalObject, static_cast<unsigned>(1));
                 RETURN_IF_EXCEPTION(*scope, false);
 
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, stack, scope, false)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, stack, scope, false)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
                         found = true;
                         if (!nextValue1.isPrimitive()) {
                             stack.append({ nextValue1, nextValue2 });
@@ -841,7 +963,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                 return false;
             }
 
@@ -896,7 +1018,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
                 return false;
             }
 
@@ -955,7 +1077,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                         result = false;
                         return false;
                     }
@@ -987,7 +1109,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                         result = false;
                         return false;
                     }
@@ -1060,7 +1182,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, stack, scope, true)) {
+        if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
             return false;
         }
 
@@ -1147,7 +1269,8 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
             // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
             if (enableAsymmetricMatchers && isMatchingObjectContaining) {
                 Vector<std::pair<JSValue, JSValue>, 16> stack;
-                if (!Bun__deepEquals<false, true>(globalObject, prop, subsetProp, stack, throwScope, true)) {
+                MarkedArgumentBuffer gcBuffer;
+                if (!Bun__deepEquals<false, true>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true)) {
                     return false;
                 }
             } else {
@@ -1951,7 +2074,8 @@ bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC_
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<false, false>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<false, false>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1961,7 +2085,8 @@ bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, 
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<false, true>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<false, true>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1971,7 +2096,8 @@ bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<true, false>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<true, false>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1981,7 +2107,9 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSVa
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<true, true>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+
+    return Bun__deepEquals<true, true>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)

@@ -16,7 +16,7 @@ if (!(Number.isSafeInteger(BUN_JSC_forceRAMSizeNumber) && BUN_JSC_forceRAMSizeNu
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
-const isAction = !!process.env["GITHUB_ACTION"];
+const isAction = !!process.env["GITHUB_ACTIONS"];
 
 let testList = [];
 if (process.platform == "win32") {
@@ -60,18 +60,18 @@ try {
   console.error(bunExe + " is not installed");
 }
 
-const ntStatusPath = 'C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h';
+const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
 let ntStatusHCached = null;
 function lookupWindowsError(code) {
   if (ntStatusHCached === null) {
     try {
-      ntStatusHCached = readFileSync(ntStatusPath, 'utf-8');
+      ntStatusHCached = readFileSync(ntStatusPath, "utf-8");
     } catch {
       console.error(`could not find ntstatus.h to lookup error code: ${ntStatusPath}`);
-      ntStatusHCached = '';
+      ntStatusHCached = "";
     }
   }
-  const match = ntStatusHCached.match(new RegExp(`(STATUS_\\w+).*0x${code.toString(16)}`, 'i'));
+  const match = ntStatusHCached.match(new RegExp(`(STATUS_\\w+).*0x${code.toString(16)}`, "i"));
   if (match) {
     return match[1];
   }
@@ -97,7 +97,7 @@ async function runTest(path) {
         BUN_JSC_forceRAMSize,
         BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
         // reproduce CI results locally
-        GITHUB_ACTION: process.env.GITHUB_ACTION ?? "true",
+        GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
         BUN_DEBUG_QUIET_LOGS: "1",
       },
     });
@@ -105,11 +105,11 @@ async function runTest(path) {
     console.error(e);
   }
 
-  if(signal) {
+  if (signal) {
     console.error(`Test ${name} was killed by signal ${signal}`);
   }
 
-  if(process.platform === 'win32' && exitCode > 256) {
+  if (process.platform === "win32" && exitCode > 256) {
     console.error(`Test ${name} crashed with exit code ${exitCode.toString(16)} (${lookupWindowsError(exitCode)})`);
   }
 

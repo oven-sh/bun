@@ -100,6 +100,7 @@ it("should remove existing package", async () => {
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + pkg2@${pkg2_path}`,
     "",
     " 1 package installed",

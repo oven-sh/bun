@@ -263,26 +263,6 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub fn spawnPackageScripts(
-        manager: *PackageManager,
-        list: Lockfile.Package.Scripts.List,
-        envp: [:null]?[*:0]u8,
-    ) !void {
-        var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
-        lifecycle_subprocess.scripts = list.items;
-        lifecycle_subprocess.manager = manager;
-        lifecycle_subprocess.envp = envp;
-
-        lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                Lockfile.Scripts.names[list.first_index],
-                @errorName(err),
-            });
-        };
-
-        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
-    }
-
     pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,

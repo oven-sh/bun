@@ -1889,9 +1889,12 @@ pub const PackageManager = struct {
     preallocated_network_tasks: PreallocatedNetworkTasks = .{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
+
+    /// items are only inserted into this if they took more than 500ms
+    lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
+
     pending_lifecycle_script_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     finished_installing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
     total_scripts: usize = 0,
 
     root_lifecycle_scripts: ?Package.Scripts.List = null,
@@ -1941,6 +1944,56 @@ pub const PackageManager = struct {
 
     const TimePasser = struct {
         pub var last_time: c_longlong = -1;
+    };
+
+    pub const LifecycleScriptTimeLog = struct {
+        const Entry = struct {
+            package_name: []const u8,
+            script_id: u8,
+
+            // nanosecond duration
+            duration: u64,
+        };
+
+        mutex: std.Thread.Mutex = .{},
+        list: std.ArrayListUnmanaged(Entry) = .{},
+
+        pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
+            log.mutex.lock();
+            defer log.mutex.unlock();
+            log.list.append(allocator, entry) catch bun.outOfMemory();
+        }
+
+        /// this can be called if .start was never called
+        pub fn printAndDeinit(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator) void {
+            if (Environment.isDebug) {
+                if (!log.mutex.tryLock()) @panic("LifecycleScriptTimeLog.print is not intended to be thread-safe");
+                log.mutex.unlock();
+            }
+
+            if (log.list.items.len > 0) {
+                const longest: Entry = longest: {
+                    var i: usize = 0;
+                    var longest: u64 = log.list.items[0].duration;
+                    for (log.list.items[1..], 1..) |item, j| {
+                        if (item.duration > longest) {
+                            i = j;
+                            longest = item.duration;
+                        }
+                    }
+                    break :longest log.list.items[i];
+                };
+
+                // extra \n will print a blank line after this one
+                Output.warn("{s}'s {s} script took {}\n\n", .{
+                    longest.package_name,
+                    Lockfile.Scripts.names[longest.script_id],
+                    bun.fmt.fmtDurationOneDecimal(longest.duration),
+                });
+                Output.flush();
+            }
+            log.list.deinit(allocator);
+        }
     };
 
     pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
@@ -9276,6 +9329,8 @@ pub const PackageManager = struct {
                     },
                 }
 
+                manager.lifecycle_script_time_log.printAndDeinit(manager.lockfile.allocator);
+
                 if (!did_meta_hash_change) {
                     manager.summary.remove = 0;
                     manager.summary.add = 0;
@@ -9291,7 +9346,7 @@ pub const PackageManager = struct {
                             @truncate(manager.package_json_updates.len),
                         ),
                     );
-                    Output.pretty("\n <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
+                    Output.pretty(" <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
@@ -9306,13 +9361,11 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    Output.pretty("\n <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+                    Output.pretty(" <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
-                    Output.pretty("\n", .{});
-
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
                         Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
@@ -9363,8 +9416,8 @@ pub const PackageManager = struct {
     ) !void {
         var uses_node_gyp = false;
         var any_scripts = false;
-        for (list.items) |_item| {
-            if (_item) |item| {
+        for (list.items) |maybe_item| {
+            if (maybe_item) |item| {
                 any_scripts = true;
                 // to be safe, add the temporary script for any usage
                 // of the string `node-gyp`.
@@ -9377,7 +9430,6 @@ pub const PackageManager = struct {
         if (!any_scripts) {
             return;
         }
-
         if (uses_node_gyp) {
             try this.ensureTempNodeGypScript();
         }

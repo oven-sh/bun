@@ -2592,7 +2592,7 @@ pub const Subprocess = struct {
                     .err => |err| {
                         std.debug.print("waitpid error: {s}\n", .{@tagName(err.getErrno())});
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                            lifecycle_script_subprocess.script_name,
+                            lifecycle_script_subprocess.scriptName(),
                             lifecycle_script_subprocess.package_name,
                             err.errno,
                             @tagName(err.getErrno()),

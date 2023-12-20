@@ -66,6 +66,7 @@ it("should link and unlink workspace package", async () => {
   expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + boba@workspace:packages/boba",
     " + moo@workspace:packages/moo",
     "",
@@ -105,7 +106,6 @@ it("should link and unlink workspace package", async () => {
   expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` installed moo@link:moo`,
-    "",
     "",
     " 1 package installed",
   ]);
@@ -164,7 +164,6 @@ it("should link and unlink workspace package", async () => {
   expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` installed foo@link:foo`,
-    "",
     "",
     " 1 package installed",
   ]);
@@ -248,7 +247,6 @@ it("should link package", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` installed ${link_name}@link:${link_name}`,
-    "",
     "",
     " 1 package installed",
   ]);
@@ -350,7 +348,6 @@ it("should link scoped package", async () => {
     "",
     ` installed ${link_name}@link:${link_name}`,
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
@@ -395,6 +392,7 @@ it("should link scoped package", async () => {
 });
 
 it("should link dependency without crashing", async () => {
+  console.log(link_dir);
   const link_name = basename(link_dir).slice("bun-link.".length) + "-really-long-name";
   await writeFile(
     join(link_dir, "package.json"),
@@ -455,6 +453,7 @@ it("should link dependency without crashing", async () => {
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + ${link_name}@link:${link_name}`,
     "",
     " 1 package installed",
@@ -506,6 +505,11 @@ it("should link dependency without crashing", async () => {
   expect(err4).toContain(`error: FileNotFound installing ${link_name}`);
   expect(stdout4).toBeDefined();
   const out4 = await new Response(stdout4).text();
-  expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["Failed to install 1 package", "[] done", ""]);
+  expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual([
+    "",
+    "Failed to install 1 package",
+    "[] done",
+    "",
+  ]);
   expect(await exited4).toBe(0);
 });

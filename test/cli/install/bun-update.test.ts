@@ -65,6 +65,7 @@ it("should update to latest version of dependency", async () => {
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + baz@0.0.3",
     "",
     " 1 package installed",
@@ -111,7 +112,6 @@ it("should update to latest version of dependency", async () => {
     "",
     " installed baz@0.0.5 with binaries:",
     "  - baz-exec",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -178,6 +178,7 @@ it("should update to latest versions of dependencies", async () => {
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + @barn/moo@0.1.0",
     " + baz@0.0.3",
     "",
@@ -229,6 +230,7 @@ it("should update to latest versions of dependencies", async () => {
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + @barn/moo@0.1.0",
     " + baz@0.0.5",
     "",
@@ -294,6 +296,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
   expect(stdout).toBeDefined();
   const out1 = await new Response(stdout).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + baz@0.0.3",
     "",
     " 1 package installed",

@@ -92,6 +92,8 @@ jobs:
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
             CANARY=${{ env.canary == 'true' && steps.canary.outputs.canary_revision || '0' }}
+            ZIG_OPTIMIZE=ReleaseSafe
+          # TODO(@paperdave): enable ASSERTIONS=1
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release

@@ -1,6 +1,6 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { rmSync, writeFileSync } from "fs";
+import { rmSync, writeFileSync, readFileSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { totalmem } from "os";
@@ -34,7 +34,7 @@ function isTest(path) {
     return false;
   }
   if (testList.length > 0) {
-    return testList.some(testPattern => name.includes(testPattern));
+    return testList.some(testPattern => path.includes(testPattern));
   }
   return true;
 }
@@ -60,6 +60,24 @@ try {
   console.error(bunExe + " is not installed");
 }
 
+const ntStatusPath = 'C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h';
+let ntStatusHCached = null;
+function lookupWindowsError(code) {
+  if (ntStatusHCached === null) {
+    try {
+      ntStatusHCached = readFileSync(ntStatusPath, 'utf-8');
+    } catch {
+      console.error(`could not find ntstatus.h to lookup error code: ${ntStatusPath}`);
+      ntStatusHCached = '';
+    }
+  }
+  const match = ntStatusHCached.match(new RegExp(`(STATUS_\\w+).*0x${code.toString(16)}`, 'i'));
+  if (match) {
+    return match[1];
+  }
+  return `unknown`;
+}
+
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
   try {
@@ -67,6 +85,7 @@ async function runTest(path) {
       stdout,
       stderr,
       status: exitCode,
+      signal,
       error: timedOut,
     } = spawnSync(bunExe, ["test", resolve(path)], {
       stdio: "inherit",
@@ -84,6 +103,14 @@ async function runTest(path) {
     });
   } catch (e) {
     console.error(e);
+  }
+
+  if(signal) {
+    console.error(`Test ${name} was killed by signal ${signal}`);
+  }
+
+  if(process.platform === 'win32' && exitCode > 256) {
+    console.error(`Test ${name} crashed with exit code ${exitCode.toString(16)} (${lookupWindowsError(exitCode)})`);
   }
 
   const passed = exitCode === 0 && !timedOut;

@@ -906,7 +906,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC -O0)
+        target_compile_options(${bun} PUBLIC /Od)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")

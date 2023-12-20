@@ -272,8 +272,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
 {
     JSC::VM& vm = globalObject->vm();
 
-    RELEASE_ASSERT(callFrame->argumentCount() == 1);
-    JSPromise* promise = jsCast<JSC::JSPromise*>(callFrame->argument(0));
+    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(callFrame->argument(0));
     RELEASE_ASSERT(promise);
 
     promise->resolve(globalObject, JSC::jsUndefined());

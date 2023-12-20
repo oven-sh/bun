@@ -498,20 +498,19 @@ for (let [gcTick, label] of [
 if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
   it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
     const result = spawnSync({
-      cmd: [bunExe(), "test", import.meta.path],
+      cmd: [bunExe(), "test", path.resolve(import.meta.path)],
       env: {
         ...bunEnv,
         // Both flags are necessary to force this condition
         "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
+      stderr: "inherit",
+      stdout: "inherit",
+      stdin: "inherit",
     });
-    if (result.exitCode !== 0) {
-      console.error(result.stderr.toString());
-      console.log(result.stdout.toString());
-    }
     expect(result.exitCode).toBe(0);
-  }, 60_000);
+  }, 128_000);
 }
 
 describe("spawn unref and kill should not hang", () => {

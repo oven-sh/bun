@@ -813,7 +813,7 @@ pub const RunCommand = struct {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
-                                    if (!strings.endsWithChar(value.dir, std.fs.path.sep)) {
+                                    if (!strings.endsWithCharOrIsZeroLength(value.dir, std.fs.path.sep)) {
                                         dir_slice = path_buf[0 .. value.dir.len + 1];
                                     }
                                     has_copied = true;

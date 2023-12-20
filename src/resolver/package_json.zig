@@ -1753,7 +1753,7 @@ pub const ESModule = struct {
                         log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
                     }
 
-                    const status: Status = if (strings.endsWithChar(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
+                    const status: Status = if (strings.endsWithCharOrIsZeroLength(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
                         .ExactEndsWithStar
                     else
                         .Exact;
@@ -1937,7 +1937,7 @@ pub const ESModule = struct {
         if (match_obj.data != .map) return null;
         const map = match_obj.data.map;
 
-        if (!strings.endsWithChar(query, "*")) {
+        if (!strings.endsWithCharOrIsZeroLength(query, "*")) {
             var slices = map.list.slice();
             const keys = slices.items(.key);
             const values = slices.items(.value);
@@ -1949,7 +1949,7 @@ pub const ESModule = struct {
         }
 
         for (map.expansion_keys) |expansion| {
-            if (strings.endsWithChar(expansion.key, '*')) {
+            if (strings.endsWithCharOrIsZeroLength(expansion.key, '*')) {
                 if (r.resolveTargetReverse(query, expansion.key, expansion.value, .pattern)) |result| {
                     return result;
                 }

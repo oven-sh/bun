@@ -145,6 +145,7 @@ myCustomName {
 [ 1, 2, empty item ]
 [ 1, 2, 3 ]
 [ 2 x empty items, 3 ]
+[ 1, 2 x empty items ]
 [
   1, 2, empty item, 4, 38 x empty items
 ]

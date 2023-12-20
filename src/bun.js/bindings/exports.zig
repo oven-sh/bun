@@ -2348,19 +2348,18 @@ pub const ZigConsoleClient = struct {
                             }
 
                             if (empty_start) |empty| {
+                                if (empty > 0) {
+                                    this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                                    if (this.ordered_properties or this.goodTimeForANewLine()) {
+                                        was_good_time = true;
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch unreachable;
+                                    } else {
+                                        writer.space();
+                                    }
+                                }
                                 const empty_count = i - empty;
                                 if (empty_count == 1) {
-                                    if (i > 1) {
-                                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                                        if (this.ordered_properties or this.goodTimeForANewLine()) {
-                                            was_good_time = true;
-                                            writer.writeAll("\n");
-                                            this.writeIndent(Writer, writer_) catch unreachable;
-                                        } else {
-                                            writer.space();
-                                        }
-                                    }
-
                                     writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
                                 } else {
                                     this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);

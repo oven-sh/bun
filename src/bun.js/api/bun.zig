@@ -3427,8 +3427,8 @@ pub const Timer = struct {
                 var timeout = Timeout{
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
-                    .timer = uws.Timer.create(
-                        vm.uwsLoop(),
+                    .timer = Timeout.TimerReference.create(
+                        vm.eventLoop(),
                         id,
                     ),
                 };
@@ -3450,12 +3450,7 @@ pub const Timer = struct {
 
                 map.put(vm.allocator, this.id, timeout) catch unreachable;
 
-                timeout.timer.set(
-                    id,
-                    Timeout.run,
-                    this.interval,
-                    @as(i32, @intFromBool(this.kind == .setInterval)) * this.interval,
-                );
+                timeout.timer.?.schedule(this.interval);
                 return this_value;
             }
             return JSValue.jsUndefined();
@@ -3503,11 +3498,109 @@ pub const Timer = struct {
     pub const Timeout = struct {
         callback: JSC.Strong = .{},
         globalThis: *JSC.JSGlobalObject,
-        timer: *uws.Timer,
+        timer: ?*TimerReference = null,
         did_unref_timer: bool = false,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         arguments: JSC.Strong = .{},
         has_scheduled_job: bool = false,
+
+        pub const TimerReference = struct {
+            id: ID = .{ .id = 0 },
+            cancelled: bool = false,
+
+            event_loop: *JSC.EventLoop,
+            timer: bun.io.Timer = .{
+                .tag = .TimerReference,
+                .next = std.mem.zeroes(std.os.timespec),
+            },
+            request: bun.io.Request = .{
+                .callback = &onRequest,
+            },
+            interval: i32 = -1,
+            concurrent_task: JSC.ConcurrentTask = undefined,
+
+            pub const Pool = bun.HiveArray(TimerReference, 1024).Fallback;
+
+            fn onRequest(req: *bun.io.Request) bun.io.Action {
+                var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
+                if (this.timer.state == .CANCELLED) {
+                    this.deinit();
+                    return bun.io.Action{
+                        .timer_cancelled = {},
+                    };
+                }
+                return bun.io.Action{
+                    .timer = &this.timer,
+                };
+            }
+
+            pub fn callback(this: *TimerReference) bun.io.Timer.Arm {
+                _ = this;
+
+                // TODO:
+                return .{ .disarm = {} };
+            }
+
+            pub fn runFromJSThread(this: *TimerReference) void {
+                const timer_id = this.id;
+                const vm = this.event_loop.virtual_machine;
+
+                if (this.cancelled) {
+                    this.deinit();
+                    return;
+                }
+                if (Timeout.runFromConcurrentTask(timer_id, vm) and !this.cancelled) {
+                    this.request = .{
+                        .callback = &onRequest,
+                    };
+                    this.schedule(null);
+                } else {
+                    this.deinit();
+                }
+            }
+
+            pub fn deinit(this: *TimerReference) void {
+                this.event_loop.timerReferencePool().put(this);
+            }
+
+            pub fn create(event_loop: *JSC.EventLoop, id: ID) *TimerReference {
+                const timer = event_loop.timerReferencePool().get();
+                timer.* = .{
+                    .id = id,
+                    .event_loop = event_loop,
+                };
+                return timer;
+            }
+
+            pub fn schedule(this: *TimerReference, interval: ?i32) void {
+                std.debug.assert(!this.cancelled);
+                this.timer.state = .PENDING;
+                this.timer.next = msToTimespec(@intCast(@max(interval orelse this.interval, 1)));
+                bun.io.Loop.get().schedule(&this.request);
+            }
+
+            fn msToTimespec(ms: usize) std.os.timespec {
+                var now: std.os.timespec = undefined;
+                // std.time.Instant.now uses a different clock on macOS than monotonic
+                bun.io.Loop.updateTimespec(&now);
+
+                var increment = std.os.timespec{
+                    // nanosecond from ms milliseconds
+                    .tv_nsec = @intCast((ms % std.time.ms_per_s) *| std.time.ns_per_ms),
+                    .tv_sec = @intCast(ms / std.time.ms_per_s),
+                };
+
+                increment.tv_nsec +|= now.tv_nsec;
+                increment.tv_sec +|= now.tv_sec;
+
+                if (increment.tv_nsec >= std.time.ns_per_s) {
+                    increment.tv_nsec -= std.time.ns_per_s;
+                    increment.tv_sec +|= 1;
+                }
+
+                return increment;
+            }
+        };
 
         pub const Kind = enum(u32) {
             setTimeout,
@@ -3535,8 +3628,99 @@ pub const Timer = struct {
 
             // use the threadlocal despite being slow on macOS
             // to handle the timeout being cancelled after already enqueued
-            var vm = JSC.VirtualMachine.get();
+            const vm = JSC.VirtualMachine.get();
 
+            runWithIDAndVM(timer_id, vm);
+        }
+
+        pub fn runFromConcurrentTask(timer_id: ID, vm: *JSC.VirtualMachine) bool {
+            const repeats = timer_id.repeats();
+
+            var map = vm.timer.maps.get(timer_id.kind);
+
+            const this_: ?Timeout = map.get(
+                timer_id.id,
+            ) orelse return false;
+            var this = this_ orelse
+                return false;
+
+            const globalThis = this.globalThis;
+
+            // Disable thundering herd of setInterval() calls
+            // Skip setInterval() calls when the previous one has not been run yet.
+            if (repeats and this.has_scheduled_job) {
+                return false;
+            }
+
+            const cb: CallbackJob = .{
+                .callback = if (repeats)
+                    JSC.Strong.create(
+                        this.callback.get() orelse {
+                            // if the callback was freed, that's an error
+                            if (comptime Environment.allow_assert)
+                                unreachable;
+
+                            this.deinit();
+                            _ = map.swapRemove(timer_id.id);
+                            return false;
+                        },
+                        globalThis,
+                    )
+                else
+                    this.callback,
+                .arguments = if (repeats and this.arguments.has())
+                    JSC.Strong.create(
+                        this.arguments.get() orelse {
+                            // if the arguments freed, that's an error
+                            if (comptime Environment.allow_assert)
+                                unreachable;
+
+                            this.deinit();
+                            _ = map.swapRemove(timer_id.id);
+                            return false;
+                        },
+                        globalThis,
+                    )
+                else
+                    this.arguments,
+                .globalThis = globalThis,
+                .id = timer_id.id,
+                .kind = timer_id.kind,
+            };
+
+            var reschedule = false;
+            // This allows us to:
+            //  - free the memory before the job is run
+            //  - reuse the JSC.Strong
+            if (!repeats) {
+                this.callback = .{};
+                this.arguments = .{};
+                map.put(vm.allocator, timer_id.id, null) catch unreachable;
+                this.deinit();
+            } else {
+                this.has_scheduled_job = true;
+                map.put(vm.allocator, timer_id.id, this) catch {};
+                reschedule = true;
+            }
+
+            // TODO: remove this memory allocation!
+            var job = vm.allocator.create(CallbackJob) catch @panic(
+                "Out of memory while allocating Timeout",
+            );
+            job.* = cb;
+            job.task = CallbackJob.Task.init(job);
+            job.ref.ref(vm);
+
+            if (vm.isInspectorEnabled()) {
+                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, timer_id.asyncID(), !repeats);
+            }
+
+            job.perform();
+
+            return reschedule;
+        }
+
+        pub fn runWithIDAndVM(timer_id: ID, vm: *JSC.VirtualMachine) void {
             const repeats = timer_id.repeats();
 
             var map = vm.timer.maps.get(timer_id.kind);
@@ -3625,7 +3809,9 @@ pub const Timer = struct {
 
             this.poll_ref.unref(vm);
 
-            this.timer.deinit(false);
+            if (this.timer) |timer| {
+                timer.cancelled = true;
+            }
 
             if (comptime Environment.isPosix)
                 // balance double unreffing in doUnref
@@ -3683,8 +3869,8 @@ pub const Timer = struct {
         var timeout = Timeout{
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
-            .timer = uws.Timer.create(
-                vm.uwsLoop(),
+            .timer = Timeout.TimerReference.create(
+                vm.eventLoop(),
                 Timeout.ID{
                     .id = id,
                     .kind = kind,
@@ -3703,15 +3889,7 @@ pub const Timer = struct {
             Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
         }
 
-        timeout.timer.set(
-            Timeout.ID{
-                .id = id,
-                .kind = kind,
-            },
-            Timeout.run,
-            interval,
-            @as(i32, @intFromBool(kind == .setInterval)) * interval,
-        );
+        timeout.timer.?.schedule(interval);
     }
 
     pub fn setImmediate(

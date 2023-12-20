@@ -339,6 +339,7 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
+const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -398,6 +399,7 @@ pub const Task = TaggedPointerUnion(.{
     Lchown,
     Unlink,
     WaitPidResultTask,
+    TimerReference,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -623,6 +625,22 @@ pub const EventLoop = struct {
     forever_timer: ?*uws.Timer = null,
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
+
+    timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
+
+    pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
+        if (comptime !Environment.isPosix) {
+            @compileError("This function is only available on POSIX platforms");
+        }
+
+        return this.timer_reference_pool orelse brk: {
+            const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
+            _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);
+            this.timer_reference_pool = _pool;
+            break :brk _pool;
+        };
+    }
+
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
 
@@ -919,6 +937,11 @@ pub const EventLoop = struct {
                     var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                    var any: *TimerReference = task.get(TimerReference).?;
+                    any.runFromJSThread();
+                },
+
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else {
@@ -1299,6 +1322,18 @@ pub const EventLoop = struct {
         }
 
         this.concurrent_tasks.push(task);
+        this.wakeup();
+    }
+
+    pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.Batch) void {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            if (this.virtual_machine.has_terminated) {
+                @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
+            }
+        }
+
+        this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
         this.wakeup();
     }
 };

@@ -2213,7 +2213,7 @@ pub const Subprocess = struct {
     };
 
     fn extractStdioBlob(
-        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.JSGlobalObject,
         blob: JSC.WebCore.AnyBlob,
         i: u32,
         stdio_array: []Stdio,
@@ -2223,29 +2223,12 @@ pub const Subprocess = struct {
         if (blob.needsToReadFile()) {
             if (blob.store()) |store| {
                 if (store.data.file.pathlike == .fd) {
-                    if (store.data.file.pathlike.fd == fd) {
+                    // TODO(@paperdave) this is wrong on windows, probably
+                    if (bun.fdcast(store.data.file.pathlike.fd) == fd) {
                         stdio_array[i] = Stdio{ .inherit = {} };
                     } else {
-                        switch (bun.FDTag.get(i)) {
-                            .stdin => {
-                                if (i == 1 or i == 2) {
-                                    globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
-                                    return false;
-                                }
-                            },
-
-                            .stdout, .stderr => {
-                                if (i == 0) {
-                                    globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
-                                    return false;
-                                }
-                            },
-                            else => {},
-                        }
-
                         stdio_array[i] = Stdio{ .fd = store.data.file.pathlike.fd };
                     }
-
                     return true;
                 }
 
@@ -2293,14 +2276,14 @@ pub const Subprocess = struct {
 
             switch (bun.FDTag.get(fd)) {
                 .stdin => {
-                    if (i == bun.STDERR_FD or i == bun.STDOUT_FD) {
+                    if (i == bun.posix.STDERR_FD or i == bun.posix.STDOUT_FD) {
                         globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
                         return false;
                     }
                 },
 
                 .stdout, .stderr => {
-                    if (i == bun.STDIN_FD) {
+                    if (i == bun.posix.STDIN_FD) {
                         globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
                         return false;
                     }
@@ -2321,7 +2304,7 @@ pub const Subprocess = struct {
             return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, stdio_array);
         } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
             var req = req_const;
-            if (i == bun.STDIN_FD) {
+            if (i == bun.posix.STDIN_FD) {
                 if (req.toAnyBlob(globalThis)) |blob| {
                     return extractStdioBlob(globalThis, blob, i, stdio_array);
                 }

@@ -10,31 +10,47 @@
 #include <unistd.h>
 #include <cstring>
 #else
+#include <io.h>
 #include <uv.h>
 #endif // !OS(WINDOWS)
 
-#if CPU(X86_64) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
 {
+#if CPU(X86_64)
+#if !OS(WINDOWS)
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx")) {
         return;
     }
+#else // OS(WINDOWS)
+    int cpuInfo[4];
+    __cpuid(cpuInfo, 1);
 
+    bool osUsesXSAVE_XRSTORE = cpuInfo[2] & (1 << 27) || false;
+    bool cpuAVXSuport = cpuInfo[2] & (1 << 28) || false;
+
+    if (osUsesXSAVE_XRSTORE && cpuAVXSuport) {
+        // Check if the OS will save the YMM registers
+        unsigned long long xcrFeatureMask = _xgetbv(_XCR_XFEATURE_ENABLED_MASK);
+        if (xcrFeatureMask & 0x6)
+            return;
+    }
+#endif // !OS(WINDOWS)
     static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
     const size_t len = strlen(str);
-
     char buf[512];
     strcpy(buf, str);
     strcpy(buf + len, url);
     strcpy(buf + len + strlen(url), "\n\0");
+#if !OS(WINDOWS)
     write(STDERR_FILENO, buf, strlen(buf));
-}
-#else
-extern "C" void bun_warn_avx_missing(char* url)
-{
-}
+#else // OS(WINDOWS)
+    _write(2, buf, strlen(buf));
+#endif // !OS(WINDOWS)
+    return;
 #endif // CPU(X86_64)
+    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("never should call bun_supports_avx() on non-x86_64");
+}
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {

@@ -30,13 +30,15 @@ fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
 
 pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
+    if (env.isDebug and FDImpl.debug_log_enabled)
+        log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    if (env.isDebug and FDImpl.debug_log_enabled)
+        log("uv_get_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
 }
 
@@ -57,6 +59,10 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
 pub const FDImpl = packed struct {
     value: Value,
     kind: Kind,
+
+    /// This exists because we cannot do debug log before initializing the logger.
+    /// and we use this struct to convert a windows handle into a c runtime handle
+    pub var debug_log_enabled = true;
 
     const invalid_value = std.math.maxInt(SystemAsInt);
     pub const invalid = FDImpl{
@@ -171,7 +177,7 @@ pub const FDImpl = packed struct {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
             const fd = this.uv();
-            if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
+            if (fd == bun.posix.STDOUT_FD or fd == bun.posix.STDERR_FD) {
                 log("close({}) SKIPPED", .{this});
                 return null;
             }

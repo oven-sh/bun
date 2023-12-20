@@ -783,7 +783,7 @@ else if (Environment.isWindows)
 else
     std.os.fd_t;
 
-pub const FDImpl = @import("./fd.zig").FDImpl;
+pub const FDImpl = @import("./FDImpl.zig").FDImpl;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
@@ -2468,9 +2468,9 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.
 
 pub const posix = struct {
     // we use these on windows for crt/uv stuff, and std.os does not define them, hence the if
-    pub const STDIN_FD = if (Environment.isPosix) std.os.STDIN_FILENO else 0;
-    pub const STDOUT_FD = if (Environment.isPosix) std.os.STDOUT_FILENO else 1;
-    pub const STDERR_FD = if (Environment.isPosix) std.os.STDERR_FILENO else 2;
+    pub const STDIN_FD: c_int = if (Environment.isPosix) std.os.STDIN_FILENO else 0;
+    pub const STDOUT_FD: c_int = if (Environment.isPosix) std.os.STDOUT_FILENO else 1;
+    pub const STDERR_FD: c_int = if (Environment.isPosix) std.os.STDERR_FILENO else 2;
 
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;
@@ -2479,7 +2479,7 @@ pub const posix = struct {
         std.os.argv = new_ptr;
     }
 
-    pub fn stdio(i: anytype) FileDescriptor {
+    pub fn stdio(i: anytype) std.os.fd_t {
         return switch (i) {
             STDOUT_FD => STDOUT_FD,
             STDERR_FD => STDERR_FD,
@@ -2492,9 +2492,9 @@ pub const posix = struct {
 };
 
 pub const win32 = struct {
-    pub var STDOUT_FD: FileDescriptor = undefined;
-    pub var STDERR_FD: FileDescriptor = undefined;
-    pub var STDIN_FD: FileDescriptor = undefined;
+    pub var STDOUT_FD: std.os.fd_t = undefined;
+    pub var STDERR_FD: std.os.fd_t = undefined;
+    pub var STDIN_FD: std.os.fd_t = undefined;
 
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;
@@ -2504,7 +2504,7 @@ pub const win32 = struct {
         std.os.argv = new_ptr;
     }
 
-    pub fn stdio(i: anytype) FileDescriptor {
+    pub fn stdio(i: anytype) std.os.fd_t {
         return switch (i) {
             0 => STDIN_FD,
             1 => STDOUT_FD,
@@ -2531,40 +2531,27 @@ pub const FDTag = enum {
     stderr,
     stdin,
     stdout,
-    pub fn get(fd_: anytype) FDTag {
-        const fd = toFD(fd_);
-        if (comptime Environment.isWindows) {
-            if (fd == win32.STDOUT_FD) {
-                return .stdout;
-            } else if (fd == win32.STDERR_FD) {
-                return .stderr;
-            } else if (fd == win32.STDIN_FD) {
-                return .stdin;
-            }
-
-            return .none;
-        } else {
-            return switch (fd) {
+    pub fn get(fd: anytype) FDTag {
+        const impl = FDImpl.decode(toFD(fd));
+        if (Environment.isPosix or impl.kind == .uv) {
+            return switch (impl.uv()) {
                 posix.STDIN_FD => FDTag.stdin,
                 posix.STDOUT_FD => FDTag.stdout,
                 posix.STDERR_FD => FDTag.stderr,
                 else => .none,
             };
         }
+        const handle = impl.system();
+        if (handle == win32.STDOUT_FD) {
+            return .stdout;
+        } else if (handle == win32.STDERR_FD) {
+            return .stderr;
+        } else if (handle == win32.STDIN_FD) {
+            return .stdin;
+        }
+        return .none;
     }
 };
-
-pub fn fdi32(fd_: anytype) i32 {
-    if (comptime Environment.isPosix) {
-        return @intCast(toFD(fd_));
-    }
-
-    if (comptime @TypeOf(fd_) == *anyopaque) {
-        return @intCast(@intFromPtr(fd_));
-    }
-
-    return @intCast(fd_);
-}
 
 pub const LazyBoolValue = enum {
     unknown,

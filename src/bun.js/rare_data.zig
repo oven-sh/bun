@@ -259,7 +259,8 @@ pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDERR_FD)) {
+        const fd = bun.toFD(bun.posix.STDERR_FD);
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
             },
@@ -272,7 +273,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDERR_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stderr_descriptor_type == .terminal,
                     .mode = mode,
@@ -289,7 +290,8 @@ pub fn stdout(rare: *RareData) *Blob.Store {
     return rare.stdout_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDOUT_FD)) {
+        const fd = bun.toFD(bun.posix.STDOUT_FD);
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
             },
@@ -301,7 +303,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDOUT_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stdout_descriptor_type == .terminal,
                     .mode = mode,
@@ -317,7 +319,8 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     return rare.stdin_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDIN_FD)) {
+        const fd = bun.toFD(bun.posix.STDIN_FD);
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
             },
@@ -329,9 +332,9 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDIN_FD,
+                        .fd = fd,
                     },
-                    .is_atty = std.os.isatty(bun.fdcast(bun.STDIN_FD)),
+                    .is_atty = std.os.isatty(bun.STDIN_FD),
                     .mode = mode,
                 },
             },

@@ -240,7 +240,7 @@ pub const LifecycleScriptSubprocess = struct {
 
             if (manager.options.log_level.isVerbose()) {
                 Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Spawning <b>\"{s}\"<r> script for package <b>\"{s}\"<r>", .{
-                    this.script_name,
+                    this.scriptName(),
                     this.package_name,
                 });
             }

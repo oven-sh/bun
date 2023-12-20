@@ -1649,6 +1649,27 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
+extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObject, void* ptr, size_t length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* structure = globalObject->JSBufferSubclassStructure();
+
+    auto buffer = ArrayBuffer::createFromBytes(ptr, length, createSharedTask<void(void*)>([length](void* p) {
+        munmap(p, length);
+    }));
+
+    auto* view = JSC::JSUint8Array::create(globalObject, structure, WTFMove(buffer), 0, length);
+
+    if (UNLIKELY(!view)) {
+        throwOutOfMemoryError(globalObject, scope);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    return JSC::JSValue::encode(view);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferConstructorFunction_allocBody(lexicalGlobalObject, callFrame);

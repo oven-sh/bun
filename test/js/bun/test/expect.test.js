@@ -3290,7 +3290,7 @@ describe("expect()", () => {
     expect(new Set()).toBeObject();
     expect(new Map()).toBeObject();
     expect(new Array(0)).toBeObject();
-    expect({e: 1, e2: 2}).toBeObject();
+    expect({ e: 1, e2: 2 }).toBeObject();
     expect("notAnObject").not.toBeObject();
     expect(1).not.toBeObject();
     expect(NaN).not.toBeObject();

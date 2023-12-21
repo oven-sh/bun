@@ -99,13 +99,15 @@ pub fn exit(code: u8) noreturn {
 pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
     Output.flush();
     @import("./crash_reporter.zig").on_error = null;
-    if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
-        const act = std.os.Sigaction{
-            .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
-            .mask = std.os.empty_sigset,
-            .flags = 0,
-        };
-        std.os.sigaction(@intCast(sig), &act, null) catch {};
+    if (!Environment.isWindows) {
+        if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
+            const act = std.os.Sigaction{
+                .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
+                .mask = std.os.empty_sigset,
+                .flags = 0,
+            };
+            std.os.sigaction(@intCast(sig), &act, null) catch {};
+        }
     }
     // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
     // after that is fixed we can make this function take i32

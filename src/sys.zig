@@ -740,9 +740,9 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     }
 }
 
-pub fn pwritev(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
+pub fn pwritev(fd: bun.FileDescriptor, buffers: []const std.os.iovec_const, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)), position);
+        const rc = pwritev_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
             log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -753,7 +753,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize)
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len, position);
+            const rc = pwritev_sym(fd, buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 

@@ -900,13 +900,13 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -g3 -O1 -gdwarf-4
+        target_compile_options(${bun} PUBLIC -g3 -O0 -gdwarf-4
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC -O1)
+        target_compile_options(${bun} PUBLIC /Od)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")

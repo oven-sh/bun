@@ -2386,9 +2386,9 @@ pub const E = struct {
             }
 
             if (s.is_utf16) {
-                var out = bun.String.createUninitializedUTF16(s.len());
+                var out, const chars = bun.String.createUninitialized(.utf16, s.len());
                 defer out.deref();
-                @memcpy(@constCast(out.utf16()), s.slice16());
+                @memcpy(chars, s.slice16());
                 return out.toJS(globalObject);
             }
 
@@ -2398,9 +2398,9 @@ pub const E = struct {
                 const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
                 defer allocator.free(decoded);
 
-                var out = bun.String.createUninitializedUTF16(decoded.len);
+                var out, const chars = bun.String.createUninitialized(.utf16, decoded.len);
                 defer out.deref();
-                @memcpy(@constCast(out.utf16()), decoded);
+                @memcpy(chars, decoded);
 
                 return out.toJS(globalObject);
             }

@@ -4566,7 +4566,7 @@ pub const NodeFS = struct {
     fn _pwritev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
         _ = flavor;
         const position = args.position.?;
-        return switch (Syscall.pwritev(args.fd, args.buffers.buffers.items, position)) {
+        return switch (Syscall.pwritev(args.fd, @ptrCast(args.buffers.buffers.items), position)) {
             .err => |err| .{
                 .err = err,
             },
@@ -4578,7 +4578,7 @@ pub const NodeFS = struct {
 
     fn _writev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
         _ = flavor;
-        return switch (Syscall.writev(args.fd, args.buffers.buffers.items)) {
+        return switch (Syscall.writev(args.fd, @ptrCast(args.buffers.buffers.items))) {
             .err => |err| .{
                 .err = err,
             },

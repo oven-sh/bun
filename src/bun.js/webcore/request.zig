@@ -253,7 +253,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return bun.String.static(@tagName(this.method)).toJSConst(globalThis);
+        return bun.String.static(@tagName(this.method)).toJS(globalThis);
     }
 
     pub fn getMode(
@@ -398,20 +398,21 @@ pub const Request = struct {
                     }
 
                     if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
-                        this.url = bun.String.createUninitializedLatin1(url_bytelength);
-                        const bytes = @constCast(this.url.byteSlice());
+                        this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
                         _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
-                        }) catch @panic("Unexpected error while printing URL");
+                        }) catch |err| switch (err) {
+                            error.NoSpaceLeft => unreachable, // exact space should have been counted
+                        };
                     } else {
                         // slow path
                         const temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
-                        }) catch unreachable;
+                        }) catch bun.outOfMemory();
                         defer bun.default_allocator.free(temp_url);
                         this.url = bun.String.create(temp_url);
                     }

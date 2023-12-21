@@ -40,7 +40,7 @@ pub const ResolveMessage = struct {
                     };
                 };
 
-                var atom = bun.String.createAtom(label);
+                var atom = bun.String.createAtomASCII(label);
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },

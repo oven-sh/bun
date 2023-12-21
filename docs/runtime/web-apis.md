@@ -32,7 +32,7 @@ The following Web APIs are partially or completely supported.
 ---
 
 - WebSockets
-- [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) (_not production ready_)
+- [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
 
 ---
 

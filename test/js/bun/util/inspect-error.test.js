@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 3 failing
 import { test, expect } from "bun:test";
 
 test("error.cause", () => {

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
 let hooks_run: string[] = [];

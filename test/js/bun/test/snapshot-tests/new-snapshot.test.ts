@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 import fs from "fs";
 import { bunExe } from "harness";
 import { tmpdir } from "os";

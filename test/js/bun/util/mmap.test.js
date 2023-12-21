@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(636[handle]) called on an windows handle"
 import { describe, it, expect } from "bun:test";
 import { gcTick } from "harness";
 

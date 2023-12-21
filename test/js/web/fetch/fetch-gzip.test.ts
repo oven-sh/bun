@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { concatArrayBuffers, Socket, TCPSocketListener } from "bun";
 import { it, expect } from "bun:test";
 import { gcTick } from "harness";

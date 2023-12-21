@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 import { expect, it, describe } from "bun:test";
 import { Database, constants } from "bun:sqlite";
 import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";

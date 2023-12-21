@@ -58,6 +58,8 @@ const { error: error2, stdout: argv0_stdout } = spawnSync(bunExe, ["-e", 'consol
 if (error2) throw error2;
 const argv0 = argv0_stdout.toString().trim();
 
+console.log(`Testing ${argv0} v${revision}`);
+
 const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
 let ntstatus_header_cache = null;
 function lookupWindowsError(code) {
@@ -172,7 +174,7 @@ async function runTest(path) {
 
   const duration = (Date.now() - start) / 1000;
 
-  console.log(`\x1b[2m${formatTime(duration).padStart(6, ' ')}\x1b[0m ${passed ? '\x1b[32m✔' : '\x1b[31m✖'} ${name}\x1b[0m${reason ? ` (${reason})` : ''}`);
+  console.log(`\x1b[2m${formatTime(duration).padStart(6, ' ')}\x1b[0m ${passed ? '\x1b[32m✔' : ((windows && expected_crash_reason === reason) ? '\x1b[33m⚠' : '\x1b[31m✖')} ${name}\x1b[0m${reason ? ` (${reason})` : ''}`);
 
   if(run_concurrency > 1 && ci) {
     process.stderr.write(output);
@@ -285,7 +287,7 @@ ${header}
 if(fixes.length > 0) {
   report += `## Fixes\n\n`;
   report += 'The following tests had @bun-known-failing-on-windows but now pass:\n\n'
-  report += regresfixessions.map(({ path, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) (before: ${expected_crash_reason})`).join("\n");
+  report += fixes.map(({ path, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) (before: ${expected_crash_reason})`).join("\n");
   report += "\n\n";
 }
 

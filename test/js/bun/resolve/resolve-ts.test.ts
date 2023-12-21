@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: SIGTERM
 import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 21 failing
 import fs from "fs";
 import path from "path";
 import { test, expect, describe, beforeAll } from "bun:test";

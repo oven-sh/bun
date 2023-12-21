@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(628[handle]) called on an windows handle"
 // We do not make these files imports in the codebase because non-ascii file paths can cause issues with git
 // Instead, we put them into a temporary directory and run them from there
 import { test, expect } from "bun:test";

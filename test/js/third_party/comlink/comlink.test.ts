@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_BREAKPOINT
 import { test, expect, describe } from "bun:test";
 import { join } from "path";
 import * as Comlink from "comlink";

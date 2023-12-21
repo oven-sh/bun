@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO"
 import path from "path";
 import { bunExe, bunEnv } from "harness";
 

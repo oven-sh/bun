@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_BREAKPOINT
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;

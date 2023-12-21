@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import { test, describe, expect } from "bun:test";
 import { sleep } from "bun";
 import { createRequire } from "module";

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { expect, test, describe } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";

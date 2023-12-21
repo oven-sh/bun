@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 10 failing
 import { it, expect } from "bun:test";
 import * as os from "node:os";
 import { realpathSync } from "fs";

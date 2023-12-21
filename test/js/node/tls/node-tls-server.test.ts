@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import tls, { rootCertificates, connect, createServer, Server, TLSSocket } from "tls";
 import type { PeerCertificate } from "tls";
 import { realpathSync, readFileSync } from "fs";

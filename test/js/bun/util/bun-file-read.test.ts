@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(624[handle]) called on an windows handle"
 import { it, expect } from "bun:test";
 import { tmpdir } from "node:os";
 

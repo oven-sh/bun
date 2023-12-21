@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";

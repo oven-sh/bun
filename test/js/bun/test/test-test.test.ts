@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO"
 // @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";

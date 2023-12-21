@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import fs, { chmodSync, unlinkSync } from "fs";
 import { gc, withoutAggressiveGC } from "harness";

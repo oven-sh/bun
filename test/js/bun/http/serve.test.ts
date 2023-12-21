@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_HEAP_CORRUPTION
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";

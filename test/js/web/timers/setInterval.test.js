@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: SIGTERM
 import { it, expect } from "bun:test";
 
 it("setInterval", async () => {

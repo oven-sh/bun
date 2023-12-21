@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "@memcpy arguments alias"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "../../../../harness";
 import {

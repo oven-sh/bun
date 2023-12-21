@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "todo"
 import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
 import path, { join } from "path";

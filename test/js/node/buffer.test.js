@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_HEAP_CORRUPTION
 import { Buffer, SlowBuffer, isAscii, isUtf8 } from "buffer";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { gc } from "harness";

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 4 failing
 import { it, expect } from "bun:test";
 import tls from "tls";
 import { join } from "node:path";

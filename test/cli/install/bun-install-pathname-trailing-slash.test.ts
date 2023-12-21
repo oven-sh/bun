@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(640[handle]) called on an windows handle"
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";

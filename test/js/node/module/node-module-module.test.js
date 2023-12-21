@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "Do not pass posix paths to windows APIs, was given '\' (missing a root like 'C:\', see PosixToWinNormalizer for why this is an assertion)"
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";

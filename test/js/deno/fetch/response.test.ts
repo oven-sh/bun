@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 9 failing
 // GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/response_test.ts

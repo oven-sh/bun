@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { expect, it, describe } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "harness";
 

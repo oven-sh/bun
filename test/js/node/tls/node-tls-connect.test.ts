@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "todo"
 import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
 import { join } from "path";
 import { AddressInfo } from "ws";

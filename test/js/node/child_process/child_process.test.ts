@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO"
 import { describe, it, expect } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";

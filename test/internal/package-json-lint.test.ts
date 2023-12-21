@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { test, expect, describe } from "bun:test";
 import { join } from "path";
 import { readdirSync, existsSync } from "fs";

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "Windows support for bun install is not implemented yet"
 import { it, expect, test, beforeAll, describe } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 4 failing
 import fs from "fs";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { bunEnv, bunExe } from "harness";

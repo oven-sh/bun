@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 import { describe, expect, test, it } from "bun:test";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";

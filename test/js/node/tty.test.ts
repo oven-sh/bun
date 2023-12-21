@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 3 failing
 import { describe, it, expect } from "bun:test";
 import { WriteStream } from "node:tty";
 

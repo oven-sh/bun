@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 import { test as bunTest, expect, describe } from "bun:test";
 import { generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";

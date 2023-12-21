@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import jwt from "jsonwebtoken";
 import { expect, describe, it, afterEach } from "bun:test";
 import jws from "jws";

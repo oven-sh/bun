@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_BREAKPOINT
 // @ts-nocheck
 import { gc, ServeOptions } from "bun";
 import { afterAll, describe, expect, it, test } from "bun:test";

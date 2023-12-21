@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_HEAP_CORRUPTION
 import { describe, expect, it } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 

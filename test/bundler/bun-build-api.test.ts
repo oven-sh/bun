@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "todo"
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";

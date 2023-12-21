@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import { createServer, Server, AddressInfo, Socket } from "net";
 import { realpathSync } from "fs";
 import { tmpdir } from "os";

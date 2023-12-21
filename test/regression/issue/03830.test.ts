@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 // test/regression/issue/03830.test.ts
 
 import { it, expect } from "bun:test";

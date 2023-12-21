@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(636[handle]) called on an windows handle"
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";

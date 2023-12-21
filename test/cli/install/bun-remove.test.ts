@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO"
 import { bunExe, bunEnv as env } from "harness";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { join, relative } from "path";

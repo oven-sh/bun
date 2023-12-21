@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(616[handle]) called on an windows handle"
 import { expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe } from "harness";

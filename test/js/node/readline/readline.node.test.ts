@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 // @ts-nocheck
 import readline from "node:readline";
 import { Writable, PassThrough } from "node:stream";

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 // https://github.com/oven-sh/bun/issues/3216
 import { test, expect } from "bun:test";
 import { tmpdir } from "os";

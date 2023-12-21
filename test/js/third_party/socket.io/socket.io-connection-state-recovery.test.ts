@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 
 import { Server, Socket } from "socket.io";

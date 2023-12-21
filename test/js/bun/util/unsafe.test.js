@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import { test, expect, it, describe } from "bun:test";
 import { gc } from "harness";
 

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 79 failing
 // Portions of this file are derived from works under the MIT License:
 //
 // Copyright (c) Denis Malinochkin

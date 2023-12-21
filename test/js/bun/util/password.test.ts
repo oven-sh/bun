@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 4 failing
 import { test, expect, describe } from "bun:test";
 
 import { Password, password } from "bun";

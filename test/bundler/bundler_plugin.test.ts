@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import assert from "assert";
 import dedent from "dedent";
 import path from "path";

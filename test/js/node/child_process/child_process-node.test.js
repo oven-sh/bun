@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: SIGTERM
 import { ChildProcess, spawn, exec, fork } from "node:child_process";
 import { createTest } from "node-harness";
 import { tmpdir } from "node:os";

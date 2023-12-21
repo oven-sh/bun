@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 1 failing
 import { describe, test, expect } from "bun:test";
 import { file, serve } from "bun";
 import type { NetworkInterfaceInfo } from "node:os";

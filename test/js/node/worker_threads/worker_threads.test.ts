@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: SIGTERM
 import wt, {
   getEnvironmentData,
   isMainThread,

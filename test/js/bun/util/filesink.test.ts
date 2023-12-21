@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "Do not pass posix paths to windows APIs, was given '\tmp\bun-test-15365520531668909302.txt' (missing a root like 'C:\', see PosixToWinNormalizer for why this is an assertion)"
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
 import { mkfifo } from "mkfifo";

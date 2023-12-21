@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { serve } from "bun";
 import { describe, test, expect } from "bun:test";
 

@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: 1 failing
 import {
   concatArrayBuffers,
   readableStreamToArray,

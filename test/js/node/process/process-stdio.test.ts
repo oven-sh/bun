@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(872[handle]) called on an windows handle"
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunExe } from "harness";

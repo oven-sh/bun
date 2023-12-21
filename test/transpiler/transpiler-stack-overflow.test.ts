@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO"
 import { test, expect } from "bun:test";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "path";

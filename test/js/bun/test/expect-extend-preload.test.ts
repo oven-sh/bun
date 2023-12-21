@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { file } from "bun";
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";

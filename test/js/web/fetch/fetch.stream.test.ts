@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import { Socket, Server, TCPSocketListener } from "bun";
 import { readFileSync } from "fs";
 import { join } from "path";

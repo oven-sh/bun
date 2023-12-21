@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "switch on corrupt value"
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";

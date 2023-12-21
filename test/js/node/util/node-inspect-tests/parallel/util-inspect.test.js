@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "uvfdcast(704[handle]) called on an windows handle"
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a

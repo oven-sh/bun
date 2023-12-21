@@ -25,7 +25,7 @@ test("the dev server can start", async () => {
     dev_server = undefined;
   });
   for await (const chunk of dev_server.stdout) {
-    console.error({ chunk });
+    console.error({ chunk: new TextDecoder().decode(chunk) });
     const str = new TextDecoder().decode(chunk);
     let match = str.match(/http:\/\/localhost:\d+/);
     if (match) {

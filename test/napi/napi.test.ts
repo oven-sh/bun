@@ -31,6 +31,13 @@ describe("napi", () => {
     }
   });
 
+  describe("issue_7685", () => {
+    it("works", () => {
+      const args = [...Array(20).keys()];
+      checkSameOutput("test_issue_7685", args);
+    });
+  });
+
   describe("napi_get_value_string_utf8 with buffer", () => {
     // see https://github.com/oven-sh/bun/issues/6949
     it("copies one char", () => {
@@ -75,7 +82,9 @@ function runOn(executable: string, test: string, args: any[]) {
     env: bunEnv,
   });
   const errs = exec.stderr.toString();
-  expect(errs).toBe("");
+  if (errs !== "") {
+    throw new Error(errs);
+  }
   expect(exec.success).toBeTrue();
   return exec.stdout.toString();
 }

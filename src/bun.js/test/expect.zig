@@ -3867,6 +3867,7 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub const toHaveReturned = notImplementedJSCFn;
     pub const toHaveReturnedTimes = notImplementedJSCFn;
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;

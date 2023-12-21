@@ -45,21 +45,24 @@ const Test = TestRunner.Test;
 
 const uws = @import("root").bun.uws;
 
-fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
+fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
     comptime {
-        return switch (emoji) {
+        // emoji and color might be split into two different options in the future
+        // some terminals support color, but not emoji.
+        // For now, they are the same.
+        return switch (emoji_or_color) {
             true => switch (status) {
-                .pass => Output.prettyFmt("<r><green>✓<r>", true),
-                .fail => Output.prettyFmt("<r><red>✗<r>", true),
-                .skip => Output.prettyFmt("<r><yellow>»<d>", true),
-                .todo => Output.prettyFmt("<r><magenta>✎<r>", true),
+                .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
+                .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
+                .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
+                .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
             else => switch (status) {
-                .pass => Output.prettyFmt("<r><green>(pass)<r>", true),
-                .fail => Output.prettyFmt("<r><red>(fail)<r>", true),
-                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", true),
-                .todo => Output.prettyFmt("<r><magenta>(todo)<r>", true),
+                .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
+                .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
+                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
+                .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
         };
@@ -193,7 +196,13 @@ pub const CommandLineReporter = struct {
         writeTestStatusLine(.fail, &writer);
         printTestLine(label, elapsed_ns, parent, false, writer);
 
+        // We must always reset the colors because (skip) will have set them to <d>
+        if (Output.enable_ansi_colors_stderr) {
+            writer.writeAll(Output.prettyFmt("<r>", true)) catch unreachable;
+        }
+
         writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
+
         Output.flush();
 
         // this.updateDots();

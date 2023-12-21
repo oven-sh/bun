@@ -313,7 +313,7 @@ jobs:
         run: |
           $Dist = mkdir -Force "${{ env.tag }}"
           cp -r build\bun.exe "$Dist\bun.exe"
-          Compress-Archive $Dist ${{ env.tag }}.zip
+          Compress-Archive $Dist ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}

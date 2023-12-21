@@ -4234,14 +4234,14 @@ pub const Expect = struct {
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalObject);
-            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJSConst(globalObject));
+            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalObject));
             globalObject.throwValue(error_value);
             return .zero;
         }
 
         if (arg.isString()) {
             const error_value = arg.toBunString(globalObject).toErrorInstance(globalObject);
-            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJSConst(globalObject));
+            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalObject));
             globalObject.throwValue(error_value);
             return .zero;
         }
@@ -4765,7 +4765,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             return .zero;
         };
         if (printed) {
-            return bun.String.init(mutable_string.toOwnedSliceLeaky()).toJSConst();
+            return bun.String.init(mutable_string.toOwnedSliceLeaky()).toJS();
         }
         return ExpectMatcherUtils.printValue(globalObject, this, null);
     }
@@ -4793,9 +4793,9 @@ pub const ExpectMatcherContext = struct {
 
     pub fn getPromise(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return switch (this.flags.promise) {
-            .rejects => bun.String.static("rejects").toJSConst(globalObject),
-            .resolves => bun.String.static("resolves").toJSConst(globalObject),
-            else => bun.String.empty.toJSConst(globalObject),
+            .rejects => bun.String.static("rejects").toJS(globalObject),
+            .resolves => bun.String.static("resolves").toJS(globalObject),
+            else => bun.String.empty.toJS(globalObject),
         };
     }
 
@@ -4862,7 +4862,7 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        return bun.String.create(mutable_string.toOwnedSlice()).toJSConst(globalObject);
+        return bun.String.create(mutable_string.toOwnedSlice()).toJS(globalObject);
     }
 
     inline fn printValueCatched(globalObject: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {
@@ -4899,8 +4899,8 @@ pub const ExpectMatcherUtils = struct {
         }
         const matcher_name = bun.String.init(arguments[0].toString(globalObject).getZigString(globalObject));
 
-        const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJSConst(globalObject);
-        const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJSConst(globalObject);
+        const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalObject);
+        const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJS(globalObject);
         const options = if (arguments.len > 3) arguments[3] else JSValue.jsUndefined();
 
         var is_not = false;

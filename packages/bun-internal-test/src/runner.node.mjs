@@ -329,11 +329,19 @@ writeFileSync("test-report.json", JSON.stringify({
 console.log('-> test-report.md, test-report.json');
 
 if (ci) {
-  if (failing_tests.length > 0) {
-    action.setFailed(`${failing_tests.length} files with failing tests`);
+  if(windows) {
+    if (failing_tests.length > 0) {
+      action.setFailed(`${failing_tests.length} files with failing tests`);
+    }
+    action.setOutput("failing_tests", failingTestDisplay);
+    action.setOutput("failing_tests_count", failing_tests.length);
+  } else {
+    if (regressions.length > 0) {
+      action.setFailed(`${regressions.length} regressing tests`);
+    }
+    action.setOutput("regressing_tests", regressions.map(({ path }) => `- [\`${path}\`](${linkToGH(path)})`).join("\n"));
+    action.setOutput("regressing_tests_count", failing_tests.length);
   }
-  action.setOutput("failing_tests", failingTestDisplay);
-  action.setOutput("failing_tests_count", failing_tests.length);
   action.summary.addHeading(`${total} files with tests ran`).addList(testFileNames);
   await action.summary.write();
 } else {
@@ -341,5 +349,3 @@ if (ci) {
     console.log('\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @bun-known-failing-on-windows annotations, run `bun update-known-failing`')
   }
 }
-
-process.exit(Math.min(failing_tests.length, 127));

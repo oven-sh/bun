@@ -300,7 +300,7 @@ jobs:
 
             ${{ steps.test.outputs.failing_tests }}
 
-            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}}/job/${{ github.job }})**
       - name: Comment on PR
         if: steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
@@ -311,7 +311,7 @@ jobs:
 
             ${{ steps.test.outputs.failing_tests }}
 
-            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}}/job/${{ github.job }})**
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - name: Uncomment on PR

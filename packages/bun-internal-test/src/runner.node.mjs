@@ -180,7 +180,7 @@ async function runTest(path) {
 
   if (!passed) {
     if(reason) {
-      if (windows && expected_crash_reason && expected_crash_reason !== reason) {
+      if (windows && expected_crash_reason !== reason) {
         regressions.push({ path: name, reason, output, expected_crash_reason });
       }
     }
@@ -288,12 +288,12 @@ if(fixes.length > 0) {
 
 if(regressions.length > 0) {
   report += `## Regressions\n\n`;
-  report += regressions.map(({ path, reason, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) ${reason} (expected: ${expected_crash_reason})`).join("\n");
+  report += regressions.map(({ path, reason, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) ${reason}${expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ''}`).join("\n");
   report += "\n\n";
 }
 
 if(failingTestDisplay.length > 0) {
-  report += `## Failing tests\n\n`;
+  report += `## ${windows ? 'Known ' : ''}Failing tests\n\n`;
   report += failingTestDisplay;
   report += "\n\n";
 }

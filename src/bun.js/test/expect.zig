@@ -113,6 +113,31 @@ pub const Expect = struct {
         return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
     }
 
+    pub fn isObjectEmpty(globalThis: *JSGlobalObject, value: JSValue) bool {
+        if (value.isIterable(globalThis)) {
+            var any_properties_in_iterator = false;
+            value.forEach(globalThis, &any_properties_in_iterator, struct {
+                pub fn anythingInIterator(
+                    _: *JSC.VM,
+                    _: *JSGlobalObject,
+                    any_: ?*anyopaque,
+                    _: JSValue,
+                ) callconv(.C) void {
+                    bun.cast(*bool, any_.?).* = true;
+                }
+            }.anythingInIterator);
+            return !any_properties_in_iterator;
+        } else {
+            var props_iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = false,
+
+                .include_value = true,
+            }).init(globalThis, value.asObjectRef());
+            defer props_iter.deinit();
+            return props_iter.len == 0;
+        }
+    }
+
     pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) void {
         switch (Output.enable_ansi_colors) {
             inline else => |colors| {
@@ -2302,28 +2327,7 @@ pub const Expect = struct {
 
         if (actual_length == std.math.inf(f64)) {
             if (value.jsTypeLoose().isObject()) {
-                if (value.isIterable(globalObject)) {
-                    var any_properties_in_iterator = false;
-                    value.forEach(globalObject, &any_properties_in_iterator, struct {
-                        pub fn anythingInIterator(
-                            _: *JSC.VM,
-                            _: *JSGlobalObject,
-                            any_: ?*anyopaque,
-                            _: JSValue,
-                        ) callconv(.C) void {
-                            bun.cast(*bool, any_.?).* = true;
-                        }
-                    }.anythingInIterator);
-                    pass = !any_properties_in_iterator;
-                } else {
-                    var props_iter = JSC.JSPropertyIterator(.{
-                        .skip_empty_name = false,
-
-                        .include_value = true,
-                    }).init(globalObject, value.asObjectRef());
-                    defer props_iter.deinit();
-                    pass = props_iter.len == 0;
-                }
+                pass = isObjectEmpty(globalObject, value);
             } else {
                 const signature = comptime getSignature("toBeEmpty", "", false);
                 const fmt = signature ++ "\n\nExpected value to be a string, object, or iterable" ++
@@ -2361,6 +2365,36 @@ pub const Expect = struct {
         const fmt = signature ++ "\n\nExpected value to be empty" ++
             "\n\nReceived: <red>{any}<r>\n";
         globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+        return .zero;
+    }
+
+    pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeEmptyObject", "") orelse return .zero;
+
+        incrementExpectCallCounter();
+
+        if (!value.isObject()) return .zero;
+
+        const not = this.flags.not;
+        var pass = isObjectEmpty(globalThis, value);
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeEmptyObject", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeEmptyObject", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
         return .zero;
     }
 

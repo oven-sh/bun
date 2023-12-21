@@ -3186,6 +3186,18 @@ describe("expect()", () => {
     }
   });
 
+  test("toBeEmptyObject()", () => {
+    expect({}).toBeEmptyObject();
+    expect([]).toBeEmptyObject();
+    expect(new Set()).toBeEmptyObject();
+    expect(new Map()).toBeEmptyObject();
+    expect(new Map().set('a', 1)).not.toBeEmptyObject();
+    expect([1, 2]).not.toBeEmptyObject();
+    expect({ a: 'hello' }).not.toBeEmptyObject();
+    expect(true).not.toBeEmptyObject();
+    expect("notAnObject").not.toBeEmptyObject();
+  });
+
   test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();

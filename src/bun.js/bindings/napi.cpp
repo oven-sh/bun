@@ -313,6 +313,8 @@ private:
     void* m_dataPtr;
 };
 
+#define ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callframe) callframe->addressOfArgumentsStart() - 1
+
 class NAPIFunction : public JSC::JSFunction {
 
 public:
@@ -330,7 +332,7 @@ public:
         MarkedArgumentBufferWithSize<12> args;
         size_t argc = callframe->argumentCount() + 1;
         args.fill(vm, argc, [&](auto* slot) {
-            memcpy(slot, callframe->addressOfArgumentsStart() - 1, sizeof(JSC::JSValue) * argc);
+            memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callframe), sizeof(JSC::JSValue) * argc);
         });
         NAPICallFrame frame(JSC::ArgList(args), function->m_dataPtr);
 
@@ -1680,7 +1682,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     MarkedArgumentBufferWithSize<12> args;
     size_t argc = callFrame->argumentCount() + 1;
     args.fill(vm, argc, [&](auto* slot) {
-        memcpy(slot, callFrame->addressOfArgumentsStart() - 1, sizeof(JSC::JSValue) * argc);
+        memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });
     NAPICallFrame frame(JSC::ArgList(args), nullptr);
     frame.newTarget = newTarget;

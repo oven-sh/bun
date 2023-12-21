@@ -1687,12 +1687,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
 
     auto result = napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (!result) {
-        return JSValue::encode(frame.thisValue());
-    }
-
-    RELEASE_AND_RETURN(scope, result);
+    RELEASE_AND_RETURN(scope, frame.thisValue());
 }
 
 NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char* utf8name,

@@ -354,3 +354,49 @@ jobs:
             **[View build output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
 
             [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
+  test:
+    name: Test
+    runs-on: windows-latest
+    needs: [windows-link]
+    # if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
+    permissions:
+      pull-requests: write
+    timeout-minutes: 30
+    outputs:
+      failing_tests: ${{ steps.test.outputs.failing_tests }}
+      failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # TODO: test baseline
+        cpu: [haswell]
+        arch: [x86_64]
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: false
+      - id: download
+        name: Download Release
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          path: ${{runner.temp}}/release
+      - id: install-bun
+        name: Install Bun
+        run: |
+          cd ${{runner.temp}}/release
+          unzip ${{env.tag}}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
+          cd ${{env.tag}}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          pwd >> $GITHUB_PATH
+      - id: install
+        name: Install dependencies
+        run: |
+          # bun install --verbose
+          # bun install --cwd=test --verbose
+          # bun install --cwd=packages/bun-internal-test --verbose
+      - uses: actions/setup-node@v4
+      - with:
+          node-version: 16
+          cache: 'npm'

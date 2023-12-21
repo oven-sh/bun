@@ -247,11 +247,7 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
     result.* = array;
     return .ok;
 }
-pub export fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status {
-    log("napi_create_double", .{});
-    result.* = JSValue.jsNumber(value);
-    return .ok;
-}
+pub extern fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status;
 pub export fn napi_create_int32(_: napi_env, value: i32, result: *napi_value) napi_status {
     log("napi_create_int32", .{});
     result.* = JSValue.jsNumber(value);
@@ -370,14 +366,7 @@ pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
-pub export fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status {
-    log("napi_get_value_double", .{});
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.coerceToDouble(env);
-    return .ok;
-}
+pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status;
 pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
     log("napi_get_value_int32", .{});
     if (!value.isNumber()) {

@@ -400,14 +400,14 @@ pub const Loop = struct {
     }
 
     pub fn updateTimespec(timespec: *os.timespec) void {
-        if (comptime Environment.isLinux) {
-            const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
-            assert(rc == 0);
-        } else if (comptime Environment.isMac) {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
-        } else {
-            @compileError("TODO: implement poll for this platform");
-        }
+        return switch (Environment.os) {
+            .linux => {
+                const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
+                if (rc != 0) @panic("clock_gettime failed");
+            },
+            .windows => std.os.clock_gettime(std.os.CLOCK.REALTIME, timespec) catch @panic("GetSystemTimeAsFileTime failed"),
+            else => std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch @panic("clock_gettime failed"),
+        };
     }
 };
 

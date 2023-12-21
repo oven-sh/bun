@@ -311,10 +311,12 @@ if(failing_tests.length) {
   report += `## Failing tests log output\n\n`
   for(const { path, output, reason } of failing_tests) {
     report += `### [\`${path}\`](${linkToGH(path)})]\n\n`;
-    report += `To mark this as a known failing test, add this to the start of the file:\n`;
-    report += `\`\`\`ts\n`;
-    report += `// @bun-known-failing-on-windows: ${reason}\n`;
-    report += `\`\`\`\n\nLogs:\n`;
+    if (windows) {
+      report += `To mark this as a known failing test, add this to the start of the file:\n`;
+      report += `\`\`\`ts\n`;
+      report += `// @bun-known-failing-on-windows: ${reason}\n`;
+      report += `\`\`\`\n\nLogs:\n`;
+    }
     report += "```\n";
     report += output.replace(/\x1b\[[0-9;]*m/g, "")
     report += "```\n\n";

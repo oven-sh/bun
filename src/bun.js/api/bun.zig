@@ -1,3 +1,5 @@
+/// TODO: rename this file to BunObject.zig
+///
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -3427,10 +3429,16 @@ pub const Timer = struct {
                 var timeout = Timeout{
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
-                    .timer = Timeout.TimerReference.create(
-                        vm.eventLoop(),
-                        id,
-                    ),
+                    .timer = if (!Environment.isWindows)
+                        Timeout.TimerReference.create(
+                            vm.eventLoop(),
+                            id,
+                        )
+                    else
+                        uws.Timer.create(
+                            vm.uwsLoop(),
+                            id,
+                        ),
                 };
 
                 if (TimerObject.argumentsGetCached(this_value)) |arguments| {
@@ -3450,7 +3458,16 @@ pub const Timer = struct {
 
                 map.put(vm.allocator, this.id, timeout) catch unreachable;
 
-                timeout.timer.?.schedule(this.interval);
+                if (!Environment.isWindows) {
+                    timeout.timer.?.schedule(this.interval);
+                } else {
+                    timeout.timer.set(
+                        id,
+                        Timeout.run,
+                        this.interval,
+                        @as(i32, @intFromBool(this.kind == .setInterval)) * this.interval,
+                    );
+                }
                 return this_value;
             }
             return JSValue.jsUndefined();
@@ -3498,7 +3515,7 @@ pub const Timer = struct {
     pub const Timeout = struct {
         callback: JSC.Strong = .{},
         globalThis: *JSC.JSGlobalObject,
-        timer: ?*TimerReference = null,
+        timer: if (!Environment.isWindows) ?*TimerReference else *uws.Timer,
         did_unref_timer: bool = false,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         arguments: JSC.Strong = .{},
@@ -3809,8 +3826,12 @@ pub const Timer = struct {
 
             this.poll_ref.unref(vm);
 
-            if (this.timer) |timer| {
-                timer.cancelled = true;
+            if (!Environment.isWindows) {
+                if (this.timer) |timer| {
+                    timer.cancelled = true;
+                }
+            } else {
+                this.timer.deinit(false);
             }
 
             if (comptime Environment.isPosix)
@@ -3869,13 +3890,20 @@ pub const Timer = struct {
         var timeout = Timeout{
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
-            .timer = Timeout.TimerReference.create(
-                vm.eventLoop(),
-                Timeout.ID{
-                    .id = id,
-                    .kind = kind,
-                },
-            ),
+            .timer = if (!Environment.isWindows)
+                Timeout.TimerReference.create(
+                    vm.eventLoop(),
+                    Timeout.ID{
+                        .id = id,
+                        .kind = kind,
+                    },
+                )
+            else
+                // TODO: switch this to use libuv timer
+                uws.Timer.create(
+                    vm.uwsLoop(),
+                    id,
+                ),
         };
 
         if (arguments_array_or_zero != .zero) {
@@ -3889,7 +3917,17 @@ pub const Timer = struct {
             Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
         }
 
-        timeout.timer.?.schedule(interval);
+        if (!Environment.isWindows) {
+            timeout.timer.?.schedule(interval);
+        } else {
+            // TODO: switch this to use libuv timer
+            timeout.timer.set(
+                id,
+                Timeout.run,
+                interval,
+                @as(i32, @intFromBool(kind == .setInterval)) * interval,
+            );
+        }
     }
 
     pub fn setImmediate(

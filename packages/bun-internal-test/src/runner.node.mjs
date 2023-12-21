@@ -355,7 +355,7 @@ if (ci) {
   await action.summary.write();
 } else {
   if(windows && (regressions.length > 0 || fixes.length > 0)) {
-    console.log('\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @bun-known-failing-on-windows annotations, run `bun update-known-failing`')
+    console.log('\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @bun-known-failing-on-windows annotations, run `bun update-known-failures`')
   }
 }
 

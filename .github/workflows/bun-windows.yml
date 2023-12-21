@@ -178,6 +178,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.repository_owner == 'oven-sh'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64]
     steps:
       - uses: actions/checkout@v4
       - run: |

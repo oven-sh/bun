@@ -7,7 +7,6 @@ import { bunExe, bunEnv } from "harness";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
-import { constants } from "bun:sqlite";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;

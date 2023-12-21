@@ -121,13 +121,7 @@ test("next build works", async () => {
     // remove timestamps from output
     .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
 
-  if (bunCliOutput.replace(/\s?/gm, "") !== nodeCliOutput.replace(/\s?/gm, "")) {
-    console.log("-- BUN CLI OUTPUT --");
-    console.log(bunCliOutput);
-    console.log("-- Node CLI OUTPUT --");
-    console.log(nodeCliOutput);
-    throw new Error("CLI output is different");
-  }
+  expect(bunCliOutput).toBe(nodeCliOutput);
 
   const bunBuildDir = join(bunDir, ".next");
   const nodeBuildDir = join(nodeDir, ".next");

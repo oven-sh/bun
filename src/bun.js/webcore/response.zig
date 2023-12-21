@@ -1674,7 +1674,7 @@ pub const Fetch = struct {
             },
             .init = Response.Init{
                 .status_code = 200,
-                .status_text = bun.String.createAtom("OK"),
+                .status_text = bun.String.createAtomASCII("OK"),
             },
             .allocator = allocator,
             .url = data_url.url.dupeRef(),

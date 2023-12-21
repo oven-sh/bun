@@ -650,16 +650,18 @@ pub const Encoding = enum(u8) {
         }
     }
 
-    pub fn encodeWithMaxSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, size: usize, comptime max_size: usize, input: []const u8) JSC.JSValue {
+    pub fn encodeWithMaxSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, comptime max_size: usize, input: []const u8) JSC.JSValue {
         switch (encoding) {
             .base64 => {
-                var base64_buf: [std.base64.standard.Encoder.calcSize(max_size)]u8 = undefined;
-                const base64 = base64_buf[0..std.base64.standard.Encoder.calcSize(size)];
-                const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(base64, input)).toValueGC(globalThis);
-                return result;
+                var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
+                const encoded_len = bun.base64.encode(&base64_buf, input);
+                const encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
+                defer encoded.deref();
+                @memcpy(@constCast(bytes), base64_buf[0..encoded_len]);
+                return encoded.toJS(globalThis);
             },
             .base64url => {
-                var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size)]u8 = undefined;
+                var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
                 return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalThis);

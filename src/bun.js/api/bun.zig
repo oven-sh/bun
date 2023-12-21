@@ -2059,7 +2059,7 @@ pub const Crypto = struct {
                 globalThis.throwValue(instance);
                 return .zero;
             };
-            return encoding.encodeWithMaxSize(globalThis, len, BoringSSL.EVP_MAX_MD_SIZE, &output_digest_buf);
+            return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, output_digest_buf[0..len]);
         }
 
         fn hashToBytes(
@@ -2257,7 +2257,7 @@ pub const Crypto = struct {
 
             const out = this.evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice);
 
-            return encoding.encodeWithMaxSize(globalThis, out.len, BoringSSL.EVP_MAX_MD_SIZE, out);
+            return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, out);
         }
 
         pub fn finalize(this: *CryptoHasher) callconv(.C) void {

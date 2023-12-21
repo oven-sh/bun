@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "TODO on Windows"
+// @bun-known-failing-on-windows: 1 failing
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { Glob, GlobScanOptions } from "bun";
 

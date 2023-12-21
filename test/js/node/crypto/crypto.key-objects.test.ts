@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 17 failing
+// @bun-known-failing-on-windows: 1 failing
 "use strict";
 
 import {

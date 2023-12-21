@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "uvfdcast(620[handle]) called on an windows handle"
+// @bun-known-failing-on-windows: 1 failing
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { platform } from "os";

@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: SIGTERM
+// @bun-known-failing-on-windows: 1 failing
 test("postMessage results in correct event", done => {
   let c1 = new BroadcastChannel("eventType");
   let c2 = new BroadcastChannel("eventType");

@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 28 failing
+// @bun-known-failing-on-windows: 1 failing
 import fs from "fs";
 import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";

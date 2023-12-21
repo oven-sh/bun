@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "uvfdcast(752[handle]) called on an windows handle"
+// @bun-known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
 
 const weirdInternalSpecifiers = [

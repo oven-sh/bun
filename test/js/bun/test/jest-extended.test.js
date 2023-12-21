@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 2 failing
+// @bun-known-failing-on-windows: 1 failing
 "use strict";
 
 /** This file is meant to be runnable in both Jest and Bun.

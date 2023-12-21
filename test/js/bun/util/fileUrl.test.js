@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 2 failing
+// @bun-known-failing-on-windows: 1 failing
 import { expect, it, describe } from "bun:test";
 import { pathToFileURL, fileURLToPath } from "bun";
 describe("pathToFileURL", () => {

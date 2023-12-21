@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "TODO on Windows"
+// @bun-known-failing-on-windows: 1 failing
 import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";

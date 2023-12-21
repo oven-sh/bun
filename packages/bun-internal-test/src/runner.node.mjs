@@ -174,7 +174,7 @@ async function runTest(path) {
 
   const duration = (Date.now() - start) / 1000;
 
-  console.log(`\x1b[2m${formatTime(duration).padStart(6, ' ')}\x1b[0m ${passed ? '\x1b[32m✔' : ((windows && expected_crash_reason === reason) ? '\x1b[33m⚠' : '\x1b[31m✖')} ${name}\x1b[0m${reason ? ` (${reason})` : ''}`);
+  console.log(`\x1b[2m${formatTime(duration).padStart(6, ' ')}\x1b[0m ${passed ? '\x1b[32m✔' : ((expected_crash_reason) ? '\x1b[33m⚠' : '\x1b[31m✖')} ${name}\x1b[0m${reason ? ` (${reason})` : ''}`);
 
   if(run_concurrency > 1 && ci) {
     process.stderr.write(output);
@@ -182,8 +182,8 @@ async function runTest(path) {
 
   if (!passed) {
     if(reason) {
-      if (windows && expected_crash_reason !== reason) {
-        regressions.push({ path: name, reason, output, expected_crash_reason });
+      if (windows && !expected_crash_reason) {
+        regressions.push({ path: name, reason, output });
       }
     }
 
@@ -311,13 +311,15 @@ if(failingTestDisplay.length > 0) {
 
 if(failing_tests.length) {
   report += `## Failing tests log output\n\n`
-  for(const { path, output, reason } of failing_tests) {
+  for(const { path, output, reason, expected_crash_reason } of failing_tests) {
     report += `### [\`${path}\`](${linkToGH(path)})]\n\n`;
-    if (windows) {
+    if (windows && (reason !== expected_crash_reason)) {
       report += `To mark this as a known failing test, add this to the start of the file:\n`;
       report += `\`\`\`ts\n`;
       report += `// @bun-known-failing-on-windows: ${reason}\n`;
-      report += `\`\`\`\n\nLogs:\n`;
+      report += `\`\`\`\n\n`;
+    } else {
+      report += `${reason}\n\n`;
     }
     report += "```\n";
     report += output.replace(/\x1b\[[0-9;]*m/g, "")

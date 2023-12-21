@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "todo"
+// @bun-known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";

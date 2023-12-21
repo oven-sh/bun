@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "switch on corrupt value"
+// @bun-known-failing-on-windows: 1 failing
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { request } from "undici";
 

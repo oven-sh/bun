@@ -1,4 +1,3 @@
-// @bun-known-failing-on-windows: SIGTERM
 /// <reference path="./expect-extend.types.d.ts" />
 // @ts-check
 

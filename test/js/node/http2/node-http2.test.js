@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "integer overflow"
+// @bun-known-failing-on-windows: 1 failing
 import http2 from "node:http2";
 import { Duplex } from "stream";
 import tls from "node:tls";

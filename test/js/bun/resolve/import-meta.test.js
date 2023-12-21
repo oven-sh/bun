@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "Do not pass posix paths to windows APIs, was given '\tmp\bun-test-import-meta-dynamic-dir' (missing a root like 'C:\', see PosixToWinNormalizer for why this is an assertion)"
+// @bun-known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";

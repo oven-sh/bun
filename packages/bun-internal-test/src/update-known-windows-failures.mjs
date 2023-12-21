@@ -31,3 +31,16 @@ for (const { path, reason, expected_crash_reason } of test_report.failing_tests)
         } 
     }
 }
+
+for (const { path } of test_report.fixes) {
+    assert(path);
+
+    const old_content = readFileSync(path, 'utf8');
+
+    let content = old_content.replace(/\/\/\s*@bun-known-failing-on-windows:.*\n/, '')
+
+    if (content !== old_content) {
+        writeFileSync(path, content, 'utf8');
+        console.log(path);
+    } 
+}

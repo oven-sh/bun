@@ -417,7 +417,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
     };
 
     JSC::Identifier propertyName = getPropertyName();
-    if (propertyName.isEmpty()) {
+    if (!propertyName.isSymbol() && propertyName.isEmpty()) {
         return;
     }
 

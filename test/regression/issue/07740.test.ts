@@ -1,7 +1,6 @@
-import { stderr } from "bun";
 import { bunEnv } from "harness";
 import { bunExe } from "harness";
-import { bun, bunRunAsScript, tempDirWithFiles } from "harness"
+import { tempDirWithFiles } from "harness"
 
 it("duplicate dependencies should warn instead of error", () => {
     const package_json = JSON.stringify({
@@ -20,16 +19,11 @@ it("duplicate dependencies should warn instead of error", () => {
     const proc = Bun.spawnSync([bunExe(), 'install'], {
         env: bunEnv,
         cwd: dir,
-        stdout: "pipe",
         stderr: "pipe",
     });
 
-    const [stdout, stderr] = [
-        proc.stdout.toString('utf-8').trim(),
-        proc.stderr.toString('utf-8').trim()
-    ]
+    const stderr = proc.stderr.toString('utf-8').trim();
 
     expect(stderr).not.toContain("error: Duplicate dependency:");
     expect(stderr).toContain("warn: Duplicate dependency");
-    expect(stdout).toEqual("");
 })

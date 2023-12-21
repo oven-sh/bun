@@ -363,7 +363,7 @@ pub fn inspect(
 ) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(4).slice();
     if (arguments.len == 0)
-        return bun.String.empty.toJSConst(globalThis);
+        return bun.String.empty.toJS(globalThis);
 
     for (arguments) |arg| {
         arg.protect();
@@ -911,7 +911,7 @@ comptime {
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
-        return bun.String.empty.toJSConst(globalObject);
+        return bun.String.empty.toJS(globalObject);
     }
     var public_path_temp_str: [bun.MAX_PATH_BYTES]u8 = undefined;
 

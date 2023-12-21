@@ -95,7 +95,7 @@ extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
-    auto stringImpl = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
+    auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
@@ -110,7 +110,8 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
-        resolvedSource, stringImpl.releaseImpl().releaseNonNull(),
+        resolvedSource,
+        string.isNull() ? *StringImpl::empty() : *string.impl(),
         JSC::SourceTaintedOrigin::Untainted,
         toSourceOrigin(sourceURLString, isBuiltin),
         sourceURLString.impl(), TextPosition(),

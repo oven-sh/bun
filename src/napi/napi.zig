@@ -291,16 +291,16 @@ pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length
 
     log("napi_create_string_latin1: {s}", .{slice});
 
-    var string = bun.String.createUninitializedLatin1(slice.len);
-    if (string.tag == .Dead) {
-        return .generic_failure;
+    if (slice.len == 0) {
+        setNapiValue(result, bun.String.empty.toJS(env));
+        return .ok;
     }
 
-    if (slice.len > 0) {
-        @memcpy(@constCast(string.latin1())[0..slice.len], slice);
-    }
-
+    var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
     defer string.deref();
+
+    @memcpy(bytes, slice);
+
     setNapiValue(result, string.toJS(env));
     return .ok;
 }
@@ -353,16 +353,15 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     if (comptime bun.Environment.allow_assert)
         log("napi_create_string_utf16: {d} {any}", .{ slice.len, strings.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
-    var string = bun.String.createUninitializedUTF16(slice.len);
-    if (string.tag == .Dead) {
-        return .generic_failure;
+    if (slice.len == 0) {
+        setNapiValue(result, bun.String.empty.toJS(env));
     }
 
-    if (slice.len > 0) {
-        @memcpy(@constCast(string.utf16())[0..slice.len], slice);
-    }
-
+    var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
     defer string.deref();
+
+    @memcpy(chars, slice);
+
     setNapiValue(result, string.toJS(env));
     return .ok;
 }

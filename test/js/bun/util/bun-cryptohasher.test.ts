@@ -22,12 +22,20 @@ describe("Hash is consistent", () => {
 
   for (let algorithm of ["sha1", "sha256", "sha512", "md5"] as const) {
     describe(algorithm, () => {
+      const Class = globalThis.Bun[algorithm.toUpperCase() as "SHA1" | "SHA256" | "SHA512" | "MD5"];
       test("base64", () => {
         for (let buffer of inputs) {
           for (let i = 0; i < 200; i++) {
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "base64")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "base64"),
             );
+
+            const instance1 = new Class();
+            instance1.update(buffer);
+            const instance2 = new Class();
+            instance2.update(buffer);
+
+            expect(instance1.digest("base64")).toEqual(instance2.digest("base64"));
           }
         }
       });
@@ -38,6 +46,13 @@ describe("Hash is consistent", () => {
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "hex")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "hex"),
             );
+
+            const instance1 = new Class();
+            instance1.update(buffer);
+            const instance2 = new Class();
+            instance2.update(buffer);
+
+            expect(instance1.digest("hex")).toEqual(instance2.digest("hex"));
           }
         }
       });

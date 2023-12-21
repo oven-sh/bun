@@ -655,7 +655,7 @@ pub const Encoding = enum(u8) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded_len = bun.base64.encode(&base64_buf, input);
-                const encoded, const bytes = bun.String.createUninitializedLatin1(encoded_len);
+                const encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
                 defer encoded.deref();
                 @memcpy(@constCast(bytes), base64_buf[0..encoded_len]);
                 return encoded.toJS(globalThis);

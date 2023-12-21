@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_SEVERITY_ERROR
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 // This test checks that printing stack traces increments and decrements

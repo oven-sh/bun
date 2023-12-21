@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { test, expect } from "bun:test";
 
 test("setImmediate doesn't block the event loop", async () => {

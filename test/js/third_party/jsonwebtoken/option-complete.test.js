@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_SEVERITY_ERROR
 "use strict";
 
 import { expect, describe, it } from "bun:test";

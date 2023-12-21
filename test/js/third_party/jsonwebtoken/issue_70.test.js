@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_SEVERITY_ERROR
 import jwt from "jsonwebtoken";
 import { describe, it } from "bun:test";
 

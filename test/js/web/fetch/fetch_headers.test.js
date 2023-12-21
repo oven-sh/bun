@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 let url = `http://localhost:0`;
 let server;

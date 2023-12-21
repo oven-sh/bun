@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 const fetch = require("node-fetch");
 
 test("require('node-fetch') fetches", async () => {

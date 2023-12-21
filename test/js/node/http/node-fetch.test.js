@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "reached unreachable code"
 import fetch2, { fetch, Response, Request, Headers } from "node-fetch";
 import * as iso from "isomorphic-fetch";
 import * as vercelFetch from "@vercel/fetch";

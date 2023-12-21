@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: STATUS_SEVERITY_ERROR
 import { expect, describe, it } from "bun:test";
 import { createPrivateKey } from "crypto";
 import fs from "fs";

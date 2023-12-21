@@ -2679,7 +2679,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeObject", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         const pass = value.isObject() != not;

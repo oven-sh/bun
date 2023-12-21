@@ -7,4 +7,3 @@ const result = fn.apply(null, JSON.parse(process.argv[3] ?? "[]"));
 if (result) {
   throw new Error(result);
 }
-

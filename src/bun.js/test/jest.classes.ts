@@ -483,6 +483,10 @@ export default [
         fn: "toBeInteger",
         length: 0,
       },
+      toBeObject: {
+        fn: "toBeObject",
+        length: 0,
+      },
       toBeFinite: {
         fn: "toBeFinite",
         length: 0,

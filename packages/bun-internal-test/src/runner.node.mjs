@@ -223,6 +223,9 @@ while(queue.length > 0) {
     }
   });
 }
+while (running > 0) {
+  await Promise.race([new Promise(resolve => on_entry_finish = resolve), new Promise(resolve => setTimeout(resolve, 1000))]);
+}
 
 function linkToGH(linkTo) {
   return `https://github.com/oven-sh/bun/blob/${git_sha}/${linkTo}`;
@@ -349,3 +352,5 @@ if (ci) {
     console.log('\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @bun-known-failing-on-windows annotations, run `bun update-known-failing`')
   }
 }
+
+process.exit(0);

@@ -153,12 +153,11 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    _ = to_dir;
-    const dirfd = bun.toFD(from_dir);
-    const in_handle = try bun.sys.openat(dirfd, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+    const from_dir_fd = bun.toFD(from_dir);
+    const in_handle = try bun.sys.openat(from_dir_fd, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
     defer _ = bun.sys.close(in_handle);
-    _ = bun.sys.unlinkat(dirfd, filename);
-    try copyFileZSlowWithHandle(in_handle, dirfd, destination);
+    _ = bun.sys.unlinkat(from_dir_fd, filename);
+    try copyFileZSlowWithHandle(in_handle, bun.toFD(to_dir), destination);
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {

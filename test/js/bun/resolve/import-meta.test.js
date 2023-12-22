@@ -192,15 +192,15 @@ it("import.meta.dir", () => {
 
 it("import.meta.dirname", () => {
   expect(dirname.endsWith("/bun/test/js/bun/resolve")).toBe(true);
-})
+});
 
 it("import.meta.file", () => {
   expect(file.endsWith("import-meta.test.js")).toBe(true);
-})
+});
 
 it("import.meta.filename", () => {
   expect(filename.endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
-})
+});
 
 it("import.meta.path", () => {
   expect(path.endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);

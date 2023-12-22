@@ -63,16 +63,6 @@ pub const ResourceUsage = struct {
         return JSC.JSValue.jsNumber(this.rusage.ixrss);
     }
 
-    pub fn pageFaults(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        var pgFaults = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        pgFaults.put(globalObject, JSC.ZigString.static("minor"), JSC.JSValue.jsNumber(this.rusage.minflt));
-        pgFaults.put(globalObject, JSC.ZigString.static("major"), JSC.JSValue.jsNumber(this.rusage.majflt));
-        return pgFaults;
-    }
-
     pub fn getSwapCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,

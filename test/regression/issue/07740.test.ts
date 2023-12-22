@@ -5,12 +5,12 @@ import { tempDirWithFiles } from "harness";
 it("duplicate dependencies should warn instead of error", () => {
   const package_json = JSON.stringify({
     devDependencies: {
-      vuex: "3.6.2",
+      "empty-package-for-bun-test-runner": "1.0.0"
     },
     dependencies: {
-      vuex: "3.6.2",
-    },
-  });
+      "empty-package-for-bun-test-runner": "1.0.0"
+    }
+  })
 
   const dir = tempDirWithFiles("07740", {
     "package.json": package_json,

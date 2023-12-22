@@ -2,6 +2,69 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
+    name: "ResourceUsage",
+    construct: true,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      utime: {
+        getter: "getUTime",
+        cache: true,
+      },
+      stime: {
+        getter: "getSTime",
+        cache: true,
+      },
+      maxrss: {
+        getter: "getMaxRSS",
+      },
+      ixrss: {
+        getter: "getIXRSS",
+      },
+      idrss: {
+        getter: "getIDRSS",
+      },
+      isrss: {
+        getter: "getISRSS",
+      },
+      minflt: {
+        getter: "getMinFLT",
+      },
+      majflt: {
+        getter: "getMajFLT",
+      },
+      nswap: {
+        getter: "getNSwap",
+      },
+      inblock: {
+        getter: "getInBlock",
+      },
+      oublock: {
+        getter: "getOuBlock",
+      },
+      msgsnd: {
+        getter: "getMsgSnd",
+      },
+      msgrcv: {
+        getter: "getMsgRcv",
+      },
+      nsignals: {
+        getter: "getNSignals",
+      },
+      nvcsw: {
+        getter: "getNVCSW",
+      },
+      nivcsw: {
+        getter: "getNIVCSW",
+      },
+    },
+    values: [],
+  }),
+  define({
     name: "Subprocess",
     construct: true,
     noConstructor: true,

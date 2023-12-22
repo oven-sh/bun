@@ -22,6 +22,129 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const PosixSpawn = bun.posix.spawn;
 
+pub const ResourceUsage = struct {
+    pub usingnamespace JSC.Codegen.JSResourceUsage;
+    rusage: if (Environment.isLinux) std.os.rusage else u0,
+
+    pub fn constructor(
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) ?*Subprocess {
+        return null;
+    }
+
+    pub fn getUTime(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        const rusage = this.rusage;
+        var utime = JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        utime.put(globalObject, JSC.ZigString.static("tv_sec"), JSValue.jsNumber(rusage.utime.tv_sec));
+        utime.put(globalObject, JSC.ZigString.static("tv_usec"), JSValue.jsNumber(rusage.utime.tv_usec));
+        return utime;
+    }
+
+    pub fn getSTime(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        const rusage = this.rusage;
+        var stime = JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        stime.put(globalObject, JSC.ZigString.static("tv_sec"), JSValue.jsNumber(rusage.stime.tv_sec));
+        stime.put(globalObject, JSC.ZigString.static("tv_usec"), JSValue.jsNumber(rusage.stime.tv_usec));
+        return stime;
+    }
+
+    pub fn getMaxRSS(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.maxrss);
+    }
+    pub fn getIXRSS(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.ixrss);
+    }
+    pub fn getIDRSS(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.idrss);
+    }
+    pub fn getISRSS(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.isrss);
+    }
+    pub fn getMinFLT(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.minflt);
+    }
+    pub fn getMajFLT(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.majflt);
+    }
+    pub fn getNSwap(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nswap);
+    }
+    pub fn getInBlock(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.inblock);
+    }
+    pub fn getOuBlock(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.oublock);
+    }
+    pub fn getMsgSnd(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.msgsnd);
+    }
+    pub fn getMsgRcv(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.msgrcv);
+    }
+    pub fn getNSignals(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nsignals);
+    }
+    pub fn getNVCSW(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nvcsw);
+    }
+    pub fn getNIVCSW(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nivcsw);
+    }
+
+    pub fn finalize(this: *ResourceUsage) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+};
+
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
     pub usingnamespace JSC.Codegen.JSSubprocess;
@@ -101,37 +224,17 @@ pub const Subprocess = struct {
             return JSValue.jsUndefined();
         }
         const pid_rusage = this.pid_rusage.?;
-        // TODO: make this a class
-        var result = JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        const resource_usage = ResourceUsage{
+            .rusage = pid_rusage,
+        };
 
-        var utime = JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        utime.put(globalObject, JSC.ZigString.static("tv_sec"), JSValue.jsNumber(pid_rusage.utime.tv_sec));
-        utime.put(globalObject, JSC.ZigString.static("tv_usec"), JSValue.jsNumber(pid_rusage.utime.tv_usec));
-
-        result.put(globalObject, JSC.ZigString.static("utime"), utime);
-
-        var stime = JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        stime.put(globalObject, JSC.ZigString.static("tv_sec"), JSValue.jsNumber(pid_rusage.stime.tv_sec));
-        stime.put(globalObject, JSC.ZigString.static("tv_usec"), JSValue.jsNumber(pid_rusage.stime.tv_usec));
-
-        result.put(globalObject, JSC.ZigString.static("stime"), stime);
-
-        result.put(globalObject, JSC.ZigString.static("maxrss"), JSValue.jsNumber(pid_rusage.maxrss));
-        result.put(globalObject, JSC.ZigString.static("ixrss"), JSValue.jsNumber(pid_rusage.ixrss));
-        result.put(globalObject, JSC.ZigString.static("idrss"), JSValue.jsNumber(pid_rusage.idrss));
-        result.put(globalObject, JSC.ZigString.static("isrss"), JSValue.jsNumber(pid_rusage.isrss));
-        result.put(globalObject, JSC.ZigString.static("minflt"), JSValue.jsNumber(pid_rusage.minflt));
-        result.put(globalObject, JSC.ZigString.static("majflt"), JSValue.jsNumber(pid_rusage.majflt));
-        result.put(globalObject, JSC.ZigString.static("nswap"), JSValue.jsNumber(pid_rusage.nswap));
-        result.put(globalObject, JSC.ZigString.static("inblock"), JSValue.jsNumber(pid_rusage.inblock));
-        result.put(globalObject, JSC.ZigString.static("oublock"), JSValue.jsNumber(pid_rusage.oublock));
-        result.put(globalObject, JSC.ZigString.static("msgsnd"), JSValue.jsNumber(pid_rusage.msgsnd));
-        result.put(globalObject, JSC.ZigString.static("msgrcv"), JSValue.jsNumber(pid_rusage.msgrcv));
-        result.put(globalObject, JSC.ZigString.static("nsignals"), JSValue.jsNumber(pid_rusage.nsignals));
-        result.put(globalObject, JSC.ZigString.static("nvcsw"), JSValue.jsNumber(pid_rusage.nvcsw));
-        result.put(globalObject, JSC.ZigString.static("nivcsw"), JSValue.jsNumber(pid_rusage.nivcsw));
-
-        return result;
+        const alloc = globalObject.allocator();
+        var result = alloc.create(ResourceUsage) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        result.* = resource_usage;
+        return result.toJS(globalObject);
     }
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;

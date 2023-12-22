@@ -291,3 +291,15 @@ it("setTimeout should not refresh after clearTimeout", done => {
     done();
   }, 100);
 });
+
+it("setTimeout CPU usage #7792", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+  });
+  const code = await process.exited;
+  expect(code).toBe(0);
+  const cpu_time = process.stats().utime;
+  expect(cpu_time.tv_sec + cpu_time.tv_usec / 1e6).toBeLessThan(1);
+});

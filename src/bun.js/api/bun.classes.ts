@@ -43,7 +43,10 @@ export default [
         fn: "doUnref",
         length: 0,
       },
-
+      stats: {
+        fn: "stats",
+        length: 0,
+      },
       send: {
         fn: "doSend",
         length: 1,

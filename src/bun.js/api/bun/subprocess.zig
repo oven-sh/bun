@@ -24,7 +24,7 @@ const PosixSpawn = bun.posix.spawn;
 
 pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
-    rusage: if (Environment.isLinux) std.os.rusage else u0,
+    rusage: if (Environment.isWindows) u0 else std.os.rusage,
 
     pub fn constructor(
         _: *JSC.JSGlobalObject,
@@ -179,7 +179,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
-    pid_rusage: if (Environment.isLinux) ?std.os.rusage else u0 = if (Environment.isLinux) null else 0,
+    pid_rusage: if (Environment.isWindows) ?u0 else ?std.os.rusage = null,
 
     pub const Flags = packed struct(u3) {
         is_sync: bool = false,

@@ -33,20 +33,20 @@ pub const ResourceUsage = struct {
         return null;
     }
 
-    pub fn getUTime(
+    pub fn getCPUTime(
         this: *ResourceUsage,
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
     ) callconv(.C) JSValue {
+        var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
-        return JSValue.jsNumber(rusage.utime.tv_usec + (rusage.utime.tv_sec * @as(c_long, 1e6)));
-    }
 
-    pub fn getSTime(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        const rusage = this.rusage;
-        return JSValue.jsNumber(rusage.stime.tv_usec + (rusage.stime.tv_sec * @as(c_long, 1e6)));
+        const usrTime = rusage.utime.tv_usec + (rusage.utime.tv_sec * @as(c_long, 1e6));
+        const sysTime = rusage.stime.tv_usec + (rusage.stime.tv_sec * @as(c_long, 1e6));
+        cpu.put(globalObject, JSC.ZigString.static("user"), JSValue.jsNumber(usrTime));
+        cpu.put(globalObject, JSC.ZigString.static("system"), JSValue.jsNumber(sysTime));
+        cpu.put(globalObject, JSC.ZigString.static("total"), JSValue.jsNumber(usrTime + sysTime));
+
+        return cpu;
     }
 
     pub fn getMaxRSS(
@@ -55,83 +55,66 @@ pub const ResourceUsage = struct {
     ) callconv(.C) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.maxrss);
     }
-    pub fn getIXRSS(
+
+    pub fn getSharedMemorySize(
         this: *ResourceUsage,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.ixrss);
     }
-    pub fn getIDRSS(
+
+    pub fn pageFaults(
         this: *ResourceUsage,
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.idrss);
+        var pgFaults = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        pgFaults.put(globalObject, JSC.ZigString.static("minor"), JSC.JSValue.jsNumber(this.rusage.minflt));
+        pgFaults.put(globalObject, JSC.ZigString.static("major"), JSC.JSValue.jsNumber(this.rusage.majflt));
+        return pgFaults;
     }
-    pub fn getISRSS(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.isrss);
-    }
-    pub fn getMinFLT(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.minflt);
-    }
-    pub fn getMajFLT(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.majflt);
-    }
-    pub fn getNSwap(
+
+    pub fn getSwapCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nswap);
     }
-    pub fn getInBlock(
+
+    pub fn getOps(
         this: *ResourceUsage,
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.inblock);
+        var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
+        ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
+        return ops;
     }
-    pub fn getOuBlock(
+
+    pub fn getMessages(
         this: *ResourceUsage,
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.oublock);
+        var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
+        msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
+        return msgs;
     }
-    pub fn getMsgSnd(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.msgsnd);
-    }
-    pub fn getMsgRcv(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.msgrcv);
-    }
-    pub fn getNSignals(
+
+    pub fn getSignalCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nsignals);
     }
-    pub fn getNVCSW(
+
+    pub fn getContextSwitches(
         this: *ResourceUsage,
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.nvcsw);
-    }
-    pub fn getNIVCSW(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.nivcsw);
+        var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
+        ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
+        return ctx;
     }
 
     pub fn finalize(this: *ResourceUsage) callconv(.C) void {

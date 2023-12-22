@@ -300,6 +300,6 @@ it("setTimeout CPU usage #7790", async () => {
   });
   const code = await process.exited;
   expect(code).toBe(0);
-  const cpu_time = process.stats().utime;
-  expect(cpu_time.tv_sec + cpu_time.tv_usec / 1e6).toBeLessThan(1);
+  const stats = process.stats();
+  expect(stats.userCPUTime / 1e6).toBeLessThan(1);
 });

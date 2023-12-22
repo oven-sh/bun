@@ -11,54 +11,52 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
-      utime: {
+      userCPUTime: {
         getter: "getUTime",
-        cache: true,
       },
-      stime: {
+      systemCPUTime: {
         getter: "getSTime",
-        cache: true,
       },
-      maxrss: {
+      maxResidentMemorySize: {
         getter: "getMaxRSS",
       },
-      ixrss: {
+      sharedMemorySize: {
         getter: "getIXRSS",
       },
-      idrss: {
+      unsharedDataSize: {
         getter: "getIDRSS",
       },
-      isrss: {
+      unsharedStackSize: {
         getter: "getISRSS",
       },
-      minflt: {
+      pageFaultsWithoutIO: {
         getter: "getMinFLT",
       },
-      majflt: {
+      pageFaultsWithIO: {
         getter: "getMajFLT",
       },
-      nswap: {
+      swapCount: {
         getter: "getNSwap",
       },
-      inblock: {
+      inputOperations: {
         getter: "getInBlock",
       },
-      oublock: {
+      outputOperations: {
         getter: "getOuBlock",
       },
-      msgsnd: {
+      messagesSent: {
         getter: "getMsgSnd",
       },
-      msgrcv: {
+      messagesReceived: {
         getter: "getMsgRcv",
       },
-      nsignals: {
+      signalCount: {
         getter: "getNSignals",
       },
-      nvcsw: {
+      voluntaryContextSwitches: {
         getter: "getNVCSW",
       },
-      nivcsw: {
+      involuntaryContextSwitches: {
         getter: "getNIVCSW",
       },
     },

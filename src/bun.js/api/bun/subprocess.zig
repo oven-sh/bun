@@ -35,24 +35,18 @@ pub const ResourceUsage = struct {
 
     pub fn getUTime(
         this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
+        _: *JSGlobalObject,
     ) callconv(.C) JSValue {
         const rusage = this.rusage;
-        var utime = JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        utime.put(globalObject, JSC.ZigString.static("tv_sec"), JSValue.jsNumber(rusage.utime.tv_sec));
-        utime.put(globalObject, JSC.ZigString.static("tv_usec"), JSValue.jsNumber(rusage.utime.tv_usec));
-        return utime;
+        return JSValue.jsNumber(rusage.utime.tv_usec + (rusage.utime.tv_sec * @as(c_long, 1e6)));
     }
 
     pub fn getSTime(
         this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
+        _: *JSGlobalObject,
     ) callconv(.C) JSValue {
         const rusage = this.rusage;
-        var stime = JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        stime.put(globalObject, JSC.ZigString.static("tv_sec"), JSValue.jsNumber(rusage.stime.tv_sec));
-        stime.put(globalObject, JSC.ZigString.static("tv_usec"), JSValue.jsNumber(rusage.stime.tv_usec));
-        return stime;
+        return JSValue.jsNumber(rusage.stime.tv_usec + (rusage.stime.tv_sec * @as(c_long, 1e6)));
     }
 
     pub fn getMaxRSS(

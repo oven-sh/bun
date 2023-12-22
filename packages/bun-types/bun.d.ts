@@ -3966,45 +3966,79 @@ declare module "bun" {
   }
 
   interface ResourceUsage {
-    /// The number of voluntary and involuntary context switches that the process made.
+    /**
+     * The number of voluntary and involuntary context switches that the process made.
+     */
     contextSwitches: {
-      /// Voluntary context switches (context switches that the process initiated).
+      /**
+       * Voluntary context switches (context switches that the process initiated).
+       */
       voluntary: number;
-      /// Involuntary context switches (context switches initiated by the system scheduler).
+      /**
+       * Involuntary context switches (context switches initiated by the system scheduler).
+       */
       involuntary: number;
     };
 
-    /// The amount of CPU time used by the process, in nanoseconds.
+    /**
+     * The amount of CPU time used by the process, in nanoseconds.
+     */
     cpuTime: {
-      /// User CPU time used by the process, in nanoseconds.
+      /**
+       * User CPU time used by the process, in nanoseconds.
+       */
       user: number;
-      /// System CPU time used by the process, in nanoseconds.
+      /**
+       * System CPU time used by the process, in nanoseconds.
+       */
       system: number;
-      /// Total CPU time used by the process, in nanoseconds.
+      /**
+       * Total CPU time used by the process, in nanoseconds.
+       */
       total: number;
     };
-    ///  The maximum resident set size (in kilobytes) used by the process. This represents the peak amount of physical memory the process has used.
+    /**
+     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     */
     maxRSS: number;
 
-    /// IPC messages sent and received by the process.
+    /**
+     * IPC messages sent and received by the process.
+     */
     messages: {
-      /// The number of IPC messages sent.
+      /**
+       * The number of IPC messages sent.
+       */
       sent: number;
-      /// The number of IPC messages received.
+      /**
+       * The number of IPC messages received.
+       */
       received: number;
     };
-    /// The number of IO operations done by the process.
+    /**
+     * The number of IO operations done by the process.
+     */
     ops: {
-      /// The number of input operations via the file system.
+      /**
+       * The number of input operations via the file system.
+       */
       in: number;
-      /// The number of output operations via the file system.
+      /**
+       * The number of output operations via the file system.
+       */
       out: number;
     };
-    /// Integral shared memory size
+    /**
+     * The amount of shared memory that the process used.
+     */
     shmSize: number;
-    /// The number of signals delivered to the process.
+    /**
+     * The number of signals delivered to the process.
+     */
     signalCount: number;
-    /// The number of times the process was swapped out of main memory.
+    /**
+     *  The number of times the process was swapped out of main memory.
+     */
     swapCount: number;
   }
 

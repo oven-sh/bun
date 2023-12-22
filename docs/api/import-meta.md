@@ -3,9 +3,11 @@ The `import.meta` object is a way for a module to access information about itsel
 Bun implements the following properties.
 
 ```ts#/path/to/project/file.ts
-import.meta.dir;   // => "/path/to/project"
-import.meta.file;  // => "file.ts"
-import.meta.path;  // => "/path/to/project/file.ts"
+import.meta.dir;        // => "/path/to/project"
+import.meta.dirname;    // => "/path/to/project"
+import.meta.file;       // => "file.ts"
+import.meta.filename;   // => "/path/to/project/file.ts"
+import.meta.path;       // => "/path/to/project/file.ts"
 
 import.meta.main;  // `true` if this file is directly executed by `bun run`
                    // `false` otherwise
@@ -23,8 +25,18 @@ import.meta.resolveSync("zod")
 
 ---
 
+- `import.meta.dirname`
+- An alias to `import.meta.dir`
+
+---
+
 - `import.meta.file`
 - The name of the current file, e.g. `index.tsx`
+
+---
+
+- `import.meta.filename`
+- An alias to `import.meta.path` or `${import.meta.dir}/${import.meta.file}`
 
 ---
 

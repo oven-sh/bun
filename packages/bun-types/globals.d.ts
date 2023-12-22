@@ -303,9 +303,19 @@ interface ImportMeta {
    */
   readonly dir: string;
   /**
+   * Absolute path to the directory containing the source file. (alias for `dir` to match Node.js)
+   *
+   * Does not have trailing slash
+   */
+  readonly dirname: string;
+  /**
    * Filename of the source file
    */
   readonly file: string;
+  /**
+   * Absolute path with filename of the source file (to match Node.js)
+   */
+  readonly filename: string;
   /**
    * The environment variables of the process
    *

@@ -52,8 +52,10 @@ public:
     WTF::String url;
     LazyProperty<JSObject, JSFunction> requireProperty;
     LazyProperty<JSObject, JSString> dirProperty;
+    LazyProperty<JSObject, JSString> dirnameProperty;
     LazyProperty<JSObject, JSString> urlProperty;
     LazyProperty<JSObject, JSString> fileProperty;
+    LazyProperty<JSObject, JSString> filenameProperty;
     LazyProperty<JSObject, JSString> pathProperty;
 
 private:

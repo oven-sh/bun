@@ -138,7 +138,10 @@ fn opendir(file_path: [:0]const u8, flags: bun.Mode) Maybe(bun.FileDescriptor) {
 
 fn opendirat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     if (bun.Environment.isWindows) {
-        return Syscall.openDirAtWindowsA(dirfd, file_path, true, flags & O.NOFOLLOW != 0);
+        // Internally uses NtCreateFile which doesn't support relative paths
+        if (ResolvePath.Platform.isAbsolute(.windows, file_path[0..file_path.len])) return Syscall.openDirAtWindowsA(dirfd, file_path, true, flags & O.NOFOLLOW != 0);
+        const normalized_str = ResolvePath.normalizeBuf(file_path[0..file_path.len], &ResolvePath.join_buf, .windows);
+        return Syscall.openDirAtWindowsA(dirfd, normalized_str, true, flags & O.NOFOLLOW != 0);
     }
 
     return Syscall.openat(dirfd, file_path, flags, 0);
@@ -279,7 +282,7 @@ pub fn GlobWalker_(
             }
 
             pub fn closeDisallowingCwd(this: *Iterator, fd: bun.FileDescriptor) void {
-                if (fd == this.cwd_fd) return;
+                if (fd == this.cwd_fd or fd == bun.invalid_fd) return;
                 _ = Syscall.close(fd);
                 if (bun.Environment.allow_assert) this.fds_open -= 1;
             }
@@ -333,6 +336,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                 this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
                 this.iter_state.directory.at_cwd = false;
+                this.iter_state.directory.fd = bun.invalid_fd;
 
                 const fd: bun.FileDescriptor = fd: {
                     if (work_item.fd) |fd| break :fd fd;
@@ -950,6 +954,7 @@ pub fn GlobWalker_(
             pattern_component: *Component,
             filepath: []const u8,
         ) bool {
+            log("matchPatternImpl: {s}", .{filepath});
             if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
             if (is_ignored(filepath)) return false;
 
@@ -1048,12 +1053,14 @@ pub fn GlobWalker_(
                 try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
         }
 
-        inline fn startsWithDot(filepath: []const u8) bool {
-            if (comptime !isWindows) {
-                return filepath[0] == '.';
-            } else {
-                return filepath[1] == '.';
-            }
+        fn startsWithDot(filepath: []const u8) bool {
+            // DirIterator actually converts to UTF-8 internally so no need for this
+            // if (comptime !isWindows) {
+            //     return filepath.len > 0 and filepath[0] == '.';
+            // } else {
+            //     return filepath.len > 1 and filepath[1] == '.';
+            // }
+            return filepath.len > 0 and filepath[0] == '.';
         }
 
         fn hasLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) bool {

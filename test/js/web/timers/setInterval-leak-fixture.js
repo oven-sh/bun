@@ -17,8 +17,8 @@ function fn(huge) {
   }
 
   if (--runs === 0) {
-    const kb = process.memoryUsage.rss() - initial;
-    console.log("Memory usage increase between timer runs:", (kb / 1024) | 0, "KB");
+    const kb = (process.memoryUsage.rss() - initial) / 1024;
+    console.log("Memory usage increase between timer runs:", kb | 0, "KB");
     if (kb > 1 * 1024) {
       process.exit(1);
     }

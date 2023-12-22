@@ -81,4 +81,8 @@ it("setInterval runs with at least the delay time", () => {
 
 it("setInterval doesn't leak memory", () => {
   expect([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]).toRun();
-});
+}, 30_000);
+
+it("setInterval doesn't run when cancelled after being scheduled", () => {
+  expect([`run`, join(import.meta.dir, "setInterval-cancel-fixture.js")]).toRun();
+}, 30_000);

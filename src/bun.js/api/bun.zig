@@ -3526,7 +3526,7 @@ pub const Timer = struct {
             fn onRequest(req: *bun.io.Request) bun.io.Action {
                 var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
 
-                if (this.timer.state == .CANCELLED) {
+                if (this.cancelled) {
                     // We must free this on the main thread
                     // deinit() is not thread-safe
                     //
@@ -3535,7 +3535,6 @@ pub const Timer = struct {
                     // 1) schedule a concurrent task to call `runFromJSThread`
                     // 2) in `runFromJSThread`, we call `deinit` if `cancelled` is true
                     //
-                    this.cancelled = true;
                     this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
                     return bun.io.Action{
                         .timer_cancelled = {},

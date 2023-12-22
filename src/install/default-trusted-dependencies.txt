@@ -498,3 +498,4 @@ zapatos
 zeromq
 zlib-sync
 zopflipng-bin
+lightningcss-cli

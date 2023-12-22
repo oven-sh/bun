@@ -3437,6 +3437,7 @@ pub const Timer = struct {
                     arguments.ensureStillAlive();
                     timeout.arguments = JSC.Strong.create(arguments, globalThis);
                 }
+                timeout.timer.?.interval = this.interval;
 
                 timeout.poll_ref.ref(vm);
 
@@ -3518,13 +3519,23 @@ pub const Timer = struct {
             },
             interval: i32 = -1,
             concurrent_task: JSC.ConcurrentTask = undefined,
+            scheduled_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
             pub const Pool = bun.HiveArray(TimerReference, 1024).Fallback;
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
                 var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
-                if (this.timer.state == .CANCELLED) {
-                    this.deinit();
+
+                if (this.cancelled) {
+                    // We must free this on the main thread
+                    // deinit() is not thread-safe
+                    //
+                    // so we:
+                    //
+                    // 1) schedule a concurrent task to call `runFromJSThread`
+                    // 2) in `runFromJSThread`, we call `deinit` if `cancelled` is true
+                    //
+                    this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
                     return bun.io.Action{
                         .timer_cancelled = {},
                     };
@@ -3541,26 +3552,37 @@ pub const Timer = struct {
                 return .{ .disarm = {} };
             }
 
+            pub fn reschedule(this: *TimerReference) void {
+                this.request = .{
+                    .callback = &onRequest,
+                };
+                this.schedule(this.interval);
+            }
+
             pub fn runFromJSThread(this: *TimerReference) void {
                 const timer_id = this.id;
                 const vm = this.event_loop.virtual_machine;
+                _ = this.scheduled_count.fetchSub(1, .Monotonic);
 
                 if (this.cancelled) {
                     this.deinit();
                     return;
                 }
-                if (Timeout.runFromConcurrentTask(timer_id, vm) and !this.cancelled) {
-                    this.request = .{
-                        .callback = &onRequest,
-                    };
-                    this.schedule(null);
-                } else {
+
+                if (comptime Environment.allow_assert)
+                    // If this is ever -1, it's invalid.
+                    // It should always be at least 1.
+                    std.debug.assert(this.interval > 0);
+
+                if (!Timeout.runFromConcurrentTask(timer_id, vm, this, reschedule) or this.cancelled) {
                     this.deinit();
                 }
             }
 
             pub fn deinit(this: *TimerReference) void {
-                this.event_loop.timerReferencePool().put(this);
+                if (this.scheduled_count.load(.Monotonic) == 0)
+                    // Free it if there is no other scheduled job
+                    this.event_loop.timerReferencePool().put(this);
             }
 
             pub fn create(event_loop: *JSC.EventLoop, id: ID) *TimerReference {
@@ -3574,6 +3596,7 @@ pub const Timer = struct {
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
                 std.debug.assert(!this.cancelled);
+                _ = this.scheduled_count.fetchAdd(1, .Monotonic);
                 this.timer.state = .PENDING;
                 this.timer.next = msToTimespec(@intCast(@max(interval orelse this.interval, 1)));
                 bun.io.Loop.get().schedule(&this.request);
@@ -3633,7 +3656,7 @@ pub const Timer = struct {
             runWithIDAndVM(timer_id, vm);
         }
 
-        pub fn runFromConcurrentTask(timer_id: ID, vm: *JSC.VirtualMachine) bool {
+        pub fn runFromConcurrentTask(timer_id: ID, vm: *JSC.VirtualMachine, timer_ref: *TimerReference, comptime reschedule: fn (*TimerReference) void) bool {
             const repeats = timer_id.repeats();
 
             var map = vm.timer.maps.get(timer_id.kind);
@@ -3688,7 +3711,6 @@ pub const Timer = struct {
                 .kind = timer_id.kind,
             };
 
-            var reschedule = false;
             // This allows us to:
             //  - free the memory before the job is run
             //  - reuse the JSC.Strong
@@ -3700,7 +3722,7 @@ pub const Timer = struct {
             } else {
                 this.has_scheduled_job = true;
                 map.put(vm.allocator, timer_id.id, this) catch {};
-                reschedule = true;
+                reschedule(timer_ref);
             }
 
             // TODO: remove this memory allocation!
@@ -3717,7 +3739,7 @@ pub const Timer = struct {
 
             job.perform();
 
-            return reschedule;
+            return repeats;
         }
 
         pub fn runWithIDAndVM(timer_id: ID, vm: *JSC.VirtualMachine) void {
@@ -3877,6 +3899,8 @@ pub const Timer = struct {
                 },
             ),
         };
+
+        timeout.timer.?.interval = interval;
 
         if (arguments_array_or_zero != .zero) {
             timeout.arguments = JSC.Strong.create(arguments_array_or_zero, globalThis);

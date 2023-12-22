@@ -43,6 +43,7 @@ const GlobAscii = @import("./glob_ascii.zig");
 const C = @import("./c.zig");
 const ResolvePath = @import("./resolver/resolve_path.zig");
 const eqlComptime = @import("./string_immutable.zig").eqlComptime;
+const builtin = @import("builtin");
 
 const isWindows = @import("builtin").os.tag == .windows;
 
@@ -109,7 +110,39 @@ const CursorState = struct {
     }
 };
 
+const log = bun.Output.scoped(.glob, false);
+
 pub const BunGlobWalker = GlobWalker_(null);
+
+const O = std.os.O;
+
+const PlatformGetcwd = switch (builtin.os.tag) {
+    .windows => struct {
+        pub extern "c" fn _wgetcwd(buf: [*]u16, size: i32) ?[*:0]u16;
+    },
+    else => struct {},
+};
+
+fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+    if (bun.Environment.isWindows) {
+        const ptr = PlatformGetcwd._wgetcwd(@ptrCast(@alignCast(buf)), @intCast(bun.MAX_PATH_BYTES)) orelse return Maybe([]const u8).errnoSys(0, .getcwd).?;
+        const slice = ptr[0..std.mem.len(ptr)];
+        return .{ .result = @as([*]const u8, @ptrCast(slice.ptr))[0 .. slice.len * 2] };
+    }
+    return Syscall.getcwd(buf);
+}
+
+fn opendir(file_path: [:0]const u8, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+    return opendirat(bun.toFD((std.fs.cwd().fd)), file_path, flags);
+}
+
+fn opendirat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+    if (bun.Environment.isWindows) {
+        return Syscall.openDirAtWindowsA(dirfd, file_path, true, flags & O.NOFOLLOW != 0);
+    }
+
+    return Syscall.openat(dirfd, file_path, flags, 0);
+}
 
 fn dummyFilterTrue(val: []const u8) bool {
     _ = val;
@@ -147,6 +180,7 @@ pub fn GlobWalker_(
 
         dot: bool = false,
         absolute: bool = false,
+        /// This is utf-16 on Windows else its utf-8
         cwd: []const u8 = "",
         follow_symlinks: bool = false,
         error_on_broken_symlinks: bool = false,
@@ -191,12 +225,13 @@ pub fn GlobWalker_(
             fds_open: if (bun.Environment.allow_assert) usize else u0 = 0,
 
             pub fn init(this: *Iterator) !Maybe(void) {
-                var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
+                const path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
                 const root_path = this.walker.cwd;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                const cwd_fd = switch (Syscall.open(@ptrCast(path_buf[0 .. root_path.len + 1]), std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
-                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
+                const root_path_z = path_buf[0..root_path.len :0];
+                const cwd_fd = switch (opendir(root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
+                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, root_path_z) },
                     .result => |fd| fd,
                 };
 
@@ -262,6 +297,7 @@ pub fn GlobWalker_(
                 work_item: WorkItem,
                 comptime root: bool,
             ) !Maybe(void) {
+                log("transition => {s}", .{work_item.path});
                 this.iter_state = .{ .directory = .{
                     .fd = 0,
                     .iter = undefined,
@@ -301,7 +337,7 @@ pub fn GlobWalker_(
                 const fd: bun.FileDescriptor = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
-                        if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                        if (had_dot_dot) break :fd switch (opendirat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
                             .err => |err| return .{
                                 .err = this.walker.handleSysErrWithPath(err, dir_path),
                             },
@@ -315,7 +351,7 @@ pub fn GlobWalker_(
                         break :fd this.cwd_fd;
                     }
 
-                    break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                    break :fd switch (opendirat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
                         .err => |err| return .{
                             .err = this.walker.handleSysErrWithPath(err, dir_path),
                         },
@@ -325,6 +361,8 @@ pub fn GlobWalker_(
                         },
                     };
                 };
+
+                // std.fs.cwd().iterate();
 
                 this.iter_state.directory.fd = fd;
                 const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
@@ -364,7 +402,7 @@ pub fn GlobWalker_(
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
-                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (opendirat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
                                                 break :brk null;
@@ -445,6 +483,7 @@ pub fn GlobWalker_(
                                 this.iter_state = .get_next;
                                 continue;
                             };
+                            log("dir: {s} entry: {s}", .{ dir.dir_path, entry.name.slice() });
 
                             const dir_iter_state: *const IterState.Directory = &this.iter_state.directory;
 
@@ -610,14 +649,18 @@ pub fn GlobWalker_(
         ) !Maybe(void) {
             errdefer arena.deinit();
             var cwd: []const u8 = undefined;
-            switch (Syscall.getcwd(&this.pathBuf)) {
+            switch (getcwd(&this.pathBuf)) {
                 .err => |err| {
                     return .{ .err = err };
                 },
                 .result => |result| {
-                    const copiedCwd = try arena.allocator().alloc(u8, result.len);
-                    @memcpy(copiedCwd, result);
-                    cwd = copiedCwd;
+                    log("{s}: is valid utf8 {any}", .{ result, bun.strings.isValidUTF8(result) });
+                    var list = std.ArrayList(u8).init(arena.allocator());
+                    list = try bun.strings.toUTF8ListWithType(list, []const u16, @as([*]const u16, @ptrCast(@alignCast(result.ptr)))[0 .. result.len / 2]);
+                    if (list.capacity > list.items.len) {
+                        list.items.ptr[list.items.len] = 0;
+                    }
+                    cwd = list.items[0..list.items.len];
                 },
             }
 
@@ -711,6 +754,7 @@ pub fn GlobWalker_(
                 .err => |err| return .{ .err = err },
                 .result => |matched_path| matched_path,
             }) |path| {
+                log("walker: matched path: {s}", .{path});
                 try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
             }
 
@@ -1615,6 +1659,29 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
     }
 
     return !negated;
+}
+
+fn copyStringZ(pathbuf: *[bun.MAX_PATH_BYTES]u8, str: []const u8) ![:0]u8 {
+    if (comptime bun.Environment.isWindows) {
+        @memcpy(pathbuf[0..str.len], str);
+        pathbuf[str.len] = 0;
+        pathbuf[str.len + 1] = 0;
+        return pathbuf[0 .. str.len + 1 :0];
+    }
+
+    @memcpy(pathbuf[0..str.len], str[0..str.len]);
+    pathbuf[str.len] = 0;
+    return pathbuf[0..str.len :0];
+}
+
+fn copyUtf8ToUtf16Z(pathbuf: *[bun.MAX_PATH_BYTES]u8, utf8: []const u8) ![:0]u8 {
+    var pathbuf_utf16: []u16 = @as([*]u16, @ptrCast(@alignCast(pathbuf)))[0 .. bun.MAX_PATH_BYTES / 2];
+    const u16len = try std.unicode.utf8ToUtf16Le(pathbuf_utf16, utf8);
+    const byte_len = u16len * 2;
+    // need space for two bytes for nul terminator (utf-16 nul terminator is two bytes wide)
+    if (byte_len + 2 > bun.MAX_PATH_BYTES) return error.OutOfMemory;
+    pathbuf_utf16[u16len] = 0;
+    return @ptrCast(pathbuf[0 .. byte_len + 2]);
 }
 
 pub inline fn isSeparator(c: Codepoint) bool {

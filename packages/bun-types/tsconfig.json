@@ -9,15 +9,8 @@
     "allowSyntheticDefaultImports": true,
     "disableSolutionSearching": true,
     "noUnusedLocals": true,
-    "outDir": "build",
     "noEmit": true,
     "resolveJsonModule": true
   },
-  "exclude": [
-    "dist",
-    "node_modules",
-    "./node_modules",
-    "./node_modules/*",
-    "./node_modules/@types/node/index.d.ts"
-  ]
+  "exclude": ["dist", "node_modules"]
 }

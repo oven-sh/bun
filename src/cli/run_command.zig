@@ -53,6 +53,8 @@ const PosixSpawn = bun.posix.spawn;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
         "bash",
@@ -272,7 +274,7 @@ pub const RunCommand = struct {
     ) !bool {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
-        var script = original_script;
+        const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
 
         // We're going to do this slowly.
@@ -293,7 +295,7 @@ pub const RunCommand = struct {
             bun.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
             for (passthrough) |part| {
-                var p = part;
+                const p = part;
                 remaining_script_buf[0] = ' ';
                 bun.copy(u8, remaining_script_buf[1..], p);
                 remaining_script_buf = remaining_script_buf[p.len + 1 ..];
@@ -333,8 +335,8 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |code| {
                 if (code > 0) {
-                    if (code > 2 and !silent) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
+                    if (code != 2 and !silent) {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
                         Output.flush();
                     }
 
@@ -343,19 +345,19 @@ pub const RunCommand = struct {
             },
             .Signal => |signal| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
 
-                Global.exit(1);
+                Global.raiseIgnoringPanicHandler(signal);
             },
             .Stopped => |signal| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {}<r>", .{ name, bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
 
-                Global.exit(1);
+                Global.raiseIgnoringPanicHandler(signal);
             },
 
             else => {},
@@ -380,6 +382,7 @@ pub const RunCommand = struct {
         cwd: string,
         env: *DotEnv.Loader,
         passthrough: []const string,
+        original_script_for_bun_run: ?[]const u8,
     ) !bool {
         var argv_ = [_]string{executable};
         var argv: []const string = &argv_;
@@ -410,6 +413,9 @@ pub const RunCommand = struct {
                         if (std.os.S.ISDIR(stat.mode)) {
                             if (!silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpStackTrace(trace.*);
+                            }
                             Global.exit(1);
                         }
                     }
@@ -419,27 +425,48 @@ pub const RunCommand = struct {
             Global.exit(1);
         };
         switch (result) {
-            .Exited => |sig| {
-                // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2 and !silent)
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
-                Global.exit(sig);
-            },
-            .Signal => |sig| {
-                // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2 and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
+            .Exited => |code| {
+                if (!silent) {
+                    const is_probably_trying_to_run_a_pkg_script =
+                        original_script_for_bun_run != null and
+                        ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
+                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                        "install",
+                        "kill",
+                        "link",
+                    }) and ctx.positionals.len == 1));
+
+                    if (is_probably_trying_to_run_a_pkg_script) {
+                        // if you run something like `bun run test`, you get a confusing message because
+                        // you don't usually think about your global path, let alone "/bin/test"
+                        //
+                        // test exits with code 1, the other ones i listed exit with code 2
+                        //
+                        // so for these script names, print the entire exe name.
+                        Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ executable, code });
+                        Output.note("a package.json script \"{s}\" was not found", .{original_script_for_bun_run.?});
+                    }
+                    // 128 + 2 is the exit code of a process killed by SIGINT, which is caused by CTRL + C
+                    else if (code > 0 and code != 130) {
+                        Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
+                    }
                 }
-                Global.exit(std.mem.asBytes(&sig)[0]);
+                Global.exit(code);
             },
-            .Stopped => |sig| {
-                if (sig > 0 and !silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ basenameOrBun(executable), bun.SignalCode.from(sig) });
-                Global.exit(std.mem.asBytes(&sig)[0]);
+            .Signal, .Stopped => |sig| {
+                // forward the signal to the shell / parent process
+                if (sig != 0) {
+                    Output.flush();
+                    Global.raiseIgnoringPanicHandler(sig);
+                } else if (!silent) {
+                    std.debug.panic("\"{s}\" stopped by signal code 0, which isn't supposed to be possible", .{executable});
+                }
+                Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
             },
             .Unknown => |sig| {
-                if (!silent)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ basenameOrBun(executable), sig });
+                if (!silent) {
+                    Output.errGeneric("\"<b>{s}<r>\" stopped with unknown state <b>{d}<r>", .{ basenameOrBun(executable), sig });
+                }
                 Global.exit(1);
             },
         }
@@ -448,7 +475,7 @@ pub const RunCommand = struct {
     }
 
     pub fn ls(ctx: Command.Context) !void {
-        var args = ctx.args;
+        const args = ctx.args;
 
         var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
@@ -459,20 +486,21 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    pub const bun_node_dir = switch (@import("builtin").target.os.tag) {
+    pub const bun_node_dir = switch (Environment.os) {
         // TODO:
         .windows => "TMPDIR",
 
-        .macos => "/private/tmp",
+        .mac => "/private/tmp",
         else => "/tmp",
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
-        "/bun-debug-node" ++ (if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "");
+        "/bun-debug-node";
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (Environment.isWindows) return bun.todo(@src(), {});
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
@@ -532,7 +560,7 @@ pub const RunCommand = struct {
         env: ?*DotEnv.Loader,
         log_errors: bool,
     ) !*DirInfo {
-        var args = ctx.args;
+        const args = ctx.args;
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
         this_bundler.env.quiet = true;
@@ -648,7 +676,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var PATH = this_bundler.env.map.get("PATH") orelse "";
+        const PATH = this_bundler.env.map.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
         }
@@ -726,7 +754,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var args = ctx.args;
+        const args = ctx.args;
 
         var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
@@ -742,7 +770,7 @@ pub const RunCommand = struct {
         }
         this_bundler.configureLinker();
 
-        var root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
+        const root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
 
         {
             this_bundler.env.loadProcess();
@@ -785,7 +813,7 @@ pub const RunCommand = struct {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
-                                    if (!strings.endsWithChar(value.dir, std.fs.path.sep)) {
+                                    if (!strings.endsWithCharOrIsZeroLength(value.dir, std.fs.path.sep)) {
                                         dir_slice = path_buf[0 .. value.dir.len + 1];
                                     }
                                     has_copied = true;
@@ -794,7 +822,10 @@ pub const RunCommand = struct {
                                 const base = value.base();
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
-                                var slice = path_buf[0 .. dir_slice.len + base.len :0];
+                                const slice = path_buf[0 .. dir_slice.len + base.len :0];
+                                if (Environment.isWindows) {
+                                    @panic("TODO");
+                                }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
@@ -859,7 +890,7 @@ pub const RunCommand = struct {
                             continue :loop;
                         }
 
-                        var entry_item = results.getOrPutAssumeCapacity(key);
+                        const entry_item = results.getOrPutAssumeCapacity(key);
 
                         if (filter == Filter.script_and_descriptions and max_description_len > 0) {
                             var description = scripts.get(key).?;
@@ -909,7 +940,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var all_keys = results.keys();
+        const all_keys = results.keys();
 
         strings.sortAsc(all_keys);
         shell_out.commands = all_keys;
@@ -1010,6 +1041,9 @@ pub const RunCommand = struct {
                     script_name_to_search,
                     @errorName(err),
                 });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
                 Global.exit(1);
             };
             return true;
@@ -1036,11 +1070,10 @@ pub const RunCommand = struct {
                     }
 
                     var file_path = script_name_to_search;
-                    var must_normalize = false;
                     const file_: anyerror!std.fs.File = brk: {
                         if (std.fs.path.isAbsolute(script_name_to_search)) {
-                            must_normalize = Environment.isWindows;
-                            break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
+                            var resolver = resolve_path.PosixToWinNormalizer{};
+                            break :brk bun.openFile(try resolver.resolveCWD(script_name_to_search), .{ .mode = .read_only });
                         } else {
                             const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                             path_buf[cwd.len] = std.fs.path.sep_posix;
@@ -1049,11 +1082,11 @@ pub const RunCommand = struct {
                                 path_buf[0 .. cwd.len + 1],
                                 &path_buf2,
                                 &parts,
-                                .loose,
+                                .auto,
                             );
                             if (file_path.len == 0) break :possibly_open_with_bun_js;
                             path_buf2[file_path.len] = 0;
-                            var file_pathZ = path_buf2[0..file_path.len :0];
+                            const file_pathZ = path_buf2[0..file_path.len :0];
                             break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                         }
                     };
@@ -1096,12 +1129,7 @@ pub const RunCommand = struct {
                     }
 
                     Global.configureAllocator(.{ .long_running = true });
-                    var out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-                    if (must_normalize) {
-                        if (comptime Environment.isWindows) {
-                            std.mem.replaceScalar(u8, out_path, std.fs.path.sep_windows, std.fs.path.sep_posix);
-                        }
-                    }
+                    const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
                     Run.boot(ctx, out_path) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -1113,6 +1141,9 @@ pub const RunCommand = struct {
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
                         Global.exit(1);
                     };
 
@@ -1125,7 +1156,7 @@ pub const RunCommand = struct {
 
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
-        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
+        const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
@@ -1197,6 +1228,9 @@ pub const RunCommand = struct {
                                     std.fs.path.basename(script_name_to_search),
                                     @errorName(err),
                                 });
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
                                 Global.exit(1);
                             };
                         }
@@ -1249,6 +1283,7 @@ pub const RunCommand = struct {
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
+                    script_name_to_search,
                 );
             }
         }

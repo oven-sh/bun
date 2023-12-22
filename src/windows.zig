@@ -58,7 +58,7 @@ pub usingnamespace ntdll;
 pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
 
-pub const INVALID_FILE_ATTRIBUTES = -1;
+pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;

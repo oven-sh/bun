@@ -337,10 +337,6 @@ Depending on the target, Bun will apply different module resolution rules and op
 
 {% /table %}
 
-{% callout %}
-
-{% /callout %}
-
 ### `format`
 
 Specifies the module format to be used in the generated bundles.

@@ -32,7 +32,6 @@
 #include "JsonWebKey.h"
 #include "OpenSSLUtilities.h"
 #include <wtf/text/Base64.h>
-#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 

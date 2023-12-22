@@ -30,6 +30,10 @@ pub const Loop = struct {
     var has_loaded_loop: bool = false;
 
     pub fn get() *Loop {
+        if (Environment.isWindows) {
+            @panic("Do not use this API on windows");
+        }
+
         if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
             loop = Loop{
                 .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
@@ -79,14 +83,16 @@ pub const Loop = struct {
         } else if (comptime Environment.isMac) {
             this.tickKqueue();
         } else {
-            @compileError("TODO: implement poll for this platform");
+            @panic("TODO on this platform");
         }
     }
 
     pub fn tickEpoll(this: *Loop) void {
         if (comptime !Environment.isLinux) {
-            @compileError("not implemented");
+            @compileError("Epoll is Linux-Only");
         }
+
+        this.updateNow();
 
         while (true) {
 
@@ -123,22 +129,12 @@ pub const Loop = struct {
                             this.active -= 1;
                             close.onDone(close.ctx);
                         },
+                        .timer_cancelled => {},
                         .timer => |timer| {
                             while (true) {
                                 switch (timer.state) {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
-                                        if (Timer.less({}, timer, &.{ .next = this.cached_now })) {
-                                            if (timer.fire() == .rearm) {
-                                                if (timer.reset) |reset| {
-                                                    timer.next = reset;
-                                                    timer.reset = null;
-                                                    continue;
-                                                }
-                                            }
-
-                                            break;
-                                        }
                                         this.timers.insert(timer);
                                     },
                                     .ACTIVE => {
@@ -170,7 +166,9 @@ pub const Loop = struct {
                     @as(u64, @intCast(this.cached_now.tv_nsec)) / std.time.ns_per_ms;
                 const ms_next = @as(u64, @intCast(t.next.tv_sec)) * std.time.ms_per_s +
                     @as(u64, @intCast(t.next.tv_nsec)) / std.time.ns_per_ms;
-                break :timeout @as(i32, @intCast(ms_next -| ms_now));
+                const out = @as(i32, @intCast(ms_next -| ms_now));
+
+                break :timeout @max(out, 0);
             };
 
             var events: [256]EventType = undefined;
@@ -188,7 +186,7 @@ pub const Loop = struct {
                 else => |e| bun.Output.panic("epoll_wait: {s}", .{@tagName(e)}),
             }
 
-            this.update_now();
+            this.updateNow();
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
@@ -223,8 +221,10 @@ pub const Loop = struct {
 
     pub fn tickKqueue(this: *Loop) void {
         if (comptime !Environment.isMac) {
-            @compileError("not implemented");
+            @compileError("Kqueue is MacOS-Only");
         }
+
+        this.updateNow();
 
         while (true) {
             var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.default_allocator);
@@ -266,6 +266,7 @@ pub const Loop = struct {
                                 &events_list.items.ptr[i],
                             );
                         },
+
                         .close => |close| {
                             if (close.poll.flags.contains(.poll_readable) or close.poll.flags.contains(.poll_writable)) {
                                 const i = events_list.items.len;
@@ -281,22 +282,12 @@ pub const Loop = struct {
                             }
                             close.onDone(close.ctx);
                         },
+                        .timer_cancelled => {},
                         .timer => |timer| {
                             while (true) {
                                 switch (timer.state) {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
-                                        if (Timer.less({}, timer, &.{ .next = this.cached_now })) {
-                                            if (timer.fire() == .rearm) {
-                                                if (timer.reset) |reset| {
-                                                    timer.next = reset;
-                                                    timer.reset = null;
-                                                    continue;
-                                                }
-                                            }
-
-                                            break;
-                                        }
                                         this.timers.insert(timer);
                                     },
                                     .ACTIVE => {
@@ -327,6 +318,15 @@ pub const Loop = struct {
                 out.tv_sec = t.next.tv_sec -| this.cached_now.tv_sec;
                 out.tv_nsec = t.next.tv_nsec -| this.cached_now.tv_nsec;
 
+                if (out.tv_nsec < 0) {
+                    out.tv_sec -= 1;
+                    out.tv_nsec += std.time.ns_per_s;
+                }
+
+                if (out.tv_sec < 0) {
+                    break :timeout null;
+                }
+
                 break :timeout out;
             };
 
@@ -349,7 +349,7 @@ pub const Loop = struct {
                 else => |e| bun.Output.panic("kevent64 failed: {s}", .{@tagName(e)}),
             }
 
-            this.update_now();
+            this.updateNow();
 
             assert(rc <= events_list.capacity);
             const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
@@ -363,6 +363,9 @@ pub const Loop = struct {
     fn drainExpiredTimers(this: *Loop) void {
         const now = Timer{ .next = this.cached_now };
 
+        var current_batch = JSC.ConcurrentTask.Queue.Batch{};
+        var prev_event_loop: ?*JSC.EventLoop = null;
+
         // Run our expired timers
         while (this.timers.peek()) |t| {
             if (!Timer.less({}, t, &now)) break;
@@ -373,7 +376,10 @@ pub const Loop = struct {
             // Mark completion as done
             t.state = .FIRED;
 
-            switch (t.fire()) {
+            switch (t.fire(
+                &current_batch,
+                &prev_event_loop,
+            )) {
                 .disarm => {},
                 .rearm => |new| {
                     t.next = new;
@@ -383,14 +389,22 @@ pub const Loop = struct {
                 },
             }
         }
+
+        if (prev_event_loop) |event_loop| {
+            event_loop.enqueueTaskConcurrentBatch(current_batch);
+        }
     }
 
-    fn update_now(this: *Loop) void {
+    fn updateNow(this: *Loop) void {
+        updateTimespec(&this.cached_now);
+    }
+
+    pub fn updateTimespec(timespec: *os.timespec) void {
         if (comptime Environment.isLinux) {
-            const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, &this.cached_now);
+            const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
         } else if (comptime Environment.isMac) {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, &this.cached_now) catch {};
+            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
         } else {
             @compileError("TODO: implement poll for this platform");
         }
@@ -412,6 +426,7 @@ pub const Action = union(enum) {
     writable: FileAction,
     close: CloseAction,
     timer: *Timer,
+    timer_cancelled: void,
 
     pub const FileAction = struct {
         fd: bun.FileDescriptor,
@@ -478,6 +493,8 @@ const Pollable = struct {
     }
 };
 
+const TimerReference = bun.JSC.BunTimer.Timeout.TimerReference;
+
 pub const Timer = struct {
     /// The absolute time to fire this timer next.
     next: os.timespec,
@@ -497,10 +514,12 @@ pub const Timer = struct {
 
     pub const Tag = enum {
         TimerCallback,
+        TimerReference,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
+                .TimerReference => TimerReference,
             };
         }
     };
@@ -552,10 +571,51 @@ pub const Timer = struct {
         disarm,
     };
 
-    pub fn fire(this: *Timer) Arm {
+    pub fn fire(this: *Timer, batch: *JSC.ConcurrentTask.Queue.Batch, event_loop: *?*JSC.EventLoop) Arm {
+        if (comptime Environment.allow_assert) {
+            if (comptime Environment.isPosix) {
+                const timer = std.time.Instant{ .timestamp = this.next };
+                var now = std.time.Instant{ .timestamp = undefined };
+                Loop.updateTimespec(&now.timestamp);
+
+                if (timer.order(now) != .lt) {
+                    bun.Output.panic("Timer fired {} too early", .{bun.fmt.fmtDuration(timer.since(now))});
+                }
+            }
+        }
+
         switch (this.tag) {
             inline else => |t| {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
+                if (comptime @hasDecl(t.Type(), "callback")) {
+                    const concurrent_task = container.concurrent_task.from(container, .manual_deinit);
+                    if (event_loop.*) |loop| {
+                        // If they are different event loops, we have to drain the batch right here.
+                        if (loop != container.event_loop) {
+                            loop.enqueueTaskConcurrentBatch(batch.*);
+                            batch.* = .{};
+                            event_loop.* = container.event_loop;
+                        }
+
+                        if (batch.front == null) {
+                            batch.front = concurrent_task;
+                        }
+                    } else {
+                        batch.front = concurrent_task;
+                        event_loop.* = container.event_loop;
+                    }
+
+                    if (batch.last) |last| {
+                        std.debug.assert(last.next == null);
+                        last.next = concurrent_task;
+                    }
+
+                    batch.last = concurrent_task;
+
+                    batch.count += 1;
+                    return container.callback();
+                }
+
                 return container.callback(container);
             },
         }
@@ -823,7 +883,7 @@ pub const Poll = struct {
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(tag, this).ptr()) } };
 
-            var op: u32 = if (this.flags.contains(.registered) or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
+            const op: u32 = if (this.flags.contains(.registered) or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
             const ctl = linux.epoll_ctl(
                 watcher_fd,
@@ -852,6 +912,6 @@ pub const Poll = struct {
     }
 };
 
-pub const retry = std.os.system.E.AGAIN;
+pub const retry = bun.C.E.AGAIN;
 
 pub const PipeReader = @import("./PipeReader.zig").PipeReader;

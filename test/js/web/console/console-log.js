@@ -124,6 +124,7 @@ console.log(hole([1, 2, 3], 1));
 console.log(hole([1, 2, 3], 0, 1));
 console.log(hole([1, 2, 3], 0, 1, 2));
 console.log(hole([1, 2, 3], 2));
+console.log(hole([1, 2, 3], 0));
 
 {
   const overriddenArray = [1, 2, 3, 4];

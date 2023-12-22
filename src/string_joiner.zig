@@ -34,7 +34,7 @@ pub const Watcher = struct {
 
 pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
     if (this.head == null) {
-        var out: []u8 = &[_]u8{};
+        const out: []u8 = &[_]u8{};
         return out;
     }
 
@@ -122,7 +122,7 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     const data = slice[offset..];
     this.len += @as(u32, @truncate(data.len));
 
-    var new_tail = if (this.use_pool)
+    const new_tail = if (this.use_pool)
         Joinable.Pool.get(default_allocator)
     else
         (this.node_allocator.create(Joinable.Pool.Node) catch unreachable);

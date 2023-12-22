@@ -1615,7 +1615,7 @@ it("#6892", () => {
   }
 });
 
-it("#4415.1", () => {
+it("#4415.1 ServerResponse es6", () => {
   class Response extends ServerResponse {
     constructor(req) {
       super(req);
@@ -1626,7 +1626,7 @@ it("#4415.1", () => {
   expect(res.req).toBe(req);
 });
 
-it("#4415.2", () => {
+it("#4415.2 ServerResponse es5", () => {
   function Response(req) {
     ServerResponse.call(this, req);
   }
@@ -1659,4 +1659,27 @@ it("#7539 _header", () => {
   });
 
   expect(sr._header).toBe("HTTP/1.1 204 No Content\r\ncookie: foo=bar, bar=baz\r\ndate: qqq\r\nh1: a, b\r\nh2: c\r\nConnection: keep-alive\r\n\r\n");
+});
+
+it("#4415.3 Server es5", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`);
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+it("#4415.4 IncomingMessage es5", () => {
+  const im = Object.create(IncomingMessage.prototype);
+  IncomingMessage.call(im, { url: "/foo" });
+  expect(im.url).toBe("/foo");
 });

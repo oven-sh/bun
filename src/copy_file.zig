@@ -74,6 +74,10 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
         return;
     }
 
+    if (comptime bun.Environment.isWindows) {
+        @panic("TODO on Windows");
+    }
+
     // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
     // fallback code will copy the contents chunk by chunk.
     const empty_iovec = [0]os.iovec_const{};
@@ -88,7 +92,7 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
 
 const Platform = @import("root").bun.analytics.GenerateHeader.GeneratePlatform;
 
-var can_use_copy_file_range = std.atomic.Atomic(i32).init(0);
+var can_use_copy_file_range = std.atomic.Value(i32).init(0);
 pub inline fn disableCopyFileRangeSyscall() void {
     if (comptime !bun.Environment.isLinux) {
         return;
@@ -120,7 +124,7 @@ pub fn canUseCopyFileRangeSyscall() bool {
     return result == 1;
 }
 
-pub var can_use_ioctl_ficlone_ = std.atomic.Atomic(i32).init(0);
+pub var can_use_ioctl_ficlone_ = std.atomic.Value(i32).init(0);
 pub inline fn disable_ioctl_ficlone() void {
     if (comptime !bun.Environment.isLinux) {
         return;

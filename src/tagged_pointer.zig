@@ -55,47 +55,25 @@ pub const TaggedPointer = packed struct {
 };
 
 pub fn TaggedPointerUnion(comptime Types: anytype) type {
-    const TagType: type = tag_break: {
-        if (std.meta.trait.isIndexable(@TypeOf(Types))) {
-            var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
-            var decls = [_]std.builtin.Type.Declaration{};
+    const TagType: type = tag: {
+        var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
+        var decls = [_]std.builtin.Type.Declaration{};
 
-            inline for (Types, 0..) |field, i| {
-                enumFields[i] = .{
-                    .name = comptime typeBaseName(@typeName(field)),
-                    .value = 1024 - i,
-                };
-            }
-
-            break :tag_break @Type(.{
-                .Enum = .{
-                    .tag_type = TagSize,
-                    .fields = &enumFields,
-                    .decls = &decls,
-                    .is_exhaustive = false,
-                },
-            });
-        } else {
-            const Fields: []const std.builtin.Type.StructField = std.meta.fields(@TypeOf(Types));
-            var enumFields: [Fields.len]std.builtin.Type.EnumField = undefined;
-            var decls = [_]std.builtin.Type.Declaration{};
-
-            inline for (Fields, 0..) |field, i| {
-                enumFields[i] = .{
-                    .name = comptime typeBaseName(@typeName(field.default_value.?)),
-                    .value = 1024 - i,
-                };
-            }
-
-            break :tag_break @Type(.{
-                .Enum = .{
-                    .tag_type = TagSize,
-                    .fields = &enumFields,
-                    .decls = &decls,
-                    .is_exhaustive = false,
-                },
-            });
+        inline for (Types, 0..) |field, i| {
+            enumFields[i] = .{
+                .name = comptime typeBaseName(@typeName(field)),
+                .value = 1024 - i,
+            };
         }
+
+        break :tag @Type(.{
+            .Enum = .{
+                .tag_type = TagSize,
+                .fields = &enumFields,
+                .decls = &decls,
+                .is_exhaustive = false,
+            },
+        });
     };
 
     return struct {
@@ -106,7 +84,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         const This = @This();
         fn assert_type(comptime Type: type) void {
-            var name = comptime typeBaseName(@typeName(Type));
+            const name = comptime typeBaseName(@typeName(Type));
             if (!comptime @hasField(Tag, name)) {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
@@ -190,7 +168,7 @@ test "TaggedPointerUnion" {
     //     wrong: bool = true,
     // };
     const Union = TaggedPointerUnion(.{ IntPrimitive, StringPrimitive, Object });
-    var str = try default_allocator.create(StringPrimitive);
+    const str = try default_allocator.create(StringPrimitive);
     str.* = StringPrimitive{ .val = "hello!" };
     var un = Union.init(str);
     try std.testing.expect(un.is(StringPrimitive));
@@ -236,7 +214,7 @@ test "TaggedPointer" {
         const what = try std.fmt.allocPrint(default_allocator, "hiiii {d}", .{i});
         hello_struct_ptr.* = Hello{ .what = what };
         try std.testing.expectEqualStrings(TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to()).get(Hello).what, what);
-        var this = TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to());
+        const this = TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to());
         try std.testing.expect(this.data == i);
         try std.testing.expect(this.data != i + 1);
     }

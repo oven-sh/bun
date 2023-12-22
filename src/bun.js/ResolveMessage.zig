@@ -40,7 +40,7 @@ pub const ResolveMessage = struct {
                     };
                 };
 
-                var atom = bun.String.createAtom(label);
+                var atom = bun.String.createAtomASCII(label);
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },
@@ -74,7 +74,7 @@ pub const ResolveMessage = struct {
     }
 
     pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
+        const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };

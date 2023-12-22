@@ -36,7 +36,7 @@ pub const Tester = struct {
         }
         const PADDING = 0;
         pub fn print(self: *const @This()) void {
-            var pad = &([_]u8{' '} ** PADDING);
+            const pad = &([_]u8{' '} ** PADDING);
             var stderr = std.io.getStdErr();
 
             stderr.writeAll(RESET) catch unreachable;

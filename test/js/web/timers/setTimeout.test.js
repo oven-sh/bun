@@ -167,7 +167,7 @@ it("node.js timers/promises setTimeout propagates exceptions", async () => {
   }
 });
 
-it.skip("order of setTimeouts", done => {
+it("order of setTimeouts", done => {
   var nums = [];
   var maybeDone = cb => {
     return () => {

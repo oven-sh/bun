@@ -1175,7 +1175,22 @@ pub const Command = struct {
             RootCommandMatcher.case("init") => .InitCommand,
             RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
-            RootCommandMatcher.case("upgrade") => .UpgradeCommand,
+            RootCommandMatcher.case("upgrade") => brk: {
+                if (args_iter.buf.len > 2) {
+                    Output.prettyError(
+                        \\<r><red>error<r><d>:<r> this command updates bun itself, and does not take package names.
+                        \\Use `bun update
+                    , .{});
+                    for (args_iter.buf[2..]) |arg| {
+                        const span = std.mem.span(arg);
+                        Output.prettyError(" {s}", .{span});
+                    }
+                    Output.prettyErrorln("` instead.", .{});
+                    Global.exit(1);
+                }
+
+                break :brk .UpgradeCommand;
+            },
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
             RootCommandMatcher.case("link") => .LinkCommand,

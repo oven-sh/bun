@@ -1644,7 +1644,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                 .file = .{
                     .fd = bun.toFD(file.handle),
                 },
-                .dirfd = if (!Environment.isWindows) bun.invalid_fd else @panic("TODO"),
+                .dirfd = bun.invalid_fd,
                 .data = .{ .string = bytes.items },
             },
             .sync,
@@ -1658,15 +1658,13 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         }
     }
 
-    if (comptime Environment.isWindows) {
-        // TODO: make this executable
-        @panic("TODO on Windows");
-    } else {
-        _ = C.fchmod(
-            tmpfile.fd,
-            // chmod 777
-            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
+    switch (bun.sys.fchmod(tmpfile.fd, 0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020)) {
+        .err => |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
+            Global.crash();
+        },
+        .result => {},
     }
 
     tmpfile.promoteToCWD(tmpname, filename) catch |err| {

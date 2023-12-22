@@ -9,8 +9,8 @@ it("duplicate dependencies should warn instead of error", () => {
     },
     dependencies: {
       "empty-package-for-bun-test-runner": "1.0.0"
-    }
-  })
+    },
+  });
 
   const dir = tempDirWithFiles("07740", {
     "package.json": package_json,

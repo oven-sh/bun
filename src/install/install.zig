@@ -7765,6 +7765,13 @@ pub const PackageManager = struct {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
                 }
 
+                if (comptime log_level.showProgress()) {
+                    if (this.manager.scripts_node) |scripts_node| {
+                        scripts_node.activate();
+                        this.manager.progress.refresh();
+                    }
+                }
+
                 PackageManager.instance.sleep();
             }
         }

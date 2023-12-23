@@ -167,7 +167,7 @@ it("node.js timers/promises setTimeout propagates exceptions", async () => {
   }
 });
 
-it.skip("order of setTimeouts", done => {
+it("order of setTimeouts", done => {
   var nums = [];
   var maybeDone = cb => {
     return () => {
@@ -290,4 +290,16 @@ it("setTimeout should not refresh after clearTimeout", done => {
     expect(count).toBe(0);
     done();
   }, 100);
+});
+
+it("setTimeout CPU usage #7790", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+  });
+  const code = await process.exited;
+  expect(code).toBe(0);
+  const stats = process.stats();
+  expect(stats.cpuTime.user / BigInt(1e6)).toBeLessThan(1);
 });

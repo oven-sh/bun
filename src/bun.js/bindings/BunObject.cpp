@@ -256,8 +256,8 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, "peek"_s);
-    JSFunction* peekFunction = JSFunction::create(vm, globalObject, 2, WTF::String("peek"_s), functionBunPeek, ImplementationVisibility::Public, NoIntrinsic);
-    JSFunction* peekStatus = JSFunction::create(vm, globalObject, 1, WTF::String("status"_s), functionBunPeekStatus, ImplementationVisibility::Public, NoIntrinsic);
+    JSFunction* peekFunction = JSFunction::create(vm, peekPeekCodeGenerator(vm), globalObject->globalScope());
+    JSFunction* peekStatus = JSFunction::create(vm, peekPeekStatusCodeGenerator(vm), globalObject->globalScope());
     peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     return peekFunction;
@@ -272,97 +272,12 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
 {
     JSC::VM& vm = globalObject->vm();
 
-    RELEASE_ASSERT(callFrame->argumentCount() == 1);
-    JSPromise* promise = jsCast<JSC::JSPromise*>(callFrame->argument(0));
+    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(callFrame->argument(0));
     RELEASE_ASSERT(promise);
 
     promise->resolve(globalObject, JSC::jsUndefined());
 
     return JSC::JSValue::encode(promise);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionBunPeek,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue promiseValue = callFrame->argument(0);
-    if (UNLIKELY(!promiseValue)) {
-        return JSValue::encode(jsUndefined());
-    } else if (!promiseValue.isCell()) {
-        return JSValue::encode(promiseValue);
-    }
-
-    auto* promise = jsDynamicCast<JSPromise*>(promiseValue);
-
-    if (!promise) {
-        return JSValue::encode(promiseValue);
-    }
-
-    JSValue invalidateValue = callFrame->argument(1);
-    bool invalidate = invalidateValue.isBoolean() && invalidateValue.asBoolean();
-
-    switch (promise->status(vm)) {
-    case JSPromise::Status::Pending: {
-        break;
-    }
-    case JSPromise::Status::Fulfilled: {
-        JSValue result = promise->result(vm);
-        if (invalidate) {
-            promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, jsUndefined());
-        }
-        return JSValue::encode(result);
-    }
-    case JSPromise::Status::Rejected: {
-        JSValue result = promise->result(vm);
-        JSC::EnsureStillAliveScope ensureStillAliveScope(result);
-
-        if (invalidate) {
-            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32() | JSC::JSPromise::isHandledFlag));
-            promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::jsUndefined());
-        }
-
-        return JSValue::encode(result);
-    }
-    }
-
-    return JSValue::encode(promiseValue);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionBunPeekStatus,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    static NeverDestroyed<String> fulfilled = MAKE_STATIC_STRING_IMPL("fulfilled");
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue promiseValue = callFrame->argument(0);
-    if (!promiseValue || !promiseValue.isCell()) {
-        return JSValue::encode(jsOwnedString(vm, fulfilled));
-    }
-
-    auto* promise = jsDynamicCast<JSPromise*>(promiseValue);
-
-    if (!promise) {
-        return JSValue::encode(jsOwnedString(vm, fulfilled));
-    }
-
-    switch (promise->status(vm)) {
-    case JSPromise::Status::Pending: {
-        static NeverDestroyed<String> pending = MAKE_STATIC_STRING_IMPL("pending");
-        return JSValue::encode(jsOwnedString(vm, pending));
-    }
-    case JSPromise::Status::Fulfilled: {
-        return JSValue::encode(jsOwnedString(vm, fulfilled));
-    }
-    case JSPromise::Status::Rejected: {
-        static NeverDestroyed<String> rejected = MAKE_STATIC_STRING_IMPL("rejected");
-        return JSValue::encode(jsOwnedString(vm, rejected));
-    }
-    }
-
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
@@ -455,13 +370,15 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue arg3 = callFrame->argument(2);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
+    MarkedArgumentBuffer gcBuffer;
 
     if (arg3.isBoolean() && arg3.asBoolean()) {
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, stack, &scope, true);
+
+        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, stack, &scope, true);
+        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
@@ -527,7 +444,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     if (!domURL) {
         if (arg0.isString()) {
             auto url = WTF::URL(arg0.toWTFString(globalObject));
-            if (UNLIKELY(!url.protocolIs("file"_s))) {
+            if (UNLIKELY(!url.protocolIsFile())) {
                 throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
@@ -539,7 +456,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     }
 
     auto& url = domURL->href();
-    if (UNLIKELY(!url.protocolIs("file"_s))) {
+    if (UNLIKELY(!url.protocolIsFile())) {
         throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }

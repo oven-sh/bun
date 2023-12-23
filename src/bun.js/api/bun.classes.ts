@@ -2,6 +2,46 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
+    name: "ResourceUsage",
+    construct: true,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      maxRSS: {
+        getter: "getMaxRSS",
+      },
+      shmSize: {
+        getter: "getSharedMemorySize",
+      },
+      swapCount: {
+        getter: "getSwapCount",
+      },
+      messages: {
+        getter: "getMessages",
+      },
+      signalCount: {
+        getter: "getSignalCount",
+      },
+      contextSwitches: {
+        getter: "getContextSwitches",
+        cache: true,
+      },
+      cpuTime: {
+        getter: "getCPUTime",
+        cache: true,
+      },
+      ops: {
+        getter: "getOps",
+        cache: true,
+      },
+    },
+    values: [],
+  }),
+  define({
     name: "Subprocess",
     construct: true,
     noConstructor: true,
@@ -43,7 +83,10 @@ export default [
         fn: "doUnref",
         length: 0,
       },
-
+      stats: {
+        fn: "stats",
+        length: 0,
+      },
       send: {
         fn: "doSend",
         length: 1,

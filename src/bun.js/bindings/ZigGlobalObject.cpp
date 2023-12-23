@@ -1494,7 +1494,7 @@ extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* global
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    if (len > 0)
+    if (len > 0 && ptr != nullptr)
         memcpy(array->vector(), ptr, len);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
@@ -3069,6 +3069,12 @@ void GlobalObject::finishCreation(VM& vm)
                 Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_NAPIFunctionStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(
+                Zig::createNAPIFunctionStructure(init.vm, init.owner));
+        });
+
     m_NapiPrototypeStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -3949,6 +3955,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NapiPrototypeStructure.visit(visitor);
+    thisObject->m_NAPIFunctionStructure.visit(visitor);
 
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockResultStructure.visit(visitor);
@@ -4127,15 +4134,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     ErrorableString res;
     res.success = false;
 
-    if (key.isString()) {
-        if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
-            auto keyString = key.toWTFString(globalObject);
-            if (virtualModules->contains(keyString)) {
-                return JSC::Identifier::fromString(globalObject->vm(), keyString);
-            }
-        }
-    }
-
     BunString keyZ;
     if (key.isString()) {
         auto moduleName = jsCast<JSString*>(key)->value(globalObject);
@@ -4149,10 +4147,20 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         } else {
             keyZ = Bun::toStringRef(moduleName);
         }
+
     } else {
         keyZ = Bun::toStringRef(globalObject, key);
     }
     BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toStringRef(globalObject, referrer) : BunStringEmpty;
+
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyZ.toWTFString(), referrerZ.toWTFString())) {
+            return Identifier::fromString(globalObject->vm(), resolvedString.value());
+        }
+    } else {
+        ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
+    }
+
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();
@@ -4184,10 +4192,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
-    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
         auto keyString = moduleNameValue->value(globalObject);
-        if (virtualModules->contains(keyString)) {
-            auto resolvedIdentifier = JSC::Identifier::fromString(vm, keyString);
+        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(keyString, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
+            auto resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier,
                 JSC::jsUndefined(), parameters, JSC::jsUndefined());

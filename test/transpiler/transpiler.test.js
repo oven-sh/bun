@@ -1192,12 +1192,38 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  it('logLevel: "error" throws', () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+      logLevel: "error",
+    });
+
+    expect(() => bun.transformSync("bad??!?!?!")).toThrow("Unexpected ?");
+  });
+
+  it("invalid logLevel throws", () => {
+    expect(
+      () =>
+        new Bun.Transpiler({
+          loader: "jsx",
+          define: {
+            "process.env.NODE_ENV": JSON.stringify("development"),
+          },
+          logLevel: "poop",
+        }),
+    ).toThrow();
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      logLevel: "error",
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
@@ -1251,6 +1277,24 @@ export default <>hi</>
 
     expect(bun.transformSync("console.log(<div></div>);")).toBe(
       `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
+`,
+    );
+
+    // key after spread props
+    // https://github.com/oven-sh/bun/issues/7328
+    expect(bun.transformSync(`console.log(<div {...obj} key="after" />, <div key="before" {...obj} />);`)).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
+`,
+    );
+    expect(bun.transformSync(`console.log(<div {...obj} key="after" {...obj2} />);`)).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
+`,
+    );
+    expect(
+      bun.transformSync(`// @jsx foo;
+console.log(<div {...obj} key="after" />);`),
+    ).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
 `,
     );
   });
@@ -3269,5 +3313,101 @@ console.log("boop");
       `console.log("boop");
 `,
     );
+  });
+
+  it("can parse 'a<b>' as typescript", () => {
+    ts.expectPrinted("a<b>", "a");
+    expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);
+  });
+});
+
+describe("await can only be used inside an async function message", () => {
+  var transpiler = new Bun.Transpiler({
+    logLevel: "debug",
+  });
+
+  function assertError(code, hasNote = false) {
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      function handle(error) {
+        expect(error.message).toBe('"await" can only be used inside an "async" function');
+
+        if (hasNote) {
+          expect(error.notes).toHaveLength(1);
+          expect(error.notes[0].message).toBe('Consider adding the "async" keyword here');
+          expect(error.notes[0].position.lineText).toContain("foo");
+        } else {
+          expect(error.notes).toHaveLength(0);
+        }
+      }
+      if (e instanceof AggregateError) {
+        handle(e.errors[0]);
+      } else {
+        expect.unreachable();
+      }
+    }
+  }
+  it("in object method", () => {
+    assertError(
+      `const x = {
+      foo() {
+       await bar();
+     }
+    }`,
+      true,
+    );
+  });
+
+  it("in class method", () => {
+    assertError(
+      `class X {
+      foo() {
+       await bar();
+     }
+    }`,
+      true,
+    );
+  });
+
+  it("in function statement", () => {
+    assertError(
+      `function foo() {
+      await bar();
+    }`,
+      true,
+    );
+  });
+
+  it("in function expression", () => {
+    assertError(
+      `const foo = function() {
+      await bar();
+    }`,
+      true,
+    );
+  });
+
+  it("in arrow function", () => {
+    assertError(
+      `const foo = () => {
+      await bar();
+    }`,
+      false,
+    );
+  });
+
+  it("in arrow function with block body", () => {
+    assertError(
+      `const foo = () => {
+      await bar();
+    }`,
+      false,
+    );
+  });
+
+  it("in arrow function with expression body", () => {
+    assertError(`const foo = () => await bar();`, false);
   });
 });

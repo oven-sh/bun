@@ -39,12 +39,13 @@ pub const ResourceUsage = struct {
     ) callconv(.C) JSValue {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
+        
+        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.tv_usec, rusage.utime.tv_sec);
+        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.tv_usec, rusage.stime.tv_sec);
 
-        const usrTime = rusage.utime.tv_usec + (rusage.utime.tv_sec * @as(c_long, 1e6));
-        const sysTime = rusage.stime.tv_usec + (rusage.stime.tv_sec * @as(c_long, 1e6));
-        cpu.put(globalObject, JSC.ZigString.static("user"), JSValue.jsNumber(usrTime));
-        cpu.put(globalObject, JSC.ZigString.static("system"), JSValue.jsNumber(sysTime));
-        cpu.put(globalObject, JSC.ZigString.static("total"), JSValue.jsNumber(usrTime + sysTime));
+        cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
+        cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
+        cpu.put(globalObject, JSC.ZigString.static("total"),  JSValue.bigIntSum(globalObject, usrTime, sysTime));
 
         return cpu;
     }

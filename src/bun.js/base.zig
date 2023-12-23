@@ -694,7 +694,7 @@ pub const ArrayBuffer = extern struct {
 };
 
 pub const MarkedArrayBuffer = struct {
-    buffer: ArrayBuffer,
+    buffer: ArrayBuffer = .{},
     allocator: ?std.mem.Allocator = null,
 
     pub const Stream = ArrayBuffer.Stream;
@@ -758,8 +758,8 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
-        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
+    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
     pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
@@ -1348,7 +1348,7 @@ pub fn wrapInstanceMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1357,22 +1357,7 @@ pub fn wrapInstanceMethod(
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
-                                    globalThis.throwInvalidArguments("expected string or buffer", .{});
-                                    iter.deinit();
-                                    return JSC.JSValue.zero;
-                                };
-                            } else {
-                                args[i] = null;
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                                     globalThis.throwInvalidArguments("expected string or buffer", .{});
                                     iter.deinit();
                                     return JSC.JSValue.zero;
@@ -1520,7 +1505,7 @@ pub fn wrapStaticMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1528,30 +1513,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
-                                globalThis.throwInvalidArguments("expected string or buffer", .{});
-                                iter.deinit();
-                                return JSC.JSValue.zero;
-                            };
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    JSC.Node.SliceOrBuffer => {
-                        const arg = iter.nextEat() orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
-                            iter.deinit();
-                            return JSC.JSValue.zero;
-                        };
-                        args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
-                            iter.deinit();
-                            return JSC.JSValue.zero;
-                        };
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                                 globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;

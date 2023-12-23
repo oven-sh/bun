@@ -880,6 +880,81 @@ pub const Encoder = struct {
         };
     }
 
+    pub fn toBunStringFromOwnedSlice(input: []u8, encoding: JSC.Node.Encoding) bun.String {
+        if (input.len == 0)
+            return bun.String.empty;
+
+        switch (encoding) {
+            .ascii => {
+                if (strings.isAllASCII(input)) {
+                    return bun.String.createExternalGloballyAllocated(.latin1, input);
+                }
+
+                defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                strings.copyLatin1IntoASCII(chars, input);
+                return str;
+            },
+            .latin1 => {
+                return bun.String.createExternalGloballyAllocated(.latin1, input);
+            },
+            .buffer, .utf8 => {
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    defer bun.default_allocator.free(input);
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                return bun.String.createExternalGloballyAllocated(.latin1, input);
+            },
+            .ucs2, .utf16le => {
+                // Avoid incomplete characters
+                if (input.len / 2 == 0) {
+                    bun.default_allocator.free(input);
+                    return bun.String.empty;
+                }
+
+                const as_u16 = std.mem.bytesAsSlice(u16, input);
+
+                return bun.String.createExternalGloballyAllocated(.utf16, @alignCast(as_u16));
+            },
+
+            .hex => {
+                defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
+
+                const wrote = strings.encodeBytesToHex(chars, input);
+
+                // Return an empty string in this case, just like node.
+                if (wrote < chars.len) {
+                    str.deref();
+                    return bun.String.empty;
+                }
+
+                return str;
+            },
+
+            // TODO: this is not right. There is an issue here. But it needs to
+            // be addressed separately because constructFromU8's base64url also
+            // appears inconsistent with Node.js.
+            .base64url => {
+                defer bun.default_allocator.free(input);
+                const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                _ = bun.base64.encodeURLSafe(chars, input);
+                return out;
+            },
+
+            .base64 => {
+                defer bun.default_allocator.free(input);
+                const to_len = bun.base64.encodeLen(input);
+                var to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
+            },
+        }
+    }
+
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
             return ZigString.Empty.toValue(global);

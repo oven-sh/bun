@@ -28,6 +28,8 @@
 #include <wtf/text/AtomString.h>
 #include <wtf/text/WTFString.h>
 
+extern "C" void mi_free(void* ptr);
+
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
@@ -507,4 +509,26 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     }
 
     return WTF::String();
+}
+
+extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
+    const LChar* bytes,
+    size_t length)
+{
+    ASSERT(length > 0);
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create(bytes, length, nullptr, [](void*, void* ptr, size_t) {
+        mi_free(ptr);
+    });
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
+extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
+    const UChar* bytes,
+    size_t length)
+{
+    ASSERT(length > 0);
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create(bytes, length, nullptr, [](void*, void* ptr, size_t) {
+        mi_free(ptr);
+    });
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

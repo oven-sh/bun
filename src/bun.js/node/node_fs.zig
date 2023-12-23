@@ -33,7 +33,6 @@ const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
-const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
@@ -58,7 +57,7 @@ else
     // TODO:
     0;
 
-const SliceWithUnderlyingStringOrBuffer = JSC.Node.SliceWithUnderlyingStringOrBuffer;
+const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
@@ -1965,7 +1964,7 @@ pub const Arguments = struct {
     };
 
     const MkdirTemp = struct {
-        prefix: JSC.Node.SliceOrBuffer = .{ .buffer = .{ .buffer = JSC.ArrayBuffer.empty } },
+        prefix: JSC.Node.StringOrBuffer = .{ .buffer = .{ .buffer = JSC.ArrayBuffer.empty } },
         encoding: Encoding = Encoding.utf8,
 
         pub fn deinit(this: MkdirTemp) void {
@@ -1983,7 +1982,7 @@ pub const Arguments = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            const prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
+            const prefix = JSC.Node.StringOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "prefix must be a string or TypedArray",
@@ -2341,7 +2340,7 @@ pub const Arguments = struct {
     ///
     pub const Write = struct {
         fd: FileDescriptor,
-        buffer: JSC.Node.SliceWithUnderlyingStringOrBuffer,
+        buffer: JSC.Node.StringOrBuffer,
         // buffer_val: JSC.JSValue = JSC.JSValue.zero,
         offset: u64 = 0,
         length: u64 = std.math.maxInt(u64),
@@ -2387,7 +2386,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = SliceWithUnderlyingStringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.nextEat() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2397,7 +2396,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, exception) orelse {
+            }) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data must be a string or TypedArray",
@@ -2414,7 +2413,7 @@ pub const Arguments = struct {
                 .fd = fd,
                 .buffer = buffer,
                 .encoding = switch (buffer) {
-                    .SliceWithUnderlyingString => Encoding.utf8,
+                    .string => Encoding.utf8,
                     .buffer => Encoding.buffer,
                 },
             };
@@ -2427,7 +2426,7 @@ pub const Arguments = struct {
                     var current = current_;
                     switch (buffer) {
                         // fs.write(fd, string[, position[, encoding]], callback)
-                        .SliceWithUnderlyingString => {
+                        .string => {
                             if (current.isNumber()) {
                                 args.position = current.to(i52);
                                 arguments.eat();
@@ -2702,10 +2701,14 @@ pub const Arguments = struct {
 
     pub const WriteFile = struct {
         encoding: Encoding = Encoding.utf8,
+
         flag: FileSystemFlags = FileSystemFlags.w,
         mode: Mode = 0o666,
         file: PathOrFileDescriptor,
+
+        /// Encoded at the time of construction.
         data: StringOrBuffer,
+
         dirfd: FileDescriptor,
 
         pub fn deinit(self: WriteFile) void {
@@ -2714,10 +2717,12 @@ pub const Arguments = struct {
 
         pub fn toThreadSafe(self: *WriteFile) void {
             self.file.toThreadSafe();
+            self.data.toThreadSafe();
         }
 
         pub fn deinitAndUnprotect(self: *WriteFile) void {
             self.file.deinitAndUnprotect();
+            self.data.deinitAndUnprotect();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
@@ -2735,7 +2740,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const data = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
+            const data_value = arguments.nextEat() orelse {
+                defer file.deinit();
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2745,19 +2751,8 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "data must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
             };
 
-            if (exception.* != null) return null;
             arguments.eat();
 
             var encoding = Encoding.buffer;
@@ -2768,6 +2763,7 @@ pub const Arguments = struct {
                 arguments.eat();
                 if (arg.isString()) {
                     encoding = Encoding.fromJS(arg, ctx.ptr()) orelse {
+                        defer file.deinit();
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
@@ -2781,6 +2777,7 @@ pub const Arguments = struct {
                 } else if (arg.isObject()) {
                     if (arg.getTruthy(ctx.ptr(), "encoding")) |encoding_| {
                         encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse {
+                            defer file.deinit();
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid encoding",
@@ -2795,6 +2792,7 @@ pub const Arguments = struct {
 
                     if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                            defer file.deinit();
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
@@ -2809,6 +2807,7 @@ pub const Arguments = struct {
 
                     if (arg.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
+                            defer file.deinit();
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
@@ -2822,6 +2821,19 @@ pub const Arguments = struct {
                     }
                 }
             }
+
+            const data = StringOrBuffer.fromJSWithEncoding(ctx.ptr(), bun.default_allocator, data_value, encoding) orelse {
+                defer file.deinit();
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "data must be a string or TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
 
             // Note: Signal is not implemented
             return WriteFile{
@@ -3660,14 +3672,14 @@ const Return = struct {
             }
         }
     };
-    pub const ReadFile = JSC.Node.StringOrNodeBuffer;
+    pub const ReadFile = JSC.Node.StringOrBuffer;
     pub const ReadFileWithOptions = union(enum) {
         string: string,
         buffer: JSC.Node.Buffer,
         null_terminated: [:0]const u8,
     };
-    pub const Readlink = JSC.Node.StringOrBunStringOrBuffer;
-    pub const Realpath = JSC.Node.StringOrBunStringOrBuffer;
+    pub const Readlink = JSC.Node.StringOrBuffer;
+    pub const Realpath = JSC.Node.StringOrBuffer;
     pub const RealpathNative = Realpath;
     pub const Rename = void;
     pub const Rmdir = void;
@@ -4998,11 +5010,7 @@ pub const NodeFS = struct {
                         .buffer = ret.result.buffer,
                     },
                 },
-                .string => .{
-                    .result = .{
-                        .string = ret.result.string,
-                    },
-                },
+                .string => .{ .result = .{ .string = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding) } },
                 else => unreachable,
             },
         };
@@ -5332,11 +5340,11 @@ pub const NodeFS = struct {
                 else => if (args.path == .slice_with_underlying_string and
                     strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
                     .{
-                        .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                        .string = args.path.slice_with_underlying_string.dupeRef(),
                     }
                 else
                     .{
-                        .BunString = bun.String.create(outbuf[0..len]),
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.create(outbuf[0..len]) },
                     },
             },
         };
@@ -5370,11 +5378,11 @@ pub const NodeFS = struct {
                     else => if (args.path == .slice_with_underlying_string and
                         strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
                         .{
-                            .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                            .string = args.path.slice_with_underlying_string.dupeRef(),
                         }
                     else
                         .{
-                            .BunString = bun.String.create(buf),
+                            .string = .{ .utf8 = .{}, .underlying = bun.String.create(buf) },
                         },
                 },
             };
@@ -5419,11 +5427,11 @@ pub const NodeFS = struct {
                 else => if (args.path == .slice_with_underlying_string and
                     strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
                     .{
-                        .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                        .string = args.path.slice_with_underlying_string.dupeRef(),
                     }
                 else
                     .{
-                        .BunString = bun.String.create(buf),
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.create(buf) },
                     },
             },
         };

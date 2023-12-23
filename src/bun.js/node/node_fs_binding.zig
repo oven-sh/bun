@@ -60,20 +60,21 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 return .zero;
             }
 
-            const result: Result = Function(
+            switch (Function(
                 &this.node_fs,
                 args,
                 comptime Flavor.sync,
-            );
-
-            switch (result) {
+            )) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                     return .zero;
                 },
                 .result => |res| {
                     if (comptime Result.ReturnType != void) {
-                        const out = JSC.JSValue.c(JSC.To.JS.withType(Result.ReturnType, res, globalObject, &exceptionref));
+                        const out = if (comptime Result.ReturnType == JSC.Node.StringOrBuffer) brk: {
+                            var res_ = res;
+                            break :brk res_.toJS(globalObject);
+                        } else JSC.JSValue.c(JSC.To.JS.withType(Result.ReturnType, res, globalObject, &exceptionref));
                         const exception = JSC.JSValue.c(exceptionref);
                         if (exception != .zero) {
                             globalObject.throwValue(exception);
@@ -110,6 +111,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            slice.will_be_async = true;
             var exceptionref: JSC.C.JSValueRef = null;
             const args = if (comptime Arguments != void)
                 (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {

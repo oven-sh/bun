@@ -158,9 +158,12 @@ pub const Async = struct {
                 var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
-                    .result => |res| brk: {
+                    .result => |*res| brk: {
                         var exceptionref: JSC.C.JSValueRef = null;
-                        const out = JSC.JSValue.c(JSC.To.JS.withType(ReturnType, res, globalObject, &exceptionref));
+                        const out = if (comptime ReturnType == JSC.Node.StringOrBuffer)
+                            res.toJS(globalObject)
+                        else
+                            JSC.JSValue.c(JSC.To.JS.withType(ReturnType, res.*, globalObject, &exceptionref));
                         const exception = JSC.JSValue.c(exceptionref);
                         if (exception != .zero) {
                             success = false;
@@ -2413,8 +2416,8 @@ pub const Arguments = struct {
                 .fd = fd,
                 .buffer = buffer,
                 .encoding = switch (buffer) {
-                    .string => Encoding.utf8,
                     .buffer => Encoding.buffer,
+                    inline else => Encoding.utf8,
                 },
             };
 
@@ -2426,7 +2429,7 @@ pub const Arguments = struct {
                     var current = current_;
                     switch (buffer) {
                         // fs.write(fd, string[, position[, encoding]], callback)
-                        .string => {
+                        else => {
                             if (current.isNumber()) {
                                 args.position = current.to(i52);
                                 arguments.eat();
@@ -3541,13 +3544,20 @@ pub const StatOrNotFound = union(enum) {
             .not_found => JSC.JSValue.undefined,
         };
     }
+
+    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .stats => this.stats.toJSNewlyCreated(globalObject),
+            .not_found => JSC.JSValue.undefined,
+        };
+    }
 };
 
 pub const StringOrUndefined = union(enum) {
     string: bun.String,
     none: void,
 
-    pub fn toJS(this: *StringOrUndefined, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const StringOrUndefined, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .string => this.string.toJS(globalObject),
             .none => JSC.JSValue.undefined,

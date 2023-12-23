@@ -213,8 +213,12 @@ pub const To = struct {
                         }
                     }
 
+                    if (comptime @hasDecl(Type, "toJSNewlyCreated") and @typeInfo(@TypeOf(@field(Type, "toJSNewlyCreated"))).Fn.params.len == 2) {
+                        return value.toJSNewlyCreated(context).asObjectRef();
+                    }
+
                     if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
-                        return bun.new(Type, value).toJS(context).asObjectRef();
+                        return value.toJS(context).asObjectRef();
                     }
 
                     const res = value.toJS(context, exception);

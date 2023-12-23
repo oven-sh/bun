@@ -2090,10 +2090,10 @@ pub const Crypto = struct {
 
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
-                    .string => |str| {
+                    inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
+                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
                             return JSC.JSValue.zero;
                         };
 
@@ -2185,10 +2185,10 @@ pub const Crypto = struct {
         ) JSC.JSValue {
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
-                    .string => |str| {
+                    inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str});
+                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str.*});
                             return JSC.JSValue.zero;
                         };
 
@@ -2327,10 +2327,10 @@ pub const Crypto = struct {
             ) JSC.JSValue {
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
-                        .string => |str| {
+                        inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
+                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
                                 return JSC.JSValue.zero;
                             };
 
@@ -2378,7 +2378,7 @@ pub const Crypto = struct {
             ) JSC.JSValue {
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
-                        .string => |str| {
+                        inline else => |str| {
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                                 globalThis.throwInvalidArguments("Unknown encoding: \"{s}\"", .{str.slice()});
                                 return JSC.JSValue.zero;

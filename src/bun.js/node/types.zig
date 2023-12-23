@@ -190,11 +190,15 @@ pub fn Maybe(comptime ResultType: type) type {
 
 pub const StringOrBuffer = union(enum) {
     string: bun.SliceWithUnderlyingString,
+    threadsafe_string: bun.SliceWithUnderlyingString,
+    encoded_slice: JSC.ZigString.Slice,
     buffer: Buffer,
 
     pub fn toThreadSafe(this: *@This()) void {
         switch (this.*) {
             .string => this.string.toThreadSafe(),
+            .threadsafe_string => {},
+            .encoded_slice => {},
             .buffer => {},
         }
     }
@@ -215,13 +219,23 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn toJS(this: *StringOrBuffer, ctx: JSC.C.JSContextRef) JSC.JSValue {
         return switch (this.*) {
-            .string => {
+            inline .threadsafe_string, .string => |*str| {
                 defer {
-                    this.string.deinit();
-                    this.string = .{};
+                    str.deinit();
+                    str.* = .{};
                 }
 
-                return this.string.toJS(ctx);
+                return str.toJS(ctx);
+            },
+            .encoded_slice => {
+                defer {
+                    this.encoded_slice.deinit();
+                    this.encoded_slice = .{};
+                }
+
+                const str = bun.String.create(this.encoded_slice.slice());
+                defer str.deref();
+                return str.toJS(ctx);
             },
             .buffer => {
                 if (this.buffer.buffer.value != .zero) {
@@ -235,15 +249,17 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn slice(this: *const StringOrBuffer) []const u8 {
         return switch (this.*) {
-            .string => this.string.slice(),
-            .buffer => this.buffer.slice(),
+            inline else => |*str| str.slice(),
         };
     }
 
     pub fn deinit(this: *const StringOrBuffer) void {
         switch (this.*) {
-            .string => |*str| {
+            inline .threadsafe_string, .string => |*str| {
                 str.deinit();
+            },
+            .encoded_slice => |*encoded| {
+                encoded.deinit();
             },
             else => {},
         }
@@ -251,22 +267,42 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn deinitAndUnprotect(this: *const StringOrBuffer) void {
         switch (this.*) {
-            .string => |*str| {
+            inline .threadsafe_string, .string => |*str| {
                 str.deinit();
             },
             .buffer => |buffer| {
                 buffer.buffer.value.unprotect();
             },
+            .encoded_slice => |*encoded| {
+                encoded.deinit();
+            },
         }
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
+    pub fn fromJSMaybeAsync(
+        global: *JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+        value: JSC.JSValue,
+        is_async: bool,
+    ) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var str = bun.String.tryFromJS(value, global) orelse return null;
-                str.ref();
+                if (is_async) {
+                    str.toThreadSafeEnsureRef();
+                } else {
+                    str.ref();
+                }
+
                 const sliced = str.toSlice(allocator);
                 sliced.reportExtraMemory(global.vm());
+
+                if (is_async and !sliced.isWTFAllocated()) {
+                    str.deref();
+                    return .{ .encoded_slice = sliced.utf8 };
+                } else if (is_async) {
+                    return StringOrBuffer{ .threadsafe_string = sliced };
+                }
                 return StringOrBuffer{ .string = sliced };
             },
 
@@ -289,8 +325,14 @@ pub const StringOrBuffer = union(enum) {
             else => null,
         };
     }
-
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
+        return fromJSMaybeAsync(global, allocator, value, false);
+    }
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) ?StringOrBuffer {
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
+    }
+
+    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) ?StringOrBuffer {
         if (value.isCell() and value.jsType().isTypedArray()) {
             return StringOrBuffer{
                 .buffer = Buffer.fromTypedArray(global, value),
@@ -298,22 +340,19 @@ pub const StringOrBuffer = union(enum) {
         }
 
         if (encoding == .utf8) {
-            return fromJS(global, allocator, value);
+            return fromJSMaybeAsync(global, allocator, value, is_async);
         }
 
         var str = bun.String.tryFromJS(value, global) orelse return null;
         if (str.isEmpty()) {
-            return fromJS(global, allocator, value);
+            return fromJSMaybeAsync(global, allocator, value, is_async);
         }
 
         const out = str.encode(encoding);
         defer global.vm().reportExtraMemory(out.len);
 
         return .{
-            .string = .{
-                .utf8 = JSC.ZigString.Slice.from(out, bun.default_allocator),
-                .underlying = bun.String.init(out),
-            },
+            .encoded_slice = JSC.ZigString.Slice.from(out, bun.default_allocator),
         };
     }
 
@@ -478,40 +517,49 @@ pub fn CallbackTask(comptime Result: type) type {
     };
 }
 
-pub const PathLike = union(Tag) {
+pub const PathLike = union(enum) {
     string: bun.PathString,
     buffer: Buffer,
     slice_with_underlying_string: bun.SliceWithUnderlyingString,
-
-    pub const Tag = enum { string, buffer, slice_with_underlying_string };
+    threadsafe_string: bun.SliceWithUnderlyingString,
+    encoded_slice: JSC.ZigString.Slice,
 
     pub fn estimatedSize(this: *const PathLike) usize {
         return switch (this.*) {
             .string => this.string.estimatedSize(),
             .buffer => this.buffer.slice().len,
-            .slice_with_underlying_string => 0,
+            .threadsafe_string, .slice_with_underlying_string => 0,
+            .encoded_slice => this.encoded_slice.slice().len,
         };
     }
 
     pub fn deinit(this: *const PathLike) void {
-        if (this.* == .slice_with_underlying_string) {
-            this.slice_with_underlying_string.deinit();
+        switch (this.*) {
+            .string, .buffer => {},
+            inline else => |*str| {
+                str.deinit();
+            },
         }
     }
 
     pub fn toThreadSafe(this: *PathLike) void {
-        if (this.* == .slice_with_underlying_string) {
-            this.slice_with_underlying_string.toThreadSafe();
-        }
-
-        if (this.* == .buffer) {
-            this.buffer.buffer.value.protect();
+        switch (this.*) {
+            .slice_with_underlying_string => {
+                this.slice_with_underlying_string.toThreadSafe();
+                this.* = .{
+                    .threadsafe_string = this.slice_with_underlying_string,
+                };
+            },
+            .buffer => {
+                this.buffer.buffer.value.protect();
+            },
+            else => {},
         }
     }
 
     pub fn deinitAndUnprotect(this: *const PathLike) void {
         switch (this.*) {
-            .slice_with_underlying_string => |val| {
+            inline .encoded_slice, .threadsafe_string, .slice_with_underlying_string => |*val| {
                 val.deinit();
             },
             .buffer => |val| {
@@ -523,9 +571,7 @@ pub const PathLike = union(Tag) {
 
     pub inline fn slice(this: PathLike) string {
         return switch (this) {
-            .string => this.string.slice(),
-            .buffer => this.buffer.slice(),
-            .slice_with_underlying_string => this.slice_with_underlying_string.slice(),
+            inline else => |*str| str.slice(),
         };
     }
 
@@ -580,7 +626,12 @@ pub const PathLike = union(Tag) {
         return switch (this) {
             .string => this.string.toJS(ctx, exception),
             .buffer => this.buffer.toJSObjectRef(ctx, exception),
-            .slice_with_underlying_string => this.slice_with_underlying_string.toJS(ctx).asObjectRef(),
+            .threadsafe_string, .slice_with_underlying_string => this.slice_with_underlying_string.toJS(ctx).asObjectRef(),
+            .encoded_slice => |encoded| {
+                const str = bun.String.create(encoded.slice());
+                defer str.deref();
+                return str.toJS(ctx);
+            },
             else => unreachable,
         };
     }
@@ -624,13 +675,26 @@ pub const PathLike = union(Tag) {
                     return null;
                 }
 
-                str.ref();
+                if (arguments.will_be_async) {
+                    str.toThreadSafeEnsureRef();
+                } else {
+                    str.ref();
+                }
 
-                return PathLike{ .slice_with_underlying_string = str.toSlice(allocator) };
+                const sliced = str.toSlice(allocator);
+
+                if (arguments.will_be_async and !sliced.isWTFAllocated()) {
+                    str.deref();
+                    return .{ .encoded_slice = sliced.utf8 };
+                } else if (arguments.will_be_async) {
+                    return .{ .threadsafe_string = sliced };
+                }
+
+                return PathLike{ .slice_with_underlying_string = sliced };
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
-                    const path_str: bun.String = domurl.fileSystemPath();
+                    var path_str: bun.String = domurl.fileSystemPath();
                     defer path_str.deref();
                     if (path_str.isEmpty()) {
                         JSC.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{}, ctx, exception);
@@ -642,9 +706,19 @@ pub const PathLike = union(Tag) {
                         return null;
                     }
 
-                    return PathLike{
-                        .slice_with_underlying_string = path_str.toSlice(allocator),
-                    };
+                    if (arguments.will_be_async) {
+                        path_str.toThreadSafe();
+                    }
+
+                    const sliced = path_str.toSlice(allocator);
+
+                    if (arguments.will_be_async and !sliced.isWTFAllocated()) {
+                        return .{ .encoded_slice = sliced.utf8 };
+                    } else if (arguments.will_be_async) {
+                        return .{ .threadsafe_string = sliced };
+                    }
+
+                    return PathLike{ .slice_with_underlying_string = sliced };
                 }
 
                 return null;
@@ -777,6 +851,7 @@ pub const ArgumentsSlice = struct {
     all: []const JSC.JSValue,
     threw: bool = false,
     protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+    will_be_async: bool = false,
 
     pub fn unprotect(this: *ArgumentsSlice) void {
         var iter = this.protected.iterator(.{});
@@ -1458,6 +1533,10 @@ pub const Stats = union(enum) {
         }
     }
 
+    pub fn toJSNewlyCreated(this: *const Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return bun.new(Stats, this.*).toJS(globalObject);
+    }
+
     pub inline fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .big => this.big.toJS(globalObject),
@@ -1496,6 +1575,11 @@ pub const Dirent = struct {
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Dirent {
         globalObject.throw("Dirent is not a constructor", .{});
         return null;
+    }
+
+    pub fn toJSNewlyCreated(this: *const Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var out = bun.new(Dirent, this.*);
+        return out.toJS(globalObject);
     }
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

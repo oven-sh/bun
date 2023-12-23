@@ -951,11 +951,28 @@ pub const String = extern struct {
     }
 
     extern fn BunString__toThreadSafe(this: *String) void;
+
+    /// Does not increment the reference count unless the StringImpl is cloned.
     pub fn toThreadSafe(this: *String) void {
         JSC.markBinding(@src());
 
         if (this.tag == .WTFStringImpl) {
             BunString__toThreadSafe(this);
+        }
+    }
+
+    /// We don't ref unless the underlying StringImpl is new.
+    ///
+    /// This will ref even if it doesn't change.
+    pub fn toThreadSafeEnsureRef(this: *String) void {
+        JSC.markBinding(@src());
+
+        if (this.tag == .WTFStringImpl) {
+            const orig = this.value.WTFStringImpl;
+            BunString__toThreadSafe(this);
+            if (this.value.WTFStringImpl == orig) {
+                orig.ref();
+            }
         }
     }
 
@@ -1017,6 +1034,14 @@ pub const SliceWithUnderlyingString = struct {
 
     pub fn reportExtraMemory(this: *const SliceWithUnderlyingString, vm: *JSC.VM) void {
         this.utf8.reportExtraMemory(vm);
+    }
+
+    pub fn isWTFAllocated(this: *const SliceWithUnderlyingString) bool {
+        if (this.utf8.allocator.get()) |allocator| {
+            return String.isWTFAllocator(allocator);
+        }
+
+        return false;
     }
 
     pub fn dupeRef(this: SliceWithUnderlyingString) SliceWithUnderlyingString {

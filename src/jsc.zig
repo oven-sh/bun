@@ -81,6 +81,7 @@ pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
+pub const ResourceUsage = @import("./bun.js/api/bun.zig").ResourceUsage;
 
 /// Generated code! To regenerate, run:
 ///

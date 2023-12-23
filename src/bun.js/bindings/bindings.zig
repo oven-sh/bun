@@ -3825,7 +3825,7 @@ pub const JSValue = enum(JSValueReprInt) {
             JSValue => number,
             f32, f64 => jsNumberFromDouble(@as(f64, number)),
             c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
-            u32, u52, c_uint, i64 => jsNumberFromInt64(@as(i64, @intCast(number))),
+            c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
             comptime_int => switch (number) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
@@ -4256,6 +4256,17 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn fromUInt64NoTruncate(globalObject: *JSGlobalObject, i: u64) JSValue {
         return cppFn("fromUInt64NoTruncate", .{ globalObject, i });
     }
+
+    /// This always returns a JS BigInt using std.os.timeval from std.os.rusage
+    pub fn fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) JSValue {
+        return cppFn("fromTimevalNoTruncate", .{ globalObject, nsec, sec });
+    }
+
+    /// Sums two JS BigInts
+    pub fn bigIntSum(globalObject: *JSGlobalObject, a: JSValue, b: JSValue) JSValue {
+        return cppFn("bigIntSum", .{ globalObject, a, b });
+    }
+    
     pub fn toUInt64NoTruncate(this: JSValue) u64 {
         return cppFn("toUInt64NoTruncate", .{
             this,

@@ -1176,7 +1176,9 @@ pub const Command = struct {
             RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
             RootCommandMatcher.case("upgrade") => brk: {
-                if (args_iter.buf.len > 2) {
+                // Check if there are any arguments passed and whether the first contains `--` (--stable/--canary)
+                // Only error if the 1st cmd argument doesn't start with `--`
+                if (args_iter.buf.len > 2 and !strings.contains(std.mem.span(args_iter.buf[2]), "--")) {
                     Output.prettyError(
                         \\<r><red>error<r><d>:<r> this command updates bun itself, and does not take package names.
                         \\Use `bun update

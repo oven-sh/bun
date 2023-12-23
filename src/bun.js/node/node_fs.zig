@@ -2386,7 +2386,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.nextEat() orelse {
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2753,11 +2753,13 @@ pub const Arguments = struct {
                 return null;
             };
 
-            arguments.eat();
-
             var encoding = Encoding.buffer;
             var flag = FileSystemFlags.w;
             var mode: Mode = default_permission;
+
+            if (data_value.isString()) {
+                encoding = Encoding.utf8;
+            }
 
             if (arguments.next()) |arg| {
                 arguments.eat();

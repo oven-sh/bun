@@ -1,6 +1,7 @@
 declare var self: Worker;
 
-self.postMessage("initial message");
+const msg: string = "initial message";
+self.postMessage(msg);
 self.onmessage = ({ data }) => {
   self.postMessage({
     received: data,

@@ -2251,14 +2251,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
     //    arrayBuffers: 9386
     // }
 
-    result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
+    result->putDirectOffset(vm, 0, JSC::jsDoubleNumber(current_rss));
+    result->putDirectOffset(vm, 1, JSC::jsDoubleNumber(vm.heap.blockBytesAllocated()));
 
     // heap.size() loops through every cell...
     // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+    result->putDirectOffset(vm, 2, JSC::jsDoubleNumber(vm.heap.sizeAfterLastEdenCollection()));
 
-    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.externalMemorySize()));
+    result->putDirectOffset(vm, 3, JSC::jsDoubleNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
     // We report 0 for this because m_arrayBuffers in JSC::Heap is private and we need to add a binding
     // If we use objectTypeCounts(), it's hideously slow because it loops through every single object in the heap

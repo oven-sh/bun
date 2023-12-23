@@ -343,6 +343,7 @@ it("promises.readFile", async () => {
   }
 });
 
+describe("promises.readFile", async () => {
   const nodeOutput = [
     {
       "encoding": "utf8",

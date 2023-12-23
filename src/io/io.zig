@@ -136,12 +136,14 @@ pub const Loop = struct {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
                                         this.timers.insert(timer);
+                                        this.active += 1;
                                     },
                                     .ACTIVE => {
                                         @panic("timer is already active");
                                     },
                                     .CANCELLED => {
                                         timer.deinit();
+                                        this.active -= 1;
                                         break;
                                     },
                                     .FIRED => {
@@ -289,12 +291,14 @@ pub const Loop = struct {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
                                         this.timers.insert(timer);
+                                        this.active += 1;
                                     },
                                     .ACTIVE => {
                                         @panic("timer is already active");
                                     },
                                     .CANCELLED => {
                                         timer.deinit();
+                                        this.active -= 1;
                                         break;
                                     },
                                     .FIRED => {

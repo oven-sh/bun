@@ -3965,6 +3965,83 @@ declare module "bun" {
       : undefined;
   }
 
+  interface ResourceUsage {
+    /**
+     * The number of voluntary and involuntary context switches that the process made.
+     */
+    contextSwitches: {
+      /**
+       * Voluntary context switches (context switches that the process initiated).
+       */
+      voluntary: number;
+      /**
+       * Involuntary context switches (context switches initiated by the system scheduler).
+       */
+      involuntary: number;
+    };
+
+    /**
+     * The amount of CPU time used by the process, in nanoseconds.
+     */
+    cpuTime: {
+      /**
+       * User CPU time used by the process, in nanoseconds.
+       */
+      user: number;
+      /**
+       * System CPU time used by the process, in nanoseconds.
+       */
+      system: number;
+      /**
+       * Total CPU time used by the process, in nanoseconds.
+       */
+      total: number;
+    };
+    /**
+     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     */
+    maxRSS: number;
+
+    /**
+     * IPC messages sent and received by the process.
+     */
+    messages: {
+      /**
+       * The number of IPC messages sent.
+       */
+      sent: number;
+      /**
+       * The number of IPC messages received.
+       */
+      received: number;
+    };
+    /**
+     * The number of IO operations done by the process.
+     */
+    ops: {
+      /**
+       * The number of input operations via the file system.
+       */
+      in: number;
+      /**
+       * The number of output operations via the file system.
+       */
+      out: number;
+    };
+    /**
+     * The amount of shared memory that the process used.
+     */
+    shmSize: number;
+    /**
+     * The number of signals delivered to the process.
+     */
+    signalCount: number;
+    /**
+     *  The number of times the process was swapped out of main memory.
+     */
+    swapCount: number;
+  }
+
   /**
    * A process created by {@link Bun.spawn}.
    *
@@ -4064,6 +4141,11 @@ declare module "bun" {
      * was created with the `ipc` option.
      */
     disconnect(): void;
+
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     */
+    stats(): ResourceUsage;
   }
 
   /**

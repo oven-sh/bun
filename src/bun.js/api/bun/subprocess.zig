@@ -22,6 +22,97 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const PosixSpawn = bun.posix.spawn;
 
+pub const ResourceUsage = struct {
+    pub usingnamespace JSC.Codegen.JSResourceUsage;
+    rusage: if (Environment.isWindows) u0 else std.os.rusage,
+
+    pub fn constructor(
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) ?*Subprocess {
+        return null;
+    }
+
+    pub fn getCPUTime(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        const rusage = this.rusage;
+        
+        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.tv_usec, rusage.utime.tv_sec);
+        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.tv_usec, rusage.stime.tv_sec);
+
+        cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
+        cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
+        cpu.put(globalObject, JSC.ZigString.static("total"),  JSValue.bigIntSum(globalObject, usrTime, sysTime));
+
+        return cpu;
+    }
+
+    pub fn getMaxRSS(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.maxrss);
+    }
+
+    pub fn getSharedMemorySize(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.ixrss);
+    }
+
+    pub fn getSwapCount(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nswap);
+    }
+
+    pub fn getOps(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
+        ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
+        return ops;
+    }
+
+    pub fn getMessages(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
+        msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
+        return msgs;
+    }
+
+    pub fn getSignalCount(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nsignals);
+    }
+
+    pub fn getContextSwitches(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
+        ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
+        return ctx;
+    }
+
+    pub fn finalize(this: *ResourceUsage) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+};
+
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
     pub usingnamespace JSC.Codegen.JSSubprocess;
@@ -62,6 +153,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
+    pid_rusage: if (Environment.isWindows) ?u0 else ?std.os.rusage = null,
 
     pub const Flags = packed struct(u3) {
         is_sync: bool = false,
@@ -87,6 +179,31 @@ pub const Subprocess = struct {
         // json,
     };
 
+    pub fn stats(
+        this: *Subprocess,
+        globalObject: *JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        if (comptime Environment.isWindows) {
+            //TODO: implement on windows
+            return JSValue.jsUndefined();
+        }
+        if (this.pid_rusage == null) {
+            return JSValue.jsUndefined();
+        }
+        const pid_rusage = this.pid_rusage.?;
+        const resource_usage = ResourceUsage{
+            .rusage = pid_rusage,
+        };
+
+        const alloc = globalObject.allocator();
+        var result = alloc.create(ResourceUsage) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        result.* = resource_usage;
+        return result.toJS(globalObject);
+    }
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
     }
@@ -1717,6 +1834,8 @@ pub const Subprocess = struct {
             };
         };
 
+        var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+        var has_rusage = false;
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
                 break :brk pid;
@@ -1728,7 +1847,6 @@ pub const Subprocess = struct {
                 @intCast(pid),
                 pidfd_flags,
             );
-
             while (true) {
                 switch (std.os.linux.getErrno(rc)) {
                     .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
@@ -1762,7 +1880,8 @@ pub const Subprocess = struct {
                         globalThis.throwValue(error_instance);
                         var status: u32 = 0;
                         // ensure we don't leak the child process on error
-                        _ = std.os.linux.waitpid(pid, &status, 0);
+                        _ = std.os.linux.wait4(pid, &status, 0, &rusage_result);
+                        has_rusage = true;
                         return .zero;
                     },
                 }
@@ -1777,6 +1896,7 @@ pub const Subprocess = struct {
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
+            .pid_rusage = if (has_rusage) rusage_result else null,
             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
             .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throwOutOfMemory();
@@ -1979,10 +2099,11 @@ pub const Subprocess = struct {
         sync: bool,
         this_jsvalue: JSC.JSValue,
     ) void {
-        this.onWaitPid(sync, this_jsvalue, PosixSpawn.waitpid(this.pid, if (sync) 0 else std.os.W.NOHANG));
+        var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+        this.onWaitPid(sync, this_jsvalue, PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result), rusage_result);
     }
 
-    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: std.os.rusage) void {
         if (Environment.isWindows) {
             @panic("windows doesnt support subprocess yet. haha");
         }
@@ -1991,6 +2112,7 @@ pub const Subprocess = struct {
         const pid = this.pid;
 
         var waitpid_result = waitpid_result_;
+        var rusage_result = pid_rusage;
 
         while (true) {
             switch (waitpid_result) {
@@ -1999,6 +2121,7 @@ pub const Subprocess = struct {
                 },
                 .result => |result| {
                     if (result.pid == pid) {
+                        this.pid_rusage = rusage_result;
                         if (std.os.W.IFEXITED(result.status)) {
                             this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
                         }
@@ -2023,7 +2146,7 @@ pub const Subprocess = struct {
                             .err => |err| {
                                 if (comptime Environment.isMac) {
                                     if (err.getErrno() == .SRCH) {
-                                        waitpid_result = PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG);
+                                        waitpid_result = PosixSpawn.wait4(pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result);
                                         continue;
                                     }
                                 }
@@ -2593,6 +2716,7 @@ pub const Subprocess = struct {
 
         pub const WaitPidResultTask = struct {
             result: JSC.Maybe(PosixSpawn.WaitPidResult),
+            rusage: std.os.rusage,
             subprocess: *Subprocess,
 
             pub fn runFromJSThread(self: *@This()) void {
@@ -2600,7 +2724,7 @@ pub const Subprocess = struct {
                 var subprocess = self.subprocess;
                 _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                 bun.default_allocator.destroy(self);
-                subprocess.onWaitPid(false, subprocess.this_jsvalue, result);
+                subprocess.onWaitPid(false, subprocess.this_jsvalue, result, self.rusage);
             }
         };
 
@@ -2672,15 +2796,19 @@ pub const Subprocess = struct {
                     continue;
                 }
 
-                const result = PosixSpawn.waitpid(process.pid, std.os.W.NOHANG);
+                var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+
+                const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, &rusage_result);
                 if (result == .err or (result == .result and result.result.pid == process.pid)) {
                     _ = this.queue.orderedRemove(i);
+                    process.pid_rusage = rusage_result;
                     queue = this.queue.items;
 
                     const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
                     task.* = WaitPidResultTask{
                         .result = result,
                         .subprocess = process,
+                        .rusage = rusage_result,
                     };
 
                     process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(

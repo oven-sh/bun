@@ -527,7 +527,7 @@ describe("promises.readFile", async () => {
     },
   ];
 
-  it("encodes", async () => {
+  it("& fs.promises.writefile encodes & decodes", async () => {
     const results = [];
     for (let encoding of [
       "utf8",
@@ -561,7 +561,12 @@ describe("promises.readFile", async () => {
         }
 
         expect(fs.readFileSync(outfile, encoding)).toEqual(out);
-        fs.rm(outfile, { force: true }, () => {});
+        await promises.rm(outfile, { force: true });
+
+        expect(await promises.writeFile(outfile, text, encoding)).toBeUndefined();
+        expect(await promises.readFile(outfile, encoding)).toEqual(out);
+        promises.rm(outfile, { force: true });
+
         results.push({
           encoding,
           text,

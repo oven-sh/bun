@@ -1215,7 +1215,7 @@ pub const Encoder = struct {
     pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 
-        const allocator = VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .buffer => {
@@ -1267,7 +1267,7 @@ pub const Encoder = struct {
     pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 
-        const allocator = VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .utf8 => {

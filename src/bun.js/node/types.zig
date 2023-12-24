@@ -1502,16 +1502,12 @@ pub fn StatType(comptime Big: bool) type {
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
             var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
 
-            const this = globalThis.allocator().create(This) catch {
-                globalThis.throwOutOfMemory();
-                return null;
-            };
-
             const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
             const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
             const ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
             const birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
-            this.* = .{
+
+            const this = bun.new(This, .{
                 .dev = if (args.len > 0 and args[0].isNumber()) @intCast(args[0].toInt32()) else 0,
                 .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
                 .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
@@ -1526,7 +1522,8 @@ pub fn StatType(comptime Big: bool) type {
                 .mtime_ms = mtime_ms,
                 .ctime_ms = ctime_ms,
                 .birthtime_ms = birthtime_ms,
-            };
+            });
+
             return this;
         }
 

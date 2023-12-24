@@ -102,15 +102,14 @@ pub fn WorkTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
             var vm = globalThis.bunVM();
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
                 .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
-            };
+            });
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;

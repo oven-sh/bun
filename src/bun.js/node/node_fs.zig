@@ -350,6 +350,8 @@ pub const AsyncReaddirRecursiveTask = struct {
     pending_err: ?Syscall.Error = null,
     pending_err_mutex: bun.Lock = bun.Lock.init(),
 
+    pub usingnamespace bun.New(@This());
+
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
             with_file_types: std.ArrayList(Dirent),
@@ -391,11 +393,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         basename: bun.PathString = bun.PathString.empty,
         task: JSC.WorkPoolTask = .{ .callback = call },
 
+        pub usingnamespace bun.New(@This());
+
         pub fn call(task: *JSC.WorkPoolTask) void {
             var this: *Subtask = @fieldParentPtr(Subtask, "task", task);
             defer {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
-                bun.default_allocator.destroy(this);
+                this.destroy();
             }
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
@@ -406,9 +410,8 @@ pub const AsyncReaddirRecursiveTask = struct {
         readdir_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
     ) void {
-        var task = bun.new(
-            Subtask,
-            Subtask{
+        var task = Subtask.new(
+            .{
                 .readdir_task = readdir_task,
                 .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
             },
@@ -427,7 +430,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             return .zero;
         }
 
-        var task = bun.new(AsyncReaddirRecursiveTask, .{
+        var task = AsyncReaddirRecursiveTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = args,
             .has_result = .{ .raw = false },
@@ -653,8 +656,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
         this.promise.strong.deinit();
-
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 };
 
@@ -2706,6 +2708,7 @@ pub const Arguments = struct {
 
         pub fn deinit(self: WriteFile) void {
             self.file.deinit();
+            self.data.deinit();
         }
 
         pub fn toThreadSafe(self: *WriteFile) void {

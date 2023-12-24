@@ -956,8 +956,13 @@ fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callc
     return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
 }
 
+extern fn dump_zone_malloc_stats() void;
+
 pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
+    if (comptime bun.is_heap_breakdown_enabled) {
+        dump_zone_malloc_stats();
+    }
     return .undefined;
 }
 

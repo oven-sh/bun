@@ -2800,17 +2800,48 @@ pub noinline fn outOfMemory() noreturn {
     @panic("Bun ran out of memory!");
 }
 
+pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
+
+const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+        ptr.* = t;
+        return ptr;
+    }
+
     const ptr = default_allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
+pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
+    if (comptime is_heap_breakdown_enabled) {
+        if (allocator.vtable == default_allocator.vtable) {
+            destroy(t);
+            return;
+        }
+    }
+
+    allocator.destroy(t);
+}
+
 pub inline fn destroy(t: anytype) void {
-    default_allocator.destroy(@TypeOf(t));
+    if (comptime is_heap_breakdown_enabled) {
+        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
+    } else {
+        default_allocator.destroy(t);
+    }
 }
 
 pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        if (allocator.vtable == default_allocator.vtable) {
+            return new(T, t);
+        }
+    }
+
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;

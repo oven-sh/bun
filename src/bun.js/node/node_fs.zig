@@ -118,19 +118,23 @@ pub const Async = struct {
 
             pub const Task = @This();
 
+            pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "Task";
+
             pub fn create(
                 globalObject: *JSC.JSGlobalObject,
                 args: ArgumentType,
                 vm: *JSC.VirtualMachine,
             ) JSC.JSValue {
-                var task = bun.default_allocator.create(Task) catch @panic("out of memory");
-                task.* = Task{
-                    .promise = JSC.JSPromise.Strong.init(globalObject),
-                    .args = args,
-                    .result = undefined,
-                    .globalObject = globalObject,
-                    .tracker = JSC.AsyncTaskTracker.init(vm),
-                };
+                var task = bun.new(
+                    Task,
+                    Task{
+                        .promise = JSC.JSPromise.Strong.init(globalObject),
+                        .args = args,
+                        .result = undefined,
+                        .globalObject = globalObject,
+                        .tracker = JSC.AsyncTaskTracker.init(vm),
+                    },
+                );
                 task.ref.ref(vm);
                 task.args.toThreadSafe();
                 task.tracker.didSchedule(globalObject);
@@ -196,7 +200,7 @@ pub const Async = struct {
                     this.args.deinit();
                 }
                 this.promise.strong.deinit();
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
             }
         };
     }
@@ -228,17 +232,19 @@ pub const AsyncCpTask = struct {
             return .zero;
         }
 
-        var task = bun.default_allocator.create(AsyncCpTask) catch @panic("out of memory");
-        task.* = AsyncCpTask{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = cp_args,
-            .has_result = .{ .raw = false },
-            .result = undefined,
-            .globalObject = globalObject,
-            .tracker = JSC.AsyncTaskTracker.init(vm),
-            .arena = arena,
-            .subtask_count = .{ .raw = 1 },
-        };
+        var task = bun.new(
+            AsyncCpTask,
+            AsyncCpTask{
+                .promise = JSC.JSPromise.Strong.init(globalObject),
+                .args = cp_args,
+                .has_result = .{ .raw = false },
+                .result = undefined,
+                .globalObject = globalObject,
+                .tracker = JSC.AsyncTaskTracker.init(vm),
+                .arena = arena,
+                .subtask_count = .{ .raw = 1 },
+            },
+        );
         task.ref.ref(vm);
         task.args.src.toThreadSafe();
         task.args.dest.toThreadSafe();
@@ -307,7 +313,7 @@ pub const AsyncCpTask = struct {
         this.args.deinit();
         this.promise.strong.deinit();
         this.arena.deinit();
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 };
 
@@ -400,11 +406,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         readdir_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
     ) void {
-        var task = bun.default_allocator.create(Subtask) catch bun.outOfMemory();
-        task.* = Subtask{
-            .readdir_task = readdir_task,
-            .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
-        };
+        var task = bun.new(
+            Subtask,
+            Subtask{
+                .readdir_task = readdir_task,
+                .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
+            },
+        );
         std.debug.assert(readdir_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
         JSC.WorkPool.schedule(&task.task);
     }
@@ -419,8 +427,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             return .zero;
         }
 
-        var task = bun.default_allocator.create(AsyncReaddirRecursiveTask) catch bun.outOfMemory();
-        task.* = AsyncReaddirRecursiveTask{
+        var task = bun.new(AsyncReaddirRecursiveTask, .{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = args,
             .has_result = .{ .raw = false },
@@ -433,7 +440,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 .with_file_types => .{ .with_file_types = std.ArrayList(Dirent).init(bun.default_allocator) },
                 .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.default_allocator) },
             },
-        };
+        });
         task.ref.ref(vm);
         task.args.toThreadSafe();
         task.tracker.didSchedule(globalObject);
@@ -664,12 +671,11 @@ pub const AsyncCpSingleFileTask = struct {
         src: [:0]const u8,
         dest: [:0]const u8,
     ) void {
-        var task = bun.default_allocator.create(AsyncCpSingleFileTask) catch @panic("out of memory");
-        task.* = AsyncCpSingleFileTask{
+        var task = bun.new(AsyncCpSingleFileTask, .{
             .cp_task = parent,
             .src = src,
             .dest = dest,
-        };
+        });
 
         JSC.WorkPool.schedule(&task.task);
     }
@@ -714,7 +720,7 @@ pub const AsyncCpSingleFileTask = struct {
         // There is only one path buffer for both paths. 2 extra bytes are the nulls at the end of each
         bun.default_allocator.free(this.src.ptr[0 .. this.src.len + this.dest.len + 2]);
 
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 };
 

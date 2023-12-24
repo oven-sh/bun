@@ -162,9 +162,7 @@ pub const HTMLRewriter = struct {
     }
 
     pub fn returnEmptyResponse(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
-        var result = bun.default_allocator.create(Response) catch unreachable;
-
-        response.cloneInto(result, getAllocator(global), global);
+        const result = response.clone(global);
         this.finalizeWithoutDestroy();
         return result.toJS(global);
     }
@@ -344,14 +342,13 @@ pub const HTMLRewriter = struct {
         tmp_sync_error: ?JSC.JSValue = null,
         // const log = bun.Output.scoped(.BufferOutputSink, false);
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
-            var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
             sink.* = BufferOutputSink{
                 .global = global,
                 .bytes = bun.MutableString.initEmpty(bun.default_allocator),
                 .rewriter = undefined,
                 .context = context,
-                .response = result,
+                .response = undefined,
             };
 
             for (sink.context.document_handlers.items) |doc| {
@@ -377,13 +374,11 @@ pub const HTMLRewriter = struct {
                 BufferOutputSink.done,
             ) catch {
                 sink.deinit();
-                bun.default_allocator.destroy(result);
 
                 return throwLOLHTMLError(global);
             };
 
-            result.* = Response{
-                .allocator = bun.default_allocator,
+            var result = bun.new(Response, .{
                 .init = .{
                     .status_code = 200,
                 },
@@ -395,7 +390,8 @@ pub const HTMLRewriter = struct {
                         },
                     },
                 },
-            };
+            });
+            sink.response = result;
 
             result.init.method = original.init.method;
             result.init.status_code = original.init.status_code;

@@ -1454,7 +1454,7 @@ pub fn StatType(comptime Big: bool) type {
         // TODO: BigIntStats includes a `_checkModeProperty` but I dont think anyone actually uses it.
 
         pub fn finalize(this: *This) callconv(.C) void {
-            bun.default_allocator.destroy(this);
+            bun.destroy(this);
         }
 
         pub fn init(stat_: bun.Stat) This {
@@ -1559,14 +1559,17 @@ pub const Stats = union(enum) {
     }
 
     pub fn toJSNewlyCreated(this: *const Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return bun.new(Stats, this.*).toJS(globalObject);
+        return switch (this.*) {
+            .big => bun.new(StatsBig, this.big).toJS(globalObject),
+            .small => bun.new(StatsSmall, this.small).toJS(globalObject),
+        };
     }
 
     pub inline fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return switch (this.*) {
-            .big => this.big.toJS(globalObject),
-            .small => this.small.toJS(globalObject),
-        };
+        _ = this;
+        _ = globalObject;
+
+        @compileError("Only use Stats.toJSNewlyCreated() or Stats.toJS() directly on a StatsBig or StatsSmall");
     }
 };
 
@@ -1663,7 +1666,7 @@ pub const Dirent = struct {
 
     pub fn finalize(this: *Dirent) callconv(.C) void {
         this.name.deref();
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 };
 

@@ -161,12 +161,6 @@ pub const HTMLRewriter = struct {
         return BufferOutputSink.init(new_context, global, response, this.builder);
     }
 
-    pub fn returnEmptyResponse(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
-        const result = response.clone(global);
-        this.finalizeWithoutDestroy();
-        return result.toJS(global);
-    }
-
     pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
         return this.beginTransform(global, response);
     }
@@ -338,17 +332,32 @@ pub const HTMLRewriter = struct {
         rewriter: *LOLHTML.HTMLRewriter,
         context: LOLHTMLContext,
         response: *Response,
+        response_value: JSC.Strong = .{},
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?JSC.JSValue = null,
         // const log = bun.Output.scoped(.BufferOutputSink, false);
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
+            var result = bun.new(Response, .{
+                .init = .{
+                    .status_code = 200,
+                },
+                .body = .{
+                    .value = .{
+                        .Locked = .{
+                            .global = global,
+                            .task = sink,
+                        },
+                    },
+                },
+            });
+
             sink.* = BufferOutputSink{
                 .global = global,
                 .bytes = bun.MutableString.initEmpty(bun.default_allocator),
                 .rewriter = undefined,
                 .context = context,
-                .response = undefined,
+                .response = result,
             };
 
             for (sink.context.document_handlers.items) |doc| {
@@ -357,6 +366,7 @@ pub const HTMLRewriter = struct {
             for (sink.context.element_handlers.items) |doc| {
                 doc.ctx = sink;
             }
+
             const input_size = original.body.len();
             sink.rewriter = builder.build(
                 .UTF8,
@@ -374,24 +384,9 @@ pub const HTMLRewriter = struct {
                 BufferOutputSink.done,
             ) catch {
                 sink.deinit();
-
+                result.finalize();
                 return throwLOLHTMLError(global);
             };
-
-            var result = bun.new(Response, .{
-                .init = .{
-                    .status_code = 200,
-                },
-                .body = .{
-                    .value = .{
-                        .Locked = .{
-                            .global = global,
-                            .task = sink,
-                        },
-                    },
-                },
-            });
-            sink.response = result;
 
             result.init.method = original.init.method;
             result.init.status_code = original.init.status_code;
@@ -439,11 +434,14 @@ pub const HTMLRewriter = struct {
             }
 
             // Hold off on cloning until we're actually done.
-            return sink.response.toJS(sink.global);
+            const response_js_value = sink.response.toJS(sink.global);
+            sink.response_value.set(global, response_js_value);
+            return response_js_value;
         }
 
         pub fn onFinishedBuffering(ctx: *anyopaque, bytes: []const u8, js_err: ?JSC.JSValue, is_async: bool) void {
             const sink = bun.cast(*BufferOutputSink, ctx);
+            sink.response_value.deinit();
             if (js_err) |err| {
                 if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
                     sink.response.body.value.Locked.promise == null)
@@ -556,6 +554,7 @@ pub const HTMLRewriter = struct {
             }
 
             this.context.deinit(bun.default_allocator);
+            this.response_value.deinit();
         }
     };
 

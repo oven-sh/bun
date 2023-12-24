@@ -539,11 +539,9 @@ afterAll(() => {
 const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/file/gzip"];
 ["http", "https"].forEach(protocol => {
   request_types.forEach(url => {
-    //TODO: change this when Bun.file supports https
-    const test = url.indexOf("file") !== -1 && protocol === "https" ? it.todo : it;
-    test(`works with ${protocol} fetch using ${url}`, async () => {
+    it(`works with ${protocol} fetch using ${url}`, async () => {
       const server = protocol === "http" ? http_server : https_server;
-      const server_url = `${protocol}://${server?.hostname}:${server?.port}`;
+      const server_url = server.url;
       const res = await fetch(`${server_url}${url}`, { tls: { rejectUnauthorized: false } });
       let calls = 0;
       const rw = new HTMLRewriter();

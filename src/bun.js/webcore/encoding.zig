@@ -1280,7 +1280,7 @@ pub const Encoder = struct {
             },
             // string is already encoded, just need to copy the data
             .ucs2, .utf16le => {
-                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len * 2) catch return &[_]u8{});
+                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len) catch return &[_]u8{});
                 const bytes = std.mem.sliceAsBytes(input[0..len]);
                 @memcpy(to[0..bytes.len], bytes);
                 return to;

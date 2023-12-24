@@ -4,13 +4,23 @@ const HeapBreakdown = @This();
 
 pub fn allocator(comptime T: type) std.mem.Allocator {
     const Holder = struct {
-        pub var allocator: ?std.mem.Allocator = null;
+        pub var zone_t: std.atomic.Value(?*malloc_zone_t) = std.atomic.Value(?*malloc_zone_t).init(null);
+        pub var zone_t_lock: bun.Lock = bun.Lock.init();
     };
-    if (Holder.allocator == null) {
-        Holder.allocator = malloc_zone_t.create(T);
-    }
+    const zone = Holder.zone_t.load(.Monotonic) orelse brk: {
+        Holder.zone_t_lock.lock();
+        defer Holder.zone_t_lock.unlock();
 
-    return Holder.allocator.?;
+        if (Holder.zone_t.load(.Monotonic)) |z| {
+            break :brk z;
+        }
+
+        const z = malloc_zone_t.create(T);
+        Holder.zone_t.store(z, .Monotonic);
+        break :brk z;
+    };
+
+    return zone.getAllocator();
 }
 
 const malloc_zone_t = opaque {
@@ -79,7 +89,7 @@ const malloc_zone_t = opaque {
         .free = @ptrCast(&free),
     };
 
-    pub fn create(comptime T: type) std.mem.Allocator {
+    pub fn create(comptime T: type) *malloc_zone_t {
         const zone = malloc_create_zone(0, 0);
         const title = struct {
             const base_name = if (@hasDecl(T, "heap_label")) T.heap_label else bun.meta.typeBaseName(@typeName(T));
@@ -88,9 +98,13 @@ const malloc_zone_t = opaque {
         }.title;
         malloc_set_zone_name(zone, title.ptr);
 
-        return std.mem.Allocator{
+        return zone;
+    }
+
+    pub fn getAllocator(zone: *malloc_zone_t) std.mem.Allocator {
+        return Allocator{
             .vtable = &VTable,
-            .ptr = @ptrCast(zone),
+            .ptr = zone,
         };
     }
 };

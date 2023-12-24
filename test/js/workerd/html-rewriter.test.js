@@ -72,9 +72,8 @@ describe("HTMLRewriter", () => {
           element.setInnerContent("<blink>it worked!</blink>", { html: true });
         },
       });
-      var input = new Response("<div>hello</div>");
       var output = rewriter.transform(input);
-      expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+      expect(typeof input === "string" ? output : await output.text()).toBe("<div><blink>it worked!</blink></div>");
     });
   }
 

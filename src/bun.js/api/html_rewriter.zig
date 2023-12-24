@@ -164,11 +164,18 @@ pub const HTMLRewriter = struct {
 
     pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: JSC.JSValue) JSValue {
         if (response_value.as(Response)) |response| {
+            if (response.body.value == .Used) {
+                global.throwInvalidArguments("Response body already used", .{});
+                return .zero;
+            }
+
             const out = this.beginTransform(global, response);
 
-            if (out.toError()) |err| {
-                global.throwValue(err);
-                return .zero;
+            if (out != .zero) {
+                if (out.toError()) |err| {
+                    global.throwValue(err);
+                    return .zero;
+                }
             }
 
             return out;
@@ -195,7 +202,6 @@ pub const HTMLRewriter = struct {
                 defer resp.finalize();
                 const out_response_value = this.beginTransform(global, resp);
                 out_response_value.ensureStillAlive();
-
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
                 var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
 
@@ -204,6 +210,7 @@ pub const HTMLRewriter = struct {
                     // Manually invoke the finalizer to ensure it does what we want
                     out_response.finalize();
                 }
+
                 return switch (kind) {
                     .string => brk: {
                         break :brk blob.toString(global, .transfer);
@@ -503,7 +510,6 @@ pub const HTMLRewriter = struct {
 
         pub fn onFinishedBuffering(ctx: *anyopaque, bytes: []const u8, js_err: ?JSC.JSValue, is_async: bool) void {
             const sink = bun.cast(*BufferOutputSink, ctx);
-            sink.response_value.deinit();
             if (js_err) |err| {
                 if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
                     sink.response.body.value.Locked.promise == null)

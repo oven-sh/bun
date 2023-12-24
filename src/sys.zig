@@ -771,7 +771,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const std.os.iovec_const, posi
 pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.allow_assert) {
         if (buffers.len == 0) {
-            @panic("readv() called with 0 length buffer");
+            bun.Output.debugWarn("readv() called with 0 length buffer", .{});
         }
     }
 
@@ -805,7 +805,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
 pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     if (comptime Environment.allow_assert) {
         if (buffers.len == 0) {
-            @panic("preadv() called with 0 length buffer");
+            bun.Output.debugWarn("preadv() called with 0 length buffer", .{});
         }
     }
 
@@ -878,7 +878,7 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
 
     if (comptime Environment.allow_assert) {
         if (adjusted_len == 0) {
-            @panic("pread() called with 0 length buffer");
+            bun.Output.debugWarn("pread() called with 0 length buffer", .{});
         }
     }
 
@@ -902,7 +902,7 @@ else
 pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usize) {
     if (comptime Environment.allow_assert) {
         if (bytes.len == 0) {
-            @panic("pwrite() called with 0 length buffer");
+            bun.Output.debugWarn("pwrite() called with 0 length buffer", .{});
         }
     }
 
@@ -925,7 +925,7 @@ pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usiz
 pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     if (comptime Environment.allow_assert) {
         if (buf.len == 0) {
-            @panic("read() called with 0 length buffer");
+            bun.Output.debugWarn("read() called with 0 length buffer", .{});
         }
     }
     const debug_timer = bun.Output.DebugTimer.start();
@@ -963,7 +963,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     if (comptime Environment.allow_assert) {
         if (adjusted_len == 0) {
-            @panic("recv() called with 0 length buffer");
+            bun.Output.debugWarn("recv() called with 0 length buffer", .{});
         }
     }
 

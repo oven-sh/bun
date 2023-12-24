@@ -2031,13 +2031,16 @@ pub const Blob = struct {
                 const buf = this.buffer.items;
 
                 defer store.deref();
-                defer bun.destroy(this);
-                if (this.system_error) |err| {
+                const total_size = this.size;
+                const system_error = this.system_error;
+                bun.destroy(this);
+
+                if (system_error) |err| {
                     cb(cb_ctx, ResultType{ .err = err });
                     return;
                 }
 
-                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
+                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = total_size, .is_temporary = true } });
             }
 
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {

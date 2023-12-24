@@ -316,7 +316,6 @@ pub const Response = struct {
         const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
-        // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
             .body = Body{
@@ -374,7 +373,6 @@ pub const Response = struct {
         var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
-        // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
             .init = Response.Init{

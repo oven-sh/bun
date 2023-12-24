@@ -2804,6 +2804,13 @@ pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.i
 
 const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
 
+/// Globally-allocate a value on the heap.
+///
+/// When used, yuo must call `bun.destroy` to free the memory.
+/// default_allocator.destroy should not be used.
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
     if (comptime is_heap_breakdown_enabled) {
         const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
@@ -2816,6 +2823,10 @@ pub inline fn new(comptime T: type, t: T) *T {
     return ptr;
 }
 
+/// Free a globally-allocated a value
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
     if (comptime is_heap_breakdown_enabled) {
         if (allocator.vtable == default_allocator.vtable) {
@@ -2851,6 +2862,12 @@ pub fn New(comptime T: type) type {
     };
 }
 
+/// Free a globally-allocated a value.
+///
+/// Must have used `new` to allocate the value.
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn destroy(t: anytype) void {
     if (comptime is_heap_breakdown_enabled) {
         HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);

@@ -78,7 +78,7 @@ describe("HTMLRewriter", () => {
     });
   }
 
-  for (let input of [new Response(Bun.file("/tmp/html-rewriter.txt.js")), Bun.file("/tmp/html-rewriter.txt.js")]) {
+  for (let input of [new Response(Bun.file("/tmp/html-rewriter.txt.js"))]) {
     it("(from file) supports element handlers with input: " + input.constructor.name, async () => {
       var rewriter = new HTMLRewriter();
       rewriter.on("div", {

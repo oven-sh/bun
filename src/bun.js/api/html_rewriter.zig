@@ -178,48 +178,42 @@ pub const HTMLRewriter = struct {
         const kind: ResponseKind = brk: {
             if (response_value.isString())
                 break :brk .string
-            else if (response_value.jsType() == .ArrayBuffer)
+            else if (response_value.jsType().isTypedArray())
                 break :brk .array_buffer
             else
                 break :brk .other;
         };
 
-        if (JSC.WebCore.Body.extract(global, response_value)) |body_value| {
-            const resp = bun.new(Response, Response{
-                .init = .{
-                    .status_code = 200,
-                },
-                .body = body_value,
-            });
-            defer resp.finalize();
-            const out_response_value = this.beginTransform(global, resp);
-            out_response_value.ensureStillAlive();
+        if (kind != .other) {
+            if (JSC.WebCore.Body.extract(global, response_value)) |body_value| {
+                const resp = bun.new(Response, Response{
+                    .init = .{
+                        .status_code = 200,
+                    },
+                    .body = body_value,
+                });
+                defer resp.finalize();
+                const out_response_value = this.beginTransform(global, resp);
+                out_response_value.ensureStillAlive();
 
-            var out_response = out_response_value.as(Response) orelse return out_response_value;
+                var out_response = out_response_value.as(Response) orelse return out_response_value;
+                var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
 
-            return switch (kind) {
-                .string => brk: {
-                    var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
-
-                    defer {
-                        _ = Response.dangerouslySetPtr(out_response_value, null);
-                        // Manually invoke the finalizer to ensure it does what we want
-                        out_response.finalize();
-                    }
-                    break :brk blob.toString(global, .transfer);
-                },
-                .array_buffer => brk: {
-                    var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
-
-                    defer {
-                        _ = Response.dangerouslySetPtr(out_response_value, null);
-                        // Manually invoke the finalizer to ensure it does what we want
-                        out_response.finalize();
-                    }
-                    break :brk blob.toArrayBuffer(global, .transfer);
-                },
-                .other => out_response_value,
-            };
+                defer {
+                    _ = Response.dangerouslySetPtr(out_response_value, null);
+                    // Manually invoke the finalizer to ensure it does what we want
+                    out_response.finalize();
+                }
+                return switch (kind) {
+                    .string => brk: {
+                        break :brk blob.toString(global, .transfer);
+                    },
+                    .array_buffer => brk: {
+                        break :brk blob.toArrayBuffer(global, .transfer);
+                    },
+                    .other => unreachable,
+                };
+            }
         }
 
         global.throwInvalidArguments("Expected Response or Body", .{});

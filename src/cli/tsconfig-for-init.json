@@ -16,6 +16,7 @@
     /* Linting */
     "skipLibCheck": true,
     "strict": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true
   }
 }

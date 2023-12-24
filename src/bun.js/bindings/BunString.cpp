@@ -28,6 +28,8 @@
 #include <wtf/text/AtomString.h>
 #include <wtf/text/WTFString.h>
 
+extern "C" void mi_free(void* ptr);
+
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
@@ -118,7 +120,6 @@ extern "C" void BunString__toThreadSafe(BunString* str)
     if (str->tag == BunStringTag::WTFStringImpl) {
         auto impl = str->impl.wtf->isolatedCopy();
         if (impl.ptr() != str->impl.wtf) {
-            impl->ref();
             str->impl.wtf = &impl.leakRef();
         }
     }
@@ -507,4 +508,39 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     }
 
     return WTF::String();
+}
+
+extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
+    const LChar* bytes,
+    size_t length)
+{
+    ASSERT(length > 0);
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create(bytes, length, nullptr, [](void*, void* ptr, size_t) {
+        mi_free(ptr);
+    });
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
+extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
+    const UChar* bytes,
+    size_t length)
+{
+    ASSERT(length > 0);
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create(bytes, length, nullptr, [](void*, void* ptr, size_t) {
+        mi_free(ptr);
+    });
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
+extern "C" bool WTFStringImpl__isThreadSafe(
+    const WTF::StringImpl* wtf)
+{
+    if (wtf->bufferOwnership() != StringImpl::BufferOwnership::BufferInternal)
+        return false;
+
+    return !(wtf->isSymbol() || wtf->isAtom());
+    // if (wtf->is8Bit())
+    //     return wtf->characters8() == reinterpret_cast_ptr<const LChar*>(reinterpret_cast<const uint8_t*>(wtf) + tailOffset<const LChar*>());
+
+    // return wtf->characters16() == reinterpret_cast_ptr<const UChar*>(reinterpret_cast<const uint16_t*>(wtf) + tailOffset<const UChar*>());
 }

@@ -281,7 +281,7 @@ pub const FDImpl = packed struct {
     }
 
     /// After calling, the input file descriptor is no longer valid and must not be used
-    pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
+    pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
     }
 

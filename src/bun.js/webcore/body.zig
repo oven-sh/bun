@@ -649,8 +649,7 @@ pub const Body = struct {
                             async_form_data.toJS(global, blob.slice(), promise);
                         },
                         else => {
-                            var ptr = bun.default_allocator.create(Blob) catch unreachable;
-                            ptr.* = new.use();
+                            var ptr = bun.new(Blob, new.use());
                             ptr.allocator = bun.default_allocator;
                             promise.resolve(global, ptr.toJS(global));
                         },
@@ -1107,8 +1106,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.use();
-            var ptr = getAllocator(globalObject).create(Blob) catch unreachable;
-            ptr.* = blob;
+            var ptr = bun.new(Blob, blob);
             blob.allocator = getAllocator(globalObject);
 
             if (blob.content_type.len == 0 and blob.store != null) {

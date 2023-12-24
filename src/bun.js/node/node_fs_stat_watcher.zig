@@ -25,9 +25,9 @@ const log = bun.Output.scoped(.StatWatcher, false);
 
 fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
-        return StatsBig.initWithAllocator(globalThis.allocator(), stats).toJS(globalThis);
+        return bun.new(StatsBig, StatsBig.init(stats)).toJS(globalThis);
     } else {
-        return StatsSmall.initWithAllocator(globalThis.allocator(), stats).toJS(globalThis);
+        return bun.new(StatsSmall, StatsSmall.init(stats)).toJS(globalThis);
     }
 }
 

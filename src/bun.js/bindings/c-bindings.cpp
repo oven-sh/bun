@@ -96,3 +96,34 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
     return 0;
 #endif
 }
+
+#if OS(DARWIN) && BUN_DEBUG
+#include <malloc/malloc.h>
+
+extern "C" void dump_zone_malloc_stats()
+{
+    vm_address_t* zones;
+    unsigned count;
+
+    // Zero out the structures in case a zone is missing
+    malloc_statistics_t stats;
+    stats.blocks_in_use = 0;
+    stats.size_in_use = 0;
+    stats.max_size_in_use = 0;
+    stats.size_allocated = 0;
+
+    malloc_get_all_zones(mach_task_self(), 0, &zones, &count);
+    for (unsigned i = 0; i < count; i++) {
+        if (const char* name = malloc_get_zone_name(reinterpret_cast<malloc_zone_t*>(zones[i]))) {
+            printf("%s:\n", name);
+            malloc_zone_statistics(reinterpret_cast<malloc_zone_t*>(zones[i]), &stats);
+            printf("  blocks_in_use:   %u\n", stats.blocks_in_use);
+            printf("  size_in_use:     %zu\n", stats.size_in_use);
+            printf("  max_size_in_use: %zu\n", stats.max_size_in_use);
+            printf("  size_allocated:  %zu\n", stats.size_allocated);
+            printf("\n");
+        }
+    }
+}
+
+#endif

@@ -4144,8 +4144,12 @@ declare module "bun" {
 
     /**
      * Get the resource usage information of the process (max RSS, CPU time, etc)
+     *
+     * Only available after the process has exited
+     *
+     * If the process hasn't exited yet, this will return `undefined`
      */
-    stats(): ResourceUsage;
+    resourceUsage(): ResourceUsage | undefined;
   }
 
   /**
@@ -4163,6 +4167,10 @@ declare module "bun" {
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;
     success: boolean;
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     */
+    resourceUsage: ResourceUsage;
   }
 
   /**

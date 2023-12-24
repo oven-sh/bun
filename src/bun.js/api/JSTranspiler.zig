@@ -85,8 +85,7 @@ const TranspilerOptions = struct {
 
 // This is going to be hard to not leak
 pub const TransformTask = struct {
-    input_code: ZigString = ZigString.init(""),
-    protected_input_value: JSC.JSValue = @as(JSC.JSValue, @enumFromInt(0)),
+    input_code: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer{ .buffer = .{} },
     output_code: ZigString = ZigString.init(""),
     bundler: Bundler.Bundler = undefined,
     log: logger.Log,
@@ -100,11 +99,10 @@ pub const TransformTask = struct {
     pub const AsyncTransformTask = JSC.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
 
-    pub fn create(transpiler: *Transpiler, protected_input_value: JSC.JSValue, globalThis: *JSGlobalObject, input_code: ZigString, loader: Loader) !*AsyncTransformTask {
+    pub fn create(transpiler: *Transpiler, input_code: bun.JSC.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) !*AsyncTransformTask {
         var transform_task = try bun.default_allocator.create(TransformTask);
         transform_task.* = .{
             .input_code = input_code,
-            .protected_input_value = protected_input_value,
             .bundler = undefined,
             .global = globalThis,
             .macro_map = transpiler.transpiler_options.macro_map,
@@ -134,6 +132,7 @@ pub const TransformTask = struct {
         const allocator = arena.allocator();
 
         defer {
+            this.input_code.deinitAndUnprotect();
             JSAst.Stmt.Data.Store.reset();
             JSAst.Expr.Data.Store.reset();
             arena.deinit();
@@ -222,9 +221,6 @@ pub const TransformTask = struct {
 
         finish(this.output_code, this.global, promise);
 
-        if (@intFromEnum(this.protected_input_value) != 0) {
-            this.protected_input_value = @as(JSC.JSValue, @enumFromInt(0));
-        }
         this.deinit();
     }
 
@@ -237,9 +233,7 @@ pub const TransformTask = struct {
         defer if (should_cleanup) bun.Global.mimalloc_cleanup(false);
 
         this.log.deinit();
-        if (this.input_code.isGloballyAllocated()) {
-            this.input_code.deinitGlobal();
-        }
+        this.input_code.deinitAndUnprotect();
 
         if (this.output_code.isGloballyAllocated()) {
             should_cleanup = this.output_code.len > 512_000;
@@ -914,13 +908,13 @@ pub fn scan(
         return .zero;
     };
 
-    const code_holder = JSC.Node.SliceOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
         globalThis.throwInvalidArgumentType("scan", "code", "string or Uint8Array");
         return .zero;
     };
-
+    defer code_holder.deinit();
     const code = code_holder.slice();
-    args.protectEat();
+    args.eat();
     var exception_ref = [_]JSC.C.JSValueRef{null};
     const exception: JSC.C.ExceptionRef = &exception_ref;
 
@@ -1014,12 +1008,11 @@ pub fn transform(
         return .zero;
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, this.arena.allocator(), code_arg, exception) orelse {
+    var code = JSC.Node.StringOrBuffer.fromJS(globalThis, this.arena.allocator(), code_arg) orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
         return .zero;
     };
 
-    const code = code_holder.slice();
     args.eat();
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
@@ -1035,15 +1028,11 @@ pub fn transform(
         return .zero;
     }
 
-    if (code_holder == .string) {
-        arguments.ptr[0].ensureStillAlive();
-    }
-
+    code.toThreadSafe();
     var task = TransformTask.create(
         this,
-        if (code_holder == .string) arguments.ptr[0] else .zero,
+        code,
         globalThis,
-        ZigString.init(code),
         loader orelse this.transpiler_options.default_loader,
     ) catch {
         globalThis.throw("Out of memory", .{});
@@ -1072,11 +1061,11 @@ pub fn transformSync(
 
     var arena = Mimalloc.Arena.init() catch unreachable;
     defer arena.deinit();
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), code_arg, exception) orelse {
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), code_arg) orelse {
         globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
         return .zero;
     };
-
+    defer code_holder.deinit();
     const code = code_holder.slice();
     arguments.ptr[0].ensureStillAlive();
     defer arguments.ptr[0].ensureStillAlive();
@@ -1254,7 +1243,7 @@ pub fn scanImports(
         return .zero;
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg, exception) orelse {
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
         if (exception.* == null) {
             globalThis.throwInvalidArgumentType("scanImports", "code", "string or Uint8Array");
         } else {
@@ -1263,7 +1252,8 @@ pub fn scanImports(
 
         return .zero;
     };
-    args.protectEat();
+    args.eat();
+    defer code_holder.deinit();
     const code = code_holder.slice();
 
     var loader: Loader = this.transpiler_options.default_loader;

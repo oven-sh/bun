@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
+import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
   existsSync,
@@ -340,6 +341,243 @@ it("promises.readFile", async () => {
       expect(e.path).toBe("/i-dont-exist");
     }
   }
+});
+
+describe("promises.readFile", async () => {
+  const nodeOutput = [
+    {
+      "encoding": "utf8",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [97, 115, 99, 105, 105],
+      },
+      "out": "ascii",
+    },
+    {
+      "encoding": "utf8",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [
+          117, 116, 102, 49, 54, 32, 240, 159, 141, 135, 32, 240, 159, 141, 136, 32, 240, 159, 141, 137, 32, 240, 159,
+          141, 138, 32, 240, 159, 141, 139,
+        ],
+      },
+      "out": "utf16 🍇 🍈 🍉 🍊 🍋",
+    },
+    {
+      "encoding": "utf8",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [240, 159, 145, 141],
+      },
+      "out": "👍",
+    },
+    {
+      "encoding": "utf-8",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [97, 115, 99, 105, 105],
+      },
+      "out": "ascii",
+    },
+    {
+      "encoding": "utf-8",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [
+          117, 116, 102, 49, 54, 32, 240, 159, 141, 135, 32, 240, 159, 141, 136, 32, 240, 159, 141, 137, 32, 240, 159,
+          141, 138, 32, 240, 159, 141, 139,
+        ],
+      },
+      "out": "utf16 🍇 🍈 🍉 🍊 🍋",
+    },
+    {
+      "encoding": "utf-8",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [240, 159, 145, 141],
+      },
+      "out": "👍",
+    },
+    {
+      "encoding": "utf16le",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [97, 0, 115, 0, 99, 0, 105, 0, 105, 0],
+      },
+      "out": "ascii",
+    },
+    {
+      "encoding": "utf16le",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [
+          117, 0, 116, 0, 102, 0, 49, 0, 54, 0, 32, 0, 60, 216, 71, 223, 32, 0, 60, 216, 72, 223, 32, 0, 60, 216, 73,
+          223, 32, 0, 60, 216, 74, 223, 32, 0, 60, 216, 75, 223,
+        ],
+      },
+      "out": "utf16 🍇 🍈 🍉 🍊 🍋",
+    },
+    {
+      "encoding": "utf16le",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [61, 216, 77, 220],
+      },
+      "out": "👍",
+    },
+    {
+      "encoding": "latin1",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [97, 115, 99, 105, 105],
+      },
+      "out": "ascii",
+    },
+    {
+      "encoding": "latin1",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [117, 116, 102, 49, 54, 32, 60, 71, 32, 60, 72, 32, 60, 73, 32, 60, 74, 32, 60, 75],
+      },
+      "out": "utf16 <G <H <I <J <K",
+    },
+    {
+      "encoding": "latin1",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [61, 77],
+      },
+      "out": "=M",
+    },
+    {
+      "encoding": "binary",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [97, 115, 99, 105, 105],
+      },
+      "out": "ascii",
+    },
+    {
+      "encoding": "binary",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [117, 116, 102, 49, 54, 32, 60, 71, 32, 60, 72, 32, 60, 73, 32, 60, 74, 32, 60, 75],
+      },
+      "out": "utf16 <G <H <I <J <K",
+    },
+    {
+      "encoding": "binary",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [61, 77],
+      },
+      "out": "=M",
+    },
+    {
+      "encoding": "base64",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [106, 199, 34],
+      },
+      "out": "asci",
+    },
+    {
+      "encoding": "hex",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
+      "encoding": "hex",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
+      "encoding": "hex",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+  ];
+
+  it("& fs.promises.writefile encodes & decodes", async () => {
+    const results = [];
+    for (let encoding of [
+      "utf8",
+      "utf-8",
+      "utf16le",
+      "latin1",
+      "binary",
+      "base64",
+      /* TODO: "base64url", */ "hex",
+    ] as const) {
+      for (let text of ["ascii", "utf16 🍇 🍈 🍉 🍊 🍋", "👍"]) {
+        if (encoding === "base64" && !isAscii(Buffer.from(text)))
+          // TODO: output does not match Node.js, and it's not a problem with readFile specifically.
+          continue;
+        const correct = Buffer.from(text, encoding);
+        const outfile = join(
+          tmpdir(),
+          "promises.readFile-" + Date.now() + "-" + Math.random().toString(32) + "-" + encoding + ".txt",
+        );
+        writeFileSync(outfile, correct);
+        const out = await fs.promises.readFile(outfile, encoding);
+        {
+          const { promise, resolve, reject } = Promise.withResolvers();
+
+          fs.readFile(outfile, encoding, (err, data) => {
+            if (err) reject(err);
+            else resolve(data);
+          });
+
+          expect(await promise).toEqual(out);
+        }
+
+        expect(fs.readFileSync(outfile, encoding)).toEqual(out);
+        await promises.rm(outfile, { force: true });
+
+        expect(await promises.writeFile(outfile, text, encoding)).toBeUndefined();
+        expect(await promises.readFile(outfile, encoding)).toEqual(out);
+        promises.rm(outfile, { force: true });
+
+        results.push({
+          encoding,
+          text,
+          correct,
+          out,
+        });
+      }
+    }
+
+    expect(JSON.parse(JSON.stringify(results, null, 2))).toEqual(nodeOutput);
+  });
 });
 
 it("promises.readFile - UTF16 file path", async () => {

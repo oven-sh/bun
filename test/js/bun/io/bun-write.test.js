@@ -299,7 +299,7 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
 
 // FLAKY TEST
 // Since Bun.file is resolved lazily, this needs to specifically be checked
-it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
+it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
   var rewriter = new HTMLRewriter();
 
   rewriter.on("div", {

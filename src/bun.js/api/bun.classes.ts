@@ -83,8 +83,8 @@ export default [
         fn: "doUnref",
         length: 0,
       },
-      stats: {
-        fn: "stats",
+      resourceUsage: {
+        fn: "resourceUsage",
         length: 0,
       },
       send: {

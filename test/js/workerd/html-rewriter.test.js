@@ -31,6 +31,11 @@ describe("HTMLRewriter", () => {
     await gcTick();
   });
 
+  it("HTMLRewriter handles Symbol invalid type error", async () => {
+    expect(() => new HTMLRewriter().transform(new Response(Symbol("ok")))).toThrow();
+    expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
+  });
+
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {
     await gcTick();
     let content;
@@ -59,30 +64,33 @@ describe("HTMLRewriter", () => {
     }
   });
 
-  it("supports element handlers", async () => {
-    var rewriter = new HTMLRewriter();
-    rewriter.on("div", {
-      element(element) {
-        element.setInnerContent("<blink>it worked!</blink>", { html: true });
-      },
+  for (let input of [new Response("<div>hello</div>"), "<div>hello</div>"]) {
+    it("supports element handlers with input " + input.constructor.name, async () => {
+      var rewriter = new HTMLRewriter();
+      rewriter.on("div", {
+        element(element) {
+          element.setInnerContent("<blink>it worked!</blink>", { html: true });
+        },
+      });
+      var input = new Response("<div>hello</div>");
+      var output = rewriter.transform(input);
+      expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
     });
-    var input = new Response("<div>hello</div>");
-    var output = rewriter.transform(input);
-    expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
-  });
+  }
 
-  it("(from file) supports element handlers", async () => {
-    var rewriter = new HTMLRewriter();
-    rewriter.on("div", {
-      element(element) {
-        element.setInnerContent("<blink>it worked!</blink>", { html: true });
-      },
+  for (let input of [new Response(Bun.file("/tmp/html-rewriter.txt.js")), Bun.file("/tmp/html-rewriter.txt.js")]) {
+    it("(from file) supports element handlers with input: " + input.constructor.name, async () => {
+      var rewriter = new HTMLRewriter();
+      rewriter.on("div", {
+        element(element) {
+          element.setInnerContent("<blink>it worked!</blink>", { html: true });
+        },
+      });
+      await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
+      var output = rewriter.transform(input);
+      expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
     });
-    await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
-    var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
-    var output = rewriter.transform(input);
-    expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
-  });
+  }
 
   it("supports attribute iterator", async () => {
     var rewriter = new HTMLRewriter();

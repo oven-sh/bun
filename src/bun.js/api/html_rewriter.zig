@@ -153,6 +153,7 @@ pub const HTMLRewriter = struct {
 
     pub fn finalizeWithoutDestroy(this: *HTMLRewriter) void {
         this.context.deinit(bun.default_allocator);
+        this.builder.deinit();
     }
 
     pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
@@ -161,8 +162,68 @@ pub const HTMLRewriter = struct {
         return BufferOutputSink.init(new_context, global, response, this.builder);
     }
 
-    pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
-        return this.beginTransform(global, response);
+    pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: JSC.JSValue) JSValue {
+        if (response_value.as(Response)) |response| {
+            const out = this.beginTransform(global, response);
+
+            if (out.toError()) |err| {
+                global.throwValue(err);
+                return .zero;
+            }
+
+            return out;
+        }
+
+        const ResponseKind = enum { string, array_buffer, other };
+        const kind: ResponseKind = brk: {
+            if (response_value.isString())
+                break :brk .string
+            else if (response_value.jsType() == .ArrayBuffer)
+                break :brk .array_buffer
+            else
+                break :brk .other;
+        };
+
+        if (JSC.WebCore.Body.extract(global, response_value)) |body_value| {
+            const resp = bun.new(Response, Response{
+                .init = .{
+                    .status_code = 200,
+                },
+                .body = body_value,
+            });
+            defer resp.finalize();
+            const out_response_value = this.beginTransform(global, resp);
+            out_response_value.ensureStillAlive();
+
+            var out_response = out_response_value.as(Response) orelse return out_response_value;
+
+            return switch (kind) {
+                .string => brk: {
+                    var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
+
+                    defer {
+                        _ = Response.dangerouslySetPtr(out_response_value, null);
+                        // Manually invoke the finalizer to ensure it does what we want
+                        out_response.finalize();
+                    }
+                    break :brk blob.toString(global, .transfer);
+                },
+                .array_buffer => brk: {
+                    var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
+
+                    defer {
+                        _ = Response.dangerouslySetPtr(out_response_value, null);
+                        // Manually invoke the finalizer to ensure it does what we want
+                        out_response.finalize();
+                    }
+                    break :brk blob.toArrayBuffer(global, .transfer);
+                },
+                .other => out_response_value,
+            };
+        }
+
+        global.throwInvalidArguments("Expected Response or Body", .{});
+        return .zero;
     }
 
     pub const on = JSC.wrapInstanceMethod(HTMLRewriter, "on_", false);
@@ -329,15 +390,21 @@ pub const HTMLRewriter = struct {
     pub const BufferOutputSink = struct {
         global: *JSGlobalObject,
         bytes: bun.MutableString,
-        rewriter: *LOLHTML.HTMLRewriter,
+        rewriter: ?*LOLHTML.HTMLRewriter = null,
         context: LOLHTMLContext,
         response: *Response,
         response_value: JSC.Strong = .{},
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
-        tmp_sync_error: ?JSC.JSValue = null,
+        tmp_sync_error: ?*JSC.JSValue = null,
         // const log = bun.Output.scoped(.BufferOutputSink, false);
-        pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
-            var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
+        pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
+            var sink = bun.new(BufferOutputSink, BufferOutputSink{
+                .global = global,
+                .bytes = bun.MutableString.initEmpty(bun.default_allocator),
+                .rewriter = null,
+                .context = context,
+                .response = undefined,
+            });
             var result = bun.new(Response, .{
                 .init = .{
                     .status_code = 200,
@@ -352,13 +419,7 @@ pub const HTMLRewriter = struct {
                 },
             });
 
-            sink.* = BufferOutputSink{
-                .global = global,
-                .bytes = bun.MutableString.initEmpty(bun.default_allocator),
-                .rewriter = undefined,
-                .context = context,
-                .response = result,
-            };
+            sink.response = result;
 
             for (sink.context.document_handlers.items) |doc| {
                 doc.ctx = sink;
@@ -397,14 +458,21 @@ pub const HTMLRewriter = struct {
                 result.init.headers = headers.cloneThis(global);
             }
 
+            // Hold off on cloning until we're actually done.
+            const response_js_value = sink.response.toJS(sink.global);
+            sink.response_value.set(global, response_js_value);
+
             result.url = original.url.clone();
+            var sink_error: JSC.JSValue = .zero;
+            sink.tmp_sync_error = &sink_error;
             const value = original.getBodyValue();
             sink.bodyValueBufferer = JSC.WebCore.BodyValueBufferer.init(sink, onFinishedBuffering, sink.global, bun.default_allocator);
+            response_js_value.ensureStillAlive();
             sink.bodyValueBufferer.?.run(value) catch |buffering_error| {
                 return switch (buffering_error) {
                     error.StreamAlreadyUsed => {
                         var err = JSC.SystemError{
-                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_ALREADY_FINISHED))),
                             .message = bun.String.static("Stream already used, please create a new one"),
                         };
                         return err.toErrorInstance(sink.global);
@@ -425,17 +493,17 @@ pub const HTMLRewriter = struct {
                     },
                 };
             };
+
             // sync error occurs
-            if (sink.tmp_sync_error) |err| {
-                err.ensureStillAlive();
-                err.unprotect();
-                sink.tmp_sync_error = null;
-                return err;
+            if (sink_error != .zero) {
+                sink_error.ensureStillAlive();
+                sink_error.unprotect();
+                defer sink.deinit();
+
+                return sink_error;
             }
 
-            // Hold off on cloning until we're actually done.
-            const response_js_value = sink.response.toJS(sink.global);
-            sink.response_value.set(global, response_js_value);
+            response_js_value.ensureStillAlive();
             return response_js_value;
         }
 
@@ -461,9 +529,9 @@ pub const HTMLRewriter = struct {
                     var ret_err = throwLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();
                     ret_err.protect();
-                    sink.tmp_sync_error = ret_err;
+                    sink.tmp_sync_error.?.* = ret_err;
                 }
-                sink.rewriter.end() catch {};
+                sink.rewriter.?.end() catch {};
                 sink.deinit();
                 return;
             }
@@ -471,7 +539,9 @@ pub const HTMLRewriter = struct {
             if (sink.runOutputSink(bytes, is_async)) |ret_err| {
                 ret_err.ensureStillAlive();
                 ret_err.protect();
-                sink.tmp_sync_error = ret_err;
+                sink.tmp_sync_error.?.* = ret_err;
+            } else {
+                sink.deinit();
             }
         }
 
@@ -484,9 +554,8 @@ pub const HTMLRewriter = struct {
             const global = sink.global;
             var response = sink.response;
 
-            sink.rewriter.write(bytes) catch {
+            sink.rewriter.?.write(bytes) catch {
                 sink.deinit();
-                bun.default_allocator.destroy(sink);
 
                 if (is_async) {
                     response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
@@ -497,7 +566,7 @@ pub const HTMLRewriter = struct {
                 }
             };
 
-            sink.rewriter.end() catch {
+            sink.rewriter.?.end() catch {
                 if (!is_async) response.finalize();
                 sink.response = undefined;
                 sink.deinit();
@@ -530,6 +599,7 @@ pub const HTMLRewriter = struct {
                     .capacity = 0,
                 },
             };
+
             prev_value.resolve(
                 &this.response.body.value,
                 this.global,
@@ -542,19 +612,17 @@ pub const HTMLRewriter = struct {
 
         pub fn deinit(this: *BufferOutputSink) void {
             this.bytes.deinit();
-            if (this.bodyValueBufferer != null) {
-                var bufferer = this.bodyValueBufferer.?;
+            if (this.bodyValueBufferer) |*bufferer| {
                 bufferer.deinit();
-            }
-
-            if (this.tmp_sync_error) |ret_err| {
-                // this should never happens, but still we avoid future leaks
-                ret_err.unprotect();
-                this.tmp_sync_error = null;
             }
 
             this.context.deinit(bun.default_allocator);
             this.response_value.deinit();
+            if (this.rewriter) |rewriter| {
+                rewriter.deinit();
+            }
+
+            bun.destroy(this);
         }
     };
 

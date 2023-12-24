@@ -133,7 +133,7 @@ pub const ZigString = extern struct {
         }
     }
 
-    pub fn toJS(this: ZigString, ctx: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
+    pub fn toJS(this: ZigString, ctx: *JSC.JSGlobalObject) JSValue {
         if (this.isGloballyAllocated()) {
             return this.toExternalValue(ctx);
         }
@@ -402,6 +402,15 @@ pub const ZigString = extern struct {
         allocator: NullableAllocator = .{},
         ptr: [*]const u8 = undefined,
         len: u32 = 0,
+
+        pub fn reportExtraMemory(this: *const Slice, vm: *JSC.VM) void {
+            if (this.allocator.get()) |allocator| {
+                // Don't report it if the memory is actually owned by JSC.
+                if (!bun.String.isWTFAllocator(allocator)) {
+                    vm.reportExtraMemory(this.len);
+                }
+            }
+        }
 
         pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
             return .{
@@ -2537,7 +2546,7 @@ pub const JSGlobalObject = extern struct {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
-    pub inline fn toJS(globalThis: *JSGlobalObject) JSValue {
+    pub inline fn toJSValue(globalThis: *JSGlobalObject) JSValue {
         return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
     }
 
@@ -2563,6 +2572,10 @@ pub const JSGlobalObject = extern struct {
             ZigString.static("ERR_INVALID_ARG_TYPE"),
             this,
         );
+    }
+
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.Lifetime) JSC.JSValue {
+        return JSC.toJS(this, @TypeOf(value), value, lifetime);
     }
 
     pub fn throwInvalidArgumentType(
@@ -3527,7 +3540,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
-            globalThis.toJS(),
+            globalThis.toJSValue(),
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );
@@ -4266,7 +4279,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn bigIntSum(globalObject: *JSGlobalObject, a: JSValue, b: JSValue) JSValue {
         return cppFn("bigIntSum", .{ globalObject, a, b });
     }
-    
+
     pub fn toUInt64NoTruncate(this: JSValue) u64 {
         return cppFn("toUInt64NoTruncate", .{
             this,

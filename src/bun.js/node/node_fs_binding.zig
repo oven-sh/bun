@@ -26,6 +26,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Arguments = comptime function.params[1].type.?;
     const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
     const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
+    _ = Result;
 
     const NodeBindingClosure = struct {
         pub fn bind(
@@ -59,34 +60,18 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 globalObject.throwValue(exception1);
                 return .zero;
             }
-
-            switch (Function(
+            var result = Function(
                 &this.node_fs,
                 args,
                 comptime Flavor.sync,
-            )) {
+            );
+            switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                     return .zero;
                 },
-                .result => |res| {
-                    if (comptime Result.ReturnType != void) {
-                        const out = if (comptime Result.ReturnType == JSC.Node.StringOrBuffer) brk: {
-                            var res_ = res;
-                            break :brk res_.toJS(globalObject);
-                        } else JSC.JSValue.c(JSC.To.JS.withType(Result.ReturnType, res, globalObject, &exceptionref));
-                        const exception = JSC.JSValue.c(exceptionref);
-                        if (exception != .zero) {
-                            globalObject.throwValue(exception);
-                            return .zero;
-                        }
-
-                        return out;
-                    } else {
-                        return JSC.JSValue.jsUndefined();
-                    }
-
-                    unreachable;
+                .result => |*res| {
+                    return globalObject.toJS(res, .temporary);
                 },
             }
         }

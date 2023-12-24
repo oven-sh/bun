@@ -196,7 +196,12 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn toThreadSafe(this: *@This()) void {
         switch (this.*) {
-            .string => this.string.toThreadSafe(),
+            .string => {
+                this.string.toThreadSafe();
+                this.* = .{
+                    .threadsafe_string = this.string,
+                };
+            },
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {},
@@ -289,21 +294,18 @@ pub const StringOrBuffer = union(enum) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var str = bun.String.tryFromJS(value, global) orelse return null;
                 if (is_async) {
-                    str.toThreadSafeEnsureRef();
+                    var sliced = str.toThreadSafeSlice(allocator);
+                    sliced.reportExtraMemory(global.vm());
+
+                    if (sliced.underlying.isEmpty()) {
+                        return StringOrBuffer{ .encoded_slice = sliced.utf8 };
+                    }
+
+                    return StringOrBuffer{ .threadsafe_string = sliced };
                 } else {
                     str.ref();
+                    return StringOrBuffer{ .string = str.toSlice(allocator) };
                 }
-
-                const sliced = str.toSlice(allocator);
-                sliced.reportExtraMemory(global.vm());
-
-                if (is_async and !sliced.isWTFAllocated()) {
-                    str.deref();
-                    return .{ .encoded_slice = sliced.utf8 };
-                } else if (is_async) {
-                    return StringOrBuffer{ .threadsafe_string = sliced };
-                }
-                return StringOrBuffer{ .string = sliced };
             },
 
             .ArrayBuffer,
@@ -622,15 +624,20 @@ pub const PathLike = union(enum) {
         return sliced.ptr[0..sliced.len :0];
     }
 
-    pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            .string => this.string.toJS(ctx, exception),
-            .buffer => this.buffer.toJSObjectRef(ctx, exception),
-            .threadsafe_string, .slice_with_underlying_string => this.slice_with_underlying_string.toJS(ctx).asObjectRef(),
+    pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .string => this.string.toJS(globalObject, null),
+            .buffer => this.buffer.toJS(globalObject),
+            inline .threadsafe_string, .slice_with_underlying_string => |*str| str.toJS(globalObject),
             .encoded_slice => |encoded| {
+                if (this.encoded_slice.allocator.get()) |allocator| {
+                    // Is this a globally-allocated slice?
+                    if (allocator.vtable == bun.default_allocator.vtable) {}
+                }
+
                 const str = bun.String.create(encoded.slice());
                 defer str.deref();
-                return str.toJS(ctx);
+                return str.toJS(globalObject);
             },
             else => unreachable,
         };
@@ -676,49 +683,66 @@ pub const PathLike = union(enum) {
                 }
 
                 if (arguments.will_be_async) {
-                    str.toThreadSafeEnsureRef();
+                    var sliced = str.toThreadSafeSlice(allocator);
+                    sliced.reportExtraMemory(ctx.vm());
+
+                    if (sliced.underlying.isEmpty()) {
+                        return PathLike{ .encoded_slice = sliced.utf8 };
+                    }
+
+                    return PathLike{ .threadsafe_string = sliced };
                 } else {
-                    str.ref();
+                    var sliced = str.toSlice(allocator);
+
+                    // Costs nothing to keep both around.
+                    if (sliced.isWTFAllocated()) {
+                        str.ref();
+                        return PathLike{ .slice_with_underlying_string = sliced };
+                    }
+
+                    sliced.reportExtraMemory(ctx.vm());
+
+                    // It is expensive to keep both around.
+                    return PathLike{ .encoded_slice = sliced.utf8 };
                 }
-
-                const sliced = str.toSlice(allocator);
-
-                if (arguments.will_be_async and !sliced.isWTFAllocated()) {
-                    str.deref();
-                    return .{ .encoded_slice = sliced.utf8 };
-                } else if (arguments.will_be_async) {
-                    return .{ .threadsafe_string = sliced };
-                }
-
-                return PathLike{ .slice_with_underlying_string = sliced };
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
-                    var path_str: bun.String = domurl.fileSystemPath();
-                    defer path_str.deref();
-                    if (path_str.isEmpty()) {
+                    var str: bun.String = domurl.fileSystemPath();
+                    defer str.deref();
+                    if (str.isEmpty()) {
                         JSC.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{}, ctx, exception);
                         return null;
                     }
                     arguments.eat();
 
-                    if (!Valid.pathStringLength(path_str.length(), ctx, exception)) {
+                    if (!Valid.pathStringLength(str.length(), ctx, exception)) {
                         return null;
                     }
 
                     if (arguments.will_be_async) {
-                        path_str.toThreadSafe();
+                        var sliced = str.toThreadSafeSlice(allocator);
+                        sliced.reportExtraMemory(ctx.vm());
+
+                        if (sliced.underlying.isEmpty()) {
+                            return PathLike{ .encoded_slice = sliced.utf8 };
+                        }
+
+                        return PathLike{ .threadsafe_string = sliced };
+                    } else {
+                        var sliced = str.toSlice(allocator);
+
+                        // Costs nothing to keep both around.
+                        if (sliced.isWTFAllocated()) {
+                            str.ref();
+                            return PathLike{ .slice_with_underlying_string = sliced };
+                        }
+
+                        sliced.reportExtraMemory(ctx.vm());
+
+                        // It is expensive to keep both around.
+                        return PathLike{ .encoded_slice = sliced.utf8 };
                     }
-
-                    const sliced = path_str.toSlice(allocator);
-
-                    if (arguments.will_be_async and !sliced.isWTFAllocated()) {
-                        return .{ .encoded_slice = sliced.utf8 };
-                    } else if (arguments.will_be_async) {
-                        return .{ .threadsafe_string = sliced };
-                    }
-
-                    return PathLike{ .slice_with_underlying_string = sliced };
                 }
 
                 return null;
@@ -1252,11 +1276,10 @@ pub fn StatType(comptime Big: bool) type {
 
     const Date = packed struct {
         value: Float,
-        pub inline fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub inline fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             const milliseconds = JSC.JSValue.jsNumber(this.value);
             const array: [1]JSC.C.JSValueRef = .{milliseconds.asObjectRef()};
-            const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
-            return obj;
+            return JSC.JSValue.c(JSC.C.JSObjectMakeDate(globalObject, 1, &array, null));
         }
     };
 
@@ -1310,25 +1333,27 @@ pub fn StatType(comptime Big: bool) type {
             }
         }
 
-        fn getter(comptime field: std.meta.FieldEnum(This)) JSC.To.Cpp.PropertyGetter(This) {
+        const PropertyGetter = fn (this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+
+        fn getter(comptime field: std.meta.FieldEnum(This)) PropertyGetter {
             return struct {
                 pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
                         return JSC.JSValue.fromInt64NoTruncate(globalThis, @intCast(value));
                     }
-                    return JSC.toJS(globalThis, value, null);
+                    return globalThis.toJS(value, .temporary);
                 }
             }.callback;
         }
 
-        fn dateGetter(comptime field: std.meta.FieldEnum(This)) JSC.To.Cpp.PropertyGetter(This) {
+        fn dateGetter(comptime field: std.meta.FieldEnum(This)) PropertyGetter {
             return struct {
                 pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
                     // but it will tell comptime code how to convert the i64/f64 to a JS Date.
-                    return JSC.toJS(globalThis, Date{ .value = value }, null);
+                    return globalThis.toJS(Date{ .value = value }, .temporary);
                 }
             }.callback;
         }

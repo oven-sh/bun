@@ -120,7 +120,6 @@ extern "C" void BunString__toThreadSafe(BunString* str)
     if (str->tag == BunStringTag::WTFStringImpl) {
         auto impl = str->impl.wtf->isolatedCopy();
         if (impl.ptr() != str->impl.wtf) {
-            impl->ref();
             str->impl.wtf = &impl.leakRef();
         }
     }
@@ -531,4 +530,17 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
         mi_free(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
+extern "C" bool WTFStringImpl__isThreadSafe(
+    const WTF::StringImpl* wtf)
+{
+    if (wtf->bufferOwnership() != StringImpl::BufferOwnership::BufferInternal)
+        return false;
+
+    return !(wtf->isSymbol() || wtf->isAtom());
+    // if (wtf->is8Bit())
+    //     return wtf->characters8() == reinterpret_cast_ptr<const LChar*>(reinterpret_cast<const uint8_t*>(wtf) + tailOffset<const LChar*>());
+
+    // return wtf->characters16() == reinterpret_cast_ptr<const UChar*>(reinterpret_cast<const uint16_t*>(wtf) + tailOffset<const UChar*>());
 }

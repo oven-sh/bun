@@ -4,7 +4,7 @@ const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const Parent = @This();
 
-pub const BufferOwnership = enum {
+pub const BufferOwnership = enum(u32) {
     BufferInternal,
     BufferOwned,
     BufferSubstring,
@@ -52,6 +52,11 @@ pub const WTFStringImplStruct = extern struct {
 
     pub fn byteLength(this: WTFStringImpl) usize {
         return if (this.is8Bit()) this.m_length else this.m_length * 2;
+    }
+
+    extern fn WTFStringImpl__isThreadSafe(WTFStringImpl) bool;
+    pub fn isThreadSafe(this: WTFStringImpl) bool {
+        return WTFStringImpl__isThreadSafe(this);
     }
 
     pub fn byteSlice(this: WTFStringImpl) []const u8 {
@@ -769,6 +774,66 @@ pub const String = extern struct {
         };
     }
 
+    pub fn toThreadSafeSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+        if (this.tag == .WTFStringImpl) {
+            if (!this.value.WTFStringImpl.isThreadSafe()) {
+                const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
+
+                if (slice.allocator.isNull()) {
+                    // this was a WTF-allocated string
+                    // We're going to need to clone it across the threads
+                    // so let's just do that now instead of creating another copy.
+                    return .{
+                        .utf8 = ZigString.Slice.init(allocator, allocator.dupe(u8, slice.slice()) catch bun.outOfMemory()),
+                    };
+                }
+
+                if (comptime bun.Environment.allow_assert) {
+                    std.debug.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
+                    std.debug.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
+                }
+
+                // We've already cloned the string, so let's just return the slice.
+                return .{
+                    .utf8 = slice,
+                    .underlying = empty,
+                };
+            } else {
+                const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
+
+                // this WTF-allocated string is already thread safe
+                // and it's ASCII, so we can just use it directly
+                if (slice.allocator.isNull()) {
+                    // Once for the string
+                    this.ref();
+
+                    // Once for the utf8 slice
+                    this.ref();
+
+                    // We didn't clone anything, so let's conserve memory by re-using the existing WTFStringImpl
+                    return .{
+                        .utf8 = ZigString.Slice.init(this.value.WTFStringImpl.refCountAllocator(), slice.slice()),
+                        .underlying = this.*,
+                    };
+                }
+
+                if (comptime bun.Environment.allow_assert) {
+                    std.debug.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
+                    std.debug.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
+                }
+
+                // We did have to clone the string. Let's avoid keeping the WTFStringImpl around
+                // for longer than necessary, since the string could potentially have a single
+                // reference count and that means excess memory usage
+                return .{
+                    .utf8 = slice,
+                };
+            }
+        }
+
+        return this.toSlice(allocator);
+    }
+
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *const String) JSC.JSValue;
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *const String, usize) JSC.JSValue;
@@ -1032,13 +1097,21 @@ pub const SliceWithUnderlyingString = struct {
     utf8: ZigString.Slice = ZigString.Slice.empty,
     underlying: String = String.dead,
 
-    pub fn reportExtraMemory(this: *const SliceWithUnderlyingString, vm: *JSC.VM) void {
+    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false else {},
+
+    pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *JSC.VM) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(!this.did_report_extra_memory_debug);
+            this.did_report_extra_memory_debug = true;
+        }
         this.utf8.reportExtraMemory(vm);
     }
 
     pub fn isWTFAllocated(this: *const SliceWithUnderlyingString) bool {
         if (this.utf8.allocator.get()) |allocator| {
-            return String.isWTFAllocator(allocator);
+            const is_wtf_allocator = String.isWTFAllocator(allocator);
+
+            return is_wtf_allocator;
         }
 
         return false;

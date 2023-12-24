@@ -159,16 +159,8 @@ pub const Async = struct {
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        var exceptionref: JSC.C.JSValueRef = null;
-                        const out = if (comptime ReturnType == JSC.Node.StringOrBuffer)
-                            res.toJS(globalObject)
-                        else
-                            JSC.JSValue.c(JSC.To.JS.withType(ReturnType, res.*, globalObject, &exceptionref));
-                        const exception = JSC.JSValue.c(exceptionref);
-                        if (exception != .zero) {
-                            success = false;
-                            break :brk exception;
-                        }
+                        const out = globalObject.toJS(res, .temporary);
+                        success = out != .zero;
 
                         break :brk out;
                     },
@@ -284,14 +276,9 @@ pub const AsyncCpTask = struct {
         var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
         const result = switch (this.result) {
             .err => |err| err.toJSC(globalObject),
-            .result => |res| brk: {
-                var exceptionref: JSC.C.JSValueRef = null;
-                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Cp, res, globalObject, &exceptionref));
-                const exception = JSC.JSValue.c(exceptionref);
-                if (exception != .zero) {
-                    success = false;
-                    break :brk exception;
-                }
+            .result => |*res| brk: {
+                const out = globalObject.toJS(res, .temporary);
+                success = out != .zero;
 
                 break :brk out;
             },
@@ -622,15 +609,12 @@ pub const AsyncReaddirRecursiveTask = struct {
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            var exceptionref: JSC.C.JSValueRef = null;
-            const out = res.toJS(globalObject, &exceptionref);
-            const exception = JSC.JSValue.c(exceptionref);
-            if (exception != .zero) {
+            const out = res.toJS(globalObject);
+            if (out == .zero) {
                 success = false;
-                break :brk exception;
             }
 
-            break :brk out.?.value();
+            break :brk out;
         };
         var promise_value = this.promise.value();
         var promise = this.promise.get();
@@ -2827,7 +2811,7 @@ pub const Arguments = struct {
                 }
             }
 
-            const data = StringOrBuffer.fromJSWithEncoding(ctx.ptr(), bun.default_allocator, data_value, encoding) orelse {
+            const data = StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx.ptr(), bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
                 defer file.deinit();
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
@@ -3593,8 +3577,8 @@ const Return = struct {
     pub const Read = struct {
         bytes_read: u52,
 
-        pub fn toJS(this: Read, _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return JSC.JSValue.jsNumberFromUint64(this.bytes_read).asObjectRef();
+        pub fn toJS(this: Read, _: JSC.C.JSContextRef) JSC.JSValue {
+            return JSC.JSValue.jsNumberFromUint64(this.bytes_read);
         }
     };
     pub const ReadPromise = struct {
@@ -3604,17 +3588,17 @@ const Return = struct {
             .bytesRead = JSC.ZigString.init("bytesRead"),
             .buffer = JSC.ZigString.init("buffer"),
         };
-        pub fn toJS(this: Read, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub fn toJS(this: *const ReadPromise, ctx: *JSC.JSGlobalObject) JSC.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
-                JSC.C.JSValueUnprotect(ctx, this.buffer_val.asObjectRef());
+                this.buffer_val.unprotect();
 
             return JSC.JSValue.createObject2(
-                ctx.ptr(),
+                ctx,
                 &fields.bytesRead,
                 &fields.buffer,
                 JSC.JSValue.jsNumberFromUint64(@as(u52, @intCast(@min(std.math.maxInt(u52), this.bytes_read)))),
                 this.buffer_val,
-            ).asObjectRef();
+            );
         }
     };
 
@@ -3628,20 +3612,20 @@ const Return = struct {
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: Write, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            defer if (!this.buffer_val.isEmptyOrUndefinedOrNull() and this.buffer == .buffer)
-                JSC.C.JSValueUnprotect(ctx, this.buffer_val.asObjectRef());
+        pub fn toJS(this: *const WritePromise, globalObject: JSC.C.JSContextRef) JSC.C.JSValueRef {
+            defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
+                this.buffer_val.unprotect();
 
             return JSC.JSValue.createObject2(
-                ctx.ptr(),
+                globalObject,
                 &fields.bytesWritten,
                 &fields.buffer,
                 JSC.JSValue.jsNumberFromUint64(@as(u52, @intCast(@min(std.math.maxInt(u52), this.bytes_written)))),
                 if (this.buffer == .buffer)
                     this.buffer_val
                 else
-                    JSC.JSValue.fromRef(this.buffer.toJS(ctx, exception)),
-            ).asObjectRef();
+                    this.buffer.toJS(globalObject),
+            );
         }
     };
     pub const Write = struct {
@@ -3651,14 +3635,14 @@ const Return = struct {
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: Write, _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return JSC.JSValue.jsNumberFromUint64(this.bytes_written).asObjectRef();
+        pub fn toJS(this: *const Write, _: *JSC.JSGlobalObject) JSC.JSValue {
+            return JSC.JSValue.jsNumberFromUint64(this.bytes_written);
         }
     };
 
     pub const Readdir = union(Tag) {
         with_file_types: []Dirent,
-        buffers: []const Buffer,
+        buffers: []Buffer,
         files: []const bun.String,
 
         pub const Tag = enum {
@@ -3667,19 +3651,19 @@ const Return = struct {
             files,
         };
 
-        pub fn toJS(this: Readdir, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             switch (this) {
                 .with_file_types => {
                     defer bun.default_allocator.free(this.with_file_types);
-                    return JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception);
+                    return JSC.toJS(globalObject, []Dirent, this.with_file_types, .temporary);
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception);
+                    return JSC.toJS(globalObject, []Buffer, this.buffers, .temporary);
                 },
                 .files => {
                     // automatically freed
-                    return JSC.To.JS.withType([]const bun.String, this.files, ctx, exception);
+                    return JSC.toJS(globalObject, []const bun.String, this.files, .temporary);
                 },
             }
         }

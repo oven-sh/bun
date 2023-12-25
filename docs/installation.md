@@ -17,7 +17,7 @@ $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 $ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
 ```
 
-```bash#NPM
+```bash#npm
 $ npm install -g bun # the last `npm` command you'll ever need
 ```
 

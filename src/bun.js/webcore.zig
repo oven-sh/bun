@@ -662,7 +662,7 @@ pub const Crypto = struct {
         defer str.deref();
 
         // randomUUID must have been called already many times before this kicks
-        // in so we can skip the rare_data poitner check.
+        // in so we can skip the rare_data pointer check.
         const uuid = globalThis.bunVM().rare_data.?.nextUUID();
 
         uuid.print(bytes[0..36]);

@@ -154,6 +154,8 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "console", "timeLog" },
     &[_]string{ "console", "trace" },
     &[_]string{ "console", "warn" },
+
+    &[_]string{ "crypto", "randomUUID" },
 };
 
 const pure_global_identifier_define = defines.IdentifierDefine{
@@ -857,6 +859,8 @@ pub const pure_global_identifiers = .{
     .{ "top", pure_global_identifier_define },
     .{ "webkitURL", pure_global_identifier_define },
     .{ "window", pure_global_identifier_define },
+
+    .{ "crypto", pure_global_identifier_define },
 };
 
 pub const pure_global_identifier_map = bun.ComptimeStringMap(defines.IdentifierDefine, pure_global_identifiers);

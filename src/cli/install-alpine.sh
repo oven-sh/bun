@@ -3,6 +3,8 @@
 # wget -O - https://raw.githubusercontent.com/alxivnov/bun/alpine/src/cli/install-alpine.sh | sh
 
 # if [ $(cat /etc/os-release | grep -c "alpine") -gt 0 ]; then
+	apk add --no-cache gcompat
+
 	GITHUB="https://github.com"
 
 	if [ $(uname -m) == "aarch64" ]; then

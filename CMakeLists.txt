@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.18")
-set(WEBKIT_TAG 657558d4d4c9c33f41b9670e72d96a5a39fe546e)
+set(Bun_VERSION "1.0.20")
+set(WEBKIT_TAG b4de09f41b83e9e5c0e43ef414f1aee5968b6f7c)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -447,7 +447,7 @@ elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
     # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
-    if(USE_DEBUG_JSC AND EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
+    if(EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
         # You may need to run:
         # make jsc-compile-debug jsc-copy-headers
         include_directories(
@@ -900,13 +900,13 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -g3 -O1 -gdwarf-4
+        target_compile_options(${bun} PUBLIC -g3 -O0 -gdwarf-4
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC -O1)
+        target_compile_options(${bun} PUBLIC /Od)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")

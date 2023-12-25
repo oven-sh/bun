@@ -92,6 +92,8 @@ jobs:
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
             CANARY=${{ env.canary == 'true' && steps.canary.outputs.canary_revision || '0' }}
+            ZIG_OPTIMIZE=ReleaseSafe
+          # TODO(@paperdave): enable ASSERTIONS=1
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
@@ -311,7 +313,7 @@ jobs:
         run: |
           $Dist = mkdir -Force "${{ env.tag }}"
           cp -r build\bun.exe "$Dist\bun.exe"
-          Compress-Archive $Dist ${{ env.tag }}.zip
+          Compress-Archive $Dist ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}

@@ -1494,7 +1494,7 @@ extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* global
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    if (len > 0)
+    if (len > 0 && ptr != nullptr)
         memcpy(array->vector(), ptr, len);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
@@ -3069,6 +3069,12 @@ void GlobalObject::finishCreation(VM& vm)
                 Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_NAPIFunctionStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(
+                Zig::createNAPIFunctionStructure(init.vm, init.owner));
+        });
+
     m_NapiPrototypeStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -3949,6 +3955,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NapiPrototypeStructure.visit(visitor);
+    thisObject->m_NAPIFunctionStructure.visit(visitor);
 
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockResultStructure.visit(visitor);

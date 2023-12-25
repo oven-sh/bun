@@ -286,18 +286,14 @@ pub const fmt = struct {
                     }
 
                     if (Keywords.get(remain[0..i])) |keyword| {
-                        prev_keyword = keyword;
+                        if (keyword != .as)
+                            prev_keyword = keyword;
                         const code = keyword.colorCode();
                         try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
                     } else {
                         write: {
                             if (prev_keyword) |prev| {
                                 switch (prev) {
-                                    .@"const", .let, .@"var", .function, .class => {
-                                        try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
-                                        prev_keyword = null;
-                                        break :write;
-                                    },
                                     .new => {
                                         prev_keyword = null;
 
@@ -311,11 +307,17 @@ pub const fmt = struct {
                                         prev_keyword = null;
                                         break :write;
                                     },
+                                    .import => {
+                                        if (strings.eqlComptime(remain[0..i], "from")) {
+                                            const code = ColorCode.magenta;
+                                            try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                                            prev_keyword = null;
+
+                                            break :write;
+                                        }
+                                    },
                                     else => {},
                                 }
-                            } else if (i < remain.len and remain[i] == '(') {
-                                try writer.print(Output.prettyFmt("<r><b><i>{s}<r>", true), .{remain[0..i]});
-                                break :write;
                             }
 
                             try writer.writeAll(remain[0..i]);
@@ -452,9 +454,18 @@ pub const fmt = struct {
                             try writer.writeAll(remain[0..i]);
                             remain = remain[i..];
                         },
-                        '}', '[', ']', '{' => {
+                        '}', '{' => {
+                            // support potentially highlighting "from" in an import statement
+                            if ((prev_keyword orelse Keyword.@"continue") != .import) {
+                                prev_keyword = null;
+                            }
+
+                            try writer.writeAll(remain[0..1]);
+                            remain = remain[1..];
+                        },
+                        '[', ']' => {
                             prev_keyword = null;
-                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..1]});
+                            try writer.writeAll(remain[0..1]);
                             remain = remain[1..];
                         },
                         ';' => {
@@ -757,6 +768,69 @@ pub const fmt = struct {
     pub fn hexIntUpper(value: anytype) HexIntFormatter(@TypeOf(value), false) {
         const Formatter = HexIntFormatter(@TypeOf(value), false);
         return Formatter{ .value = value };
+    }
+
+    const FormatDurationData = struct {
+        ns: u64,
+        negative: bool = false,
+    };
+
+    /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
+    fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
+        var buf: [24]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        var buf_writer = fbs.writer();
+        if (data.negative) {
+            buf_writer.writeByte('-') catch unreachable;
+        }
+
+        var ns_remaining = data.ns;
+        inline for (.{
+            .{ .ns = 365 * std.time.ns_per_day, .sep = 'y' },
+            .{ .ns = std.time.ns_per_week, .sep = 'w' },
+            .{ .ns = std.time.ns_per_day, .sep = 'd' },
+            .{ .ns = std.time.ns_per_hour, .sep = 'h' },
+            .{ .ns = std.time.ns_per_min, .sep = 'm' },
+        }) |unit| {
+            if (ns_remaining >= unit.ns) {
+                const units = ns_remaining / unit.ns;
+                std.fmt.formatInt(units, 10, .lower, .{}, buf_writer) catch unreachable;
+                buf_writer.writeByte(unit.sep) catch unreachable;
+                ns_remaining -= units * unit.ns;
+                if (ns_remaining == 0)
+                    return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+            }
+        }
+
+        inline for (.{
+            .{ .ns = std.time.ns_per_s, .sep = "s" },
+            .{ .ns = std.time.ns_per_ms, .sep = "ms" },
+            .{ .ns = std.time.ns_per_us, .sep = "us" },
+        }) |unit| {
+            const kunits = ns_remaining * 1000 / unit.ns;
+            if (kunits >= 1000) {
+                std.fmt.formatInt(kunits / 1000, 10, .lower, .{}, buf_writer) catch unreachable;
+                const frac = @divFloor(kunits % 1000, 100);
+                if (frac > 0) {
+                    var decimal_buf = [_]u8{ '.', 0 };
+                    _ = std.fmt.formatIntBuf(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
+                    buf_writer.writeAll(&decimal_buf) catch unreachable;
+                }
+                buf_writer.writeAll(unit.sep) catch unreachable;
+                return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+            }
+        }
+
+        std.fmt.formatInt(ns_remaining, 10, .lower, .{}, buf_writer) catch unreachable;
+        buf_writer.writeAll("ns") catch unreachable;
+        return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+    }
+
+    /// Return a Formatter for number of nanoseconds according to its magnitude:
+    /// [#y][#w][#d][#h][#m]#[.###][n|u|m]s
+    pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal) {
+        return .{ .data = FormatDurationData{ .ns = ns } };
     }
 };
 
@@ -1619,16 +1693,68 @@ pub const SignalCode = enum(u8) {
         return null;
     }
 
+    pub fn description(signal: SignalCode) ?[]const u8 {
+        // Description names copied from fish
+        // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
+        return switch (signal) {
+            .SIGHUP => "Terminal hung up",
+            .SIGINT => "Quit request",
+            .SIGQUIT => "Quit request",
+            .SIGILL => "Illegal instruction",
+            .SIGTRAP => "Trace or breakpoint trap",
+            .SIGABRT => "Abort",
+            .SIGBUS => "Misaligned address error",
+            .SIGFPE => "Floating point exception",
+            .SIGKILL => "Forced quit",
+            .SIGUSR1 => "User defined signal 1",
+            .SIGUSR2 => "User defined signal 2",
+            .SIGSEGV => "Address boundary error",
+            .SIGPIPE => "Broken pipe",
+            .SIGALRM => "Timer expired",
+            .SIGTERM => "Polite quit request",
+            .SIGCHLD => "Child process status changed",
+            .SIGCONT => "Continue previously stopped process",
+            .SIGSTOP => "Forced stop",
+            .SIGTSTP => "Stop request from job control (^Z)",
+            .SIGTTIN => "Stop from terminal input",
+            .SIGTTOU => "Stop from terminal output",
+            .SIGURG => "Urgent socket condition",
+            .SIGXCPU => "CPU time limit exceeded",
+            .SIGXFSZ => "File size limit exceeded",
+            .SIGVTALRM => "Virtual timefr expired",
+            .SIGPROF => "Profiling timer expired",
+            .SIGWINCH => "Window size change",
+            .SIGIO => "I/O on asynchronous file descriptor is possible",
+            .SIGSYS => "Bad system call",
+            .SIGPWR => "Power failure",
+            else => null,
+        };
+    }
+
     pub fn from(value: anytype) SignalCode {
         return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
-    pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        if (self.name()) |str| {
-            try std.fmt.format(writer, "code {d} ({s})", .{ @intFromEnum(self), str });
-        } else {
-            try std.fmt.format(writer, "code {d}", .{@intFromEnum(self)});
+    // This wrapper struct is lame, what if bun's color formatter was more versitile
+    const Fmt = struct {
+        signal: SignalCode,
+        enable_ansi_colors: bool,
+        pub fn format(this: Fmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const signal = this.signal;
+            switch (this.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    if (signal.name()) |str| if (signal.description()) |desc| {
+                        try writer.print(Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors), .{ str, desc });
+                        return;
+                    };
+                    try writer.print("code {d}", .{@intFromEnum(signal)});
+                },
+            }
         }
+    };
+
+    pub fn fmt(signal: SignalCode, enable_ansi_colors: bool) Fmt {
+        return .{ .signal = signal, .enable_ansi_colors = enable_ansi_colors };
     }
 };
 
@@ -2677,17 +2803,89 @@ pub noinline fn outOfMemory() noreturn {
     @panic("Bun ran out of memory!");
 }
 
+pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
+
+const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+
+/// Globally-allocate a value on the heap.
+///
+/// When used, yuo must call `bun.destroy` to free the memory.
+/// default_allocator.destroy should not be used.
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+        ptr.* = t;
+        return ptr;
+    }
+
     const ptr = default_allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
+/// Free a globally-allocated a value
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
+pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
+    if (comptime is_heap_breakdown_enabled) {
+        if (allocator.vtable == default_allocator.vtable) {
+            destroy(t);
+            return;
+        }
+    }
+
+    allocator.destroy(t);
+}
+
+pub fn New(comptime T: type) type {
+    return struct {
+        pub inline fn destroy(self: *T) void {
+            if (comptime is_heap_breakdown_enabled) {
+                HeapBreakdown.allocator(T).destroy(self);
+            } else {
+                default_allocator.destroy(self);
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            if (comptime is_heap_breakdown_enabled) {
+                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+                ptr.* = t;
+                return ptr;
+            }
+
+            const ptr = default_allocator.create(T) catch outOfMemory();
+            ptr.* = t;
+            return ptr;
+        }
+    };
+}
+
+/// Free a globally-allocated a value.
+///
+/// Must have used `new` to allocate the value.
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn destroy(t: anytype) void {
-    default_allocator.destroy(@TypeOf(t));
+    if (comptime is_heap_breakdown_enabled) {
+        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
+    } else {
+        default_allocator.destroy(t);
+    }
 }
 
 pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        if (allocator.vtable == default_allocator.vtable) {
+            return new(T, t);
+        }
+    }
+
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;

@@ -418,8 +418,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
     auto iterator = headers.get().createIterator();
     while (auto value = iterator.next()) {
-        headerNames.uncheckedAppend(Zig::toZigString(value->key));
-        headerValues.uncheckedAppend(Zig::toZigString(value->value));
+        headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
+        headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
     }
 
     m_isSecure = is_secure;

@@ -742,9 +742,13 @@ pub const TestCommand = struct {
             if (ctx.test_options.include) |include_glob_pattern| {
                 const glob = @import("../glob.zig");
                 const GlobWalker = glob.GlobWalker_(glob.ignoreNodeModules, true);
-                var glob_walker = bun.new(GlobWalker, .{});
-                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-                errdefer arena.deinit();
+                var glob_walker = ctx.allocator.create(GlobWalker) catch bun.outOfMemory();
+                glob_walker.* = .{
+                    .allocator = ctx.allocator,
+                };
+                defer ctx.allocator.destroy(glob_walker);
+                var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+                defer arena.deinit();
 
                 const result = brk: {
                     const dot: bool = false;
@@ -773,13 +777,12 @@ pub const TestCommand = struct {
                     };
 
                     break :brk glob_walker.initWithCwd(&arena, include_glob_pattern, cwd, dot, absolute, follow_symlinks, error_on_broken_symlinks, only_files) catch {
-                        arena.deinit();
                         return;
                     };
                 };
 
                 _ = try result.unwrap();
-                defer glob_walker.deinit(true);
+                defer glob_walker.deinit(false);
 
                 var iter = GlobWalker.Iterator{ .walker = glob_walker };
                 defer iter.deinit();

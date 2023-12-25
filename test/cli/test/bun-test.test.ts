@@ -6,7 +6,7 @@ import { describe, test, expect } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 
 describe("bun test", () => {
-  test("glob include", () => {
+  test("bun test include", () => {
     const cwd = createTest([
       {
         filename: "hello.lol.js",

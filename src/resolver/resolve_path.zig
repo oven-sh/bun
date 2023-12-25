@@ -1810,12 +1810,17 @@ pub const PosixToWinNormalizer = struct {
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
     ) ![:0]const u8 {
-        return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
+        _ = this;
+        _ = maybe_posix_path;
+        // problem: the buffer does not exist on posix, but we need to convert []const u8 to [:0]const u8
+        // maybe we just take [:0]const u8 in?
+        @compileError("TODO: fix resolveCWDZ on posix");
+        // return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
     }
 
     // underlying implementation:
 
-    pub fn resolveWithExternalBuf(
+    fn resolveWithExternalBuf(
         buf: *Buf,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
@@ -1834,7 +1839,7 @@ pub const PosixToWinNormalizer = struct {
         return maybe_posix_path;
     }
 
-    pub fn resolveCWDWithExternalBuf(
+    fn resolveCWDWithExternalBuf(
         buf: *Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
@@ -1858,7 +1863,7 @@ pub const PosixToWinNormalizer = struct {
     }
 
     pub fn resolveCWDWithExternalBufZ(
-        buf: *Buf,
+        buf: *bun.PathBuffer,
         maybe_posix_path: []const u8,
     ) ![:0]const u8 {
         std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));

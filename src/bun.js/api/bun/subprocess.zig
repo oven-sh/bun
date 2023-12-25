@@ -22,6 +22,97 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const PosixSpawn = bun.posix.spawn;
 
+pub const ResourceUsage = struct {
+    pub usingnamespace JSC.Codegen.JSResourceUsage;
+    rusage: if (Environment.isWindows) u0 else std.os.rusage,
+
+    pub fn constructor(
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) ?*Subprocess {
+        return null;
+    }
+
+    pub fn getCPUTime(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        const rusage = this.rusage;
+
+        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.tv_usec, rusage.utime.tv_sec);
+        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.tv_usec, rusage.stime.tv_sec);
+
+        cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
+        cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
+        cpu.put(globalObject, JSC.ZigString.static("total"), JSValue.bigIntSum(globalObject, usrTime, sysTime));
+
+        return cpu;
+    }
+
+    pub fn getMaxRSS(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.maxrss);
+    }
+
+    pub fn getSharedMemorySize(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.ixrss);
+    }
+
+    pub fn getSwapCount(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nswap);
+    }
+
+    pub fn getOps(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
+        ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
+        return ops;
+    }
+
+    pub fn getMessages(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
+        msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
+        return msgs;
+    }
+
+    pub fn getSignalCount(
+        this: *ResourceUsage,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSC.JSValue.jsNumber(this.rusage.nsignals);
+    }
+
+    pub fn getContextSwitches(
+        this: *ResourceUsage,
+        globalObject: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
+        ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
+        return ctx;
+    }
+
+    pub fn finalize(this: *ResourceUsage) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+};
+
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
     pub usingnamespace JSC.Codegen.JSSubprocess;
@@ -62,6 +153,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
+    pid_rusage: if (Environment.isWindows) ?u0 else ?std.os.rusage = null,
 
     pub const Flags = packed struct(u3) {
         is_sync: bool = false,
@@ -86,6 +178,38 @@ pub const Subprocess = struct {
         bun,
         // json,
     };
+
+    pub fn resourceUsage(
+        this: *Subprocess,
+        globalObject: *JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return this.createResourceUsageObject(globalObject);
+    }
+
+    pub fn createResourceUsageObject(
+        this: *Subprocess,
+        globalObject: *JSGlobalObject,
+    ) JSValue {
+        if (comptime Environment.isWindows) {
+            //TODO: implement on windows
+            return JSValue.jsUndefined();
+        }
+        if (this.pid_rusage == null) {
+            return JSValue.jsUndefined();
+        }
+        const pid_rusage = this.pid_rusage.?;
+        const resource_usage = ResourceUsage{
+            .rusage = pid_rusage,
+        };
+
+        var result = bun.default_allocator.create(ResourceUsage) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        result.* = resource_usage;
+        return result.toJS(globalObject);
+    }
 
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
@@ -196,6 +320,7 @@ pub const Subprocess = struct {
 
     const Readable = union(enum) {
         fd: bun.FileDescriptor,
+        memfd: bun.FileDescriptor,
 
         pipe: Pipe,
         inherit: void,
@@ -275,6 +400,7 @@ pub const Subprocess = struct {
                 },
                 .path => Readable{ .ignore = {} },
                 .blob, .fd => Readable{ .fd = bun.toFD(fd) },
+                .memfd => Readable{ .memfd = stdio.memfd },
                 .array_buffer => Readable{
                     .pipe = .{
                         .buffer = BufferedOutput.initWithSlice(bun.toFD(fd), stdio.array_buffer.slice()),
@@ -293,7 +419,7 @@ pub const Subprocess = struct {
 
         pub fn close(this: *Readable) void {
             switch (this.*) {
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                 },
                 .pipe => {
@@ -305,7 +431,7 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                 },
                 .pipe => {
@@ -322,6 +448,9 @@ pub const Subprocess = struct {
 
         pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
             switch (this.*) {
+                // should only be reachable when the entire output is buffered.
+                .memfd => return this.toBufferedValue(globalThis),
+
                 .fd => |fd| {
                     return JSValue.jsNumber(fd);
                 },
@@ -338,6 +467,13 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .fd => |fd| {
                     return JSValue.jsNumber(fd);
+                },
+                .memfd => |fd| {
+                    if (comptime !Environment.isPosix) {
+                        Output.panic("memfd is only supported on Linux", .{});
+                    }
+                    this.* = .{ .closed = {} };
+                    return JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
                 },
                 .pipe => {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
@@ -923,6 +1059,7 @@ pub const Subprocess = struct {
         },
         fd: bun.FileDescriptor,
         buffered_input: BufferedInput,
+        memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
 
@@ -997,6 +1134,11 @@ pub const Subprocess = struct {
                     }
                     return Writable{ .buffered_input = buffered_input };
                 },
+
+                .memfd => {
+                    return Writable{ .memfd = stdio.memfd };
+                },
+
                 .fd => {
                     return Writable{ .fd = bun.toFD(fd) };
                 },
@@ -1013,7 +1155,7 @@ pub const Subprocess = struct {
             return switch (this) {
                 .pipe => |pipe| pipe.toJS(globalThis),
                 .fd => |fd| JSValue.jsNumber(fd),
-                .ignore => JSValue.jsUndefined(),
+                .memfd, .ignore => JSValue.jsUndefined(),
                 .inherit => JSValue.jsUndefined(),
                 .buffered_input => JSValue.jsUndefined(),
                 .pipe_to_readable_stream => this.pipe_to_readable_stream.readable_stream.value,
@@ -1028,7 +1170,7 @@ pub const Subprocess = struct {
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
@@ -1046,7 +1188,7 @@ pub const Subprocess = struct {
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
-                .fd => |fd| {
+                inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
@@ -1529,6 +1671,7 @@ pub const Subprocess = struct {
             const exitCode = subprocess.exit_code orelse 1;
             const stdout = subprocess.stdout.toBufferedValue(globalThis);
             const stderr = subprocess.stderr.toBufferedValue(globalThis);
+            const resource_usage = subprocess.createResourceUsage(globalThis);
             subprocess.finalizeSync();
 
             const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
@@ -1536,6 +1679,7 @@ pub const Subprocess = struct {
             sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
             sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
             sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+            sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
             return sync_value;
         }
         // POSIX:
@@ -1573,6 +1717,24 @@ pub const Subprocess = struct {
         if (!override_env and env_array.items.len == 0) {
             env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.handleError(err, "in posix_spawn");
             env_array.capacity = env_array.items.len;
+        }
+
+        inline for (0..stdio.len) |fd_index| {
+            if (stdio[fd_index].canUseMemfd(is_sync)) {
+                stdio[fd_index].useMemfd(fd_index);
+            }
+        }
+        var should_close_memfd = Environment.isLinux;
+
+        defer {
+            if (should_close_memfd) {
+                inline for (0..stdio.len) |fd_index| {
+                    if (stdio[fd_index] == .memfd) {
+                        _ = bun.sys.close(stdio[fd_index].memfd);
+                        stdio[fd_index] = .ignore;
+                    }
+                }
+            }
         }
 
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
@@ -1681,6 +1843,8 @@ pub const Subprocess = struct {
             };
         };
 
+        var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+        var has_rusage = false;
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
                 break :brk pid;
@@ -1692,7 +1856,6 @@ pub const Subprocess = struct {
                 @intCast(pid),
                 pidfd_flags,
             );
-
             while (true) {
                 switch (std.os.linux.getErrno(rc)) {
                     .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
@@ -1726,7 +1889,8 @@ pub const Subprocess = struct {
                         globalThis.throwValue(error_instance);
                         var status: u32 = 0;
                         // ensure we don't leak the child process on error
-                        _ = std.os.linux.waitpid(pid, &status, 0);
+                        _ = std.os.linux.wait4(pid, &status, 0, &rusage_result);
+                        has_rusage = true;
                         return .zero;
                     },
                 }
@@ -1741,6 +1905,7 @@ pub const Subprocess = struct {
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
+            .pid_rusage = if (has_rusage) rusage_result else null,
             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
             .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throwOutOfMemory();
@@ -1831,6 +1996,8 @@ pub const Subprocess = struct {
             }
         }
 
+        should_close_memfd = false;
+
         if (comptime !is_sync) {
             return out;
         }
@@ -1883,6 +2050,7 @@ pub const Subprocess = struct {
         const exitCode = subprocess.exit_code orelse 1;
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
+        const resource_usage = subprocess.createResourceUsageObject(globalThis);
         subprocess.finalizeSync();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
@@ -1890,6 +2058,7 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+        sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
         return sync_value;
     }
 
@@ -1940,10 +2109,11 @@ pub const Subprocess = struct {
         sync: bool,
         this_jsvalue: JSC.JSValue,
     ) void {
-        this.onWaitPid(sync, this_jsvalue, PosixSpawn.waitpid(this.pid, if (sync) 0 else std.os.W.NOHANG));
+        var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+        this.onWaitPid(sync, this_jsvalue, PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result), rusage_result);
     }
 
-    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: std.os.rusage) void {
         if (Environment.isWindows) {
             @panic("windows doesnt support subprocess yet. haha");
         }
@@ -1952,6 +2122,7 @@ pub const Subprocess = struct {
         const pid = this.pid;
 
         var waitpid_result = waitpid_result_;
+        var rusage_result = pid_rusage;
 
         while (true) {
             switch (waitpid_result) {
@@ -1960,6 +2131,7 @@ pub const Subprocess = struct {
                 },
                 .result => |result| {
                     if (result.pid == pid) {
+                        this.pid_rusage = rusage_result;
                         if (std.os.W.IFEXITED(result.status)) {
                             this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
                         }
@@ -1984,7 +2156,7 @@ pub const Subprocess = struct {
                             .err => |err| {
                                 if (comptime Environment.isMac) {
                                     if (err.getErrno() == .SRCH) {
-                                        waitpid_result = PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG);
+                                        waitpid_result = PosixSpawn.wait4(pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result);
                                         continue;
                                     }
                                 }
@@ -2129,6 +2301,91 @@ pub const Subprocess = struct {
         blob: JSC.WebCore.AnyBlob,
         pipe: ?JSC.WebCore.ReadableStream,
         array_buffer: JSC.ArrayBuffer.Strong,
+        memfd: bun.FileDescriptor,
+
+        pub fn canUseMemfd(this: *const @This(), is_sync: bool) bool {
+            if (comptime !Environment.isLinux) {
+                return false;
+            }
+
+            return switch (this.*) {
+                .blob => !this.blob.needsToReadFile(),
+                .memfd, .array_buffer => true,
+                .pipe => |pipe| pipe == null and is_sync,
+                else => false,
+            };
+        }
+
+        pub fn byteSlice(this: *const @This()) []const u8 {
+            return switch (this.*) {
+                .blob => this.blob.slice(),
+                .array_buffer => |array_buffer| array_buffer.slice(),
+                else => "",
+            };
+        }
+
+        pub fn useMemfd(this: *@This(), index: u32) void {
+            const label = switch (index) {
+                0 => "spawn_stdio_stdin",
+                1 => "spawn_stdio_stdout",
+                2 => "spawn_stdio_stderr",
+                else => "spawn_stdio_memory_file",
+            };
+
+            // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
+            const rc = std.os.linux.memfd_create(label, 0);
+
+            log("memfd_create({s}) = {d}", .{ label, rc });
+
+            switch (std.os.linux.getErrno(rc)) {
+                .SUCCESS => {},
+                else => |errno| {
+                    log("Failed to create memfd: {s}", .{@tagName(errno)});
+                    return;
+                },
+            }
+
+            const fd = bun.toFD(rc);
+
+            var remain = this.byteSlice();
+
+            if (remain.len > 0)
+                // Hint at the size of the file
+                _ = bun.sys.ftruncate(fd, @intCast(remain.len));
+
+            // Dump all the bytes in there
+            var written: isize = 0;
+            while (remain.len > 0) {
+                switch (bun.sys.pwrite(fd, remain, written)) {
+                    .err => |err| {
+                        if (err.getErrno() == .AGAIN) {
+                            continue;
+                        }
+
+                        Output.debugWarn("Failed to write to memfd: {s}", .{@tagName(err.getErrno())});
+                        _ = bun.sys.close(fd);
+                        return;
+                    },
+                    .result => |result| {
+                        if (result == 0) {
+                            Output.debugWarn("Failed to write to memfd: EOF", .{});
+                            _ = bun.sys.close(fd);
+                            return;
+                        }
+                        written += @intCast(result);
+                        remain = remain[result..];
+                    },
+                }
+            }
+
+            switch (this.*) {
+                .array_buffer => this.array_buffer.deinit(),
+                .blob => this.blob.detach(),
+                else => {},
+            }
+
+            this.* = .{ .memfd = fd };
+        }
 
         pub fn isPiped(self: Stdio) bool {
             return switch (self) {
@@ -2152,6 +2409,9 @@ pub const Subprocess = struct {
                     try actions.close(pipe_fd[1 - idx]);
                 },
                 .fd => |fd| {
+                    try actions.dup2(fd, std_fileno);
+                },
+                .memfd => |fd| {
                     try actions.dup2(fd, std_fileno);
                 },
                 .path => |pathlike| {
@@ -2198,6 +2458,7 @@ pub const Subprocess = struct {
                     .flags = uv.UV_IGNORE,
                     .data = undefined,
                 },
+                .memfd => unreachable,
             };
         }
 
@@ -2465,6 +2726,7 @@ pub const Subprocess = struct {
 
         pub const WaitPidResultTask = struct {
             result: JSC.Maybe(PosixSpawn.WaitPidResult),
+            rusage: std.os.rusage,
             subprocess: *Subprocess,
 
             pub fn runFromJSThread(self: *@This()) void {
@@ -2472,7 +2734,7 @@ pub const Subprocess = struct {
                 var subprocess = self.subprocess;
                 _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                 bun.default_allocator.destroy(self);
-                subprocess.onWaitPid(false, subprocess.this_jsvalue, result);
+                subprocess.onWaitPid(false, subprocess.this_jsvalue, result, self.rusage);
             }
         };
 
@@ -2544,15 +2806,19 @@ pub const Subprocess = struct {
                     continue;
                 }
 
-                const result = PosixSpawn.waitpid(process.pid, std.os.W.NOHANG);
+                var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+
+                const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, &rusage_result);
                 if (result == .err or (result == .result and result.result.pid == process.pid)) {
                     _ = this.queue.orderedRemove(i);
+                    process.pid_rusage = rusage_result;
                     queue = this.queue.items;
 
                     const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
                     task.* = WaitPidResultTask{
                         .result = result,
                         .subprocess = process,
+                        .rusage = rusage_result,
                     };
 
                     process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(
@@ -2592,7 +2858,7 @@ pub const Subprocess = struct {
                     .err => |err| {
                         std.debug.print("waitpid error: {s}\n", .{@tagName(err.getErrno())});
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                            lifecycle_script_subprocess.script_name,
+                            lifecycle_script_subprocess.scriptName(),
                             lifecycle_script_subprocess.package_name,
                             err.errno,
                             @tagName(err.getErrno()),

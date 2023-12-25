@@ -9,13 +9,13 @@ const Output = bun.Output;
 const Global = bun.Global;
 const JSC = bun.JSC;
 const WaiterThread = JSC.Subprocess.WaiterThread;
+const Timer = std.time.Timer;
 
 pub const LifecycleScriptSubprocess = struct {
-    script_name: []const u8,
     package_name: []const u8,
 
     scripts: [6]?Lockfile.Scripts.Entry,
-    current_script_index: usize = 0,
+    current_script_index: u8 = 0,
 
     finished_fds: u8 = 0,
 
@@ -27,6 +27,10 @@ pub const LifecycleScriptSubprocess = struct {
     stderr: OutputReader = .{},
     manager: *PackageManager,
     envp: [:null]?[*:0]u8,
+
+    timer: ?Timer = null,
+
+    pub const min_milliseconds_to_log = 500;
 
     pub var alive_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
 
@@ -81,7 +85,7 @@ pub const LifecycleScriptSubprocess = struct {
             switch (this.poll.register(this.subprocess().manager.uws_event_loop, .readable, true)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.subprocess().script_name,
+                        this.subprocess().scriptName(),
                         this.subprocess().package_name,
                         err.errno,
                         @tagName(err.getErrno()),
@@ -109,6 +113,11 @@ pub const LifecycleScriptSubprocess = struct {
         }
     };
 
+    pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
+        std.debug.assert(this.current_script_index < Lockfile.Scripts.names.len);
+        return Lockfile.Scripts.names[this.current_script_index];
+    }
+
     pub fn onOutputDone(this: *LifecycleScriptSubprocess) void {
         std.debug.assert(this.finished_fds < 2);
         this.finished_fds += 1;
@@ -126,7 +135,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.finished_fds += 1;
 
         Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-            this.script_name,
+            this.scriptName(),
             this.package_name,
             err.errno,
             @tagName(err.getErrno()),
@@ -140,7 +149,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
     }
 
-    pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: usize) !void {
+    pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
         if (Environment.isWindows) {
             @panic("TODO");
         }
@@ -152,22 +161,20 @@ pub const LifecycleScriptSubprocess = struct {
         const original_script = this.scripts[next_script_index].?;
         const cwd = original_script.cwd;
         const env = manager.env;
-        const name = Lockfile.Scripts.names[next_script_index];
 
         if (manager.scripts_node) |scripts_node| {
+            manager.setNodeName(
+                scripts_node,
+                original_script.package_name,
+                PackageManager.ProgressStrings.script_emoji,
+                true,
+            );
             if (manager.finished_installing.load(.Monotonic)) {
-                manager.setNodeName(
-                    scripts_node,
-                    original_script.package_name,
-                    PackageManager.ProgressStrings.script_emoji,
-                    true,
-                );
                 scripts_node.activate();
                 manager.progress.refresh();
             }
         }
 
-        this.script_name = name;
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.waitpid_result = null;
@@ -184,13 +191,15 @@ pub const LifecycleScriptSubprocess = struct {
 
         var argv = [_]?[*:0]const u8{
             shell_bin,
-            "-c",
+            if (Environment.isWindows) "/c" else "-c",
             combined_script,
             null,
         };
         // Have both stdout and stderr write to the same buffer
-        const fdsOut = try std.os.pipe2(0);
-        const fdsErr = try std.os.pipe2(0);
+        const fdsOut, const fdsErr = if (!this.manager.options.log_level.isVerbose())
+            .{ try std.os.pipe2(0), try std.os.pipe2(0) }
+        else
+            .{ .{ 0, 0 }, .{ 0, 0 } };
 
         var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
         if (comptime Environment.isMac) {
@@ -206,15 +215,38 @@ pub const LifecycleScriptSubprocess = struct {
             var actions = try PosixSpawn.Actions.init();
             defer actions.deinit();
             try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
-            try actions.dup2(fdsOut[1], bun.STDOUT_FD);
-            try actions.dup2(fdsErr[1], bun.STDERR_FD);
+
+            if (!this.manager.options.log_level.isVerbose()) {
+                try actions.dup2(fdsOut[1], bun.STDOUT_FD);
+                try actions.dup2(fdsErr[1], bun.STDERR_FD);
+            } else {
+                if (comptime Environment.isMac) {
+                    try actions.inherit(bun.STDOUT_FD);
+                    try actions.inherit(bun.STDERR_FD);
+                } else {
+                    try actions.dup2(bun.STDOUT_FD, bun.STDOUT_FD);
+                    try actions.dup2(bun.STDERR_FD, bun.STDERR_FD);
+                }
+            }
 
             try actions.chdir(cwd);
 
             defer {
-                _ = bun.sys.close(fdsOut[1]);
-                _ = bun.sys.close(fdsErr[1]);
+                if (!this.manager.options.log_level.isVerbose()) {
+                    _ = bun.sys.close(fdsOut[1]);
+                    _ = bun.sys.close(fdsErr[1]);
+                }
             }
+
+            if (manager.options.log_level.isVerbose()) {
+                Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Spawning <b>\"{s}\"<r> script for package <b>\"{s}\"<r>", .{
+                    this.scriptName(),
+                    this.package_name,
+                });
+            }
+
+            this.timer = Timer.start() catch null;
+
             switch (PosixSpawn.spawnZ(
                 argv[0].?,
                 actions,
@@ -224,7 +256,7 @@ pub const LifecycleScriptSubprocess = struct {
             )) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
-                        name,
+                        this.scriptName(),
                         err.errno,
                         @tagName(err.getErrno()),
                     });
@@ -281,7 +313,7 @@ pub const LifecycleScriptSubprocess = struct {
                         _ = std.os.linux.waitpid(pid, &status, 0);
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
-                            name,
+                            this.scriptName(),
                             err,
                             @tagName(err),
                         });
@@ -292,18 +324,19 @@ pub const LifecycleScriptSubprocess = struct {
             }
         };
 
-        this.stdout = .{
-            .parent = this,
-            .poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, &this.stdout),
-        };
+        if (!this.manager.options.log_level.isVerbose()) {
+            this.stdout = .{
+                .parent = this,
+                .poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, &this.stdout),
+            };
 
-        this.stderr = .{
-            .parent = this,
-            .poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, &this.stderr),
-        };
-
-        try this.stdout.start().unwrap();
-        try this.stderr.start().unwrap();
+            this.stderr = .{
+                .parent = this,
+                .poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, &this.stderr),
+            };
+            try this.stdout.start().unwrap();
+            try this.stderr.start().unwrap();
+        }
 
         if (WaiterThread.shouldUseWaiterThread()) {
             WaiterThread.appendLifecycleScriptSubprocess(this);
@@ -335,24 +368,26 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {
-        if (this.stdout.buffer.items.len +| this.stderr.buffer.items.len == 0) {
-            return;
+        if (!this.manager.options.log_level.isVerbose()) {
+            if (this.stdout.buffer.items.len +| this.stderr.buffer.items.len == 0) {
+                return;
+            }
+
+            Output.disableBuffering();
+            Output.flush();
+
+            if (this.stdout.buffer.items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{this.stdout.buffer.items}) catch {};
+                this.stdout.buffer.clearAndFree();
+            }
+
+            if (this.stderr.buffer.items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{this.stderr.buffer.items}) catch {};
+                this.stderr.buffer.clearAndFree();
+            }
+
+            Output.enableBuffering();
         }
-
-        Output.disableBuffering();
-        Output.flush();
-
-        if (this.stdout.buffer.items.len > 0) {
-            Output.errorWriter().print("{s}\n", .{this.stdout.buffer.items}) catch {};
-            this.stdout.buffer.clearAndFree();
-        }
-
-        if (this.stderr.buffer.items.len > 0) {
-            Output.errorWriter().print("{s}\n", .{this.stderr.buffer.items}) catch {};
-            this.stderr.buffer.clearAndFree();
-        }
-
-        Output.enableBuffering();
     }
 
     pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {
@@ -360,7 +395,7 @@ pub const LifecycleScriptSubprocess = struct {
             switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.script_name,
+                        this.scriptName(),
                         this.package_name,
                         err.errno,
                         @tagName(err.getErrno()),
@@ -386,7 +421,7 @@ pub const LifecycleScriptSubprocess = struct {
         _ = alive_count.fetchSub(1, .Monotonic);
         if (result.pid == 0) {
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                this.script_name,
+                this.scriptName(),
                 this.package_name,
                 0,
                 "Unknown",
@@ -397,19 +432,22 @@ pub const LifecycleScriptSubprocess = struct {
             return;
         }
         if (std.os.W.IFEXITED(result.status)) {
-            std.debug.assert(this.finished_fds <= 2);
-            if (this.finished_fds < 2) {
-                this.waitpid_result = result;
-                return;
+            const maybe_duration = if (this.timer) |*t| t.read() else null;
+            if (!this.manager.options.log_level.isVerbose()) {
+                std.debug.assert(this.finished_fds <= 2);
+                if (this.finished_fds < 2) {
+                    this.waitpid_result = result;
+                    return;
+                }
             }
 
             const code = std.os.W.EXITSTATUS(result.status);
             if (code > 0) {
                 this.printOutput();
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
-                    this.script_name,
+                    this.scriptName(),
                     this.package_name,
-                    bun.SignalCode.from(code),
+                    code,
                 });
                 this.deinit();
                 Output.flush();
@@ -424,11 +462,24 @@ pub const LifecycleScriptSubprocess = struct {
                 }
             }
 
+            if (maybe_duration) |nanos| {
+                if (nanos > min_milliseconds_to_log * std.time.ns_per_ms) {
+                    this.manager.lifecycle_script_time_log.appendConcurrent(
+                        this.manager.lockfile.allocator,
+                        .{
+                            .package_name = this.package_name,
+                            .script_id = this.current_script_index,
+                            .duration = nanos,
+                        },
+                    );
+                }
+            }
+
             for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                 if (this.scripts[new_script_index] != null) {
                     this.resetPolls();
-                    this.spawnNextScript(new_script_index) catch |err| {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                    this.spawnNextScript(@intCast(new_script_index)) catch |err| {
+                        Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
                             Lockfile.Scripts.names[new_script_index],
                             @errorName(err),
                         });
@@ -441,49 +492,63 @@ pub const LifecycleScriptSubprocess = struct {
             // the last script finished
             _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
 
-            if (this.finished_fds == 2) {
+            if (!this.manager.options.log_level.isVerbose()) {
+                if (this.finished_fds == 2) {
+                    this.deinit();
+                }
+            } else {
                 this.deinit();
             }
+
             return;
         }
         if (std.os.W.IFSIGNALED(result.status)) {
             const signal = std.os.W.TERMSIG(result.status);
 
-            if (this.finished_fds < 2) {
-                this.waitpid_result = result;
-                return;
+            if (!this.manager.options.log_level.isVerbose()) {
+                if (this.finished_fds < 2) {
+                    this.waitpid_result = result;
+                    return;
+                }
             }
             this.printOutput();
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
-                this.script_name,
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
+                this.scriptName(),
                 this.package_name,
-                bun.SignalCode.from(signal),
+                bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
-            Output.flush();
-            Global.exit(1);
+            Global.raiseIgnoringPanicHandler(signal);
         }
         if (std.os.W.IFSTOPPED(result.status)) {
             const signal = std.os.W.STOPSIG(result.status);
 
-            if (this.finished_fds < 2) {
-                this.waitpid_result = result;
-                return;
+            if (!this.manager.options.log_level.isVerbose()) {
+                if (this.finished_fds < 2) {
+                    this.waitpid_result = result;
+                    return;
+                }
             }
             this.printOutput();
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by signal {any}<r>", .{
-                this.script_name,
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by {}<r>", .{
+                this.scriptName(),
                 this.package_name,
-                bun.SignalCode.from(signal),
+                bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
             });
-            Output.flush();
-            Global.exit(1);
+            Global.raiseIgnoringPanicHandler(signal);
         }
 
-        std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{ this.script_name, this.package_name, result.pid, result.status });
+        std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{
+            this.scriptName(),
+            this.package_name,
+            result.pid,
+            result.status,
+        });
     }
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
-        std.debug.assert(this.finished_fds == 2);
+        if (!this.manager.options.log_level.isVerbose()) {
+            std.debug.assert(this.finished_fds == 2);
+        }
 
         const loop = this.manager.uws_event_loop;
 
@@ -495,8 +560,10 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn deinit(this: *LifecycleScriptSubprocess) void {
         this.resetPolls();
-        this.stdout.buffer.clearAndFree();
-        this.stderr.buffer.clearAndFree();
+        if (!this.manager.options.log_level.isVerbose()) {
+            this.stdout.buffer.clearAndFree();
+            this.stderr.buffer.clearAndFree();
+        }
         this.manager.allocator.destroy(this);
     }
 
@@ -504,11 +571,20 @@ pub const LifecycleScriptSubprocess = struct {
         manager: *PackageManager,
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]u8,
+        comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
         lifecycle_subprocess.scripts = list.items;
         lifecycle_subprocess.manager = manager;
         lifecycle_subprocess.envp = envp;
+
+        if (comptime log_level.isVerbose()) {
+            Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{
+                list.first().package_name,
+            });
+        }
+
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
@@ -516,7 +592,5 @@ pub const LifecycleScriptSubprocess = struct {
                 @errorName(err),
             });
         };
-
-        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
     }
 };

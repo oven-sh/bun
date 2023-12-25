@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.18")
+set(Bun_VERSION "1.0.20")
 set(WEBKIT_TAG b4de09f41b83e9e5c0e43ef414f1aee5968b6f7c)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -900,13 +900,13 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -g3 -O1 -gdwarf-4
+        target_compile_options(${bun} PUBLIC -g3 -O0 -gdwarf-4
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC -O1)
+        target_compile_options(${bun} PUBLIC /Od)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")

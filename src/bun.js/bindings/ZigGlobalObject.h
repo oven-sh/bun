@@ -260,6 +260,7 @@ public:
 
     Structure* NapiExternalStructure() { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
+    Structure* NAPIFunctionStructure() { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -283,6 +284,8 @@ public:
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
     WebCore::EventTarget& eventTarget();
+
+    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Bun::GlobalScope& globalEventScope;
 
     enum class PromiseFunctions : uint8_t {
@@ -441,7 +444,6 @@ private:
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
     Lock m_gcLock;
-    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
     Bun::CommonStrings m_commonStrings;
 
@@ -520,6 +522,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;

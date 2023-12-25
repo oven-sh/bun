@@ -35,7 +35,6 @@
 #include "JsonWebKey.h"
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
-#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 

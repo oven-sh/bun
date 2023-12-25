@@ -359,7 +359,8 @@ pub const ServerConfig = struct {
                         var valid_count: u32 = 0;
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                                defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
                                     native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -407,7 +408,8 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                        defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -442,7 +444,8 @@ pub const ServerConfig = struct {
             }
 
             if (obj.getTruthy(global, "ALPNProtocols")) |protocols| {
-                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols, exception)) |sb| {
+                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
+                    defer sb.deinit();
                     const sliced = sb.slice();
                     if (sliced.len > 0) {
                         result.protos = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -468,7 +471,8 @@ pub const ServerConfig = struct {
 
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                                defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
                                     native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -516,7 +520,8 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                        defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -574,7 +579,8 @@ pub const ServerConfig = struct {
 
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
+                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                                defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
                                     native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -622,7 +628,8 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
+                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                        defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
@@ -4889,7 +4896,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,
-                    bun.String.static(info.ip).toJSConst(this.globalThis),
+                    bun.String.static(info.ip).toJS(this.globalThis),
                     info.port,
                     info.is_ipv6,
                 )
@@ -5401,7 +5408,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             if (tcp.hostname) |hostname| {
                                 this.cached_hostname = bun.String.create(bun.sliceTo(hostname, 0));
                             } else {
-                                this.cached_hostname = bun.String.createAtom("localhost");
+                                this.cached_hostname = bun.String.createAtomASCII("localhost");
                             }
                         },
                         else => {},

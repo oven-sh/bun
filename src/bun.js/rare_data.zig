@@ -154,6 +154,8 @@ pub fn nextUUID(this: *RareData) UUID {
     return UUID.initWith(&bytes);
 }
 
+
+
 pub fn entropySlice(this: *RareData, len: usize) []u8 {
     if (this.entropy_cache == null) {
         this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;

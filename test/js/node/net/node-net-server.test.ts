@@ -2,6 +2,7 @@ import { createServer, Server, AddressInfo, Socket } from "net";
 import { realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { spawnSync } from "node:child_process";
 import { createTest } from "node-harness";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
@@ -72,11 +73,9 @@ describe("net.createServer listen", () => {
     );
   });
 
-  it("should listen if we passed backlog", done => {
+  it.if(process.platform == "linux")("tcp server should work with custom backlog", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
     const server: Server = createServer();
-
     let timeout: Timer;
     const closeAndFail = () => {
       clearTimeout(timeout);
@@ -85,16 +84,49 @@ describe("net.createServer listen", () => {
     };
     server.on("error", closeAndFail);
     timeout = setTimeout(closeAndFail, 100);
-
     server.listen(
       0,
       "0.0.0.0",
       1024,
       mustCall(() => {
-        const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("0.0.0.0");
-        expect(address.port).toBeGreaterThan(100);
-        expect(address.family).toStrictEqual("IPv4");
+        const port = (server.address() as AddressInfo).port;
+        const line = spawnSync("ss", ["-tulnp"])
+          .stdout.toString()
+          .split("\n")
+          .find(line => line.includes(`:${port}`));
+        expect(line).toBeDefined();
+        const columns = line!.split(/\s+/);
+        expect(columns![3]).toBe("1024");
+        server.close();
+        done();
+      }),
+    );
+  });
+
+  it.if(process.platform == "linux")("unix server should work with custom backlog", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const server: Server = createServer();
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
+    server.listen(
+      socketPath,
+      1024,
+      mustCall(() => {
+        const port = (server.address() as AddressInfo).port;
+        const line = spawnSync("ss", ["-xln"])
+          .stdout.toString()
+          .split("\n")
+          .find(line => line.includes(socketPath));
+        expect(line).toBeDefined();
+        const columns = line!.split(/\s+/);
+        expect(columns![3]).toBe("1024");
         server.close();
         done();
       }),

@@ -467,6 +467,10 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
   if (typeof host === "function") {
     onListen = host;
     host = undefined;
+  } else if (Number.isSafeInteger(host) && host > 0) {
+    onListen = backlog;
+    backlog = host;
+    host = undefined;
   }
 
   if (typeof port === "function") {

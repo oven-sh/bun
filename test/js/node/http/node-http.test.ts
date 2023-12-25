@@ -979,20 +979,66 @@ describe("node:http", () => {
     });
   });
 
-  test("should listen if we pass a backlog", done => {
-    const server = createServer((req, res) => {
-      res.end();
-    });
-    server.listen(0, "127.0.0.1", 1024, async (_err, host, port) => {
+  test.if(process.platform == "linux")("server default backlog", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      port = server.address().port;
       try {
-        await fetch(`http://${host}:${port}`).then(res => {
-          expect(res.status).toBe(200);
-          done();
-        });
+        const line = spawnSync("ss", ["-tulnp"])
+          .stdout.toString()
+          .split("\n")
+          .find(line => line.includes(`:${port}`));
+        expect(line).toBeDefined();
+        const columns = line.split(/\s+/);
+        expect(columns[3]).toBe("512");
+        done();
       } catch (err) {
         done(err);
       } finally {
         server.close();
+      }
+    });
+  });
+
+  test.if(process.platform == "linux")("tcp server should work with custom backlog", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, "127.0.0.1", 1024, async (_err, host, port) => {
+      port = server.address().port;
+      try {
+        const line = spawnSync("ss", ["-tulnp"])
+          .stdout.toString()
+          .split("\n")
+          .find(line => line.includes(`:${port}`));
+        expect(line).toBeDefined();
+        const columns = line.split(/\s+/);
+        expect(columns[3]).toBe("1024");
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  test.if(process.platform == "linux")("unix server should work with custom backlog", done => {
+    const server = createServer((req, res) => {});
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    server.listen(socketPath, 1024, async (_err, host, port) => {
+      try {
+        const line = spawnSync("ss", ["-xln"])
+          .stdout.toString()
+          .split("\n")
+          .find(line => line.includes(socketPath));
+        expect(line).toBeDefined();
+        const columns = line.split(/\s+/);
+        expect(columns[3]).toBe("1024");
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+        unlinkSync(socketPath);
       }
     });
   });

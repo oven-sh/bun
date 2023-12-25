@@ -457,6 +457,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     LIBUS_SOCKET_DESCRIPTOR listenFd,
     struct addrinfo *listenAddr,
     int port,
+    int backlog,
     int options
 ) {
 
@@ -488,7 +489,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
 
-    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, 512)) {
+    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, backlog)) {
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -497,7 +498,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int backlog, int options) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -522,7 +523,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, backlog, options) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -539,7 +540,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, backlog, options) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -560,7 +561,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #endif
 #include <sys/stat.h>
 #include <stddef.h>
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int backlog, int options) {
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
@@ -588,7 +589,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int opti
     unlink(path);
 #endif
 
-    if (bind(listenFd, (struct sockaddr *)&server_address, size) || listen(listenFd, 512)) {
+    if (bind(listenFd, (struct sockaddr *)&server_address, size) || listen(listenFd, backlog)) {
         bsd_close_socket(listenFd);
         return LIBUS_SOCKET_ERROR;
     }

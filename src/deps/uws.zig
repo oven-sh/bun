@@ -1106,8 +1106,8 @@ extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext,
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
-pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, backlog: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, backlog: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, source_host: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
@@ -1736,6 +1736,7 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn listen(
             app: *ThisApp,
             port: i32,
+            backlog: i32,
             comptime UserData: type,
             user_data: UserData,
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket, uws_app_listen_config_t) void,
@@ -1756,7 +1757,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 }
             };
-            return uws_app_listen(ssl_flag, @as(*uws_app_t, @ptrCast(app)), port, Wrapper.handle, user_data);
+            return uws_app_listen(ssl_flag, @as(*uws_app_t, @ptrCast(app)), port, backlog, Wrapper.handle, user_data);
         }
 
         pub fn listenWithConfig(
@@ -1778,7 +1779,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 }
             };
-            return uws_app_listen_with_config(ssl_flag, @as(*uws_app_t, @ptrCast(app)), config.host, @as(u16, @intCast(config.port)), config.options, Wrapper.handle, user_data);
+            return uws_app_listen_with_config(ssl_flag, @as(*uws_app_t, @ptrCast(app)), config.host, @as(u16, @intCast(config.port)), config.backlog, config.options, Wrapper.handle, user_data);
         }
 
         pub fn listenOnUnixSocket(
@@ -1787,6 +1788,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserData,
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
             domain: [*:0]const u8,
+            backlog: i32,
             flags: i32,
         ) void {
             const Wrapper = struct {
@@ -1805,6 +1807,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 ssl_flag,
                 @as(*uws_app_t, @ptrCast(app)),
                 domain,
+                backlog,
                 flags,
                 Wrapper.handle,
                 user_data,
@@ -2242,6 +2245,7 @@ extern fn uws_app_listen_with_config(
     app: *uws_app_t,
     host: [*c]const u8,
     port: u16,
+    backlog: i32,
     options: i32,
     handler: uws_listen_handler,
     user_data: ?*anyopaque,
@@ -2376,6 +2380,7 @@ pub const uws_app_listen_config_t = extern struct {
     port: i32,
     host: [*c]const u8 = null,
     options: i32,
+    backlog: i32,
 };
 
 extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
@@ -2418,7 +2423,8 @@ extern fn uws_app_listen_domain_with_options(
     ssl_flag: c_int,
     app: *uws_app_t,
     domain: [*:0]const u8,
-    i32,
+    backlog: i32,
+    options: i32,
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;

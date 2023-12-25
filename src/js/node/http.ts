@@ -476,6 +476,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
       this.close();
     });
 
+    backlog = port?.backlog;
     host = port?.host;
     port = port?.port;
 
@@ -500,6 +501,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
       port,
       hostname: host,
       unix: socketPath,
+      backlog: backlog,
       // Bindings to be used for WS Server
       websocket: {
         open(ws) {

@@ -979,6 +979,24 @@ describe("node:http", () => {
     });
   });
 
+  test("should listen if we pass a backlog", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen(0, "127.0.0.1", 1024, async (_err, host, port) => {
+      try {
+        await fetch(`http://${host}:${port}`).then(res => {
+          expect(res.status).toBe(200);
+          done();
+        });
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
   test("error event not fired, issue#4651", done => {
     const server = createServer((req, res) => {
       res.end();

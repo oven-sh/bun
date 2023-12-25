@@ -72,6 +72,35 @@ describe("net.createServer listen", () => {
     );
   });
 
+  it("should listen if we passed backlog", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(
+      0,
+      "0.0.0.0",
+      1024,
+      mustCall(() => {
+        const address = server.address() as AddressInfo;
+        expect(address.address).toStrictEqual("0.0.0.0");
+        expect(address.port).toBeGreaterThan(100);
+        expect(address.family).toStrictEqual("IPv4");
+        server.close();
+        done();
+      }),
+    );
+  });
+
   it("should call listening", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

@@ -109,7 +109,7 @@ const CursorState = struct {
     }
 };
 
-pub const BunGlobWalker = GlobWalker_(null);
+pub const BunGlobWalker = GlobWalker_(null, false);
 
 fn dummyFilterTrue(val: []const u8) bool {
     _ = val;
@@ -121,8 +121,13 @@ fn dummyFilterFalse(val: []const u8) bool {
     return false;
 }
 
+pub fn ignoreNodeModules(entry_name: []const u8) bool {
+    return bun.strings.eqlComptime(entry_name, "node_modules");
+}
+
 pub fn GlobWalker_(
     comptime ignore_filter_fn: ?*const fn ([]const u8) bool,
+    comptime track_search_count: bool,
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
 
@@ -155,6 +160,7 @@ pub fn GlobWalker_(
         pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
+        search_count: if (track_search_count) usize else u0 = 0,
 
         /// The glob walker references the .directory.path so its not safe to
         /// copy/move this
@@ -447,6 +453,7 @@ pub fn GlobWalker_(
                             };
 
                             const dir_iter_state: *const IterState.Directory = &this.iter_state.directory;
+                            this.walker.bumpSearchCount();
 
                             const entry_name = entry.name.slice();
                             switch (entry.kind) {
@@ -685,6 +692,12 @@ pub fn GlobWalker_(
         pub fn deinit(this: *GlobWalker, comptime clear_arena: bool) void {
             if (comptime clear_arena) {
                 this.arena.deinit();
+            }
+        }
+
+        inline fn bumpSearchCount(this: *GlobWalker) void {
+            if (comptime track_search_count) {
+                this.search_count += 1;
             }
         }
 

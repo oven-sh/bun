@@ -239,6 +239,7 @@ pub const Arguments = struct {
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--include <STR>                  Use glob patterns to select which tests to run, works in conjunction with positional arguments.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -466,6 +467,9 @@ pub const Arguments = struct {
                     Global.exit(1);
                 };
                 ctx.test_options.test_filter_regex = regex;
+            }
+            if (args.option("--include")) |include_pattern| {
+                ctx.test_options.include = include_pattern;
             }
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             ctx.test_options.run_todo = args.flag("--todo");
@@ -1051,6 +1055,9 @@ pub const Command = struct {
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
+        /// A glob pattern to scan for files to test
+        /// This is applied _before_ the positional "filter" argument.
+        include: ?[]const u8 = null,
     };
 
     pub const Debugger = union(enum) {

@@ -6,6 +6,53 @@ import { describe, test, expect } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 
 describe("bun test", () => {
+  test("FUCK", () => {
+    const cwd = createTest([
+      {
+        filename: "hello.lol.js",
+        contents: /* typescript */ `
+        import { test, expect } from "bun:test"
+        test("test #1", () => {
+          expect(true).toBe(true);
+        });
+        `,
+      },
+      {
+        filename: "nice.lol.ts",
+        contents: /* typescript */ `
+        import { test, expect } from "bun:test"
+        test("test #2", () => {
+          expect(true).toBe(true);
+        });
+        `,
+      },
+      {
+        filename: "index.js",
+        contents: /* typescript */ `
+        import { test, expect } from "bun:test"
+        test("test #3", () => {
+          expect(true).toBe(true);
+        });
+        `,
+      },
+      {
+        filename: "index.lol.ts",
+        contents: /* typescript */ `
+        import { test, expect } from "bun:test"
+        test("test #4", () => {
+          expect(true).toBe(true);
+        });
+        `,
+      },
+    ]);
+    const stderr = runTest({
+      args: ["--include", "**/*.lol.{ts,js}"],
+      cwd,
+    });
+    expect(stderr).toContain("test #1");
+    expect(stderr).toContain("test #2");
+    expect(stderr).toContain("test #4");
+  });
   test("can provide no arguments", () => {
     const stderr = runTest({
       args: [],

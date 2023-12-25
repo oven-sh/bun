@@ -126,6 +126,17 @@ The root directory to run tests from. Default `.`.
 root = "./__tests__"
 ```
 
+### `test.include`
+
+Specify a glob pattern to select which tests files to run.
+
+Defaults to: `**/*.{test,_test,spec,_spec}.{js,jsx,ts,tsx}`
+
+```toml
+[test]
+include = "tests/**/*.{js,jsx,ts,tsx}"
+```
+
 ### `test.preload`
 
 Same as the top-level `preload` field, but only applies to `bun test`.

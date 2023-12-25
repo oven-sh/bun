@@ -237,6 +237,11 @@ pub const Bunfig = struct {
                         this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
                     }
 
+                    if (test_.get("include")) |expr| {
+                        try this.expect(expr, .e_string);
+                        this.ctx.test_options.include = expr.data.e_string.data;
+                    }
+
                     if (test_.get("preload")) |expr| {
                         try this.loadPreload(allocator, expr);
                     }

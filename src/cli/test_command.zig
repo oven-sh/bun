@@ -499,13 +499,14 @@ const Scanner = struct {
     }
 
     pub fn doesAbsolutePathMatchFilter(this: *Scanner, name: string) bool {
-        if (this.filter_names.len == 0) return true;
+        return TestCommand.doesAbsolutePathMatchFilter(this.filter_names, name);
+        // if (this.filter_names.len == 0) return true;
 
-        for (this.filter_names) |filter_name| {
-            if (strings.startsWith(name, filter_name)) return true;
-        }
+        // for (this.filter_names) |filter_name| {
+        //     if (strings.startsWith(name, filter_name)) return true;
+        // }
 
-        return false;
+        // return false;
     }
 
     pub fn doesPathMatchFilter(this: *Scanner, name: string) bool {
@@ -577,6 +578,26 @@ pub const TestCommand = struct {
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
     };
+
+    pub fn doesAbsolutePathMatchFilter(filter_names: []const []const u8, name_: string) bool {
+        if (filter_names.len == 0) return true;
+
+        for (filter_names) |filter_name| {
+            if (strings.startsWith(name_, filter_name)) return true;
+        }
+
+        return false;
+    }
+
+    pub fn doesPathMatchFilter(filter_names: []const []const u8, name_: string) bool {
+        if (filter_names.len == 0) return true;
+
+        for (filter_names) |filter_name| {
+            if (strings.contains(name_, filter_name)) return true;
+        }
+
+        return false;
+    }
 
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
@@ -717,6 +738,67 @@ pub const TestCommand = struct {
 
             // Treat arguments as filters and scan the codebase
             const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
+
+            if (ctx.test_options.include) |include_glob_pattern| {
+                const glob = @import("../glob.zig");
+                const GlobWalker = glob.GlobWalker_(glob.ignoreNodeModules, true);
+                var glob_walker = bun.new(GlobWalker, .{});
+                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                errdefer arena.deinit();
+
+                const result = brk: {
+                    const dot: bool = false;
+                    const absolute: bool = true;
+                    const follow_symlinks: bool = false;
+                    const error_on_broken_symlinks: bool = false;
+                    const only_files: bool = true;
+
+                    // No specified cwd
+                    if (std.mem.eql(u8, ctx.debug.test_directory, "")) {
+                        break :brk glob_walker.init(&arena, include_glob_pattern, dot, absolute, follow_symlinks, error_on_broken_symlinks, only_files) catch bun.outOfMemory();
+                    }
+                    const cwd = cwd: {
+                        if (resolve_path.Platform.auto.isAbsolute(ctx.debug.test_directory))
+                            break :cwd arena.allocator().dupe(u8, ctx.debug.test_directory) catch bun.outOfMemory();
+
+                        // Convert to an absolute path
+                        const cwd = try bun.sys.getcwd((&path_buf)).unwrap();
+
+                        const cwd_str = resolve_path.joinStringBuf(&path_buf2, &[_][]const u8{
+                            cwd,
+                            ctx.debug.test_directory,
+                        }, .auto);
+
+                        break :cwd arena.allocator().dupe(u8, cwd_str) catch bun.outOfMemory();
+                    };
+
+                    break :brk glob_walker.initWithCwd(&arena, include_glob_pattern, cwd, dot, absolute, follow_symlinks, error_on_broken_symlinks, only_files) catch {
+                        arena.deinit();
+                        return;
+                    };
+                };
+
+                _ = try result.unwrap();
+                defer glob_walker.deinit(true);
+
+                var iter = GlobWalker.Iterator{ .walker = glob_walker };
+                defer iter.deinit();
+                try (try iter.init()).unwrap();
+
+                while (try (try iter.next()).unwrap()) |path| {
+                    const is_match = doesAbsolutePathMatchFilter(filter_names, path) or brk: {
+                        const rel_path = bun.path.relative(vm.bundler.fs.top_level_dir, path);
+                        break :brk doesPathMatchFilter(filter_names, rel_path);
+                    };
+
+                    if (is_match) {
+                        const abs_path = bun.PathString.init(vm.bundler.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
+                        results.append(abs_path) catch bun.outOfMemory();
+                    }
+                }
+
+                break :scan .{ results.items, glob_walker.search_count };
+            }
 
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),

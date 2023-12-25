@@ -27,209 +27,77 @@ const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
 
-fn ObjectPtrType(comptime Type: type) type {
-    if (Type == void) return Type;
-    return *Type;
-}
-
-const Internal = struct {
-    pub fn toJSWithType(globalThis: *JSC.JSGlobalObject, comptime Type: type, value: Type, exception: JSC.C.ExceptionRef) JSValue {
-        // TODO: refactor withType to use this instead of the other way around
-        return JSC.JSValue.c(To.JS.withType(Type, value, globalThis, exception));
-    }
-
-    pub fn toJS(globalThis: *JSC.JSGlobalObject, value: anytype, exception: JSC.C.ExceptionRef) JSValue {
-        return toJSWithType(globalThis, @TypeOf(value), value, exception);
-    }
+pub const Lifetime = enum {
+    allocated,
+    temporary,
 };
-
-pub usingnamespace Internal;
-
-pub const To = struct {
-    pub const Cpp = struct {
-        pub fn PropertyGetter(
-            comptime Type: type,
-        ) type {
-            return comptime fn (
-                this: ObjectPtrType(Type),
-                globalThis: *JSC.JSGlobalObject,
-            ) callconv(.C) JSC.JSValue;
+pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: ValueType, comptime lifetime: Lifetime) JSC.JSValue {
+    const Type = comptime brk: {
+        var CurrentType = ValueType;
+        if (@typeInfo(ValueType) == .Optional) {
+            CurrentType = @typeInfo(ValueType).Optional.child;
         }
-
-        const toJS = Internal.toJSWithType;
-
-        pub fn GetterFn(comptime Type: type, comptime decl: std.meta.DeclEnum(Type)) PropertyGetter(Type) {
-            return struct {
-                pub fn getter(
-                    this: ObjectPtrType(Type),
-                    globalThis: *JSC.JSGlobalObject,
-                ) callconv(.C) JSC.JSValue {
-                    var exception_ref = [_]JSC.C.JSValueRef{null};
-                    const exception: JSC.C.ExceptionRef = &exception_ref;
-                    const result = toJS(globalThis, @call(.auto, @field(Type, @tagName(decl)), .{this}), exception);
-                    if (exception.* != null) {
-                        globalThis.throwValue(JSC.JSValue.c(exception.*));
-                        return .zero;
-                    }
-
-                    return result;
-                }
-            }.getter;
-        }
+        break :brk if (@typeInfo(CurrentType) == .Pointer and @typeInfo(CurrentType).Pointer.size == .One)
+            @typeInfo(CurrentType).Pointer.child
+        else
+            CurrentType;
     };
-    pub const JS = struct {
-        pub fn withType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return withTypeClone(Type, value, context, exception, false);
-        }
 
-        pub fn withTypeClone(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef, clone: bool) JSC.C.JSValueRef {
-            if (comptime bun.trait.isNumber(Type)) {
-                return JSC.JSValue.jsNumberWithType(Type, value).asRef();
+    if (comptime bun.trait.isNumber(Type)) {
+        return JSC.JSValue.jsNumberWithType(Type, if (comptime Type != ValueType) value.* else value);
+    }
+
+    switch (comptime Type) {
+        void => return .undefined,
+        bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
+        *JSC.JSGlobalObject => return value.toJSValue(),
+        []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
+            const str = bun.String.create(value);
+            defer str.deref();
+            return str.toJS(globalObject);
+        },
+        []const bun.String => {
+            defer {
+                for (value) |out| {
+                    out.deref();
+                }
+                bun.default_allocator.free(value);
+            }
+            return bun.String.toJSArray(globalObject, value);
+        },
+        JSC.JSValue => return if (Type != ValueType) value.* else value,
+
+        else => {
+
+            // Recursion can stack overflow here
+            if (bun.trait.isSlice(Type)) {
+                const Child = comptime std.meta.Child(Type);
+
+                var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                for (value, 0..) |*item, i| {
+                    const res = toJS(globalObject, *Child, item, lifetime);
+                    if (res == .zero) return .zero;
+                    array.putIndex(
+                        globalObject,
+                        @truncate(i),
+                        res,
+                    );
+                }
+                return array;
             }
 
-            var zig_str: JSC.ZigString = undefined;
+            if (comptime @hasDecl(Type, "toJSNewlyCreated") and @typeInfo(@TypeOf(@field(Type, "toJSNewlyCreated"))).Fn.params.len == 2) {
+                return value.toJSNewlyCreated(globalObject);
+            }
 
-            return switch (comptime Type) {
-                void => JSC.C.JSValueMakeUndefined(context),
-                bool => JSC.C.JSValueMakeBoolean(context, value),
-                []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => brk: {
-                    zig_str = ZigString.init(value);
-                    const val = zig_str.toValueAuto(context.ptr());
+            if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
+                return value.toJS(globalObject);
+            }
 
-                    break :brk val.asObjectRef();
-                },
-                []const JSC.ZigString => {
-                    const array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
-                    const values: []const JSC.ZigString = value;
-                    defer bun.default_allocator.free(values);
-                    if (clone) {
-                        for (values) |out| {
-                            if (out.isGloballyAllocated()) {
-                                out.deinitGlobal();
-                            }
-                        }
-                    }
-
-                    return array;
-                },
-                []const bun.String => {
-                    defer {
-                        for (value) |out| {
-                            out.deref();
-                        }
-                        bun.default_allocator.free(value);
-                    }
-                    return bun.String.toJSArray(context, value).asObjectRef();
-                },
-                []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
-                    if (value.len == 0)
-                        return JSC.C.JSObjectMakeArray(context, 0, null, exception);
-
-                    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-                    var allocator = stack_fallback.get();
-
-                    var zig_strings = allocator.alloc(ZigString, value.len) catch unreachable;
-                    defer if (stack_fallback.fixed_buffer_allocator.end_index >= 511) allocator.free(zig_strings);
-
-                    for (value, 0..) |path_string, i| {
-                        if (comptime Type == []const PathString) {
-                            zig_strings[i] = ZigString.init(path_string.slice());
-                        } else {
-                            zig_strings[i] = ZigString.init(path_string);
-                        }
-                    }
-                    // there is a possible C ABI bug or something here when the ptr is null
-                    // it should not be segfaulting but it is
-                    // that's why we check at the top of this function
-                    const array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
-
-                    if (clone and value.len > 0) {
-                        for (value) |path_string| {
-                            if (comptime Type == []const PathString) {
-                                bun.default_allocator.free(path_string.slice());
-                            } else {
-                                bun.default_allocator.free(path_string);
-                            }
-                        }
-                        bun.default_allocator.free(value);
-                    }
-
-                    return array;
-                },
-
-                JSC.C.JSValueRef => value,
-
-                else => {
-                    const Info: std.builtin.Type = @typeInfo(Type);
-                    if (Info == .Enum) {
-                        const Enum: std.builtin.Type.Enum = Info.Enum;
-                        if (!bun.trait.isNumber(Enum.tag_type)) {
-                            @compileError("im curious if this ever gets hit. this feels like dead code");
-                            // zig_str = JSC.ZigString.init(@tagName(value));
-                            // return zig_str.toValue(context.ptr()).asObjectRef();
-                        }
-                    }
-
-                    // Recursion can stack overflow here
-                    if (bun.trait.isSlice(Type)) {
-                        const Child = comptime std.meta.Child(Type);
-
-                        var array = JSC.JSValue.createEmptyArray(context, value.len);
-                        for (value, 0..) |item, i| {
-                            array.putIndex(
-                                context,
-                                @truncate(i),
-                                JSC.JSValue.c(To.JS.withType(Child, item, context, exception)),
-                            );
-
-                            if (exception.* != null) {
-                                return null;
-                            }
-                        }
-                        return array.asObjectRef();
-                    }
-
-                    if (comptime bun.trait.isZigString(Type)) {
-                        zig_str = JSC.ZigString.init(value);
-                        return zig_str.toValue(context.ptr()).asObjectRef();
-                    }
-
-                    if (comptime Info == .Pointer) {
-                        const Child = std.meta.Child(Type);
-                        if (bun.trait.isContainer(Child) and @hasDecl(Child, "Class") and @hasDecl(Child.Class, "isJavaScriptCoreClass")) {
-                            return Child.Class.make(context, value);
-                        }
-                    }
-
-                    if (comptime Info == .Struct) {
-                        if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
-                            if (comptime !@hasDecl(Type, "finalize")) {
-                                @compileError(std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
-                            }
-
-                            if (comptime !@hasDecl(Type, "toJS")) {
-                                return Type.Class.make(context, bun.new(Type, value));
-                            }
-                        }
-                    }
-
-                    if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
-                        return bun.new(Type, value).toJS(context).asObjectRef();
-                    }
-
-                    const res = value.toJS(context, exception);
-
-                    if (@TypeOf(res) == JSC.C.JSValueRef) {
-                        return res;
-                    } else if (@TypeOf(res) == JSC.JSValue) {
-                        return res.asObjectRef();
-                    }
-                    @compileError("dont know how to convert " ++ @typeName(@TypeOf(res)) ++ " to JS");
-                },
-            };
-        }
-    };
-};
+            @compileError("dont know how to convert " ++ @typeName(ValueType) ++ " to JS");
+        },
+    }
+}
 
 pub const Properties = struct {
     pub const UTF8 = struct {
@@ -694,7 +562,7 @@ pub const ArrayBuffer = extern struct {
 };
 
 pub const MarkedArrayBuffer = struct {
-    buffer: ArrayBuffer,
+    buffer: ArrayBuffer = .{},
     allocator: ?std.mem.Allocator = null,
 
     pub const Stream = ArrayBuffer.Stream;
@@ -758,8 +626,8 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
-        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
+    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
     pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
@@ -787,7 +655,18 @@ pub const MarkedArrayBuffer = struct {
         );
     }
 
-    pub const toJS = toJSObjectRef;
+    // TODO: refactor this
+    pub fn toJS(this: *MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var exception = [_]JSC.C.JSValueRef{null};
+        const obj = this.toJSObjectRef(globalObject, &exception);
+
+        if (exception[0] != null) {
+            globalObject.throwValue(JSC.JSValue.c(exception[0]));
+            return .zero;
+        }
+
+        return JSC.JSValue.c(obj);
+    }
 };
 
 // expensive heap reference-counted string type
@@ -1348,7 +1227,7 @@ pub fn wrapInstanceMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1357,22 +1236,7 @@ pub fn wrapInstanceMethod(
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
-                                    globalThis.throwInvalidArguments("expected string or buffer", .{});
-                                    iter.deinit();
-                                    return JSC.JSValue.zero;
-                                };
-                            } else {
-                                args[i] = null;
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                                     globalThis.throwInvalidArguments("expected string or buffer", .{});
                                     iter.deinit();
                                     return JSC.JSValue.zero;
@@ -1520,7 +1384,7 @@ pub fn wrapStaticMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1528,30 +1392,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
-                                globalThis.throwInvalidArguments("expected string or buffer", .{});
-                                iter.deinit();
-                                return JSC.JSValue.zero;
-                            };
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    JSC.Node.SliceOrBuffer => {
-                        const arg = iter.nextEat() orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
-                            iter.deinit();
-                            return JSC.JSValue.zero;
-                        };
-                        args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
-                            iter.deinit();
-                            return JSC.JSValue.zero;
-                        };
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                                 globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;

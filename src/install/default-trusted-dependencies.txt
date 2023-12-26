@@ -355,7 +355,6 @@ node-zopfli-es
 nodegit
 nodejieba
 nodent-runtime
-nuxt
 nuxt-edge
 nx
 odiff-bin

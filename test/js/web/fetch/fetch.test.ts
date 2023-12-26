@@ -296,11 +296,21 @@ describe("AbortSignal", () => {
   it("TimeoutError", async () => {
     const signal = AbortSignal.timeout(10);
 
+    let server: Server | null = null;
     try {
-      await fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text());
-      expect(() => {}).toThrow();
+      server = Bun.serve({
+        port: 0,
+        async fetch() {
+          Bun.sleep(100);
+          return new Response("Hello");
+        },
+      });
+      await fetch(server.url, { signal: signal }).then(res => res.text());
+      expect.unreachable();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
+    } finally {
+      server?.stop(true);
     }
   });
 

@@ -2585,7 +2585,11 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             ) catch |err| {
                 if (err == error.Redirect) {
                     this.state.response_message_buffer.deinit();
-
+                    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
+                    socket.ext(**anyopaque).?.* = bun.cast(
+                        **anyopaque,
+                        NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
+                    );
                     if (this.state.allow_keepalive and FeatureFlags.enable_keepalive) {
                         std.debug.assert(this.connected_url.hostname.len > 0);
                         ctx.releaseSocket(

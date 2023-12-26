@@ -1207,13 +1207,9 @@ pub const ShellSubprocess = struct {
 
         var out_err: ?JSValue = null;
         var out_watchfd: if (Environment.isLinux) ?std.os.fd_t else ?i32 = null;
-        const subprocess = util.spawnMaybeSyncImpl(
+        const subprocess = spawnMaybeSyncImpl(
             .{
-                .SpawnArgs = SpawnArgs,
-                .Subprocess = ShellSubprocess,
-                .WaiterThread = WaiterThread,
                 .is_sync = false,
-                .is_js = false,
             },
             globalThis,
             arena.allocator(),
@@ -1326,6 +1322,392 @@ pub const ShellSubprocess = struct {
 
             jsc_vm.tick();
             jsc_vm.eventLoop().autoTick();
+        }
+
+        return subprocess;
+    }
+
+    pub fn spawnMaybeSyncImpl(
+        comptime config: struct {
+            is_sync: bool,
+        },
+        globalThis: *JSC.JSGlobalObject,
+        allocator: Allocator,
+        out_watchfd: *?WatchFd,
+        out_err: *?JSValue,
+        spawn_args: *SpawnArgs,
+        out_subproc: **ShellSubprocess,
+    ) ?*ShellSubprocess {
+        const Subprocess = ShellSubprocess;
+        const is_sync = config.is_sync;
+
+        var env: [*:null]?[*:0]const u8 = undefined;
+        var jsc_vm = globalThis.bunVM();
+        out_err.* = null;
+
+        var attr = PosixSpawn.Attr.init() catch {
+            globalThis.throw("out of memory", .{});
+            return null;
+        };
+
+        var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
+
+        if (comptime Environment.isMac) {
+            flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
+        }
+
+        if (spawn_args.detached) {
+            flags |= bun.C.POSIX_SPAWN_SETSID;
+        }
+
+        defer attr.deinit();
+        var actions = PosixSpawn.Actions.init() catch |err| {
+            out_err.* = globalThis.handleError(err, "in posix_spawn");
+            return null;
+        };
+        if (comptime Environment.isMac) {
+            attr.set(@intCast(flags)) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
+        } else if (comptime Environment.isLinux) {
+            attr.set(@intCast(flags)) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
+        }
+
+        attr.resetSignals() catch {
+            globalThis.throw("Failed to reset signals in posix_spawn", .{});
+            return null;
+        };
+
+        defer actions.deinit();
+
+        if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
+            spawn_args.env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
+            spawn_args.env_array.capacity = spawn_args.env_array.items.len;
+        }
+
+        const stdin_pipe = if (spawn_args.stdio[0].isPiped()) os.pipe2(0) catch |err| {
+            globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
+            return null;
+        } else undefined;
+
+        const stdout_pipe = if (spawn_args.stdio[1].isPiped()) os.pipe2(0) catch |err| {
+            globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
+            return null;
+        } else undefined;
+
+        const stderr_pipe = if (spawn_args.stdio[2].isPiped()) os.pipe2(0) catch |err| {
+            globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
+            return null;
+        } else undefined;
+
+        spawn_args.stdio[0].setUpChildIoPosixSpawn(
+            &actions,
+            stdin_pipe,
+            bun.STDIN_FD,
+        ) catch |err| {
+            out_err.* = globalThis.handleError(err, "in configuring child stdin");
+            return null;
+        };
+
+        spawn_args.stdio[1].setUpChildIoPosixSpawn(
+            &actions,
+            stdout_pipe,
+            bun.STDOUT_FD,
+        ) catch |err| {
+            out_err.* = globalThis.handleError(err, "in configuring child stdout");
+            return null;
+        };
+
+        spawn_args.stdio[2].setUpChildIoPosixSpawn(
+            &actions,
+            stderr_pipe,
+            bun.STDERR_FD,
+        ) catch |err| {
+            out_err.* = globalThis.handleError(err, "in configuring child stderr");
+            return null;
+        };
+
+        actions.chdir(spawn_args.cwd) catch |err| {
+            out_err.* = globalThis.handleError(err, "in chdir()");
+            return null;
+        };
+
+        spawn_args.argv.append(allocator, null) catch {
+            globalThis.throw("out of memory", .{});
+            return null;
+        };
+
+        // // IPC is currently implemented in a very limited way.
+        // //
+        // // Node lets you pass as many fds as you want, they all become be sockets; then, IPC is just a special
+        // // runtime-owned version of "pipe" (in which pipe is a misleading name since they're bidirectional sockets).
+        // //
+        // // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional
+        // //
+        // // And then fd 3 is assigned specifically and only for IPC. This is quite lame, because Node.js allows
+        // // the ipc fd to be any number and it just works. But most people only care about the default `.fork()`
+        // // behavior, where this workaround suffices.
+        // //
+        // // When Bun.spawn() is given a `.onMessage` callback, it enables IPC as follows:
+        // var socket: if (is_js) IPC.Socket else u0 = undefined;
+        // if (comptime is_js) {
+        //     if (spawn_args.ipc_mode != .none) {
+        //         if (comptime is_sync) {
+        //             globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
+        //             return null;
+        //         }
+
+        //         spawn_args.env_array.ensureUnusedCapacity(allocator, 2) catch |err| {
+        //             out_err.* = globalThis.handleError(err, "in posix_spawn");
+        //             return null;
+        //         };
+        //         spawn_args.env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
+
+        //         var fds: [2]uws.LIBUS_SOCKET_DESCRIPTOR = undefined;
+        //         socket = uws.newSocketFromPair(
+        //             jsc_vm.rareData().spawnIPCContext(jsc_vm),
+        //             @sizeOf(*Subprocess),
+        //             &fds,
+        //         ) orelse {
+        //             globalThis.throw("failed to create socket pair: E{s}", .{
+        //                 @tagName(bun.sys.getErrno(-1)),
+        //             });
+        //             return null;
+        //         };
+        //         actions.dup2(fds[1], 3) catch |err| {
+        //             out_err.* = globalThis.handleError(err, "in posix_spawn");
+        //             return null;
+        //         };
+        //     }
+        // }
+
+        spawn_args.env_array.append(allocator, null) catch {
+            globalThis.throw("out of memory", .{});
+            return null;
+        };
+        env = @as(@TypeOf(env), @ptrCast(spawn_args.env_array.items.ptr));
+
+        const pid = brk: {
+            defer {
+                if (spawn_args.stdio[0].isPiped()) {
+                    _ = bun.sys.close(stdin_pipe[0]);
+                }
+
+                if (spawn_args.stdio[1].isPiped()) {
+                    _ = bun.sys.close(stdout_pipe[1]);
+                }
+
+                if (spawn_args.stdio[2].isPiped()) {
+                    _ = bun.sys.close(stderr_pipe[1]);
+                }
+            }
+
+            break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
+                .err => |err| {
+                    const str = err.toJSC(globalThis).getZigString(globalThis);
+                    std.debug.print("THE ERROR!: {s}\n", .{str});
+                    globalThis.throwValue(err.toJSC(globalThis));
+                    return null;
+                },
+                .result => |pid_| pid_,
+            };
+        };
+
+        const pidfd: std.os.fd_t = brk: {
+            if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
+                break :brk pid;
+            }
+
+            const kernel = @import("../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+
+            // pidfd_nonblock only supported in 5.10+
+            var pidfd_flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+                std.os.O.NONBLOCK
+            else
+                0;
+
+            var rc = std.os.linux.pidfd_open(
+                @intCast(pid),
+                pidfd_flags,
+            );
+
+            while (true) {
+                switch (std.os.linux.getErrno(rc)) {
+                    .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
+                    .INTR => {
+                        rc = std.os.linux.pidfd_open(
+                            @intCast(pid),
+                            pidfd_flags,
+                        );
+                        continue;
+                    },
+                    else => |err| {
+                        if (err == .INVAL) {
+                            if (pidfd_flags != 0) {
+                                rc = std.os.linux.pidfd_open(
+                                    @intCast(pid),
+                                    0,
+                                );
+                                pidfd_flags = 0;
+                                continue;
+                            }
+                        }
+
+                        const error_instance = brk2: {
+                            if (err == .NOSYS) {
+                                WaiterThread.setShouldUseWaiterThread();
+                                break :brk pid;
+                            }
+
+                            break :brk2 bun.sys.Error.fromCode(err, .open).toJSC(globalThis);
+                        };
+                        globalThis.throwValue(error_instance);
+                        var status: u32 = 0;
+                        // ensure we don't leak the child process on error
+                        _ = std.os.linux.waitpid(pid, &status, 0);
+                        return null;
+                    },
+                }
+            }
+        };
+
+        var subprocess = globalThis.allocator().create(Subprocess) catch {
+            globalThis.throw("out of memory", .{});
+            return null;
+        };
+        out_subproc.* = subprocess;
+        // When run synchronously, subprocess isn't garbage collected
+        // if (comptime is_js) {
+        //     subprocess.* = Subprocess{
+        //         .globalThis = globalThis,
+        //         .pid = pid,
+        //         .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
+        //         .stdin = Subprocess.Writable.init(spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+        //             globalThis.throw("out of memory", .{});
+        //             return null;
+        //         },
+        //         // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
+        //         .stdout = Subprocess.Readable.init(spawn_args.stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, Subprocess.default_max_buffer_size),
+        //         .stderr = Subprocess.Readable.init(spawn_args.stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, Subprocess.default_max_buffer_size),
+        //         .flags = .{
+        //             .is_sync = is_sync,
+        //         },
+        //         .on_exit_callback = if (spawn_args.on_exit_callback != .zero) JSC.Strong.create(spawn_args.on_exit_callback, globalThis) else .{},
+        //         .ipc_mode = spawn_args.ipc_mode,
+        //         // will be assigned in the block below
+        //         .ipc = .{ .socket = socket },
+        //         .ipc_callback = if (spawn_args.ipc_callback != .zero) JSC.Strong.create(spawn_args.ipc_callback, globalThis) else undefined,
+        //     };
+
+        //     if (spawn_args.ipc_mode != .none) {
+        //         const ptr = socket.ext(*Subprocess);
+        //         ptr.?.* = subprocess;
+        //         subprocess.ipc.writeVersionPacket();
+        //     }
+        // } else {
+        subprocess.* = Subprocess{
+            .globalThis = globalThis,
+            .pid = pid,
+            .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
+            .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+                globalThis.throw("out of memory", .{});
+                return null;
+            },
+            // Readable initialization functions won't touch the subrpocess pointer so it's okay to hand it to them even though it technically has undefined memory at the point of Readble initialization
+            // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
+            .stdout = Subprocess.Readable.init(subprocess, .stdout, spawn_args.stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, Subprocess.default_max_buffer_size),
+            .stderr = Subprocess.Readable.init(subprocess, .stderr, spawn_args.stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, Subprocess.default_max_buffer_size),
+            .flags = .{
+                .is_sync = is_sync,
+            },
+            .cmd_parent = spawn_args.cmd_parent,
+        };
+        // subprocess.stdout.pipe.buffer.watch();
+        // }
+
+        if (subprocess.stdin == .pipe) {
+            subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+        }
+
+        // if (comptime is_js) {
+        //     const out = if (comptime !is_sync)
+        //         subprocess.toJS(globalThis)
+        //     else
+        //         JSValue.zero;
+        //     subprocess.this_jsvalue = out;
+        // }
+
+        var send_exit_notification = false;
+        const watchfd = if (comptime Environment.isLinux) brk: {
+            break :brk pidfd;
+        } else brk: {
+            break :brk pid;
+        };
+        out_watchfd.* = watchfd;
+
+        if (comptime !is_sync) {
+            if (!WaiterThread.shouldUseWaiterThread()) {
+                const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+                subprocess.poll = .{ .poll_ref = poll };
+                switch (subprocess.poll.poll_ref.?.register(
+                    jsc_vm.event_loop_handle.?,
+                    .process,
+                    true,
+                )) {
+                    .result => {
+                        subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
+                    },
+                    .err => |err| {
+                        if (err.getErrno() != .SRCH) {
+                            @panic("This shouldn't happen");
+                        }
+
+                        send_exit_notification = true;
+                        spawn_args.lazy = false;
+                    },
+                }
+            } else {
+                WaiterThread.append(subprocess);
+            }
+        }
+
+        defer {
+            if (send_exit_notification) {
+                // process has already exited
+                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                subprocess.wait(subprocess.flags.is_sync);
+            }
+        }
+
+        if (subprocess.stdin == .buffered_input) {
+            subprocess.stdin.buffered_input.remain = switch (subprocess.stdin.buffered_input.source) {
+                .blob => subprocess.stdin.buffered_input.source.blob.slice(),
+                .array_buffer => |array_buffer| array_buffer.slice(),
+            };
+            subprocess.stdin.buffered_input.writeIfPossible(is_sync);
+        }
+
+        if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+            if (comptime is_sync) {
+                subprocess.stdout.pipe.buffer.readAll();
+            } else if (!spawn_args.lazy) {
+                subprocess.stdout.pipe.buffer.readAll();
+            }
+        }
+
+        if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+            if (comptime is_sync) {
+                subprocess.stderr.pipe.buffer.readAll();
+            } else if (!spawn_args.lazy) {
+                subprocess.stderr.pipe.buffer.readAll();
+            }
         }
 
         return subprocess;
@@ -1544,5 +1926,177 @@ pub const ShellSubprocess = struct {
         return util.extractStdioBlob(globalThis, blob, i, stdio_array);
     }
 
-    pub const WaiterThread = util.NewWaiterThread(ShellSubprocess, false);
+    pub const WaiterThread = NewWaiterThread(ShellSubprocess, false);
 };
+
+// Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
+// use a thread to wait for the child process to exit.
+// We use a single thread to call waitpid() in a loop.
+pub fn NewWaiterThread(comptime Subprocess: type, comptime is_js: bool) type {
+    return struct {
+        const WaiterThread = @This();
+        concurrent_queue: Queue = .{},
+        queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
+        started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+        signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+        eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+
+        pub fn setShouldUseWaiterThread() void {
+            @atomicStore(bool, &should_use_waiter_thread, true, .Monotonic);
+        }
+
+        pub fn shouldUseWaiterThread() bool {
+            return @atomicLoad(bool, &should_use_waiter_thread, .Monotonic);
+        }
+
+        pub const WaitTask = struct {
+            subprocess: *Subprocess,
+            next: ?*WaitTask = null,
+        };
+
+        var should_use_waiter_thread = false;
+
+        pub const Queue = bun.UnboundedQueue(WaitTask, .next);
+        pub var instance: WaiterThread = .{};
+        pub fn init() !void {
+            std.debug.assert(should_use_waiter_thread);
+
+            if (instance.started.fetchMax(1, .Monotonic) > 0) {
+                return;
+            }
+
+            var thread = try std.Thread.spawn(.{ .stack_size = 512 * 1024 }, loop, .{});
+            thread.detach();
+
+            if (comptime Environment.isLinux) {
+                const linux = std.os.linux;
+                var mask = std.os.empty_sigset;
+                linux.sigaddset(&mask, std.os.SIG.CHLD);
+                instance.signalfd = try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK);
+                instance.eventfd = try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0);
+            }
+        }
+
+        pub const WaitPidResultTask = struct {
+            result: JSC.Maybe(PosixSpawn.WaitPidResult),
+            subprocess: *Subprocess,
+
+            pub fn runFromJSThread(self: *@This()) void {
+                const result = self.result;
+                var subprocess = self.subprocess;
+                _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                bun.default_allocator.destroy(self);
+                subprocess.onWaitPid(false, subprocess.this_jsvalue, result);
+            }
+        };
+
+        pub fn append(process: *Subprocess) void {
+            if (process.poll == .wait_thread) {
+                process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+                _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
+            } else {
+                process.poll = .{
+                    .wait_thread = .{
+                        .poll_ref = .{},
+                        .ref_count = std.atomic.Value(u32).init(1),
+                    },
+                };
+                process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+            }
+
+            const task = bun.default_allocator.create(WaitTask) catch unreachable;
+            task.* = WaitTask{
+                .subprocess = process,
+            };
+            instance.concurrent_queue.push(task);
+            if (comptime is_js) {
+                process.updateHasPendingActivity();
+            }
+
+            init() catch @panic("Failed to start WaiterThread");
+
+            if (comptime Environment.isLinux) {
+                const one = @as([8]u8, @bitCast(@as(usize, 1)));
+                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+            }
+        }
+
+        pub fn loop() void {
+            Output.Source.configureNamedThread("Waitpid");
+
+            var this = &instance;
+
+            while (true) {
+                {
+                    var batch = this.concurrent_queue.popBatch();
+                    var iter = batch.iterator();
+                    this.queue.ensureUnusedCapacity(batch.count) catch unreachable;
+                    while (iter.next()) |task| {
+                        this.queue.appendAssumeCapacity(task.subprocess);
+                        bun.default_allocator.destroy(task);
+                    }
+                }
+
+                var queue: []*Subprocess = this.queue.items;
+                var i: usize = 0;
+                while (queue.len > 0 and i < queue.len) {
+                    var process = queue[i];
+
+                    // this case shouldn't really happen
+                    if (process.pid == bun.invalid_fd) {
+                        _ = this.queue.orderedRemove(i);
+                        _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                        queue = this.queue.items;
+                        continue;
+                    }
+
+                    const result = PosixSpawn.waitpid(process.pid, std.os.W.NOHANG);
+                    if (result == .err or (result == .result and result.result.pid == process.pid)) {
+                        _ = this.queue.orderedRemove(i);
+                        queue = this.queue.items;
+
+                        const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
+                        task.* = WaitPidResultTask{
+                            .result = result,
+                            .subprocess = process,
+                        };
+
+                        process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(
+                            JSC.ConcurrentTask.create(
+                                JSC.Task.init(task),
+                            ),
+                        );
+                    }
+
+                    i += 1;
+                }
+
+                if (comptime Environment.isLinux) {
+                    var polls = [_]std.os.pollfd{
+                        .{
+                            .fd = @intCast(this.signalfd),
+                            .events = std.os.POLL.IN | std.os.POLL.ERR,
+                            .revents = 0,
+                        },
+                        .{
+                            .fd = @intCast(this.eventfd),
+                            .events = std.os.POLL.IN | std.os.POLL.ERR,
+                            .revents = 0,
+                        },
+                    };
+
+                    _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
+
+                    // Make sure we consume any pending signals
+                    var buf: [1024]u8 = undefined;
+                    _ = std.os.read(this.signalfd, &buf) catch 0;
+                } else {
+                    var mask = std.os.empty_sigset;
+                    var signal: c_int = std.os.SIG.CHLD;
+                    const rc = std.c.sigwait(&mask, &signal);
+                    _ = rc;
+                }
+            }
+        }
+    };
+}

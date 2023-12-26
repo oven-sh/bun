@@ -476,6 +476,7 @@ pub const FilePoll = struct {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        // log("{x} disableKeepingProcessAlive", .{@intFromPtr(this)});
         vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.remove(.has_incremented_active_count);
@@ -486,6 +487,7 @@ pub const FilePoll = struct {
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        // log("{x} enableKeepingProcessAlive", .{@intFromPtr(this)});
         if (this.flags.contains(.closed))
             return;
 

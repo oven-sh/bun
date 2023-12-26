@@ -55,7 +55,8 @@ declare module "bun" {
     | string
     | Subprocess
     | SpawnOptions.Readable
-    | SpawnOptions.Writable;
+    | SpawnOptions.Writable
+    | ReadableStream;
 
   export interface Shell {
     (

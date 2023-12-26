@@ -2585,7 +2585,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             ) catch |err| {
                 if (err == error.Redirect) {
                     this.state.response_message_buffer.deinit();
-
                     if (this.state.allow_keepalive and FeatureFlags.enable_keepalive) {
                         std.debug.assert(this.connected_url.hostname.len > 0);
                         ctx.releaseSocket(

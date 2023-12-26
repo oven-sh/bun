@@ -384,6 +384,7 @@ prisma
 protoc
 protoc-gen-grpc-web
 puppeteer
+purescript
 quick-mongo-super
 re2
 react-intl-universal
@@ -425,6 +426,7 @@ snyk
 sockopt
 sodium-native
 sonar-scanner
+spago
 spectaql
 spectron
 spellchecker

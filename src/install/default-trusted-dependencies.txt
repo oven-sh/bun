@@ -499,3 +499,4 @@ zeromq
 zlib-sync
 zopflipng-bin
 lightningcss-cli
+@railway/cli

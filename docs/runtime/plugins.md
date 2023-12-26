@@ -4,17 +4,17 @@ Plugins intercept imports and perform custom loading logic: reading files, trans
 
 ## Usage
 
-A plugin is defined as simple JavaScript object containing a `name` property and a `setup` function. Register a plugin with Bun using the `plugin` function.
+A plugin is defined as a simple JavaScript object containing a `name` property and a `setup` function. Register a plugin with Bun using the `plugin` function.
 
 ```tsx#myPlugin.ts
-import { plugin, type BunPlugin } from "bun";
+import { plugin } from "bun";
 
-const myPlugin: BunPlugin = {
-  name: "Custom loader",
+plugin({
+  name: "My Plugin",
   setup(build) {
     // implementation
   },
-};
+});
 ```
 
 Plugins have to be registered before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](/docs/runtime/bunfig). Bun automatically loads the files/modules specified in `preload` before running a file.

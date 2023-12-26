@@ -69,7 +69,6 @@ pub const ShellSubprocess = struct {
     // };
 
     pub const OutKind = util.OutKind;
-    pub const Writable = util.Writable;
     // pub const Readable = util.Readable;
     pub const Stdio = util.Stdio;
 
@@ -80,6 +79,149 @@ pub const ShellSubprocess = struct {
     pub const SignalCode = bun.SignalCode;
     pub const Poll = util.Poll;
     pub const WaitThreadPoll = util.WaitThreadPoll;
+
+    pub const Writable = union(enum) {
+        pipe: *JSC.WebCore.FileSink,
+        pipe_to_readable_stream: struct {
+            pipe: *JSC.WebCore.FileSink,
+            readable_stream: JSC.WebCore.ReadableStream,
+        },
+        fd: bun.FileDescriptor,
+        buffered_input: BufferedInput,
+        inherit: void,
+        ignore: void,
+
+        pub fn ref(this: *Writable) void {
+            switch (this.*) {
+                .pipe => {
+                    if (this.pipe.poll_ref) |poll| {
+                        poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
+                    }
+                },
+                else => {},
+            }
+        }
+
+        pub fn unref(this: *Writable) void {
+            switch (this.*) {
+                .pipe => {
+                    if (this.pipe.poll_ref) |poll| {
+                        poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // When the stream has closed we need to be notified to prevent a use-after-free
+        // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
+        pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
+            this.* = .{
+                .ignore = {},
+            };
+        }
+        pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
+        pub fn onStart(_: *Writable) void {}
+
+        pub fn init(subproc: *ShellSubprocess, stdio: Stdio, fd: i32, globalThis: *JSC.JSGlobalObject) !Writable {
+            switch (stdio) {
+                .pipe => {
+                    var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
+                    sink.* = .{
+                        .fd = fd,
+                        .buffer = bun.ByteList{},
+                        .allocator = globalThis.bunVM().allocator,
+                        .auto_close = true,
+                    };
+                    sink.mode = std.os.S.IFIFO;
+                    sink.watch(fd);
+                    if (stdio == .pipe) {
+                        if (stdio.pipe) |readable| {
+                            return Writable{
+                                .pipe_to_readable_stream = .{
+                                    .pipe = sink,
+                                    .readable_stream = readable,
+                                },
+                            };
+                        }
+                    }
+
+                    return Writable{ .pipe = sink };
+                },
+                .array_buffer, .blob => {
+                    var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined, .subproc = subproc };
+                    switch (stdio) {
+                        .array_buffer => |array_buffer| {
+                            buffered_input.source = .{ .array_buffer = array_buffer.buf };
+                        },
+                        .blob => |blob| {
+                            buffered_input.source = .{ .blob = blob };
+                        },
+                        else => unreachable,
+                    }
+                    return Writable{ .buffered_input = buffered_input };
+                },
+                .fd => {
+                    return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
+                },
+                .inherit => {
+                    return Writable{ .inherit = {} };
+                },
+                .path, .ignore => {
+                    return Writable{ .ignore = {} };
+                },
+            }
+        }
+
+        pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
+            return switch (this) {
+                .pipe => |pipe| pipe.toJS(globalThis),
+                .fd => |fd| JSValue.jsNumber(fd),
+                .ignore => JSValue.jsUndefined(),
+                .inherit => JSValue.jsUndefined(),
+                .buffered_input => JSValue.jsUndefined(),
+                .pipe_to_readable_stream => this.pipe_to_readable_stream.readable_stream.value,
+            };
+        }
+
+        pub fn finalize(this: *Writable) void {
+            return switch (this.*) {
+                .pipe => |pipe| {
+                    pipe.close();
+                },
+                .pipe_to_readable_stream => |*pipe_to_readable_stream| {
+                    _ = pipe_to_readable_stream.pipe.end(null);
+                },
+                .fd => |fd| {
+                    _ = bun.sys.close(fd);
+                    this.* = .{ .ignore = {} };
+                },
+                .buffered_input => {
+                    this.buffered_input.deinit();
+                },
+                .ignore => {},
+                .inherit => {},
+            };
+        }
+
+        pub fn close(this: *Writable) void {
+            return switch (this.*) {
+                .pipe => {},
+                .pipe_to_readable_stream => |*pipe_to_readable_stream| {
+                    _ = pipe_to_readable_stream.pipe.end(null);
+                },
+                .fd => |fd| {
+                    _ = bun.sys.close(fd);
+                    this.* = .{ .ignore = {} };
+                },
+                .buffered_input => {
+                    this.buffered_input.deinit();
+                },
+                .ignore => {},
+                .inherit => {},
+            };
+        }
+    };
 
     pub const Readable =
         union(enum) {
@@ -578,6 +720,7 @@ pub const ShellSubprocess = struct {
 
     pub const BufferedInput = struct {
         remain: []const u8 = "",
+        subproc: *ShellSubprocess,
         fd: bun.FileDescriptor = bun.invalid_fd,
         poll_ref: ?*Async.FilePoll = null,
         written: usize = 0,
@@ -713,6 +856,9 @@ pub const ShellSubprocess = struct {
                     array_buffer.deinit();
                 },
             }
+            if (this.subproc.cmd_parent) |cmd| {
+                cmd.bufferedInputClose();
+            }
         }
     };
 
@@ -732,6 +878,7 @@ pub const ShellSubprocess = struct {
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
+                // if (poll.flags.contains(.enable)
                 poll.ref(vm);
             },
             .wait_thread => |*wait_thread| {
@@ -1047,6 +1194,7 @@ pub const ShellSubprocess = struct {
     pub fn spawnAsync(
         globalThis: *JSC.JSGlobalObject,
         spawn_args_: SpawnArgs,
+        out: **ShellSubprocess,
     ) !?*ShellSubprocess {
         if (comptime Environment.isWindows) {
             globalThis.throwTODO("spawn() is not yet implemented on Windows");
@@ -1072,6 +1220,7 @@ pub const ShellSubprocess = struct {
             &out_watchfd,
             &out_err,
             &spawn_args,
+            out,
         ) orelse
             {
             if (out_err) |err| {

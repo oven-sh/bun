@@ -1681,7 +1681,7 @@ pub const Cmd = struct {
     };
 
     const BufferedIoClosed = struct {
-        stdin: ?BufferedIoState = null,
+        stdin: ?bool = null,
         stdout: ?BufferedIoState = null,
         stderr: ?BufferedIoState = null,
 
@@ -1708,7 +1708,9 @@ pub const Cmd = struct {
 
         fn deinit(this: *BufferedIoClosed, jsc_vm_allocator: Allocator) void {
             if (this.stdin) |*io| {
-                io.deinit(jsc_vm_allocator);
+                _ = io; // autofix
+
+                // io.deinit(jsc_vm_allocator);
             }
 
             if (this.stdout) |*io| {
@@ -1721,7 +1723,7 @@ pub const Cmd = struct {
         }
 
         fn allClosed(this: *BufferedIoClosed) bool {
-            return (if (this.stdin) |*stdin| stdin.closed() else true) and
+            return (if (this.stdin) |stdin| stdin else true) and
                 (if (this.stdout) |*stdout| stdout.closed() else true) and
                 (if (this.stderr) |*stderr| stderr.closed() else true);
         }
@@ -1743,9 +1745,10 @@ pub const Cmd = struct {
                     }
                 },
                 .stdin => {
-                    if (this.stdin) |*stdin| {
-                        stdin.state = .{ .closed = .{} };
-                    }
+                    this.stdin = true;
+                    // if (this.stdin) |*stdin| {
+                    //     stdin.state = .{ .closed = .{} };
+                    // }
                 },
             }
         }
@@ -1756,7 +1759,7 @@ pub const Cmd = struct {
 
         fn fromStdio(io: *const [3]Subprocess.Stdio) BufferedIoClosed {
             return .{
-                .stdin = if (io[bun.STDIN_FD].isPiped()) .{ .owned = io[bun.STDIN_FD] == .pipe } else null,
+                .stdin = if (io[bun.STDIN_FD].isPiped()) false else null,
                 .stdout = if (io[bun.STDOUT_FD].isPiped()) .{ .owned = io[bun.STDOUT_FD] == .pipe } else null,
                 .stderr = if (io[bun.STDERR_FD].isPiped()) .{ .owned = io[bun.STDERR_FD] == .pipe } else null,
             };
@@ -1961,20 +1964,11 @@ pub const Cmd = struct {
         this.io.to_subproc_stdio(&spawn_args.stdio);
 
         if (this.node.redirect_file) |redirect| {
+            const fd: u32 = if (this.node.redirect.stdout) bun.STDOUT_FD else (if (this.node.redirect.stdin) bun.STDIN_FD else bun.STDERR_FD);
             const in_cmd_subst = false;
 
             if (comptime in_cmd_subst) {
-                if (this.node.redirect.stdin) {
-                    spawn_args.stdio[bun.STDIN_FD] = .ignore;
-                }
-
-                if (this.node.redirect.stdout) {
-                    spawn_args.stdio[bun.STDOUT_FD] = .ignore;
-                }
-
-                if (this.node.redirect.stderr) {
-                    spawn_args.stdio[bun.STDERR_FD] = .ignore;
-                }
+                spawn_args.stdio[fd] = .ignore;
             } else switch (redirect) {
                 .jsbuf => |val| {
                     if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(this.base.interpreter.global)) |buf| {
@@ -1986,34 +1980,21 @@ pub const Cmd = struct {
                             .from_jsc = true,
                         } };
 
-                        if (this.node.redirect.stdin) {
-                            spawn_args.stdio[bun.STDIN_FD] = stdio;
-                        }
-
-                        if (this.node.redirect.stdout) {
-                            spawn_args.stdio[bun.STDOUT_FD] = stdio;
-                        }
-
-                        if (this.node.redirect.stderr) {
-                            spawn_args.stdio[bun.STDERR_FD] = stdio;
-                        }
+                        spawn_args.stdio[fd] = stdio;
                     } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
-                        if (this.node.redirect.stdout) {
-                            if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
-                                @panic("FIXME OOPS");
-                            }
+                        if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, fd, &spawn_args.stdio)) {
+                            @panic("FIXME OOPS");
                         }
+                    } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], this.base.interpreter.global)) |rstream| {
+                        const stdio: Subprocess.Stdio = .{
+                            .pipe = rstream,
+                        };
 
-                        if (this.node.redirect.stdin) {
-                            if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
-                                @panic("FIXME OOPS");
-                            }
-                        }
-
-                        if (this.node.redirect.stderr) {
-                            if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
-                                @panic("FIXME OOPS");
-                            }
+                        spawn_args.stdio[fd] = stdio;
+                    } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
+                        req.getBodyValue().toBlobIfPossible();
+                        if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), fd, &spawn_args.stdio)) {
+                            @panic("FIXME OOPS");
                         }
                     } else {
                         @panic("FIXME Unhandled");
@@ -2026,11 +2007,11 @@ pub const Cmd = struct {
         const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
         log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
 
-        const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
         this.exec = .{ .subproc = .{
-            .child = subproc,
+            .child = undefined,
             .buffered_closed = buffered_closed,
         } };
+        const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args, &this.exec.subproc.child)) orelse return ShellError.Spawn;
         subproc.ref();
 
         // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {
@@ -2128,6 +2109,10 @@ pub const Cmd = struct {
         // this.spawn_arena.deinit();
         this.freed = true;
         this.base.interpreter.allocator.destroy(this);
+    }
+
+    pub fn bufferedInputClose(this: *Cmd) void {
+        this.exec.subproc.buffered_closed.close(.stdin);
     }
 
     pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind) void {

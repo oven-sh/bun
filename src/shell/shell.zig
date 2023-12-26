@@ -1588,6 +1588,14 @@ pub const AST = struct {
             append: bool = false,
             __unused: u4 = 0,
 
+            pub fn @"<"() RedirectFlags {
+                return .{ .stdin = true };
+            }
+
+            pub fn @"<<"() RedirectFlags {
+                return .{ .stdin = true, .append = true };
+            }
+
             pub fn @">"() RedirectFlags {
                 return .{ .stdout = true };
             }
@@ -2420,7 +2428,14 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         '>' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
-                            const redirect = self.eat_simple_redirect();
+                            const redirect = self.eat_simple_redirect(.out);
+                            try self.tokens.append(.{ .Redirect = redirect });
+                            continue;
+                        },
+                        '<' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+                            const redirect = self.eat_simple_redirect(.in);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
                         },
@@ -2431,7 +2446,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             const next = self.peek() orelse @panic("Unexpected EOF");
                             if (next.char == '>' and !next.escaped) {
                                 _ = self.eat();
-                                const inner = if (self.eat_simple_redirect_operator())
+                                const inner = if (self.eat_simple_redirect_operator(.out))
                                     AST.Cmd.RedirectFlags.@"&>>"()
                                 else
                                     AST.Cmd.RedirectFlags.@"&>"();
@@ -2539,20 +2554,43 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             self.word_start = self.j;
         }
 
-        fn eat_simple_redirect(self: *@This()) AST.Cmd.RedirectFlags {
-            return if (self.eat_simple_redirect_operator())
-                AST.Cmd.RedirectFlags.@">>"()
-            else
-                AST.Cmd.RedirectFlags.@">"();
+        const RedirectDirection = enum { out, in };
+
+        fn eat_simple_redirect(self: *@This(), dir: RedirectDirection) AST.Cmd.RedirectFlags {
+            const is_double = self.eat_simple_redirect_operator(dir);
+
+            if (is_double) {
+                return switch (dir) {
+                    .out => AST.Cmd.RedirectFlags.@">>"(),
+                    .in => AST.Cmd.RedirectFlags.@"<<"(),
+                };
+            }
+
+            return switch (dir) {
+                .out => AST.Cmd.RedirectFlags.@">"(),
+                .in => AST.Cmd.RedirectFlags.@"<"(),
+            };
         }
 
-        fn eat_simple_redirect_operator(self: *@This()) bool {
+        /// Returns true if the operator is "double one": >> or <<
+        /// Returns null if it is invalid: <> ><
+        fn eat_simple_redirect_operator(self: *@This(), dir: RedirectDirection) bool {
             if (self.peek()) |peeked| {
                 if (peeked.escaped) return false;
                 switch (peeked.char) {
                     '>' => {
-                        _ = self.eat();
-                        return true;
+                        if (dir == .out) {
+                            _ = self.eat();
+                            return true;
+                        }
+                        return false;
+                    },
+                    '<' => {
+                        if (dir == .in) {
+                            _ = self.eat();
+                            return true;
+                        }
+                        return false;
                     },
                     else => return false,
                 }
@@ -2613,14 +2651,22 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 else => return null,
             }
 
+            var dir: RedirectDirection = .out;
             if (self.peek()) |input| {
-                if (input.escaped or input.char != '>') return null;
+                if (input.escaped) return null;
+                switch (input.char) {
+                    '>' => dir = .out,
+                    '<' => dir = .in,
+                    else => return null,
+                }
                 _ = self.eat();
             }
 
-            if (self.eat_simple_redirect_operator()) {
+            const is_double = self.eat_simple_redirect_operator(dir);
+            if (is_double) {
                 flags.append = true;
             }
+
             return flags;
         }
 

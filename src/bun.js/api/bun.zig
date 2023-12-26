@@ -384,6 +384,28 @@ pub fn shellCmdFromJS(
                     continue;
                 }
 
+                if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
+                    _ = rstream;
+
+                    const idx = out_jsobjs.items.len;
+                    template_value.protect();
+                    try out_jsobjs.append(template_value);
+                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
+                    try out_script.appendSlice(slice);
+                    continue;
+                }
+
+                if (template_value.as(JSC.WebCore.Response)) |req| {
+                    _ = req;
+
+                    const idx = out_jsobjs.items.len;
+                    template_value.protect();
+                    try out_jsobjs.append(template_value);
+                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
+                    try out_script.appendSlice(slice);
+                    continue;
+                }
+
                 if (template_value.isString()) {
                     if (!try appendJSValueStr(allocator, globalThis, template_value, out_script)) {
                         globalThis.throw("bunshell: invalid string", .{});

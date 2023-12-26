@@ -437,149 +437,6 @@ pub const BufferedOutput = struct {
     }
 };
 
-pub const Writable = union(enum) {
-    pipe: *JSC.WebCore.FileSink,
-    pipe_to_readable_stream: struct {
-        pipe: *JSC.WebCore.FileSink,
-        readable_stream: JSC.WebCore.ReadableStream,
-    },
-    fd: bun.FileDescriptor,
-    buffered_input: BufferedInput,
-    inherit: void,
-    ignore: void,
-
-    pub fn ref(this: *Writable) void {
-        switch (this.*) {
-            .pipe => {
-                if (this.pipe.poll_ref) |poll| {
-                    poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
-                }
-            },
-            else => {},
-        }
-    }
-
-    pub fn unref(this: *Writable) void {
-        switch (this.*) {
-            .pipe => {
-                if (this.pipe.poll_ref) |poll| {
-                    poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
-                }
-            },
-            else => {},
-        }
-    }
-
-    // When the stream has closed we need to be notified to prevent a use-after-free
-    // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
-        this.* = .{
-            .ignore = {},
-        };
-    }
-    pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
-    pub fn onStart(_: *Writable) void {}
-
-    pub fn init(stdio: Stdio, fd: i32, globalThis: *JSC.JSGlobalObject) !Writable {
-        switch (stdio) {
-            .pipe => {
-                var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
-                sink.* = .{
-                    .fd = fd,
-                    .buffer = bun.ByteList{},
-                    .allocator = globalThis.bunVM().allocator,
-                    .auto_close = true,
-                };
-                sink.mode = std.os.S.IFIFO;
-                sink.watch(fd);
-                if (stdio == .pipe) {
-                    if (stdio.pipe) |readable| {
-                        return Writable{
-                            .pipe_to_readable_stream = .{
-                                .pipe = sink,
-                                .readable_stream = readable,
-                            },
-                        };
-                    }
-                }
-
-                return Writable{ .pipe = sink };
-            },
-            .array_buffer, .blob => {
-                var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined };
-                switch (stdio) {
-                    .array_buffer => |array_buffer| {
-                        buffered_input.source = .{ .array_buffer = array_buffer.buf };
-                    },
-                    .blob => |blob| {
-                        buffered_input.source = .{ .blob = blob };
-                    },
-                    else => unreachable,
-                }
-                return Writable{ .buffered_input = buffered_input };
-            },
-            .fd => {
-                return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
-            },
-            .inherit => {
-                return Writable{ .inherit = {} };
-            },
-            .path, .ignore => {
-                return Writable{ .ignore = {} };
-            },
-        }
-    }
-
-    pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
-        return switch (this) {
-            .pipe => |pipe| pipe.toJS(globalThis),
-            .fd => |fd| JSValue.jsNumber(fd),
-            .ignore => JSValue.jsUndefined(),
-            .inherit => JSValue.jsUndefined(),
-            .buffered_input => JSValue.jsUndefined(),
-            .pipe_to_readable_stream => this.pipe_to_readable_stream.readable_stream.value,
-        };
-    }
-
-    pub fn finalize(this: *Writable) void {
-        return switch (this.*) {
-            .pipe => |pipe| {
-                pipe.close();
-            },
-            .pipe_to_readable_stream => |*pipe_to_readable_stream| {
-                _ = pipe_to_readable_stream.pipe.end(null);
-            },
-            .fd => |fd| {
-                _ = bun.sys.close(fd);
-                this.* = .{ .ignore = {} };
-            },
-            .buffered_input => {
-                this.buffered_input.deinit();
-            },
-            .ignore => {},
-            .inherit => {},
-        };
-    }
-
-    pub fn close(this: *Writable) void {
-        return switch (this.*) {
-            .pipe => {},
-            .pipe_to_readable_stream => |*pipe_to_readable_stream| {
-                _ = pipe_to_readable_stream.pipe.end(null);
-            },
-            .fd => |fd| {
-                _ = bun.sys.close(fd);
-                this.* = .{ .ignore = {} };
-            },
-            .buffered_input => {
-                this.buffered_input.deinit();
-            },
-            .ignore => {},
-            .inherit => {},
-        };
-    }
-};
-
 pub const Stdio = union(enum) {
     inherit: void,
     ignore: void,
@@ -798,6 +655,7 @@ pub fn spawnMaybeSyncImpl(
     out_watchfd: *?WatchFd,
     out_err: *?JSValue,
     spawn_args: *config.SpawnArgs,
+    out_subproc: **config.Subprocess,
 ) ?*config.Subprocess {
     const Subprocess = config.Subprocess;
     const WaiterThread = config.WaiterThread;
@@ -1045,13 +903,14 @@ pub fn spawnMaybeSyncImpl(
         globalThis.throw("out of memory", .{});
         return null;
     };
+    out_subproc.* = subprocess;
     // When run synchronously, subprocess isn't garbage collected
     if (comptime is_js) {
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
-            .stdin = Writable.init(spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+            .stdin = Subprocess.Writable.init(spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
                 return null;
             },
@@ -1078,7 +937,7 @@ pub fn spawnMaybeSyncImpl(
             .globalThis = globalThis,
             .pid = pid,
             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
-            .stdin = Writable.init(spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+            .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
                 return null;
             },

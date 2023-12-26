@@ -301,7 +301,7 @@ describe("AbortSignal", () => {
       server = Bun.serve({
         port: 0,
         async fetch() {
-          Bun.sleep(100);
+          await Bun.sleep(100);
           return new Response("Hello");
         },
       });

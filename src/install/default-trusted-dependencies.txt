@@ -118,6 +118,7 @@
 @pulumi/postgresql
 @pulumi/random
 @pulumi/tls
+@railway/cli
 @replayio/cypress
 @replayio/playwright
 @root/acme
@@ -305,6 +306,7 @@ libpg-query
 libpq
 libxmljs
 libxmljs2
+lightningcss-cli
 lint
 lmdb
 lmdb-store
@@ -498,5 +500,3 @@ zapatos
 zeromq
 zlib-sync
 zopflipng-bin
-lightningcss-cli
-@railway/cli

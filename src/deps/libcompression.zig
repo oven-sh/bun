@@ -1,6 +1,10 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
+fn macOSOnly() noreturn {
+    @panic("CompressionFramework is only available on macOS. This code should not be reachable.");
+}
+
 /// https://developer.apple.com/documentation/compression?language=objc
 /// We only use this for Brotli on macOS, to avoid linking in libbrotli.
 ///
@@ -119,7 +123,7 @@ pub const CompressionFramework = struct {
 
         pub fn deinit(this: *compression_stream) void {
             if (comptime !bun.Environment.isMac) {
-                @compileError("Compression.framework is only supported on macOS");
+                macOSOnly();
             }
 
             _ = compression_stream_destroy(this);
@@ -127,7 +131,7 @@ pub const CompressionFramework = struct {
 
         pub fn process(stream: *compression_stream, data: []const u8, is_done: bool, comptime Iterator: type, iter: *Iterator) !StreamResult {
             if (comptime !bun.Environment.isMac) {
-                @compileError("Compression.framework is only supported on macOS");
+                macOSOnly();
             }
             stream.src_ptr = data.ptr;
             stream.src_size = data.len;
@@ -216,7 +220,7 @@ pub const CompressionFramework = struct {
 
     pub fn compress(data: []const u8, algorithm: compression_algorithm, is_done: bool, writer: anytype) !StreamResult {
         if (comptime !bun.Environment.isMac) {
-            @compileError("Compression.framework is only supported on macOS");
+            macOSOnly();
         }
 
         var scratch_buffer: [64 * 1024]u8 = undefined;
@@ -248,7 +252,7 @@ pub const CompressionFramework = struct {
 
     pub fn decompress(data: []const u8, algorithm: compression_algorithm, is_done: bool, writer: anytype) !StreamResult {
         if (comptime !bun.Environment.isMac) {
-            @compileError("Compression.framework is only supported on macOS");
+            macOSOnly();
         }
 
         var scratch_buffer: [64 * 1024]u8 = undefined;
@@ -300,7 +304,7 @@ pub const CompressionFramework = struct {
 
         pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, algorithm: CompressionFramework.compression_algorithm) !*DecompressionArrayList {
             if (comptime !bun.Environment.isMac) {
-                @compileError("Compression.framework is only supported on macOS");
+                macOSOnly();
             }
 
             if (!CompressionFramework.load()) {

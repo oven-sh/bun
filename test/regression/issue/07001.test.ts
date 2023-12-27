@@ -41,7 +41,7 @@ test("await fetch(req) throws if req.body is already consumed (stream that has b
   expect(() => fetch(req)).toThrow();
 });
 
-test.todo("await fetch(req) throws if req.body is already consumed (stream)", async () => {
+test("await fetch(req) throws if req.body is already consumed (stream)", async () => {
   const req = new Request("https://example.com/", {
     body: "test",
     method: "POST",

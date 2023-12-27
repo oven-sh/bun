@@ -2862,9 +2862,28 @@ pub fn New(comptime T: type) type {
     };
 }
 
+/// Reference-counted heap-allocated instance value.
+///
+/// `ref_count` is expected to be defined on `T` with a default value set to `1`
 pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
     return struct {
-        pub inline fn destroy(self: *T) void {
+        pub fn destroy(self: *T) void {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(self.ref_count == 0);
+            }
+
             if (comptime is_heap_breakdown_enabled) {
                 HeapBreakdown.allocator(T).destroy(self);
             } else {
@@ -2892,11 +2911,21 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             if (comptime is_heap_breakdown_enabled) {
                 const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
                 ptr.* = t;
+
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(ptr.ref_count == 1);
+                }
+
                 return ptr;
             }
 
             const ptr = default_allocator.create(T) catch outOfMemory();
             ptr.* = t;
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(ptr.ref_count == 1);
+            }
+
             return ptr;
         }
     };

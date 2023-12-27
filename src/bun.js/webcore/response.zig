@@ -1911,16 +1911,23 @@ pub const Fetch = struct {
                     }
                 } else {
                     method = request.method;
-                    if (request.body.value.tryUseAsAnyBlob()) |body_value| {
-                        body = body_value;
-                    } else {
-                        globalThis.throw("Body already consumed", .{});
-                        if (hostname) |host| {
-                            allocator.free(host);
-                            hostname = null;
+
+                    if (request.body.value == .Locked) {
+                        if (request.body.value.Locked.readable) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                globalThis.throw("ReadableStream has already been consumed", .{});
+                                if (hostname) |host| {
+                                    allocator.free(host);
+                                    hostname = null;
+                                }
+                                return .zero;
+                            }
                         }
-                        return .zero;
                     }
+
+                    // TODO: remove second isDisturbed check in useAsAnyBlob
+                    body = request.body.value.useAsAnyBlob();
+
                     if (request.headers) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                             if (hostname) |host| {

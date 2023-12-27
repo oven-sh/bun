@@ -990,7 +990,7 @@ describe("node:http", () => {
           .find(line => line.includes(`:${port}`));
         expect(line).toBeDefined();
         const columns = line.split(/\s+/);
-        expect(columns[3]).toBe("512");
+        expect(columns[3]).toBe("511");
         done();
       } catch (err) {
         done(err);

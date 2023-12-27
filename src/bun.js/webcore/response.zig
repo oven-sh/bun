@@ -1911,7 +1911,16 @@ pub const Fetch = struct {
                     }
                 } else {
                     method = request.method;
-                    body = request.body.value.useAsAnyBlob();
+                    if (request.body.value.tryUseAsAnyBlob()) |body_value| {
+                        body = body_value;
+                    } else {
+                        globalThis.throw("Body already consumed", .{});
+                        if (hostname) |host| {
+                            allocator.free(host);
+                            hostname = null;
+                        }
+                        return .zero;
+                    }
                     if (request.headers) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                             if (hostname) |host| {

@@ -110,6 +110,7 @@ appium-chromedriver
 appium-windows-driver
 applicationinsights-native-metrics
 argon2
+autorest
 aws-crt
 azure-functions-core-tools
 azure-streamanalytics-cicd
@@ -141,6 +142,7 @@ cpu-features
 cwebp-bin
 cy2
 cypress
+dd-trace
 deasync
 detox
 detox-recorder
@@ -201,6 +203,7 @@ ibm_db
 iconv
 iedriver
 iltorb
+incremental-json-parser
 install-peers
 interruptor
 iobroker.js-controller
@@ -267,6 +270,7 @@ oniguruma
 optipng-bin
 oracledb
 os-dns-native
+parse-server
 phantomjs
 phantomjs-prebuilt
 pkcs11js

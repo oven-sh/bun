@@ -5,10 +5,10 @@ import { tempDirWithFiles } from "harness";
 it("duplicate dependencies should warn instead of error", () => {
   const package_json = JSON.stringify({
     devDependencies: {
-      "empty-package-for-bun-test-runner": "1.0.0"
+      "empty-package-for-bun-test-runner": "1.0.0",
     },
     dependencies: {
-      "empty-package-for-bun-test-runner": "1.0.0"
+      "empty-package-for-bun-test-runner": "1.0.0",
     },
   });
 

@@ -975,9 +975,21 @@ pub fn BodyMixin(comptime Type: type) type {
 
         pub fn getBodyUsed(
             this: *Type,
-            _: *JSC.JSGlobalObject,
+            globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
-            return JSValue.jsBoolean(this.getBodyValue().* == .Used);
+            return JSValue.jsBoolean(
+                switch (this.getBodyValue().*) {
+                    .Used => true,
+                    .Locked => |*pending| brk: {
+                        if (pending.readable) |*stream| {
+                            break :brk stream.isDisturbed(globalObject);
+                        }
+
+                        break :brk false;
+                    },
+                    else => false,
+                },
+            );
         }
 
         pub fn getJSON(

@@ -215,6 +215,24 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
+static void addAdditionalProperties(JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, JSC::JSObject* object, int index)
+{
+    const char* column = sqlite3_column_origin_name(castedThis->stmt, index);
+    const char* table = sqlite3_column_table_name(castedThis->stmt, index);
+    const char* database = sqlite3_column_database_name(castedThis->stmt, index);
+    const char* type = sqlite3_column_decltype(castedThis->stmt, index);
+
+    auto columnKey = Identifier::fromString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(column));
+    auto tableKey = Identifier::fromString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(table));
+    auto databaseKey = Identifier::fromString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(database));
+    auto typeKey = Identifier::fromString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(type));
+
+    object->putDirect(lexicalGlobalObject->vm(), columnKey, JSValue(jsString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(column))), 0);
+    object->putDirect(lexicalGlobalObject->vm(), tableKey, JSValue(jsString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(table))), 0);
+    object->putDirect(lexicalGlobalObject->vm(), databaseKey, JSValue(jsString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(database))), 0);
+    object->putDirect(lexicalGlobalObject->vm(), typeKey, JSValue(jsString(lexicalGlobalObject->vm(), WTF::String::fromUTF8(type))), 0);
+}
+
 static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
 {
     if (!castedThis->hasExecuted) {

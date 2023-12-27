@@ -1643,6 +1643,8 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     $lazyStreamPrototypeMap.$set(nativeType, Prototype);
   }
 
+  $putByIdDirectPrivate(stream, "disturbed", true);
+
   const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);
   var drainValue;
   const { drain: drainFn, deinit: deinitFn } = Prototype;

@@ -539,8 +539,8 @@ pub const Body = struct {
             value.ensureStillAlive();
 
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
-                if (readable.isLocked(globalThis)) {
-                    globalThis.throw("Cannot use a locked ReadableStream", .{});
+                if (readable.isDisturbed(globalThis)) {
+                    globalThis.throw("ReadableStream has already been used", .{});
                     return null;
                 }
 

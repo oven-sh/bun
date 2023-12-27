@@ -110,6 +110,10 @@ pub const ReadableStream = struct {
         stream: *ReadableStream,
         globalThis: *JSC.JSGlobalObject,
     ) ?JSC.WebCore.AnyBlob {
+        if (stream.isDisturbed(globalThis)) {
+            return null;
+        }
+
         stream.reloadTag(globalThis);
 
         switch (stream.ptr) {

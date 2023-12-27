@@ -159,7 +159,7 @@ pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
-        return Maybe(void).errnoSys(sys_uv.fchmod(fd, mode), .fchmod) orelse Maybe(void).success;
+        return sys_uv.fchmod(bun.toFD(bun.FDImpl.decode(fd)), mode);
     }
 
     return Maybe(void).errnoSys(C.fchmod(fd, mode), .fchmod) orelse Maybe(void).success;

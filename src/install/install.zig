@@ -1240,6 +1240,10 @@ const PackageInstall = struct {
                 progress_: *Progress,
             ) !u32 {
                 var real_file_count: u32 = 0;
+
+                var in_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+                var out_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
                     real_file_count += 1;
@@ -1262,19 +1266,38 @@ const PackageInstall = struct {
                     var in_file = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
                     defer in_file.close();
 
-                    if (comptime Environment.isPosix) {
-                        const stat = in_file.stat() catch continue;
-                        _ = C.fchmod(outfile.handle, stat.mode);
+                    if (comptime Environment.isWindows) {
+                        const in_path = bun.getFdPathW(in_file.handle, &in_buf) catch unreachable;
+                        in_buf[in_path.len] = 0;
+                        const in = in_buf[0..in_path.len :0];
+
+                        const out_path = bun.getFdPathW(outfile.handle, &out_buf) catch unreachable;
+                        out_buf[out_path.len] = 0;
+                        const out = out_buf[0..out_path.len :0];
+
+                        bun.copyFile(in, out) catch |err| {
+                            progress_.root.end();
+
+                            progress_.refresh();
+
+                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                            Global.crash();
+                        };
+                    } else {
+                        if (comptime Environment.isPosix) {
+                            const stat = in_file.stat() catch continue;
+                            _ = C.fchmod(outfile.handle, stat.mode);
+                        }
+
+                        bun.copyFile(in_file.handle, outfile.handle) catch |err| {
+                            progress_.root.end();
+
+                            progress_.refresh();
+
+                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                            Global.crash();
+                        };
                     }
-
-                    bun.copyFile(in_file.handle, outfile.handle) catch |err| {
-                        progress_.root.end();
-
-                        progress_.refresh();
-
-                        Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                        Global.crash();
-                    };
                 }
 
                 return real_file_count;
@@ -1313,27 +1336,47 @@ const PackageInstall = struct {
         };
         defer walker_.deinit();
 
-        var buf: if (Environment.isWindows) [2048]u16 else [0]u16 = undefined;
-        var buf2: if (Environment.isWindows) [2048]u16 else [0]u16 = undefined;
+        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
+        defer subdir.close();
+
+        var buf: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
+        var buf2: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {
-            buf[0] = '\\';
-            buf[1] = '\\';
-            buf[2] = '?';
-            buf[3] = '\\';
+            var fd_path_buf: bun.PathBuffer = undefined;
 
-            strings.copyU8IntoU16(buf[3..], this.destination_dir_subpath);
-            buf[3 + this.destination_dir_subpath.len] = 0;
+            // buf[0] = '\\';
+            // buf[1] = '\\';
+            // buf[2] = '?';
+            // buf[3] = '\\';
+            // const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
+            // strings.copyU8IntoU16(buf[4..], dest_path);
+            // buf[dest_path.len + 4] = '\\';
+            // to_copy_buf = buf[dest_path.len + 5 ..];
 
-            buf2[0] = '\\';
-            buf2[1] = '\\';
-            buf2[2] = '?';
-            buf2[3] = '\\';
-            strings.copyU8IntoU16(buf2[3..], this.cache_dir_subpath);
+            // buf2[0] = '\\';
+            // buf2[1] = '\\';
+            // buf2[2] = '?';
+            // buf2[3] = '\\';
+            // const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
+            // strings.copyU8IntoU16(buf2[4..], cache_path);
+            // buf2[cache_path.len + 4] = '\\';
+            // to_copy_buf2 = buf2[cache_path.len + 5 ..];
 
-            to_copy_buf = buf[0 .. 4 + this.destination_dir_subpath.len :0];
-            to_copy_buf2 = buf2[0 .. 4 + this.cache_dir_subpath.len :0];
+            // TODO(dylan-conway): find out why //?/ isn't working
+            const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
+            strings.copyU8IntoU16(&buf, dest_path);
+            buf[dest_path.len] = '\\';
+            to_copy_buf = buf[dest_path.len + 1 ..];
+
+            const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
+            strings.copyU8IntoU16(&buf2, cache_path);
+            buf2[cache_path.len] = '\\';
+            to_copy_buf2 = buf2[cache_path.len + 1 ..];
         }
 
         const FileCopier = struct {
@@ -1345,6 +1388,8 @@ const PackageInstall = struct {
                 to_copy_into2: if (Environment.isWindows) []u16 else void,
                 head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
+                // std.debug.print("to_copy_into1.len = {d}\n", .{to_copy_into1.len});
+                // std.debug.print("to_copy_into2.len = {d}\n", .{to_copy_into2.len});
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
@@ -1353,6 +1398,7 @@ const PackageInstall = struct {
                         },
                         .file => {
                             if (comptime Environment.isWindows) {
+                                // std.debug.print("entry.path({d}): {s}\n", .{ entry.path.len, entry.path });
                                 if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
                                     return error.NameTooLong;
                                 }
@@ -1403,12 +1449,6 @@ const PackageInstall = struct {
                 return real_file_count;
             }
         };
-
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-
-        defer subdir.close();
 
         this.file_count = FileCopier.copy(
             subdir,
@@ -8208,7 +8248,7 @@ pub const PackageManager = struct {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         node_modules_path,
                         &[_]string{ destination_dir_subpath, "binding.gyp" },
-                        .posix,
+                        .auto,
                     );
 
                     break :brk Syscall.exists(binding_dot_gyp_path);
@@ -8217,7 +8257,7 @@ pub const PackageManager = struct {
                 const path_str = Path.joinAbsString(
                     node_modules_path,
                     &[_]string{destination_dir_subpath},
-                    .posix,
+                    .auto,
                 );
 
                 if (scripts.enqueue(
@@ -9268,7 +9308,7 @@ pub const PackageManager = struct {
         const binding_dot_gyp_path = Path.joinAbsStringZ(
             Fs.FileSystem.instance.top_level_dir,
             &[_]string{"binding.gyp"},
-            .posix,
+            .auto,
         );
         if (root.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);

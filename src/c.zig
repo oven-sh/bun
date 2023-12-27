@@ -161,6 +161,10 @@ pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    if (comptime Environment.isWindows) {
+        @panic("TODO windows");
+    }
+
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
 
     // Attempt to delete incase it already existed.

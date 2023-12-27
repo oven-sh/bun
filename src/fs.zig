@@ -695,7 +695,7 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
                 const result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                this.fd = bun.toFD(result);
+                this.fd = bun.toLibUVOwnedFD(result);
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);

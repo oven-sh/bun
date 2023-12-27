@@ -1195,6 +1195,46 @@ pub const E = enum(u16) {
     UV_EUNATCH = -uv.UV_EUNATCH,
 };
 
+pub const S = struct {
+    pub const IFMT = 0xf000;
+
+    pub const IFIFO = 0x1000;
+    pub const IFCHR = 0x2000;
+    pub const IFDIR = 0x4000;
+    pub const IFBLK = 0x6000;
+    pub const IFLNK = 0xa000;
+    pub const IFSOCK = 0xc000;
+    pub const IFREG = 0x8000;
+
+    // pub fn ISREG(m: Mode) bool {
+    //     return m & IFMT == IFREG;
+    // }
+
+    // pub fn ISDIR(m: mode_t) bool {
+    //     return m & IFMT == IFDIR;
+    // }
+
+    // pub fn ISCHR(m: mode_t) bool {
+    //     return m & IFMT == IFCHR;
+    // }
+
+    // pub fn ISBLK(m: mode_t) bool {
+    //     return m & IFMT == IFBLK;
+    // }
+
+    // pub fn ISFIFO(m: mode_t) bool {
+    //     return m & IFMT == IFIFO;
+    // }
+
+    // pub fn ISLNK(m: mode_t) bool {
+    //     return m & IFMT == IFLNK;
+    // }
+
+    // pub fn ISSOCK(m: mode_t) bool {
+    //     return m & IFMT == IFSOCK;
+    // }
+};
+
 pub fn getErrno(_: anytype) E {
     if (Win32Error.get().toSystemErrno()) |sys| {
         return sys.toE();

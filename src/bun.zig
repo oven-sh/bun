@@ -1899,6 +1899,21 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     };
 }
 
+pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
+    const fd = fdcast(toFD(fd_));
+
+    if (comptime Environment.isWindows) {
+        var temp: [MAX_PATH_BYTES]u8 = undefined;
+        var temp2: [MAX_PATH_BYTES]u8 = undefined;
+        const temp_slice = try std.os.getFdPath(fd, &temp);
+        const slice = path.normalizeBuf(temp_slice, &temp2, .loose);
+        strings.copyU8IntoU16(buf, slice);
+        return buf[0..slice.len];
+    }
+
+    @panic("TODO unsupported platform for getFdPathW");
+}
+
 fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
     switch (@typeInfo(@TypeOf(ptr))) {
         .Pointer => |ptr_info| switch (ptr_info.size) {

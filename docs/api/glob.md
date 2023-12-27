@@ -9,7 +9,7 @@ import { Glob } from "bun";
 
 const glob = new Glob("*.ts");
 
-// Scans the root '.' and each of its sub-directories recursively
+// Scans the current working directory and each of its sub-directories recursively
 for await (const file of glob.scan(".")) {
   console.log(file); // => "index.ts"
 }

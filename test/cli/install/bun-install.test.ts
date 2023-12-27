@@ -7123,7 +7123,7 @@ it("should not override npm dependency by workspace with mismatched version", as
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("Saved lockfile");
-  expect(err).toContain('error: Duplicate dependency: "bar" specified in package.json');
+  expect(err).toContain('warn: Duplicate dependency: "bar" specified in package.json');
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);

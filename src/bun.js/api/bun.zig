@@ -41,13 +41,14 @@ pub const BunObject = struct {
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
-    pub const @"$" = Bun.shell;
+    // pub const @"$" = Bun.shell;
     pub const shellParse = Bun.shellParse;
     pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
     // --- Callbacks ---
 
     // --- Getters ---
+    pub const ShellInterpreter = Bun.getShellConstructor;
     pub const CryptoHasher = Crypto.CryptoHasher.getter;
     pub const FFI = Bun.FFIObject.getter;
     pub const FileSystemRouter = Bun.getFileSystemRouter;
@@ -95,6 +96,7 @@ pub const BunObject = struct {
         }
 
         // --- Getters ---
+        @export(BunObject.ShellInterpreter, .{ .name = getterName("ShellInterpreter") });
         @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
         @export(BunObject.FFI, .{ .name = getterName("FFI") });
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
@@ -158,7 +160,7 @@ pub const BunObject = struct {
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
-        @export(BunObject.@"$", .{ .name = callbackName("$") });
+        // @export(BunObject.@"$", .{ .name = callbackName("$") });
         @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
         @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         // -- Callbacks --
@@ -299,127 +301,6 @@ pub fn getCSSImports() []ZigString {
     return css_imports_list_strings[0..tail];
 }
 
-/// This will disallow invalid surrogate pairs
-fn appendJSValueStr(
-    allocator: Allocator,
-    globalThis: *JSC.JSGlobalObject,
-    jsval: JSValue,
-    outbuf: *std.ArrayList(u8),
-) !bool {
-    const bunstr = jsval.toBunString(globalThis);
-    bunstr.ref();
-    defer bunstr.deref();
-    if (bunstr.isUTF16()) {
-        const slice: [*]const u16 = @ptrCast(@alignCast(bunstr.byteSlice().ptr));
-        const len = bunstr.byteSlice().len / 2;
-        const result = bun.simdutf.simdutf__validate_utf16le_with_errors(slice, len);
-        if (result.status != .success) {
-            return false;
-        }
-        const utf8 = bunstr.toUTF8(allocator);
-        defer utf8.deinit();
-        try outbuf.appendSlice(utf8.slice());
-        return true;
-    }
-
-    if (bunstr.is8Bit()) {
-        if (bun.strings.isAllASCII(bunstr.byteSlice())) {
-            try outbuf.appendSlice(bunstr.byteSlice());
-            return true;
-        }
-        if (bunstr.isUTF8()) {
-            try outbuf.appendSlice(bunstr.byteSlice());
-            return true;
-        }
-        const utf8 = bunstr.toUTF8(allocator);
-        utf8.deinit();
-        try outbuf.appendSlice(utf8.slice());
-        return true;
-    }
-
-    @panic("unreachable i think");
-}
-
-pub fn shellCmdFromJS(
-    allocator: Allocator,
-    globalThis: *JSC.JSGlobalObject,
-    string_args: JSValue,
-    template_args: []const JSValue,
-    out_jsobjs: *std.ArrayList(JSValue),
-    out_script: *std.ArrayList(u8),
-) !bool {
-    var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
-
-    var string_iter = string_args.arrayIterator(globalThis);
-    var i: u32 = 0;
-    const last = string_iter.len -| 1;
-    while (string_iter.next()) |js_value| {
-        defer i += 1;
-        if (!try appendJSValueStr(allocator, globalThis, js_value, out_script)) {
-            globalThis.throw("bunshell: invalid string", .{});
-            return false;
-        }
-        // const str = js_value.getZigString(globalThis);
-        // try script.appendSlice(str.full());
-        if (i < last) {
-            const template_value = template_args[i];
-            if (!template_value.isEmpty()) {
-                if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
-                    _ = array_buffer;
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (template_value.as(JSC.WebCore.Blob)) |blob| {
-                    _ = blob;
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
-                    _ = rstream;
-
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (template_value.as(JSC.WebCore.Response)) |req| {
-                    _ = req;
-
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (template_value.isString()) {
-                    if (!try appendJSValueStr(allocator, globalThis, template_value, out_script)) {
-                        globalThis.throw("bunshell: invalid string", .{});
-                        return false;
-                    }
-                    continue;
-                }
-                @panic("Unsupported");
-            }
-        }
-    }
-    return true;
-}
-
 pub fn shellLex(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
@@ -443,7 +324,7 @@ pub fn shellLex(
     }
 
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -511,7 +392,7 @@ pub fn shellParse(
         }
     }
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -586,7 +467,7 @@ pub fn shell(
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -627,7 +508,7 @@ pub fn shell(
 
     script_heap.* = script_ast;
 
-    var interpreter = Interpreter.init(
+    const interpreter = Interpreter.init(
         globalThis,
         allocator,
         &arena,
@@ -637,10 +518,14 @@ pub fn shell(
         arena.deinit();
         return .false;
     };
+    _ = interpreter; // autofix
 
-    return interpreter.start(globalThis) catch {
-        return .false;
-    };
+    // return interpreter;
+    return .undefined;
+
+    // return interpreter.start(globalThis) catch {
+    //     return .false;
+    // };
 }
 
 pub fn braces(
@@ -3403,6 +3288,13 @@ pub fn getTOMLObject(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return TOMLObject.create(globalThis);
+}
+
+pub fn getShellConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.Shell.eval.Interpreter.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(

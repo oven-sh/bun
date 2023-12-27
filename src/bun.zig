@@ -834,6 +834,10 @@ pub const fmt = struct {
     }
 };
 
+pub const shell = struct {
+    pub usingnamespace @import("./shell/shell.zig");
+};
+
 pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
 pub const ShellBufferedWriter = @import("./shell/interpreter.zig").BufferedWriter;
 

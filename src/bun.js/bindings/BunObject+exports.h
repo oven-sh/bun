@@ -14,6 +14,7 @@
     macro(SHA384) \
     macro(SHA512) \
     macro(SHA512_256) \
+    macro(ShellInterpreter) \
     macro(TOML) \
     macro(Transpiler) \
     macro(argv) \
@@ -65,7 +66,6 @@
     macro(spawnSync) \
     macro(which) \
     macro(write) \
-    macro($) \
     macro(shellParse) \
     macro(shellLex) \
 

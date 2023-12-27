@@ -493,6 +493,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     SHA384                                         BunObject_getter_wrap_SHA384                                        DontDelete|PropertyCallback
     SHA512                                         BunObject_getter_wrap_SHA512                                        DontDelete|PropertyCallback
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
+    ShellInterpreter                               BunObject_getter_wrap_ShellInterpreter                              DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     _Os                                            BunObject_callback__Os                                              DontEnum|DontDelete|Function 1
@@ -602,7 +603,12 @@ public:
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
-        auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+
+        auto shellTemplateFunction = shellShellTemplateFunctionCodeGenerator(vm);
+        auto mainShellFunc = JSFunction::create(vm, shellTemplateFunction, globalObject->globalScope());
+        // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+        // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+        // auto mainShellFunc = shellShellCodeGenerator;
 #ifdef BUN_DEBUG
         auto parseIdent = Identifier::fromString(vm, String("parse"_s));
         auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);

@@ -76,6 +76,8 @@ pub const Interpreter = struct {
     /// Root ast node
     script: *ast.Script,
 
+    io: IO = .{},
+
     /// Shell env for expansion by the shell
     shell_env: std.StringArrayHashMap([:0]const u8),
     /// Local environment variables to be given to a subprocess
@@ -96,6 +98,14 @@ pub const Interpreter = struct {
     // FIXME TODO deinit
     cwd_fd: bun.FileDescriptor,
 
+    resolve: JSValue = .undefined,
+    reject: JSValue = .undefined,
+    /// Align to 64 bytes to prevent false sharing
+    has_pending_activity: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
+    started: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
+
+    pub usingnamespace JSC.Codegen.JSShellInterpreter;
+
     const ShellErrorKind = error{
         OutOfMemory,
         Syscall,
@@ -112,6 +122,78 @@ pub const Interpreter = struct {
             };
         }
     };
+
+    pub fn constructor(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Interpreter {
+        const allocator = bun.default_allocator;
+        var arena = bun.ArenaAllocator.init(allocator);
+
+        const arguments_ = callframe.arguments(1);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const string_args = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 2 arguments, got 0", .{});
+            return null;
+        };
+
+        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        var script = std.ArrayList(u8).init(arena.allocator());
+        if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        })) {
+            return null;
+        }
+
+        const lex_result = brk: {
+            if (bun.strings.isAllASCII(script.items[0..])) {
+                var lexer = bun.shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+                lexer.lex() catch |err| {
+                    globalThis.throwError(err, "failed to lex shell");
+                    return null;
+                };
+                break :brk lexer.get_result();
+            }
+            var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return null;
+            };
+            break :brk lexer.get_result();
+        };
+
+        var parser = bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
+            globalThis.throwError(err, "failed to create shell parser");
+            return null;
+        };
+
+        const script_ast = parser.parse() catch |err| {
+            globalThis.throwError(err, "failed to parse shell");
+            return null;
+        };
+
+        const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        };
+
+        script_heap.* = script_ast;
+
+        const interpreter = Interpreter.init(
+            globalThis,
+            allocator,
+            &arena,
+            script_heap,
+            jsobjs.items[0..],
+        ) catch {
+            arena.deinit();
+            return null;
+        };
+
+        return interpreter;
+    }
 
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
@@ -185,30 +267,82 @@ pub const Interpreter = struct {
         return interpreter;
     }
 
-    pub fn start(this: *Interpreter, globalThis: *JSGlobalObject) !JSValue {
+    pub fn run(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        _ = callframe; // autofix
+
         _ = globalThis;
-        var root = try Script.init(this, this.script, .{});
+        incrPendingActivityFlag(&this.has_pending_activity);
+        var root = Script.init(this, this.script, .{}) catch bun.outOfMemory();
         const value = this.promise.value();
+        this.started.store(true, .SeqCst);
         try root.start();
         return value;
     }
 
     fn finish(this: *Interpreter, exit_code: u8) void {
-        defer this.deinit();
-        this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
+        log("finish", .{});
+        // defer this.deinit();
+        // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
+        _ = this.resolve.call(this.global, &[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
     }
 
     fn errored(this: *Interpreter, the_error: ShellError) void {
-        defer this.deinit();
-        this.promise.reject(this.global, the_error.toJSC(this.global));
+        _ = the_error; // autofix
+
+        // defer this.deinit();
+        // this.promise.reject(this.global, the_error.toJSC(this.global));
+        _ = this.resolve.call(this.resolve, &[_]JSValue{JSValue.jsNumberFromChar(1)});
     }
 
     fn deinit(this: *Interpreter) void {
+        log("deinit", .{});
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
         }
         this.arena.deinit();
         this.allocator.destroy(this);
+    }
+
+    pub fn setResolve(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = globalThis;
+        const value = callframe.argument(0);
+        this.resolve = value;
+        return .undefined;
+    }
+
+    pub fn setReject(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = globalThis;
+        const value = callframe.argument(0);
+        this.reject = value;
+        return .undefined;
+    }
+
+    pub fn isRunning(
+        this: *Interpreter,
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        _ = globalThis; // autofix
+        _ = callframe; // autofix
+
+        return JSC.JSValue.jsBoolean(this.hasPendingActivity());
+    }
+
+    pub fn getStarted(
+        this: *Interpreter,
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        _ = globalThis; // autofix
+        _ = callframe; // autofix
+
+        return JSC.JSValue.jsBoolean(this.started.load(.SeqCst));
+    }
+
+    pub fn finalize(
+        this: *Interpreter,
+    ) callconv(.C) void {
+        this.deinit();
     }
 
     /// For some reason, bash does not allow braces to be expanded in
@@ -304,6 +438,21 @@ pub const Interpreter = struct {
                 return env;
         }
         return "unknown";
+    }
+
+    pub fn hasPendingActivity(this: *Interpreter) callconv(.C) bool {
+        @fence(.SeqCst);
+        return this.has_pending_activity.load(.SeqCst) > 0;
+    }
+
+    fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
+        @fence(.SeqCst);
+        _ = has_pending_activity.fetchAdd(1, .SeqCst);
+    }
+
+    fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
+        @fence(.SeqCst);
+        _ = has_pending_activity.fetchSub(1, .SeqCst);
     }
 };
 
@@ -1082,15 +1231,19 @@ const StateKind = enum(u8) {
 };
 
 const IO = struct {
-    stdin: Kind = .std,
-    stdout: Kind = .std,
-    stderr: Kind = .std,
+    stdin: Kind = .{ .std = .{} },
+    stdout: Kind = .{ .std = .{ .captured = true } },
+    stderr: Kind = .{ .std = .{ .captured = true } },
 
     const Kind = union(enum) {
         /// Use stdin/stdout/stderr of this process
-        std,
+        /// if `captured` is true, it will write to std{out,err} and also buffer it
+        std: struct { captured: bool = false },
+        /// Write/Read to/from file descriptor
         fd: bun.FileDescriptor,
+        /// Buffers the output
         pipe,
+        /// Discards output
         ignore,
 
         fn close(this: Kind) void {
@@ -2443,6 +2596,11 @@ pub const ShellGlobTask = struct {
         this.result.deinit();
         this.allocator.destroy(this);
     }
+};
+
+/// This writes to the output and also
+pub const CapturedWriter = struct {
+    bufw: BufferedWriter,
 };
 
 /// This is modified version of BufferedInput for file descriptors only. This
@@ -4927,10 +5085,10 @@ pub const Builtin = struct {
             exec: struct {
                 // task: RmTask,
                 filepath_args: []const [*:0]const u8,
-                lock: std.Thread.Mutex = std.Thread.Mutex{},
                 total_tasks: usize,
-                error_signal: std.atomic.Value(bool) = .{ .raw = false },
                 err: ?Syscall.Error = null,
+                lock: std.Thread.Mutex = std.Thread.Mutex{},
+                error_signal: std.atomic.Value(bool) = .{ .raw = false },
                 state: union(enum) {
                     idle,
                     waiting: struct {

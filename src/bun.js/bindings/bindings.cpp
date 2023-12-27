@@ -3374,7 +3374,7 @@ JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObje
     auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
     auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
     auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
-    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject,  big_1e6, big_sec);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
     ASSERT(sec_as_nsec.isHeapBigInt());
     auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
     ASSERT(big_sec_as_nsec);

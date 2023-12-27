@@ -1269,7 +1269,7 @@ const Decompressor = union(enum) {
 
                     return;
                 },
-                else => unreachable,
+                else => @panic("Invalid encoding. This code should not be reachable"),
             }
         }
 

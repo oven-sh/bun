@@ -3369,6 +3369,33 @@ JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* globalObject
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
 }
 
+JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
+{
+    auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
+    auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
+    auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject,  big_1e6, big_sec);
+    ASSERT(sec_as_nsec.isHeapBigInt());
+    auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
+    ASSERT(big_sec_as_nsec);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec));
+}
+
+JSC__JSValue JSC__JSValue__bigIntSum(JSC__JSGlobalObject* globalObject, JSC__JSValue a, JSC__JSValue b)
+{
+    JSC::JSValue a_value = JSC::JSValue::decode(a);
+    JSC::JSValue b_value = JSC::JSValue::decode(b);
+
+    ASSERT(a_value.isHeapBigInt());
+    auto* big_a = a_value.asHeapBigInt();
+    ASSERT(big_a);
+
+    ASSERT(b_value.isHeapBigInt());
+    auto* big_b = b_value.asHeapBigInt();
+    ASSERT(big_b);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_a, big_b));
+}
+
 JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObject, uint64_t val)
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));

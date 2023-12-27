@@ -1645,7 +1645,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                     .fd = bun.toFD(file.handle),
                 },
                 .dirfd = bun.invalid_fd,
-                .data = .{ .string = bytes.items },
+                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.from(bytes.items, bun.default_allocator) } },
             },
             .sync,
         )) {

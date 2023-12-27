@@ -161,6 +161,10 @@ test("testing Bun.deepEquals() using isEqual()", () => {
   expect(Infinity).toEqual(1 / 0);
   expect(-Infinity).toEqual(-Infinity);
   expect(-Infinity).toEqual(-1 / 0);
+
+  expect(Error("foo")).toEqual(Error("foo"));
+  expect(Error("foo")).not.toEqual(Error("bar"));
+  expect(Error("foo")).not.toEqual("foo");
 });
 
 try {

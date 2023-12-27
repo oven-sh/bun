@@ -1548,6 +1548,16 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
+    // https://github.com/oven-sh/bun/issues/7849
+    if (!description.isEmptyOrUndefinedOrNull() and description.isCallable(globalThis.vm())) {
+        // TODO: do we need an exception check here?
+        if (description.get(globalThis, "name")) |name| {
+            if (name.isString()) {
+                description = name;
+            }
+        }
+    }
+
     if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
         function = description;
         description = .zero;

@@ -21,7 +21,7 @@ const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 
 const ShellCmd = @import("./interpreter.zig").Cmd;
 
-const util = @import("../subproc/util.zig");
+const util = @import("./util.zig");
 
 pub const ShellSubprocess = struct {
     const log = Output.scoped(.SHELL_SUBPROC, false);
@@ -69,16 +69,24 @@ pub const ShellSubprocess = struct {
     // };
 
     pub const OutKind = util.OutKind;
-    // pub const Readable = util.Readable;
     pub const Stdio = util.Stdio;
 
-    // pub const BufferedInput = util.BufferedInput;
-    // pub const BufferedOutput = util.BufferedOutput;
-
-    pub const Flags = util.Flags;
+    pub const Flags = packed struct(u3) {
+        is_sync: bool = false,
+        killed: bool = false,
+        waiting_for_onexit: bool = false,
+    };
     pub const SignalCode = bun.SignalCode;
-    pub const Poll = util.Poll;
-    pub const WaitThreadPoll = util.WaitThreadPoll;
+
+    pub const Poll = union(enum) {
+        poll_ref: ?*Async.FilePoll,
+        wait_thread: WaitThreadPoll,
+    };
+
+    pub const WaitThreadPoll = struct {
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+        poll_ref: Async.KeepAlive = .{},
+    };
 
     pub const Writable = union(enum) {
         pipe: *JSC.WebCore.FileSink,

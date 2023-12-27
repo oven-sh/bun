@@ -1312,7 +1312,7 @@ const Decompressor = union(enum) {
                 reader.list = body_out_str.list;
                 reader.total_out = @truncate(initial);
             },
-            else => unreachable,
+            else => @panic("Invalid encoding. This code should not be reachable"),
         }
     }
 

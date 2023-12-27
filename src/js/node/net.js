@@ -804,6 +804,7 @@ class Server extends EventEmitter {
 
     if (typeof backlog === "function") {
       onListen = backlog;
+      backlog = undefined;
     }
 
     //port is actually path

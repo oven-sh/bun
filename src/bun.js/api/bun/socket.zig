@@ -341,7 +341,7 @@ pub const SocketConfig = struct {
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
-    backlog: i32 = 512,
+    backlog: i32 = 511,
 
     pub fn fromJS(
         opts: JSC.JSValue,
@@ -351,7 +351,7 @@ pub const SocketConfig = struct {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
-        var backlog: i32 = 512;
+        var backlog: i32 = 511;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;

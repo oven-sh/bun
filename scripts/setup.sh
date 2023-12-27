@@ -32,7 +32,6 @@ for type in CC CXX; do
   ) || fail "LLVM ${LLVM_VERSION} is required. Detected $type as '$compiler'"
 done
 
-has_exec "zig" || fail "'zig' is missing"
 has_exec "bun" || fail "you need an existing copy of 'bun' in your path to build bun"
 has_exec "cmake" || fail "'cmake' is missing"
 has_exec "ninja" || fail "'ninja' is missing"

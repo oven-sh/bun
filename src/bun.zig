@@ -2862,6 +2862,46 @@ pub fn New(comptime T: type) type {
     };
 }
 
+pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    return struct {
+        pub inline fn destroy(self: *T) void {
+            if (comptime is_heap_breakdown_enabled) {
+                HeapBreakdown.allocator(T).destroy(self);
+            } else {
+                default_allocator.destroy(self);
+            }
+        }
+
+        pub fn ref(self: *T) void {
+            self.ref_count += 1;
+        }
+
+        pub fn deref(self: *T) void {
+            self.ref_count -= 1;
+
+            if (self.ref_count == 0) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            if (comptime is_heap_breakdown_enabled) {
+                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+                ptr.* = t;
+                return ptr;
+            }
+
+            const ptr = default_allocator.create(T) catch outOfMemory();
+            ptr.* = t;
+            return ptr;
+        }
+    };
+}
+
 /// Free a globally-allocated a value.
 ///
 /// Must have used `new` to allocate the value.

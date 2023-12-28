@@ -1145,6 +1145,14 @@ declare module "bun:test" {
      * Asserts that a value matches the most recent snapshot.
      *
      * @example
+     * expect([1, 2, 3]).toMatchSnapshot('hint message');
+     * @param hint Hint used to identify the snapshot in the snapshot file.
+     */
+    toMatchSnapshot(hint?: string): void;
+    /**
+     * Asserts that a value matches the most recent snapshot.
+     *
+     * @example
      * expect([1, 2, 3]).toMatchSnapshot();
      * expect({ a: 1, b: 2 }).toMatchSnapshot({ a: 1 });
      * expect({ c: new Date() }).toMatchSnapshot({ c: expect.any(Date) });

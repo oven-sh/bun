@@ -2663,6 +2663,8 @@ pub const BufferedWriter = struct {
     written: usize = 0,
     parent: ParentPtr,
     err: ?Syscall.Error = null,
+    /// optional bytelist for capturing the data
+    bytelist: ?*bun.ByteList = null,
 
     const print = bun.Output.scoped(.BufferedWriter, false);
 
@@ -2795,6 +2797,10 @@ pub const BufferedWriter = struct {
                 },
 
                 .result => |bytes_written| {
+                    if (this.bytelist) |blist| {
+                        blist.append(bun.default_allocator, to_write[0..bytes_written]) catch bun.outOfMemory();
+                    }
+
                     this.written += bytes_written;
 
                     log(
@@ -3146,6 +3152,10 @@ pub const Builtin = struct {
     const BuiltinIO = union(enum) {
         fd: bun.FileDescriptor,
         buf: std.ArrayList(u8),
+        captured: struct {
+            out_kind: enum { stdout, stderr },
+            bytelist: *bun.ByteList,
+        },
         arraybuf: ArrayBuf,
         ignore,
 
@@ -3153,6 +3163,14 @@ pub const Builtin = struct {
             buf: JSC.ArrayBuffer.Strong,
             i: u32 = 0,
         };
+
+        pub fn expectFd(this: *BuiltinIO) bun.FileDescriptor {
+            return switch (this.*) {
+                .fd => this.fd,
+                .captured => if (this.captured.out_kind == .stdout) @as(bun.FileDescriptor, bun.STDOUT_FD) else @as(bun.FileDescriptor, bun.STDERR_FD),
+                else => @panic("No fd"),
+            };
+        }
 
         pub fn isClosed(this: *BuiltinIO) bool {
             switch (this.*) {
@@ -3191,7 +3209,7 @@ pub const Builtin = struct {
 
         pub fn needsIO(this: *BuiltinIO) bool {
             return switch (this.*) {
-                .fd => true,
+                .fd, .captured => true,
                 else => false,
             };
         }
@@ -3262,13 +3280,13 @@ pub const Builtin = struct {
             .ignore => .ignore,
         };
         var stdout: Builtin.BuiltinIO = switch (io.stdout) {
-            .std => .{ .fd = bun.STDOUT_FD },
+            .std => if (io.stdout.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stdout, .bytelist = bytelist } } else .{ .fd = bun.STDOUT_FD },
             .fd => |fd| .{ .fd = fd },
             .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
             .ignore => .ignore,
         };
         var stderr: Builtin.BuiltinIO = switch (io.stderr) {
-            .std => .{ .fd = bun.STDERR_FD },
+            .std => if (io.stderr.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stderr, .bytelist = bytelist } } else .{ .fd = bun.STDERR_FD },
             .fd => |fd| .{ .fd = fd },
             .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
             .ignore => .ignore,
@@ -3446,6 +3464,18 @@ pub const Builtin = struct {
     //     }
     // }
 
+    pub fn ioBytelist(this: *Builtin, comptime io_kind: @Type(.EnumLiteral)) ?*bun.ByteList {
+        if (comptime io_kind != .stdout and io_kind != .stderr) {
+            @compileError("Bad IO" ++ @tagName(io_kind));
+        }
+
+        const io: *BuiltinIO = &@field(this, @tagName(io_kind));
+        return switch (io.*) {
+            .captured => if (comptime io_kind == .stdout) &this.parentCmd().base.interpreter.buffered_stdout else &this.parentCmd().base.interpreter.buffered_stderr,
+            else => null,
+        };
+    }
+
     pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(usize) {
         if (comptime io_kind != .stdout and io_kind != .stderr) {
             @compileError("Bad IO" ++ @tagName(io_kind));
@@ -3454,7 +3484,7 @@ pub const Builtin = struct {
         var io: *BuiltinIO = &@field(this, @tagName(io_kind));
 
         switch (io.*) {
-            .fd => @panic("writeNoIO can't write to a file descriptor"),
+            .captured, .fd => @panic("writeNoIO can't write to a file descriptor"),
             .buf => {
                 log("{s} write to buf {d}\n", .{ this.kind.asString(), buf.len });
                 io.buf.appendSlice(buf) catch bun.outOfMemory();
@@ -3575,8 +3605,9 @@ pub const Builtin = struct {
                 this.print_state = .{
                     .bufwriter = BufferedWriter{
                         .remain = buf,
-                        .fd = this.bltn.stdout.fd,
+                        .fd = this.bltn.stdout.expectFd(),
                         .parent = BufferedWriter.ParentPtr{ .ptr = BufferedWriter.ParentPtr.Repr.init(this) },
+                        .bytelist = this.bltn.ioBytelist(.stdout),
                     },
                 };
 
@@ -3647,9 +3678,10 @@ pub const Builtin = struct {
             }
 
             this.io_write_state = BufferedWriter{
-                .fd = this.bltn.stdout.fd,
+                .fd = this.bltn.stdout.expectFd(),
                 .remain = this.output.items[0..],
                 .parent = BufferedWriter.ParentPtr.init(this),
+                .bytelist = this.bltn.ioBytelist(.stdout),
             };
             this.state = .waiting;
             this.io_write_state.?.writeIfPossible(false);
@@ -3716,9 +3748,10 @@ pub const Builtin = struct {
                 this.state = .{
                     .one_arg = .{
                         .writer = BufferedWriter{
-                            .fd = this.bltn.stdout.fd,
+                            .fd = this.bltn.stdout.expectFd(),
                             .remain = "\n",
                             .parent = BufferedWriter.ParentPtr.init(this),
+                            .bytelist = this.bltn.ioBytelist(.stdout),
                         },
                     },
                 };
@@ -3781,9 +3814,10 @@ pub const Builtin = struct {
                 multiargs.had_not_found = true;
                 multiargs.state = .{
                     .waiting_write = BufferedWriter{
-                        .fd = this.bltn.stdout.fd,
+                        .fd = this.bltn.stdout.expectFd(),
                         .remain = buf,
                         .parent = BufferedWriter.ParentPtr.init(this),
+                        .bytelist = this.bltn.ioBytelist(.stdout),
                     },
                 };
                 multiargs.state.waiting_write.writeIfPossible(false);
@@ -3794,9 +3828,10 @@ pub const Builtin = struct {
             const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
             multiargs.state = .{
                 .waiting_write = BufferedWriter{
-                    .fd = this.bltn.stdout.fd,
+                    .fd = this.bltn.stdout.expectFd(),
                     .remain = buf,
                     .parent = BufferedWriter.ParentPtr.init(this),
+                    .bytelist = this.bltn.ioBytelist(.stdout),
                 },
             };
             multiargs.state.waiting_write.writeIfPossible(false);
@@ -3859,9 +3894,10 @@ pub const Builtin = struct {
             this.state = .{
                 .waiting_write_stderr = .{
                     .buffered_writer = BufferedWriter{
-                        .fd = this.bltn.stderr.fd,
+                        .fd = this.bltn.stderr.expectFd(),
                         .remain = buf,
                         .parent = BufferedWriter.ParentPtr.init(this),
+                        .bytelist = this.bltn.ioBytelist(.stderr),
                     },
                 },
             };
@@ -3987,9 +4023,10 @@ pub const Builtin = struct {
                         .waiting_io = .{
                             .kind = .stderr,
                             .writer = BufferedWriter{
-                                .fd = this.bltn.stderr.fd,
+                                .fd = this.bltn.stderr.expectFd(),
                                 .remain = msg,
                                 .parent = BufferedWriter.ParentPtr.init(this),
+                                .bytelist = this.bltn.ioBytelist(.stderr),
                             },
                         },
                     };
@@ -4012,9 +4049,10 @@ pub const Builtin = struct {
                     .waiting_io = .{
                         .kind = .stdout,
                         .writer = BufferedWriter{
-                            .fd = this.bltn.stdout.fd,
+                            .fd = this.bltn.stdout.expectFd(),
                             .remain = buf,
                             .parent = BufferedWriter.ParentPtr.init(this),
+                            .bytelist = this.bltn.ioBytelist(.stdout),
                         },
                     },
                 };
@@ -4101,9 +4139,10 @@ pub const Builtin = struct {
             if (this.bltn.stderr.needsIO()) {
                 this.state = .{
                     .waiting_write_err = BufferedWriter{
-                        .fd = this.bltn.stderr.fd,
+                        .fd = this.bltn.stderr.expectFd(),
                         .remain = buf,
                         .parent = BufferedWriter.ParentPtr.init(this),
+                        .bytelist = this.bltn.ioBytelist(.stderr),
                     },
                 };
                 this.state.waiting_write_err.writeIfPossible(false);
@@ -4221,9 +4260,10 @@ pub const Builtin = struct {
             if (this.bltn.stdout.needsIO()) {
                 const blocking_output: BlockingOutput = .{
                     .writer = BufferedWriter{
-                        .fd = this.bltn.stdout.fd,
+                        .fd = this.bltn.stdout.expectFd(),
                         .remain = output.items[0..],
                         .parent = BufferedWriter.ParentPtr.init(this),
+                        .bytelist = this.bltn.ioBytelist(.stdout),
                     },
                     .arr = output,
                 };
@@ -4996,9 +5036,10 @@ pub const Builtin = struct {
                 this.state = .{
                     .waiting_write_err = .{
                         .writer = BufferedWriter{
-                            .fd = this.bltn.stderr.fd,
+                            .fd = this.bltn.stderr.expectFd(),
                             .remain = buf,
                             .parent = BufferedWriter.ParentPtr.init(this),
+                            .bytelist = this.bltn.ioBytelist(.stderr),
                         },
                         .exit_code = exit_code,
                     },
@@ -5462,9 +5503,10 @@ pub const Builtin = struct {
                                     if (this.bltn.stderr.needsIO()) {
                                         parse_opts.state = .{
                                             .wait_write_err = BufferedWriter{
-                                                .fd = this.bltn.stderr.fd,
+                                                .fd = this.bltn.stderr.expectFd(),
                                                 .remain = error_string,
                                                 .parent = BufferedWriter.ParentPtr.init(this),
+                                                .bytelist = this.bltn.ioBytelist(.stderr),
                                             },
                                         };
                                         parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -5499,9 +5541,10 @@ pub const Builtin = struct {
                                             if (this.bltn.stderr.needsIO()) {
                                                 parse_opts.state = .{
                                                     .wait_write_err = BufferedWriter{
-                                                        .fd = this.bltn.stderr.fd,
+                                                        .fd = this.bltn.stderr.expectFd(),
                                                         .remain = buf,
                                                         .parent = BufferedWriter.ParentPtr.init(this),
+                                                        .bytelist = this.bltn.ioBytelist(.stderr),
                                                     },
                                                 };
                                                 parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -5542,9 +5585,10 @@ pub const Builtin = struct {
                                                     if (this.bltn.stderr.needsIO()) {
                                                         parse_opts.state = .{
                                                             .wait_write_err = BufferedWriter{
-                                                                .fd = this.bltn.stderr.fd,
+                                                                .fd = this.bltn.stderr.expectFd(),
                                                                 .remain = error_string,
                                                                 .parent = BufferedWriter.ParentPtr.init(this),
+                                                                .bytelist = this.bltn.ioBytelist(.stderr),
                                                             },
                                                         };
                                                         parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -5578,9 +5622,10 @@ pub const Builtin = struct {
                                         if (this.bltn.stderr.needsIO()) {
                                             parse_opts.state = .{
                                                 .wait_write_err = BufferedWriter{
-                                                    .fd = this.bltn.stderr.fd,
+                                                    .fd = this.bltn.stderr.expectFd(),
                                                     .remain = error_string,
                                                     .parent = BufferedWriter.ParentPtr.init(this),
+                                                    .bytelist = this.bltn.ioBytelist(.stderr),
                                                 },
                                             };
                                             parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -5600,9 +5645,10 @@ pub const Builtin = struct {
                                         if (this.bltn.stderr.needsIO()) {
                                             parse_opts.state = .{
                                                 .wait_write_err = BufferedWriter{
-                                                    .fd = this.bltn.stderr.fd,
+                                                    .fd = this.bltn.stderr.expectFd(),
                                                     .remain = error_string,
                                                     .parent = BufferedWriter.ParentPtr.init(this),
+                                                    .bytelist = this.bltn.ioBytelist(.stderr),
                                                 },
                                             };
                                             parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -5826,9 +5872,10 @@ pub const Builtin = struct {
 
                             if (this.bltn.stderr.needsIO()) {
                                 exec.state.waiting_but_errored.error_writer = BufferedWriter{
-                                    .fd = this.bltn.stderr.fd,
+                                    .fd = this.bltn.stderr.expectFd(),
                                     .remain = error_string,
                                     .parent = BufferedWriter.ParentPtr.init(this),
+                                    .bytelist = this.bltn.ioBytelist(.stderr),
                                 };
                                 exec.state.waiting_but_errored.error_writer.?.writeIfPossible(false);
                                 return;

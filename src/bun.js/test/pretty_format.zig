@@ -792,7 +792,6 @@ pub const JestPrettyFormat = struct {
 
                     const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
-                    if (key.eqlComptime("call")) return;
 
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;

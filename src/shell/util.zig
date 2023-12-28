@@ -22,7 +22,8 @@ fn destroyPipe(pipe: [2]os.fd_t) void {
 pub const OutKind = enum { stdout, stderr };
 
 pub const Stdio = union(enum) {
-    inherit: void,
+    /// When set to true, it means to capture the output
+    inherit: struct { captured: ?*bun.ByteList = null },
     ignore: void,
     fd: bun.FileDescriptor,
     path: JSC.Node.PathLike,
@@ -33,6 +34,7 @@ pub const Stdio = union(enum) {
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
             .array_buffer, .blob, .pipe => true,
+            .inherit => self.inherit.captured != null,
             else => false,
         };
     }
@@ -51,19 +53,29 @@ pub const Stdio = union(enum) {
                 try actions.dup2(pipe_fd[idx], std_fileno);
                 try actions.close(pipe_fd[1 - idx]);
             },
+            .inherit => {
+                if (stdio.inherit.captured != null) {
+                    // Same as above
+                    std.debug.assert(!(stdio == .blob and stdio.blob.needsToReadFile()));
+                    const idx: usize = if (std_fileno == 0) 0 else 1;
+
+                    try actions.dup2(pipe_fd[idx], std_fileno);
+                    try actions.close(pipe_fd[1 - idx]);
+                    return;
+                }
+
+                if (comptime Environment.isMac) {
+                    try actions.inherit(std_fileno);
+                } else {
+                    try actions.dup2(std_fileno, std_fileno);
+                }
+            },
             .fd => |fd| {
                 try actions.dup2(fd, std_fileno);
             },
             .path => |pathlike| {
                 const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                 try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
-            },
-            .inherit => {
-                if (comptime Environment.isMac) {
-                    try actions.inherit(std_fileno);
-                } else {
-                    try actions.dup2(std_fileno, std_fileno);
-                }
             },
             .ignore => {
                 const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
@@ -85,7 +97,7 @@ pub fn extractStdioBlob(
         if (blob.store()) |store| {
             if (store.data.file.pathlike == .fd) {
                 if (store.data.file.pathlike.fd == fd) {
-                    stdio_array[i] = Stdio{ .inherit = {} };
+                    stdio_array[i] = Stdio{ .inherit = .{} };
                 } else {
                     switch (bun.FDTag.get(i)) {
                         .stdin => {

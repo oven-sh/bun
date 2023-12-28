@@ -302,13 +302,31 @@ pub const ShellSubprocess = struct {
 
         pub fn init(subproc: *ShellSubprocess, comptime kind: OutKind, stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
             return switch (stdio) {
-                .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
                 .pipe => {
                     var subproc_readable_ptr = subproc.getIO(kind);
                     subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
                     BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd, max_size);
                     return subproc_readable_ptr.*;
+                },
+                .inherit => {
+                    // Same as pipe
+                    if (stdio.inherit.captured != null) {
+                        var subproc_readable_ptr = subproc.getIO(kind);
+                        subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
+                        BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd, max_size);
+                        subproc_readable_ptr.pipe.buffer.out = stdio.inherit.captured.?;
+                        subproc_readable_ptr.pipe.buffer.writer = BufferedOutput.CapturedBufferedWriter{
+                            .src = BufferedOutput.WriterSrc{
+                                .inner = &subproc_readable_ptr.pipe.buffer,
+                            },
+                            .fd = if (kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
+                            .parent = .{ .parent = &subproc_readable_ptr.pipe.buffer },
+                        };
+                        return subproc_readable_ptr.*;
+                    }
+
+                    return Readable{ .inherit = {} };
                 },
                 .path => Readable{ .ignore = {} },
                 .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
@@ -444,6 +462,34 @@ pub const ShellSubprocess = struct {
             .pending = {},
         },
         recall_readall: bool = true,
+        /// Used to allow to write to fd and also capture the data
+        writer: ?CapturedBufferedWriter = null,
+        out: ?*bun.ByteList = null,
+
+        const WriterSrc = struct {
+            inner: *BufferedOutput,
+
+            pub inline fn bufToWrite(this: WriterSrc, written: usize) []const u8 {
+                if (written >= this.inner.internal_buffer.len) return "";
+                return this.inner.internal_buffer.ptr[written..this.inner.internal_buffer.len];
+            }
+
+            pub inline fn isDone(this: WriterSrc, written: usize) bool {
+                // need to wait for more input
+                if (this.inner.status != .done and this.inner.status != .err) return false;
+                return written >= this.inner.internal_buffer.len;
+            }
+        };
+
+        pub const CapturedBufferedWriter = bun.shell.eval.NewBufferedWriter(
+            WriterSrc,
+            struct {
+                parent: *BufferedOutput,
+                pub inline fn onDone(this: @This(), e: ?bun.sys.Error) void {
+                    this.parent.onBufferedWriterDone(e);
+                }
+            },
+        );
 
         pub const Status = union(enum) {
             pending: void,
@@ -492,10 +538,36 @@ pub const ShellSubprocess = struct {
             out.fifo.auto_sizer = &out.auto_sizer.?;
         }
 
-        pub fn closeFifoSignalCmd(this: *BufferedOutput) void {
+        pub fn onBufferedWriterDone(this: *BufferedOutput, e: ?bun.sys.Error) void {
+            _ = e; // autofix
+
+            defer this.signalDoneToCmd();
+            // if (e) |err| {
+            //     this.status = .{ .err = err };
+            // }
+        }
+
+        pub fn isDone(this: *BufferedOutput) bool {
+            if (this.status != .done and this.status != .err) return false;
+            if (this.writer != null) {
+                return this.writer.?.isDone();
+            }
+            return true;
+        }
+
+        pub fn signalDoneToCmd(this: *BufferedOutput) void {
+            log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
             // `this.fifo.close()` will be called from the parent
             // this.fifo.close();
+            if (!this.isDone()) return;
             if (this.subproc.cmd_parent) |cmd| {
+                if (this.writer != null) {
+                    if (this.writer.?.err) |e| {
+                        if (this.status != .err) {
+                            this.status = .{ .err = e };
+                        }
+                    }
+                }
                 cmd.bufferedOutputClose(this.out_type);
             }
         }
@@ -506,7 +578,7 @@ pub const ShellSubprocess = struct {
             log("ON READ {s} result={s}", .{ @tagName(this.out_type), @tagName(result) });
             defer {
                 if (this.status == .err or this.status == .done) {
-                    this.closeFifoSignalCmd();
+                    this.signalDoneToCmd();
                 } else if (this.recall_readall and this.recall_readall) {
                     this.readAll();
                 }
@@ -539,6 +611,10 @@ pub const ShellSubprocess = struct {
                     if (slice.len > 0)
                         std.debug.assert(this.internal_buffer.contains(slice));
 
+                    if (this.writer != null) {
+                        this.writer.?.writeIfPossible(false);
+                    }
+
                     this.fifo.buf = this.internal_buffer.ptr[@min(this.internal_buffer.len, this.internal_buffer.cap)..this.internal_buffer.cap];
 
                     if (result.isDone() or (slice.len == 0 and this.fifo.poll_ref != null and this.fifo.poll_ref.?.isHUP())) {
@@ -553,95 +629,6 @@ pub const ShellSubprocess = struct {
         pub fn readAll(this: *BufferedOutput) void {
             log("ShellBufferedOutput.readAll doing nothing", .{});
             this.watch();
-            // this.recall_readall = false;
-            // if (this.auto_sizer) |auto_sizer| {
-            //     while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
-            //         var stack_buffer: [8096]u8 = undefined;
-            //         var stack_buf: []u8 = stack_buffer[0..];
-            //         var buf_to_use = stack_buf;
-            //         var available = this.internal_buffer.available();
-            //         if (available.len >= stack_buf.len) {
-            //             buf_to_use = available;
-            //         }
-
-            //         const result = this.fifo.read(buf_to_use, this.fifo.to_read);
-
-            //         switch (result) {
-            //             .pending => {
-            //                 this.watch();
-            //                 return;
-            //             },
-            //             .err => |err| {
-            //                 this.status = .{ .err = err };
-            //                 // this.fifo.close();
-            //                 this.closeFifoSignalCmd();
-            //                 this.recall_readall = false;
-
-            //                 return;
-            //             },
-            //             .done => {
-            //                 this.status = .{ .done = {} };
-            //                 // this.fifo.close();
-            //                 this.closeFifoSignalCmd();
-            //                 this.recall_readall = false;
-            //                 return;
-            //             },
-            //             .read => |slice| {
-            //                 log("buffered output ({s}) readAll (autosizer): {s}", .{ @tagName(this.out_type), slice });
-            //                 if (slice.ptr == stack_buf.ptr) {
-            //                     this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
-            //                 } else {
-            //                     this.internal_buffer.len += @as(u32, @truncate(slice.len));
-            //                 }
-
-            //                 if (slice.len < buf_to_use.len) {
-            //                     this.watch();
-            //                     return;
-            //                 }
-            //             },
-            //         }
-            //     }
-            // } else {
-            //     while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
-            //         log("we in this loop i think", .{});
-            //         var buf_to_use = this.internal_buffer.available();
-
-            //         const result = this.fifo.read(buf_to_use, this.fifo.to_read);
-
-            //         log("Result tag: {s}", .{@tagName(result)});
-
-            //         switch (result) {
-            //             .pending => {
-            //                 this.watch();
-            //                 return;
-            //             },
-            //             .err => |err| {
-            //                 this.status = .{ .err = err };
-            //                 // this.fifo.close();
-            //                 this.closeFifoSignalCmd();
-            //                 this.recall_readall = false;
-
-            //                 return;
-            //             },
-            //             .done => {
-            //                 this.status = .{ .done = {} };
-            //                 // this.fifo.close();
-            //                 this.closeFifoSignalCmd();
-            //                 this.recall_readall = false;
-            //                 return;
-            //             },
-            //             .read => |slice| {
-            //                 log("buffered output ({s}) readAll (autosizer): {s}", .{ @tagName(this.out_type), slice });
-            //                 this.internal_buffer.len += @as(u32, @truncate(slice.len));
-
-            //                 if (slice.len < buf_to_use.len) {
-            //                     this.watch();
-            //                     return;
-            //                 }
-            //             },
-            //         }
-            //     }
-            // }
         }
 
         pub fn watch(this: *BufferedOutput) void {
@@ -1066,7 +1053,7 @@ pub const ShellSubprocess = struct {
         stdio: [3]Stdio = .{
             .{ .ignore = {} },
             .{ .pipe = null },
-            .{ .inherit = {} },
+            .{ .inherit = .{} },
         },
         lazy: bool = false,
         PATH: []const u8,
@@ -1142,7 +1129,7 @@ pub const ShellSubprocess = struct {
                 .stdio = .{
                     .{ .ignore = {} },
                     .{ .pipe = null },
-                    .{ .inherit = {} },
+                    .{ .inherit = .{} },
                 },
                 .lazy = false,
                 .PATH = jsc_vm.bundler.env.get("PATH") orelse "",

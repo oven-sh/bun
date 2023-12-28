@@ -78,6 +78,10 @@ pub const Interpreter = struct {
 
     io: IO = .{},
 
+    /// FIXME think about lifetimes
+    buffered_stdout: bun.ByteList = .{},
+    buffered_stderr: bun.ByteList = .{},
+
     /// Shell env for expansion by the shell
     shell_env: std.StringArrayHashMap([:0]const u8),
     /// Local environment variables to be given to a subprocess
@@ -260,6 +264,11 @@ pub const Interpreter = struct {
             .cwd_fd = cwd_fd,
 
             .arena = arena.*,
+
+            .io = .{
+                .stdout = .{ .std = .{ .captured = &interpreter.buffered_stdout } },
+                // .stderr = .{ .std = .{ .captured = &interpreter.buffered_stderr } },
+            },
         };
 
         var promise = JSC.JSPromise.create(global);
@@ -272,10 +281,18 @@ pub const Interpreter = struct {
 
         _ = globalThis;
         incrPendingActivityFlag(&this.has_pending_activity);
-        var root = Script.init(this, this.script, .{}) catch bun.outOfMemory();
+        var root = Script.init(this, this.script, this.io) catch bun.outOfMemory();
         const value = this.promise.value();
         this.started.store(true, .SeqCst);
         try root.start();
+        return value;
+    }
+
+    fn ioToJSValue(this: *Interpreter, buf: *bun.ByteList) JSValue {
+        var bytelist = buf.*;
+        buf.* = .{};
+        const arraybuf = JSC.ArrayBuffer.fromBytes(bytelist.slice(), .Uint8Array);
+        const value = arraybuf.toJSUnchecked(this.global, null);
         return value;
     }
 
@@ -283,6 +300,7 @@ pub const Interpreter = struct {
         log("finish", .{});
         // defer this.deinit();
         // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
+        // this.buffered_stdout.
         _ = this.resolve.call(this.global, &[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
     }
 
@@ -337,6 +355,30 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         return JSC.JSValue.jsBoolean(this.started.load(.SeqCst));
+    }
+
+    pub fn getBufferedStdout(
+        this: *Interpreter,
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        _ = globalThis; // autofix
+        _ = callframe; // autofix
+
+        const stdout = this.ioToJSValue(&this.buffered_stdout);
+        return stdout;
+    }
+
+    pub fn getBufferedStderr(
+        this: *Interpreter,
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        _ = globalThis; // autofix
+        _ = callframe; // autofix
+
+        const stdout = this.ioToJSValue(&this.buffered_stderr);
+        return stdout;
     }
 
     pub fn finalize(
@@ -1232,13 +1274,13 @@ const StateKind = enum(u8) {
 
 const IO = struct {
     stdin: Kind = .{ .std = .{} },
-    stdout: Kind = .{ .std = .{ .captured = true } },
-    stderr: Kind = .{ .std = .{ .captured = true } },
+    stdout: Kind = .{ .std = .{} },
+    stderr: Kind = .{ .std = .{} },
 
     const Kind = union(enum) {
         /// Use stdin/stdout/stderr of this process
         /// if `captured` is true, it will write to std{out,err} and also buffer it
-        std: struct { captured: bool = false },
+        std: struct { captured: ?*bun.ByteList = null },
         /// Write/Read to/from file descriptor
         fd: bun.FileDescriptor,
         /// Buffers the output
@@ -1257,7 +1299,7 @@ const IO = struct {
 
         fn to_subproc_stdio(this: Kind) Subprocess.Stdio {
             return switch (this) {
-                .std => .inherit,
+                .std => .{ .inherit = .{ .captured = this.std.captured } },
                 .fd => |val| .{ .fd = val },
                 .pipe => .{ .pipe = null },
                 .ignore => .ignore,
@@ -2283,6 +2325,10 @@ pub const Cmd = struct {
             std.debug.assert(this.exec == .subproc);
         }
         log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
+        if (this.io.stdout == .std and this.io.stdout.std.captured != null) {
+            var buf = this.io.stdout.std.captured.?;
+            buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+        }
         this.exec.subproc.buffered_closed.close(.{ .stdout = &this.exec.subproc.child.stdout });
         this.exec.subproc.child.closeIO(.stdout);
     }
@@ -2292,6 +2338,10 @@ pub const Cmd = struct {
             std.debug.assert(this.exec == .subproc);
         }
         log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
+        if (this.io.stderr == .std and this.io.stderr.std.captured != null) {
+            var buf = this.io.stderr.std.captured.?;
+            buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+        }
         this.exec.subproc.buffered_closed.close(.{ .stderr = &this.exec.subproc.child.stderr });
         this.exec.subproc.child.closeIO(.stderr);
     }
@@ -2643,15 +2693,15 @@ pub const BufferedWriter = struct {
             };
         }
 
-        fn onDone(this: ParentPtr, bw: *BufferedWriter, e: ?Syscall.Error) void {
-            if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Which)) return this.ptr.as(Builtin.Which).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Rm)) return this.ptr.as(Builtin.Rm).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Pwd)) return this.ptr.as(Builtin.Pwd).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Mv)) return this.ptr.as(Builtin.Mv).onBufferedWriterDone(bw, e);
-            if (this.ptr.is(Builtin.Ls)) return this.ptr.as(Builtin.Ls).onBufferedWriterDone(bw, e);
+        fn onDone(this: ParentPtr, e: ?Syscall.Error) void {
+            if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Which)) return this.ptr.as(Builtin.Which).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Rm)) return this.ptr.as(Builtin.Rm).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Pwd)) return this.ptr.as(Builtin.Pwd).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Mv)) return this.ptr.as(Builtin.Mv).onBufferedWriterDone(e);
+            if (this.ptr.is(Builtin.Ls)) return this.ptr.as(Builtin.Ls).onBufferedWriterDone(e);
             @panic("Invalid ptr tag");
         }
     };
@@ -2782,9 +2832,236 @@ pub const BufferedWriter = struct {
 
     pub fn deinit(this: *BufferedWriter) void {
         this.closeFDIfOpen();
-        this.parent.onDone(this, this.err);
+        this.parent.onDone(this.err);
     }
 };
+
+const SliceBufferSrc = struct {
+    remain: []const u8 = "",
+
+    fn bufToWrite(this: SliceBufferSrc, written: usize) []const u8 {
+        if (written >= this.remain.len) return "";
+        return this.remain[written..];
+    }
+
+    fn isDone(this: SliceBufferSrc, written: usize) bool {
+        return written >= this.remain.len;
+    }
+};
+
+const BuiltinParent = struct {
+    const Types = .{
+        Builtin.Export,
+        Builtin.Echo,
+        Builtin.Cd,
+        Builtin.Which,
+        Builtin.Rm,
+        Builtin.Pwd,
+        Builtin.Mv,
+        Builtin.Ls,
+    };
+    ptr: Repr,
+    const Repr = TaggedPointerUnion(Types);
+
+    fn underlying(this: BuiltinParent) type {
+        inline for (Types) |Ty| {
+            if (this.ptr.is(Ty)) return Ty;
+        }
+        @panic("Uh oh");
+    }
+
+    fn init(p: anytype) BuiltinParent {
+        return .{
+            .ptr = Repr.init(p),
+        };
+    }
+
+    fn onDone(this: BuiltinParent, bw: *@This(), e: ?Syscall.Error) void {
+        if (this.ptr.is(Builtin.Export)) return this.ptr.as(Builtin.Export).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Echo)) return this.ptr.as(Builtin.Echo).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Cd)) return this.ptr.as(Builtin.Cd).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Which)) return this.ptr.as(Builtin.Which).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Rm)) return this.ptr.as(Builtin.Rm).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Pwd)) return this.ptr.as(Builtin.Pwd).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Mv)) return this.ptr.as(Builtin.Mv).onBufferedWriterDone(bw, e);
+        if (this.ptr.is(Builtin.Ls)) return this.ptr.as(Builtin.Ls).onBufferedWriterDone(bw, e);
+        @panic("Invalid ptr tag");
+    }
+};
+
+/// This is modified version of BufferedInput for file descriptors only. This
+/// struct cleans itself up when it is done, so no need to call `.deinit()` on
+/// it.
+pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type) type {
+    const SrcHandler = struct {
+        src: Src,
+
+        inline fn bufToWrite(src: Src, written: usize) []const u8 {
+            if (!@hasDecl(Src, "bufToWrite")) @compileError("Need `bufToWrite`");
+            return src.bufToWrite(written);
+        }
+
+        inline fn isDone(src: Src, written: usize) bool {
+            if (!@hasDecl(Src, "isDone")) @compileError("Need `bufToWrite`");
+            return src.isDone(written);
+        }
+    };
+
+    return struct {
+        src: Src,
+        fd: bun.FileDescriptor,
+        poll_ref: ?*bun.Async.FilePoll = null,
+        written: usize = 0,
+        parent: Parent,
+        err: ?Syscall.Error = null,
+
+        pub const ParentType = Parent;
+
+        const print = bun.Output.scoped(.BufferedWriter, false);
+
+        pub fn isDone(this: *@This()) bool {
+            return SrcHandler.isDone(this.src, this.written) or this.err != null;
+        }
+
+        pub usingnamespace JSC.WebCore.NewReadyWatcher(@This(), .writable, onReady);
+
+        pub fn onReady(this: *@This(), _: i64) void {
+            if (this.fd == bun.invalid_fd) {
+                return;
+            }
+
+            this.__write();
+        }
+
+        pub fn writeIfPossible(this: *@This(), comptime is_sync: bool) void {
+            if (comptime !is_sync) {
+                // we ask, "Is it possible to write right now?"
+                // we do this rather than epoll or kqueue()
+                // because we don't want to block the thread waiting for the write
+                switch (bun.isWritable(this.fd)) {
+                    .ready => {
+                        if (this.poll_ref) |poll| {
+                            poll.flags.insert(.writable);
+                            poll.flags.insert(.fifo);
+                            std.debug.assert(poll.flags.contains(.poll_writable));
+                        }
+                    },
+                    .hup => {
+                        this.deinit();
+                        return;
+                    },
+                    .not_ready => {
+                        if (!this.isWatching()) this.watch(this.fd);
+                        return;
+                    },
+                }
+            }
+
+            this.writeAllowBlocking(is_sync);
+        }
+
+        /// Calling this directly will block if the fd is not opened with non
+        /// blocking option. If the fd is blocking, you should call
+        /// `writeIfPossible()` first, which will check if the fd is writable. If so
+        /// it will then call this function, if not, then it will poll for the fd to
+        /// be writable
+        pub fn __write(this: *@This()) void {
+            this.writeAllowBlocking(false);
+        }
+
+        pub fn writeAllowBlocking(this: *@This(), allow_blocking: bool) void {
+            _ = allow_blocking; // autofix
+
+            var to_write = SrcHandler.bufToWrite(this.src, this.written);
+
+            if (to_write.len == 0) {
+                // we are done!
+                // this.closeFDIfOpen();
+                if (SrcHandler.isDone(this.src, this.written)) {
+                    this.deinit();
+                }
+                return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                // bun.assertNonBlocking(this.fd);
+            }
+
+            while (to_write.len > 0) {
+                switch (bun.sys.write(this.fd, to_write)) {
+                    .err => |e| {
+                        if (e.isRetry()) {
+                            log("write({d}) retry", .{
+                                to_write.len,
+                            });
+
+                            this.watch(this.fd);
+                            this.poll_ref.?.flags.insert(.fifo);
+                            return;
+                        }
+
+                        if (e.getErrno() == .PIPE) {
+                            this.deinit();
+                            return;
+                        }
+
+                        // fail
+                        log("write({d}) fail: {d}", .{ to_write.len, e.errno });
+                        this.err = e;
+                        this.deinit();
+                        return;
+                    },
+
+                    .result => |bytes_written| {
+                        this.written += bytes_written;
+
+                        log(
+                            "write({d}) {d}",
+                            .{
+                                to_write.len,
+                                bytes_written,
+                            },
+                        );
+
+                        // this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                        // to_write = to_write[bytes_written..];
+
+                        // // we are done or it accepts no more input
+                        // if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
+                        //     this.deinit();
+                        //     return;
+                        // }
+
+                        to_write = SrcHandler.bufToWrite(this.src, this.written);
+                        if (to_write.len == 0) {
+                            if (SrcHandler.isDone(this.src, this.written)) {
+                                this.deinit();
+                                return;
+                            }
+                        }
+                    },
+                }
+            }
+        }
+
+        fn closeFDIfOpen(this: *@This()) void {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            if (this.fd != bun.invalid_fd) {
+                _ = bun.sys.close(this.fd);
+                this.fd = bun.invalid_fd;
+            }
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.closeFDIfOpen();
+            this.parent.onDone(this.err);
+        }
+    };
+}
 
 pub const Builtin = struct {
     kind: Kind,
@@ -3235,8 +3512,7 @@ pub const Builtin = struct {
             }
         };
 
-        pub fn onBufferedWriterDone(this: *Export, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Export, e: ?Syscall.Error) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.print_state != null);
             }
@@ -3380,8 +3656,7 @@ pub const Builtin = struct {
             return Maybe(void).success;
         }
 
-        pub fn onBufferedWriterDone(this: *Echo, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Echo, e: ?Syscall.Error) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.io_write_state != null and this.state == .waiting);
             }
@@ -3538,8 +3813,7 @@ pub const Builtin = struct {
             this.next();
         }
 
-        pub fn onBufferedWriterDone(this: *Which, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Which, e: ?Syscall.Error) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.state == .one_arg or
                     (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -3671,8 +3945,7 @@ pub const Builtin = struct {
             }
         }
 
-        pub fn onBufferedWriterDone(this: *Cd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Cd, e: ?Syscall.Error) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.state == .waiting_write_stderr);
             }
@@ -3773,8 +4046,7 @@ pub const Builtin = struct {
             }
         }
 
-        pub fn onBufferedWriterDone(this: *Pwd, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Pwd, e: ?Syscall.Error) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.state == .waiting_io);
             }
@@ -3920,8 +4192,7 @@ pub const Builtin = struct {
             }
         }
 
-        pub fn onBufferedWriterDone(this: *Ls, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter; // autofix
+        pub fn onBufferedWriterDone(this: *Ls, e: ?Syscall.Error) void {
             _ = e; // autofix
 
             if (this.state == .waiting_write_err) {
@@ -4897,8 +5168,7 @@ pub const Builtin = struct {
             return Maybe(void).success;
         }
 
-        pub fn onBufferedWriterDone(this: *Mv, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Mv, e: ?Syscall.Error) void {
             switch (this.state) {
                 .waiting_write_err => {
                     if (e != null) {
@@ -5400,8 +5670,7 @@ pub const Builtin = struct {
             return Maybe(void).success;
         }
 
-        pub fn onBufferedWriterDone(this: *Rm, bufwriter: *BufferedWriter, e: ?Syscall.Error) void {
-            _ = bufwriter;
+        pub fn onBufferedWriterDone(this: *Rm, e: ?Syscall.Error) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
                     (this.state == .exec and

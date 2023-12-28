@@ -127,6 +127,7 @@ pub const FilePoll = struct {
     const Subprocess = JSC.Subprocess;
     const ShellSubprocess = bun.ShellSubprocess;
     const ShellBufferedWriter = bun.ShellBufferedWriter;
+    const ShellSubprocessCapturedBufferedWriter = bun.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
     const DNSResolver = JSC.DNS.DNSResolver;
@@ -143,12 +144,13 @@ pub const FilePoll = struct {
         FileSink,
         Subprocess,
         ShellSubprocess,
+        ShellBufferedWriter,
+        ShellSubprocessCapturedBufferedWriter,
         BufferedInput,
         FIFO,
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
-        ShellBufferedWriter,
         LifecycleScriptSubprocessOutputReader,
         LifecycleScriptSubprocessPid,
     });

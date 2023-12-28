@@ -30,6 +30,14 @@ export default [
         fn: "getStarted",
         length: 0,
       },
+      getBufferedStdout: {
+        fn: "getBufferedStdout",
+        length: 0,
+      },
+      getBufferedStderr: {
+        fn: "getBufferedStderr",
+        length: 0,
+      },
     },
   }),
 ];

@@ -1,8 +1,17 @@
 type ShellInterpreter = any;
-type ShellOutput = undefined;
 type Resolve = (value: ShellOutput) => void;
 
 export function shellTemplateFunction(strings: TemplateStringsArray) {
+  class ShellOutput {
+    stdout: Buffer;
+    stderr: Buffer;
+    exitCode: number;
+    constructor(stdout: Buffer, stderr: Buffer, exitCode: number) {
+      this.stdout = stdout;
+      this.stderr = stderr;
+      this.exitCode = exitCode;
+    }
+  }
   class ShellPromise extends Promise<ShellOutput> {
     _resolve: Resolve = () => {};
     _reject: Resolve = () => {};
@@ -35,15 +44,19 @@ export function shellTemplateFunction(strings: TemplateStringsArray) {
       return super.then(onfulfilled, onrejected);
     }
   }
+
   // console.log("Expressions", expressions, typeof expressions);
+  const core = new Bun.ShellInterpreter(...arguments);
   let resolve_: Resolve;
   let reject_: Resolve;
-  const promise = new ShellPromise((resolve, reject) => {
-    resolve_ = resolve;
-    reject_ = reject;
+  const promise = new ShellPromise((res, rej) => {
+    resolve_ = code =>
+      res(new ShellOutput(Buffer.from(core.getBufferedStdout()), Buffer.from(core.getBufferedStderr()), code));
+
+    reject_ = code =>
+      rej(new ShellOutput(Buffer.from(core.getBufferedStdout()), Buffer.from(core.getBufferedStderr()), code));
   });
   // const core = new Bun.ShellInterpreter(strings, ...expressions);
-  const core = new Bun.ShellInterpreter(...arguments);
   promise._bind(core, resolve_, reject_);
   // setImmediate(() => /* promise.isHalted  || */ promise.run());
   setTimeout(() => promise.run(), 0);

@@ -58,6 +58,10 @@ declare module "bun" {
     | SpawnOptions.Writable
     | ReadableStream;
 
+  interface ShellPromise<ShellOutput> extends Promise<ShellOutput> {
+    get stdin(): WritableStream;
+  }
+
   export interface Shell {
     (
       strings: TemplateStringsArray,

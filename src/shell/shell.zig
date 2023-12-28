@@ -20,6 +20,7 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Subprocess = bun.ShellSubprocess;
 
 pub const eval = @import("./interpreter.zig");
+pub const subproc = @import("./subproc.zig");
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;

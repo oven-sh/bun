@@ -1877,6 +1877,14 @@ declare module "bun" {
     maxRequestBodySize?: number;
 
     /**
+     * The backlog argument defines the maximum length to which the queue of pending connections for server.
+     * If a connection request arrives when the queue is full, the client may receive an error with an indication of ECONNREFUSED or,
+     * if the underlying protocol supports retransmission, the request may be ignored so that a later reattempt at connection succeeds.
+     * @default 511
+     */
+    backlog?: number;
+
+    /**
      * Render contextual errors? This enables bun's error page
      * @default process.env.NODE_ENV !== 'production'
      */

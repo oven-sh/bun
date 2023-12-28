@@ -1430,8 +1430,8 @@ void us_internal_ssl_socket_context_free(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size) {
-  return us_socket_context_listen(0, &context->sc, host, port, options,
+    int port, int backlog, int options, int socket_ext_size) {
+  return us_socket_context_listen(0, &context->sc, host, port, backlog, options,
                                   sizeof(struct us_internal_ssl_socket_t) -
                                       sizeof(struct us_socket_t) +
                                       socket_ext_size);
@@ -1439,8 +1439,8 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     struct us_internal_ssl_socket_context_t *context, const char *path,
-    int options, int socket_ext_size) {
-  return us_socket_context_listen_unix(0, &context->sc, path, options,
+    int backlog, int options, int socket_ext_size) {
+  return us_socket_context_listen_unix(0, &context->sc, path, backlog, options,
                                        sizeof(struct us_internal_ssl_socket_t) -
                                            sizeof(struct us_socket_t) +
                                            socket_ext_size);

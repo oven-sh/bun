@@ -67,6 +67,7 @@ typedef struct {
   int port;
   const char *host;
   int options;
+  int backlog;
 } uws_app_listen_config_t;
 
 struct uws_app_s;
@@ -123,8 +124,8 @@ typedef struct {
 
 typedef void (*uws_listen_handler)(struct us_listen_socket_t *listen_socket,
                                    void *user_data);
-typedef void (*uws_listen_domain_handler)(struct us_listen_socket_t *listen_socket, 
-                                          const char* domain, int options, 
+typedef void (*uws_listen_domain_handler)(struct us_listen_socket_t *listen_socket,
+                                          const char* domain, int options,
                                           void *user_data);
 
 typedef void (*uws_method_handler)(uws_res_t *response, uws_req_t *request,
@@ -132,10 +133,10 @@ typedef void (*uws_method_handler)(uws_res_t *response, uws_req_t *request,
 typedef void (*uws_filter_handler)(uws_res_t *response, int, void *user_data);
 typedef void (*uws_missing_server_handler)(const char *hostname,
                                            void *user_data);
-typedef void (*uws_get_headers_server_handler)(const char *header_name, 
-                                               size_t header_name_size, 
-                                               const char *header_value, 
-                                               size_t header_value_size, 
+typedef void (*uws_get_headers_server_handler)(const char *header_name,
+                                               size_t header_name_size,
+                                               const char *header_value,
+                                               size_t header_value_size,
                                                void *user_data);
 
 // Basic HTTP
@@ -165,16 +166,16 @@ void uws_app_any(int ssl, uws_app_t *app, const char *pattern,
 
 void uws_app_run(int ssl, uws_app_t *);
 
-void uws_app_listen(int ssl, uws_app_t *app, int port,
+void uws_app_listen(int ssl, uws_app_t *app, int port, int backlog,
                     uws_listen_handler handler, void *user_data);
 void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
-                                uint16_t port, int32_t options,
+                                uint16_t port, int32_t backlog, int32_t options,
                                 uws_listen_handler handler, void *user_data);
-void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, 
+void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, int backlog,
                            uws_listen_domain_handler handler, void *user_data);
 
 void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain,
-                                        int options, uws_listen_domain_handler handler,
+                                        int backlog, int options, uws_listen_domain_handler handler,
                                         void *user_data);
 void uws_app_domain(int ssl, uws_app_t *app, const char *server_name);
 

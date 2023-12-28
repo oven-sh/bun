@@ -2073,7 +2073,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             var exception_ref = [_]JSC.C.JSValueRef{null};
             const exception: JSC.C.ExceptionRef = &exception_ref;
-            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg, exception)) |sb| {
+            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
+                defer sb.deinit();
                 const session_slice = sb.slice();
                 const ssl_ptr = this.socket.ssl();
                 var tmp = @as([*c]const u8, @ptrCast(session_slice.ptr));
@@ -2205,7 +2206,8 @@ fn NewSocket(comptime ssl: bool) type {
 
                 var exception_ref = [_]JSC.C.JSValueRef{null};
                 const exception: JSC.C.ExceptionRef = &exception_ref;
-                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg, exception)) |sb| {
+                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
+                    defer sb.deinit();
                     const context_slice = sb.slice();
 
                     const buffer_size = @as(usize, @intCast(length));

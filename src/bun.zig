@@ -2800,17 +2800,158 @@ pub noinline fn outOfMemory() noreturn {
     @panic("Bun ran out of memory!");
 }
 
+pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
+
+const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+
+/// Globally-allocate a value on the heap.
+///
+/// When used, yuo must call `bun.destroy` to free the memory.
+/// default_allocator.destroy should not be used.
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+        ptr.* = t;
+        return ptr;
+    }
+
     const ptr = default_allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
+/// Free a globally-allocated a value
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
+pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
+    if (comptime is_heap_breakdown_enabled) {
+        if (allocator.vtable == default_allocator.vtable) {
+            destroy(t);
+            return;
+        }
+    }
+
+    allocator.destroy(t);
+}
+
+pub fn New(comptime T: type) type {
+    return struct {
+        pub inline fn destroy(self: *T) void {
+            if (comptime is_heap_breakdown_enabled) {
+                HeapBreakdown.allocator(T).destroy(self);
+            } else {
+                default_allocator.destroy(self);
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            if (comptime is_heap_breakdown_enabled) {
+                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+                ptr.* = t;
+                return ptr;
+            }
+
+            const ptr = default_allocator.create(T) catch outOfMemory();
+            ptr.* = t;
+            return ptr;
+        }
+    };
+}
+
+/// Reference-counted heap-allocated instance value.
+///
+/// `ref_count` is expected to be defined on `T` with a default value set to `1`
+pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(self.ref_count == 0);
+            }
+
+            if (comptime is_heap_breakdown_enabled) {
+                HeapBreakdown.allocator(T).destroy(self);
+            } else {
+                default_allocator.destroy(self);
+            }
+        }
+
+        pub fn ref(self: *T) void {
+            self.ref_count += 1;
+        }
+
+        pub fn deref(self: *T) void {
+            self.ref_count -= 1;
+
+            if (self.ref_count == 0) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            if (comptime is_heap_breakdown_enabled) {
+                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+                ptr.* = t;
+
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(ptr.ref_count == 1);
+                }
+
+                return ptr;
+            }
+
+            const ptr = default_allocator.create(T) catch outOfMemory();
+            ptr.* = t;
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(ptr.ref_count == 1);
+            }
+
+            return ptr;
+        }
+    };
+}
+
+/// Free a globally-allocated a value.
+///
+/// Must have used `new` to allocate the value.
+///
+/// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
+/// to dump the heap.
 pub inline fn destroy(t: anytype) void {
-    default_allocator.destroy(@TypeOf(t));
+    if (comptime is_heap_breakdown_enabled) {
+        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
+    } else {
+        default_allocator.destroy(t);
+    }
 }
 
 pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    if (comptime is_heap_breakdown_enabled) {
+        if (allocator.vtable == default_allocator.vtable) {
+            return new(T, t);
+        }
+    }
+
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;

@@ -956,8 +956,13 @@ fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callc
     return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
 }
 
+extern fn dump_zone_malloc_stats() void;
+
 pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
+    if (comptime bun.is_heap_breakdown_enabled) {
+        dump_zone_malloc_stats();
+    }
     return .undefined;
 }
 
@@ -1743,23 +1748,18 @@ pub const Crypto = struct {
                     return JSC.JSValue.undefined;
             }
 
-            var string_or_buffer = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+            const password_to_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
                 globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
-            if (string_or_buffer.slice().len == 0) {
+            if (password_to_hash.len == 0) {
                 globalObject.throwInvalidArguments("password must not be empty", .{});
-                string_or_buffer.deinit();
+                bun.default_allocator.free(password_to_hash);
                 return JSC.JSValue.undefined;
             }
 
-            string_or_buffer.ensureCloned(bun.default_allocator) catch {
-                globalObject.throwOutOfMemory();
-                return JSC.JSValue.undefined;
-            };
-
-            return hash(globalObject, string_or_buffer.slice(), algorithm, false);
+            return hash(globalObject, password_to_hash, algorithm, false);
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
@@ -1782,7 +1782,7 @@ pub const Crypto = struct {
                     return JSC.JSValue.undefined;
             }
 
-            var string_or_buffer = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+            var string_or_buffer = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
                 globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
@@ -1793,10 +1793,6 @@ pub const Crypto = struct {
                 return JSC.JSValue.undefined;
             }
 
-            string_or_buffer.ensureCloned(bun.default_allocator) catch {
-                globalObject.throwOutOfMemory();
-                return JSC.JSValue.undefined;
-            };
             defer string_or_buffer.deinit();
 
             return hash(globalObject, string_or_buffer.slice(), algorithm, true);
@@ -1920,40 +1916,28 @@ pub const Crypto = struct {
                 };
             }
 
-            var password = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+            const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch |err| {
+                if (err != error.JSError) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
-            var hash_ = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
-                password.deinit();
-                globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch |err| {
+                bun.default_allocator.free(owned_password);
+                if (err != error.JSError) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
-            if (hash_.slice().len == 0) {
-                password.deinit();
+            if (owned_hash.len == 0) {
+                bun.default_allocator.free(owned_password);
                 return JSC.JSPromise.resolvedPromiseValue(globalObject, JSC.JSValue.jsBoolean(false));
             }
 
-            if (password.slice().len == 0) {
-                hash_.deinit();
+            if (owned_password.len == 0) {
+                bun.default_allocator.free(owned_hash);
                 return JSC.JSPromise.resolvedPromiseValue(globalObject, JSC.JSValue.jsBoolean(false));
             }
 
-            password.ensureCloned(bun.default_allocator) catch {
-                hash_.deinit();
-                globalObject.throwOutOfMemory();
-                return JSC.JSValue.undefined;
-            };
-
-            hash_.ensureCloned(bun.default_allocator) catch {
-                password.deinit();
-                globalObject.throwOutOfMemory();
-                return JSC.JSValue.undefined;
-            };
-
-            return verify(globalObject, password.slice(), hash_.slice(), algorithm, false);
+            return verify(globalObject, owned_password, owned_hash, algorithm, false);
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
@@ -1985,12 +1969,12 @@ pub const Crypto = struct {
                 };
             }
 
-            var password = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+            var password = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
                 globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
-            var hash_ = JSC.Node.SliceOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
+            var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
                 password.deinit();
                 globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 return JSC.JSValue.undefined;
@@ -2046,7 +2030,7 @@ pub const Crypto = struct {
         fn hashToEncoding(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.SliceOrBuffer,
+            input: JSC.Node.StringOrBuffer,
             encoding: JSC.Node.Encoding,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
@@ -2065,7 +2049,7 @@ pub const Crypto = struct {
         fn hashToBytes(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.SliceOrBuffer,
+            input: JSC.Node.StringOrBuffer,
             output: ?JSC.ArrayBuffer,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
@@ -2100,7 +2084,7 @@ pub const Crypto = struct {
         pub fn hash_(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
-            input: JSC.Node.SliceOrBuffer,
+            input: JSC.Node.StringOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
             var evp = EVP.byName(algorithm, globalThis) orelse {
@@ -2111,9 +2095,10 @@ pub const Crypto = struct {
 
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
-                    .string => |str| {
-                        const encoding = JSC.Node.Encoding.from(str) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
+                    inline else => |*str| {
+                        defer str.deinit();
+                        const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
+                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
                             return JSC.JSValue.zero;
                         };
 
@@ -2169,7 +2154,7 @@ pub const Crypto = struct {
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
             const encoding = arguments.ptr[1];
-            const buffer = JSC.Node.SliceOrBuffer.fromJSWithEncoding(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
+            const buffer = JSC.Node.StringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
                 globalThis.throwInvalidArguments("expected string or buffer", .{});
                 return JSC.JSValue.zero;
             };
@@ -2201,14 +2186,14 @@ pub const Crypto = struct {
         pub fn digest_(
             this: *@This(),
             globalThis: *JSGlobalObject,
-            output: ?JSC.Node.SliceOrBuffer,
+            output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
-                    .string => |str| {
+                    inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str});
+                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str.*});
                             return JSC.JSValue.zero;
                         };
 
@@ -2347,9 +2332,10 @@ pub const Crypto = struct {
             ) JSC.JSValue {
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
-                        .string => |str| {
-                            const encoding = JSC.Node.Encoding.from(str) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
+                        inline else => |*str| {
+                            defer str.deinit();
+                            const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
+                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
                                 return JSC.JSValue.zero;
                             };
 
@@ -2381,7 +2367,7 @@ pub const Crypto = struct {
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
-                const buffer = JSC.Node.SliceOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
+                const buffer = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
                     globalThis.throwInvalidArguments("expected string or buffer", .{});
                     return JSC.JSValue.zero;
                 };
@@ -2393,11 +2379,11 @@ pub const Crypto = struct {
             pub fn digest_(
                 this: *@This(),
                 globalThis: *JSGlobalObject,
-                output: ?JSC.Node.SliceOrBuffer,
+                output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
-                        .string => |str| {
+                        inline else => |str| {
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                                 globalThis.throwInvalidArguments("Unknown encoding: \"{s}\"", .{str.slice()});
                                 return JSC.JSValue.zero;

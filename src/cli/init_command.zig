@@ -317,7 +317,7 @@ pub const InitCommand = struct {
 
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                try dev_dependencies.data.e_object.putString(alloc, "bun-types", "latest");
+                try dev_dependencies.data.e_object.putString(alloc, "@types/bun", "latest");
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
             }
 

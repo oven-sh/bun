@@ -4144,8 +4144,12 @@ declare module "bun" {
 
     /**
      * Get the resource usage information of the process (max RSS, CPU time, etc)
+     *
+     * Only available after the process has exited
+     *
+     * If the process hasn't exited yet, this will return `undefined`
      */
-    stats(): ResourceUsage;
+    resourceUsage(): ResourceUsage | undefined;
   }
 
   /**
@@ -4163,6 +4167,10 @@ declare module "bun" {
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;
     success: boolean;
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     */
+    resourceUsage: ResourceUsage;
   }
 
   /**
@@ -4519,7 +4527,9 @@ declare module "bun" {
     constructor(pattern: string);
 
     /**
-     * Scan for files that match this glob pattern. Returns an async iterator.
+     * Scan a root directory recursively for files that match this glob pattern. Returns an async iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js
@@ -4540,7 +4550,9 @@ declare module "bun" {
     ): AsyncIterableIterator<string>;
 
     /**
-     * Scan for files that match this glob pattern. Returns an iterator.
+     * Synchronously scan a root directory recursively for files that match this glob pattern. Returns an iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js

@@ -39,13 +39,13 @@ pub const ResourceUsage = struct {
     ) callconv(.C) JSValue {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
-        
+
         const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.tv_usec, rusage.utime.tv_sec);
         const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.tv_usec, rusage.stime.tv_sec);
 
         cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
         cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
-        cpu.put(globalObject, JSC.ZigString.static("total"),  JSValue.bigIntSum(globalObject, usrTime, sysTime));
+        cpu.put(globalObject, JSC.ZigString.static("total"), JSValue.bigIntSum(globalObject, usrTime, sysTime));
 
         return cpu;
     }
@@ -179,11 +179,18 @@ pub const Subprocess = struct {
         // json,
     };
 
-    pub fn stats(
+    pub fn resourceUsage(
         this: *Subprocess,
         globalObject: *JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        return this.createResourceUsageObject(globalObject);
+    }
+
+    pub fn createResourceUsageObject(
+        this: *Subprocess,
+        globalObject: *JSGlobalObject,
+    ) JSValue {
         if (comptime Environment.isWindows) {
             //TODO: implement on windows
             return JSValue.jsUndefined();
@@ -196,14 +203,14 @@ pub const Subprocess = struct {
             .rusage = pid_rusage,
         };
 
-        const alloc = globalObject.allocator();
-        var result = alloc.create(ResourceUsage) catch {
+        var result = bun.default_allocator.create(ResourceUsage) catch {
             globalObject.throwOutOfMemory();
             return .zero;
         };
         result.* = resource_usage;
         return result.toJS(globalObject);
     }
+
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
     }
@@ -1664,6 +1671,7 @@ pub const Subprocess = struct {
             const exitCode = subprocess.exit_code orelse 1;
             const stdout = subprocess.stdout.toBufferedValue(globalThis);
             const stderr = subprocess.stderr.toBufferedValue(globalThis);
+            const resource_usage = subprocess.createResourceUsage(globalThis);
             subprocess.finalizeSync();
 
             const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
@@ -1671,6 +1679,7 @@ pub const Subprocess = struct {
             sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
             sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
             sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+            sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
             return sync_value;
         }
         // POSIX:
@@ -2041,6 +2050,7 @@ pub const Subprocess = struct {
         const exitCode = subprocess.exit_code orelse 1;
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
+        const resource_usage = subprocess.createResourceUsageObject(globalThis);
         subprocess.finalizeSync();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
@@ -2048,7 +2058,7 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
-
+        sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
         return sync_value;
     }
 

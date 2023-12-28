@@ -3067,10 +3067,10 @@ pub const JSMap = opaque {
 pub const JSValueReprInt = i64;
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
-    undefined = @as(JSValueReprInt, @bitCast(@as(i64, 0xa))),
-    null = @as(JSValueReprInt, @bitCast(@as(i64, 0x2))),
+    undefined = 0xa,
+    null = 0x2,
     true = FFI.TrueI64,
-    false = @as(JSValueReprInt, @bitCast(@as(i64, 0x6))),
+    false = 0x6,
     _,
 
     pub const Type = JSValueReprInt;

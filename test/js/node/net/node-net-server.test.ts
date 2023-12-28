@@ -159,6 +159,35 @@ describe("net.createServer listen", () => {
     server.listen(0, "0.0.0.0");
   });
 
+  it("should provide listening property", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+    expect(server.listening).toBeFalse();
+
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+
+    server.on("error", closeAndFail).on(
+      "listening",
+      mustCall(() => {
+        expect(server.listening).toBeTrue();
+        clearTimeout(timeout);
+        server.close();
+        expect(server.listening).toBeFalse();
+        done();
+      }),
+    );
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "0.0.0.0");
+  });
+
   it("should listen on localhost", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

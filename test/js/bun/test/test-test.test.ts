@@ -165,6 +165,10 @@ test("testing Bun.deepEquals() using isEqual()", () => {
   expect(Error("foo")).toEqual(Error("foo"));
   expect(Error("foo")).not.toEqual(Error("bar"));
   expect(Error("foo")).not.toEqual("foo");
+
+  class CustomError extends Error { constructor(message) { super(message); } };
+  expect(new CustomError("foo")).not.toEqual(new CustomError("bar"));
+  expect(new CustomError("foo")).toEqual(new CustomError("foo"));
 });
 
 try {

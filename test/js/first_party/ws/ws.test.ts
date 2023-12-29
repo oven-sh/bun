@@ -253,10 +253,10 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocketServer", () => {
-  it("sets websocket prototype properties correctly", (done) => {
+  it("sets websocket prototype properties correctly", done => {
     const wss = new WebSocketServer({ port: 0 });
 
-    wss.on("connection", (ws) => {
+    wss.on("connection", ws => {
       try {
         expect(ws.CLOSED).toBeDefined();
         expect(ws.CLOSING).toBeDefined();
@@ -276,10 +276,10 @@ describe("WebSocketServer", () => {
 });
 
 describe("Server", () => {
-  it("sets websocket prototype properties correctly", (done) => {
+  it("sets websocket prototype properties correctly", done => {
     const wss = new Server({ port: 0 });
 
-    wss.on("connection", (ws) => {
+    wss.on("connection", ws => {
       try {
         expect(ws.CLOSED).toBeDefined();
         expect(ws.CLOSING).toBeDefined();

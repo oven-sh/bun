@@ -684,6 +684,8 @@ pub const Subprocess = struct {
             array_buffer: JSC.ArrayBuffer.Strong,
         },
 
+        pub const event_loop_kind = JSC.EventLoopKind.js;
+
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
 
         pub fn onReady(this: *BufferedInput, _: i64) void {

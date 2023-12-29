@@ -465,7 +465,7 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
-const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution

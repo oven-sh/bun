@@ -2712,6 +2712,7 @@ pub const BufferedWriter = struct {
         return this.remain.len == 0 or this.err != null;
     }
 
+    pub const event_loop_kind = JSC.EventLoopKind.js;
     pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
 
     pub fn onReady(this: *BufferedWriter, _: i64) void {
@@ -2929,6 +2930,7 @@ pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type) type {
             return SrcHandler.isDone(this.src, this.written) or this.err != null;
         }
 
+        pub const event_loop_kind = JSC.EventLoopKind.js;
         pub usingnamespace JSC.WebCore.NewReadyWatcher(@This(), .writable, onReady);
 
         pub fn onReady(this: *@This(), _: i64) void {

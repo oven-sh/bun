@@ -1372,15 +1372,83 @@ pub const EventLoop = struct {
     }
 };
 
+const EventLoopCtxJs = struct {
+    vm: *JSC.VirtualMachine,
+
+    pub inline fn init(inner: *JSC.VirtualMachine) EventLoopCtxJs {
+        return .{
+            .vm = inner,
+        };
+    }
+
+    pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
+        return this.vm.rareData().filePolls(this.vm).get();
+    }
+
+    pub inline fn ioLoop(this: @This()) *JSC.PlatformEventLoop {
+        return this.vm.event_loop_handle.?;
+    }
+};
+
+const EventLoopCtxMini = struct {
+    mini: *JSC.MiniEventLoop,
+
+    pub fn init(inner: *JSC.MiniEventLoop) EventLoopCtxMini {
+        return .{
+            .mini = inner,
+        };
+    }
+
+    pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
+        return this.mini.filePolls().get();
+    }
+
+    pub inline fn ioLoop(this: @This()) *JSC.PlatformEventLoop {
+        return this.mini.loop;
+    }
+};
+
+pub const EventLoopKind = enum { js, mini };
+
+pub fn EventLoopCtx(inner: anytype) brk: {
+    if (@TypeOf(inner) == *JSC.VirtualMachine) {
+        break :brk EventLoopCtxJs;
+    } else if (@TypeOf(inner) == *JSC.MiniEventLoop) {
+        break :brk EventLoopCtxMini;
+    }
+    @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
+} {
+    if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return EventLoopCtxJs.init(inner);
+    if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return EventLoopCtxMini.init(inner);
+    @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
+}
+
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
     loop: *uws.Loop,
     allocator: std.mem.Allocator,
+    file_polls_: ?*Async.FilePoll.Store = null,
+
+    pub threadlocal var global: *MiniEventLoop = undefined;
+
+    pub fn initGlobal() void {
+        const loop = MiniEventLoop.init(bun.default_allocator);
+        global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
+        global.* = loop;
+    }
 
     const Queue = std.fifo.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
 
     pub const Task = AnyTaskWithExtraContext;
+
+    pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
+        return this.file_polls_ orelse {
+            this.file_polls_ = this.allocator.create(Async.FilePoll.Store) catch bun.outOfMemory();
+            this.file_polls_.?.* = Async.FilePoll.Store.init(this.allocator);
+            return this.file_polls_.?;
+        };
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,

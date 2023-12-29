@@ -666,13 +666,6 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn sliceZAssume(
-        this: PathLike,
-    ) [:0]const u8 {
-        var sliced = this.slice();
-        return sliced.ptr[0..sliced.len :0];
-    }
-
     pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .string => this.string.toJS(globalObject, null),

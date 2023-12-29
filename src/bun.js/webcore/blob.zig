@@ -50,7 +50,7 @@ const PathOrBlob = union(enum) {
     blob: Blob,
 
     pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, args.arena.allocator(), exception)) |path| {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, exception)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -337,10 +337,11 @@ pub const Blob = struct {
                     .fd => {
                         const fd = try reader.readInt(bun.FileDescriptor, .little);
 
+                        var path_or_fd = JSC.Node.PathOrFileDescriptor{
+                            .fd = fd,
+                        };
                         const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
-                            JSC.Node.PathOrFileDescriptor{
-                                .fd = fd,
-                            },
+                            &path_or_fd,
                             globalThis,
                         ));
 
@@ -350,13 +351,13 @@ pub const Blob = struct {
                         const path_len = try reader.readInt(u32, .little);
 
                         const path = try readSlice(reader, path_len, default_allocator);
-
-                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
-                            JSC.Node.PathOrFileDescriptor{
-                                .path = .{
-                                    .string = bun.PathString.init(path),
-                                },
+                        var dest = JSC.Node.PathOrFileDescriptor{
+                            .path = .{
+                                .string = bun.PathString.init(path),
                             },
+                        };
+                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                            &dest,
                             globalThis,
                         ));
 
@@ -836,6 +837,11 @@ pub const Blob = struct {
             }
             return .zero;
         };
+        defer {
+            if (path_or_blob == .path) {
+                path_or_blob.path.deinit();
+            }
+        }
 
         var data = args.nextEat() orelse {
             globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
@@ -908,8 +914,6 @@ pub const Blob = struct {
             bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
         {
             if (data.isString()) {
-                defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
-
                 const len = data.getLength(globalThis);
 
                 if (len < 256 * 1024) {
@@ -945,8 +949,6 @@ pub const Blob = struct {
                     }
                 }
             } else if (data.asArrayBuffer(globalThis)) |buffer_view| {
-                defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
-
                 if (buffer_view.byte_len < 256 * 1024) {
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -983,10 +985,9 @@ pub const Blob = struct {
         }
 
         // if path_or_blob is a path, convert it into a file blob
-        var destination_blob: Blob = if (path_or_blob == .path)
-            Blob.findOrCreateFileFromPath(path_or_blob.path, globalThis)
-        else
-            path_or_blob.blob.dupe();
+        var destination_blob: Blob = if (path_or_blob == .path) brk: {
+            break :brk Blob.findOrCreateFileFromPath(&path_or_blob.path, globalThis);
+        } else path_or_blob.blob.dupe();
 
         if (destination_blob.store == null) {
             globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
@@ -1390,7 +1391,7 @@ pub const Blob = struct {
         var exception_ = [1]JSC.JSValueRef{null};
         const exception = &exception_;
 
-        const path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, args.arena.allocator(), exception) orelse {
+        var path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator, exception) orelse {
             if (exception_[0] == null) {
                 globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
             } else {
@@ -1399,8 +1400,9 @@ pub const Blob = struct {
 
             return .undefined;
         };
+        defer path.deinitAndUnprotect();
 
-        var blob = Blob.findOrCreateFileFromPath(path, globalObject);
+        var blob = Blob.findOrCreateFileFromPath(&path, globalObject);
 
         if (arguments.len >= 2) {
             const opts = arguments[1];
@@ -1438,28 +1440,32 @@ pub const Blob = struct {
         return ptr.toJS(globalObject);
     }
 
-    pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
-        const allocator = vm.allocator;
+        const allocator = bun.default_allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
-            switch (path_) {
+            switch (path_.*) {
                 .path => {
                     const slice = path_.path.slice();
 
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
+                            defer {
+                                if (path_.path != .string) {
+                                    path_.deinit();
+                                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                                }
+                            }
+
                             return file.blob(globalThis).dupe();
                         }
                     }
 
-                    const cloned = (allocator.dupeZ(u8, slice) catch unreachable)[0..slice.len];
-
-                    break :brk .{
-                        .path = .{
-                            .string = bun.PathString.init(cloned),
-                        },
-                    };
+                    path_.toThreadSafe();
+                    const copy = path_.*;
+                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    break :brk copy;
                 },
                 .fd => {
                     switch (bun.FDTag.get(path_.fd)) {
@@ -1477,7 +1483,7 @@ pub const Blob = struct {
                         ),
                         else => {},
                     }
-                    break :brk path_;
+                    break :brk path_.*;
                 },
             }
         };
@@ -1580,7 +1586,11 @@ pub const Blob = struct {
                 },
                 .file => |file| {
                     if (file.pathlike == .path) {
-                        allocator.free(@constCast(file.pathlike.path.slice()));
+                        if (file.pathlike.path == .string) {
+                            allocator.free(@constCast(file.pathlike.path.slice()));
+                        } else {
+                            file.pathlike.path.deinit();
+                        }
                     }
                 },
             }
@@ -3012,11 +3022,12 @@ pub const Blob = struct {
             const open_source_flags = O.CLOEXEC | O.RDONLY;
 
             pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
+                var path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
                 // open source file first
                 // if it fails, we don't want the extra destination file hanging out
                 if (which == .both or which == .source) {
                     this.source_fd = switch (bun.sys.open(
-                        this.source_file_store.pathlike.path.sliceZAssume(),
+                        this.source_file_store.pathlike.path.sliceZ(&path_buf1),
                         open_source_flags,
                         0,
                     )) {
@@ -3030,7 +3041,7 @@ pub const Blob = struct {
 
                 if (which == .both or which == .destination) {
                     while (true) {
-                        const dest = this.destination_file_store.pathlike.path.sliceZAssume();
+                        const dest = this.destination_file_store.pathlike.path.sliceZ(&path_buf1);
                         this.destination_fd = switch (bun.sys.open(
                             dest,
                             open_destination_flags,
@@ -3261,10 +3272,11 @@ pub const Blob = struct {
                     if (comptime Environment.isMac) {
                         if (this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
                             do_clonefile: {
+                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
                                 // stat the output file, make sure it:
                                 // 1. Exists
-                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZAssume())) {
+                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZ(&path_buf))) {
                                     .result => |result| {
                                         stat_ = result;
 
@@ -3287,7 +3299,7 @@ pub const Blob = struct {
                                     if (this.max_length != Blob.max_size and this.max_length < @as(SizeType, @intCast(stat_.?.size))) {
                                         // If this fails...well, there's not much we can do about it.
                                         _ = bun.C.truncate(
-                                            this.destination_file_store.pathlike.path.sliceZAssume(),
+                                            this.destination_file_store.pathlike.path.sliceZ(&path_buf),
                                             @as(std.os.off_t, @intCast(this.max_length)),
                                         );
                                         this.read_len = @as(SizeType, @intCast(this.max_length));

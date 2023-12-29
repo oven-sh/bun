@@ -1852,8 +1852,6 @@ pub const Command = struct {
         ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
-            // TODO: report zig compiler bug
-            //       moving the "&" before "comptime" causes compiler error.
             return comptime &switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
                 .RunCommand, .RunAsNodeCommand => Arguments.run_params,

@@ -4,7 +4,7 @@
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
-#else 
+#else
 #include <windows.h>
 #endif
 
@@ -37,6 +37,8 @@ typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
 typedef void (*lazy_sqlite3_free_type)(void*);
 typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
+typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
+typedef int (*lazy_sqlite3_config_type)(int, ...);
 typedef int (*lazy_sqlite3_open_v2_type)(const char* filename, /* Database filename (UTF-8) */ sqlite3** ppDb, /* OUT: SQLite db handle */ int flags, /* Flags */ const char* zVfs /* Name of VFS module to use */);
 typedef int (*lazy_sqlite3_prepare_v3_type)(sqlite3* db, /* Database handle */
     const char* zSql, /* SQL statement, UTF-8 encoded */
@@ -79,7 +81,7 @@ typedef int (*lazy_sqlite3_deserialize_type)(
 );
 
 typedef int (*lazy_sqlite3_stmt_readonly_type)(sqlite3_stmt* pStmt);
-typedef int (*lazy_sqlite3_compileoption_used_type)(const char *zOptName);
+typedef int (*lazy_sqlite3_compileoption_used_type)(const char* zOptName);
 
 static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
 static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
@@ -122,6 +124,7 @@ static lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
 static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
 static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
 static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
+static lazy_sqlite3_config_type lazy_sqlite3_config;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -163,11 +166,15 @@ static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
 #define sqlite3_compileoption_used lazy_sqlite3_compileoption_used
+#define sqlite3_config lazy_sqlite3_config
 
 #if !OS(WINDOWS)
 #define HMODULE void*
 #else
-static const char* dlerror() { return "Unknown error while loading sqlite"; }
+static const char* dlerror()
+{
+    return "Unknown error while loading sqlite";
+}
 #define dlsym GetProcAddress
 #endif
 
@@ -234,6 +241,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_malloc64 = (lazy_sqlite3_malloc64_type)dlsym(sqlite3_handle, "sqlite3_malloc64");
     lazy_sqlite3_stmt_readonly = (lazy_sqlite3_stmt_readonly_type)dlsym(sqlite3_handle, "sqlite3_stmt_readonly");
     lazy_sqlite3_compileoption_used = (lazy_sqlite3_compileoption_used_type)dlsym(sqlite3_handle, "sqlite3_compileoption_used");
+    lazy_sqlite3_config = (lazy_sqlite3_config_type)dlsym(sqlite3_handle, "sqlite3_config");
 
     return 0;
 }

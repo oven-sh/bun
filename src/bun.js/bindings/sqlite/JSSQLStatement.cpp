@@ -25,6 +25,7 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+#include "simdutf.h"
 
 /* ******************************************************************************** */
 // Lazy Load SQLite on macOS
@@ -46,6 +47,42 @@ static inline int lazyLoadSQLite()
 
 #endif
 /* ******************************************************************************** */
+
+#if !USE(SYSTEM_MALLOC)
+#include <bmalloc/BPlatform.h>
+#define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
+#endif
+
+static void enableFastMallocForSQLite()
+{
+#if ENABLE(SQLITE_FAST_MALLOC)
+    int returnCode = sqlite3_config(SQLITE_CONFIG_LOOKASIDE, 0, 0);
+    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to reduce lookaside buffer size");
+
+    static sqlite3_mem_methods fastMallocMethods = {
+        [](int n) { return fastMalloc(n); },
+        fastFree,
+        [](void* p, int n) { return fastRealloc(p, n); },
+        [](void* p) { return static_cast<int>(fastMallocSize(p)); },
+        [](int n) { return static_cast<int>(fastMallocGoodSize(n)); },
+        [](void*) { return SQLITE_OK; },
+        [](void*) {},
+        nullptr
+    };
+
+    returnCode = sqlite3_config(SQLITE_CONFIG_MALLOC, &fastMallocMethods);
+    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to replace SQLite malloc");
+
+#endif
+}
+
+static void initializeSQLite()
+{
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        enableFastMallocForSQLite();
+    });
+}
 
 static WTF::String sqliteString(const char* str)
 {
@@ -522,7 +559,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return JSValue::encode(JSC::jsUndefined());
     }
+
 #endif
+
+    initializeSQLite();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
 }
@@ -569,6 +609,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return JSValue::encode(JSC::jsUndefined());
     }
 #endif
+    initializeSQLite();
 
     size_t byteLength = array->byteLength();
     void* ptr = array->vector();
@@ -766,10 +807,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     sqlite3_stmt* statement = nullptr;
 
     int rc = SQLITE_OK;
-    if (sqlString.is8Bit()) {
+    if (
+        // fast path: ascii latin1 string is utf8
+        sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
         rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
     } else {
-        rc = sqlite3_prepare16_v3(db, sqlString.characters16(), sqlString.length() * 2, 0, &statement, nullptr);
+        // slow path: utf16 or latin1 string with supplemental characters
+        CString utf8 = sqlString.utf8();
+        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), 0, &statement, nullptr);
     }
 
     if (UNLIKELY(rc != SQLITE_OK || statement == nullptr)) {
@@ -905,10 +950,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     sqlite3_stmt* statement = nullptr;
 
     int rc = SQLITE_OK;
-    if (sqlString.is8Bit()) {
-        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), flags, &statement, nullptr);
+    if (
+        // fast path: ascii latin1 string is utf8
+        sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
+        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
     } else {
-        rc = sqlite3_prepare16_v3(db, sqlString.characters16(), sqlString.length() * 2, flags, &statement, nullptr);
+        // slow path: utf16 or latin1 string with supplemental characters
+        CString utf8 = sqlString.utf8();
+        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), 0, &statement, nullptr);
     }
 
     if (rc != SQLITE_OK) {
@@ -966,6 +1015,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
 #endif
+    initializeSQLite();
 
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);

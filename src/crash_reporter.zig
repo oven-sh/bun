@@ -16,13 +16,13 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
     // Prevent recursive calls
     setup_sigactions(null) catch unreachable;
 
-    const addr = switch (comptime builtin.target.os.tag) {
+    const addr = switch (builtin.target.os.tag) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .macos, .freebsd => @intFromPtr(info.addr),
         .netbsd => @intFromPtr(info.info.reason.fault.addr),
         .openbsd => @intFromPtr(info.data.fault.addr),
         .solaris => @intFromPtr(info.reason.fault.addr),
-        else => unreachable,
+        else => @compileError("unreachable"),
     };
     if (on_error) |handle| handle(sig, addr);
 }

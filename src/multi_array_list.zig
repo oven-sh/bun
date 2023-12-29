@@ -86,7 +86,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 const e = switch (@typeInfo(T)) {
                     .Struct => elem,
                     .Union => Elem.fromT(elem),
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 };
                 inline for (fields, 0..) |field_info, i| {
                     self.items(@as(Field, @enumFromInt(i)))[index] = @field(e, field_info.name);
@@ -101,7 +101,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 return switch (@typeInfo(T)) {
                     .Struct => result,
                     .Union => Elem.toT(result.tags, result.data),
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 };
             }
 
@@ -293,7 +293,7 @@ pub fn MultiArrayList(comptime T: type) type {
             const entry = switch (@typeInfo(T)) {
                 .Struct => elem,
                 .Union => Elem.fromT(elem),
-                else => unreachable,
+                else => @compileError("unreachable"),
             };
             const slices = self.slice();
             inline for (fields, 0..) |field_info, field_index| {

@@ -479,11 +479,11 @@ pub const AsyncReaddirRecursiveTask = struct {
                 )) {
                     .err => |err| {
                         for (entries.items) |*item| {
-                            switch (comptime ResultType) {
+                            switch (ResultType) {
                                 bun.String => item.deref(),
                                 Dirent => item.name.deref(),
                                 Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
-                                else => unreachable,
+                                else => @compileError("unreachable"),
                             }
                         }
 
@@ -516,11 +516,11 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.ArrayList(ResultType)) void {
         if (result.items.len > 0) {
-            const Field = comptime switch (ResultType) {
+            const Field = switch (ResultType) {
                 bun.String => .files,
                 Dirent => .with_file_types,
                 Buffer => .buffers,
-                else => unreachable,
+                else => @compileError("unreachable"),
             };
             const list = bun.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
             errdefer {
@@ -4634,7 +4634,7 @@ pub const NodeFS = struct {
         while (switch (entry) {
             .err => |err| {
                 for (entries.items) |*item| {
-                    switch (comptime ExpectedType) {
+                    switch (ExpectedType) {
                         Dirent => {
                             item.name.deref();
                         },
@@ -4644,7 +4644,7 @@ pub const NodeFS = struct {
                         bun.String => {
                             item.deref();
                         },
-                        else => unreachable,
+                        else => @compileError("unreachable"),
                     }
                 }
 
@@ -4657,7 +4657,7 @@ pub const NodeFS = struct {
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
             const utf8_name = current.name.slice();
-            switch (comptime ExpectedType) {
+            switch (ExpectedType) {
                 Dirent => {
                     entries.append(.{
                         .name = bun.String.create(utf8_name),
@@ -4670,7 +4670,7 @@ pub const NodeFS = struct {
                 bun.String => {
                     entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
                 },
-                else => unreachable,
+                else => @compileError("unreachable"),
             }
         }
 
@@ -4933,11 +4933,11 @@ pub const NodeFS = struct {
         comptime recursive: bool,
         comptime flavor: Flavor,
     ) Maybe(Return.Readdir) {
-        const file_type = comptime switch (ExpectedType) {
+        const file_type = switch (ExpectedType) {
             Dirent => "with_file_types",
             bun.String => "files",
             Buffer => "buffers",
-            else => unreachable,
+            else => @compileError("unreachable"),
         };
 
         const path = args.path.sliceZ(buf);
@@ -4949,7 +4949,7 @@ pub const NodeFS = struct {
             return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
                 .err => |err| {
                     for (entries.items) |*result| {
-                        switch (comptime ExpectedType) {
+                        switch (ExpectedType) {
                             Dirent => {
                                 result.name.deref();
                             },
@@ -4959,7 +4959,7 @@ pub const NodeFS = struct {
                             bun.String => {
                                 result.deref();
                             },
-                            else => unreachable,
+                            else => @compileError("unreachable"),
                         }
                     }
 

@@ -968,8 +968,6 @@ By specifying `.` as `root`, the generated file structure will look like this:
 
 A prefix to be appended to any import paths in bundled code.
 
-<!-- $ bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com -->
-
 In many cases, generated bundles will contain no `import` statements. After all, the goal of bundling is to combine all of the code into a single file. However there are a number of cases with the generated bundles will contain `import` statements.
 
 - **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
@@ -1007,7 +1005,7 @@ await Bun.build({
 ```
 
 ```bash#CLI
-n/a
+$ bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com/
 ```
 
 {% /codetabs %}

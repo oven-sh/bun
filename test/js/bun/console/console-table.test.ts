@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "bun";
-import { bunExe } from "harness";
+import { bunExe, bunEnv } from "harness";
 
 describe("console.table", () => {
   test("throws when second arg is invalid", () => {
@@ -200,9 +200,7 @@ describe("console.table", () => {
       cmd: [bunExe(), `${import.meta.dir}/console-table-run.ts`, args.toString()],
       stdout: "pipe",
       stderr: "inherit",
-      env: {
-        BUN_DEBUG_QUIET_LOGS: "1",
-      },
+      env: bunEnv,
     });
 
     const actualOutput = stdout.toString();

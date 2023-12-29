@@ -1106,7 +1106,7 @@ pub const ZigConsoleClient = struct {
         /// Compute how much horizontal space will take a JSValue when printed
         fn getWidthForValue(this: *TablePrinter, value: JSValue) u32 {
             var counting_writer = std.io.countingWriter(std.io.null_writer);
-            var value_formatter = (&this.value_formatter).*;
+            var value_formatter = this.value_formatter;
             value_formatter.format(
                 ZigConsoleClient.Formatter.Tag.get(value, this.globalObject),
                 @TypeOf(counting_writer).Writer,
@@ -1183,6 +1183,7 @@ pub const ZigConsoleClient = struct {
         fn printRow(
             this: *TablePrinter,
             writer: anytype,
+            comptime enable_ansi_colors: bool,
             columns: *std.ArrayList(Column),
             row_key: RowKey,
             row_value: JSValue,
@@ -1230,19 +1231,15 @@ pub const ZigConsoleClient = struct {
                     const pad_r = col.width - len - pad_l;
                     try writer.writeByteNTimes(' ', pad_l + PADDING);
                     const tag = ZigConsoleClient.Formatter.Tag.get(value, this.globalObject);
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            var value_formatter = (&this.value_formatter).*;
-                            value_formatter.format(
-                                tag,
-                                @TypeOf(writer),
-                                writer,
-                                value,
-                                this.globalObject,
-                                enable_ansi_colors,
-                            );
-                        },
-                    }
+                    var value_formatter = this.value_formatter;
+                    value_formatter.format(
+                        tag,
+                        @TypeOf(writer),
+                        writer,
+                        value,
+                        this.globalObject,
+                        enable_ansi_colors,
+                    );
                     try writer.writeByteNTimes(' ', pad_r + PADDING);
                 }
             }
@@ -1275,11 +1272,8 @@ pub const ZigConsoleClient = struct {
             if (!this.properties.isUndefined()) {
                 var properties_iter = JSC.JSArrayIterator.init(this.properties, globalObject);
                 while (properties_iter.next()) |value| {
-                    var property_name = value.toStringOrNull(globalObject) orelse {
-                        return error.JSError;
-                    };
                     try columns.append(.{
-                        .name = String.init(property_name.getZigString(globalObject)),
+                        .name = value.toBunString(globalObject),
                     });
                 }
             }
@@ -1352,9 +1346,13 @@ pub const ZigConsoleClient = struct {
                     var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: *const @TypeOf(writer), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = &writer };
                     this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
                         fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
-                            printRow(ctx.this, ctx.writer.*, ctx.columns, .{ .num = ctx.idx }, value) catch {
-                                ctx.err = true;
-                            };
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    printRow(ctx.this, ctx.writer.*, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
+                                        ctx.err = true;
+                                    };
+                                },
+                            }
                             ctx.idx += 1;
                         }
                     }.callback);
@@ -1366,8 +1364,12 @@ pub const ZigConsoleClient = struct {
                     }).init(globalObject, this.tabular_data.asObjectRef());
                     defer rows_iter.deinit();
 
-                    while (rows_iter.next()) |row_key| {
-                        try this.printRow(writer, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| {
+                            while (rows_iter.next()) |row_key| {
+                                try this.printRow(writer, enable_ansi_colors, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
+                            }
+                        },
                     }
                 }
             }

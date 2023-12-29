@@ -1460,7 +1460,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);
 
     if (statusCode != SQLITE_OK) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
 
         return JSValue::encode(jsUndefined());
     }

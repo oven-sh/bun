@@ -625,3 +625,22 @@ it("latin1 sqlite3 column name", () => {
     },
   ]);
 });
+
+it("syntax error sets the byteOffset", () => {
+  const db = new Database(":memory:");
+  try {
+    db.query("SELECT * FROM foo!!").all();
+    throw new Error("Expected error");
+  } catch (error) {
+    expect(error.byteOffset).toBe(17);
+  }
+});
+
+it("Missing DB throws SQLITE_CANTOPEN", () => {
+  try {
+    new Database("/definitely/not/found");
+    expect.unreachable();
+  } catch (error) {
+    expect(error.code).toBe("SQLITE_CANTOPEN");
+  }
+});

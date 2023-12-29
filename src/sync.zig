@@ -596,7 +596,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
                         attr: i32 = 0,
                         __reserved: [36]u8 = [_]u8{0} ** 36,
                     },
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 },
                 else => extern struct {
                     size: [56]u8 align(@alignOf(usize)) = [_]u8{0} ** 56,
@@ -613,7 +613,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
                 ptr_interlock: switch (@import("builtin").target.cpu.arch) {
                     .aarch64, .sparc, .x86_64 => u8,
                     .arm, .powerpc => c_int,
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 } = 0,
                 ptr_rblocked_first: ?*u8 = null,
                 ptr_rblocked_last: ?*u8 = null,

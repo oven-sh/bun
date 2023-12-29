@@ -63,6 +63,9 @@ pub const BuildCommand = struct {
         }
         var outfile = ctx.bundler_options.outfile;
 
+        this_bundler.options.public_path = ctx_.bundler_options.public_path;
+        this_bundler.resolver.opts.public_path = ctx_.bundler_options.public_path;
+
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
         this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;

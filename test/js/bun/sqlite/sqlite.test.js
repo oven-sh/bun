@@ -401,7 +401,10 @@ it("db.transaction()", () => {
     ]);
     throw new Error("Should have thrown");
   } catch (exception) {
-    expect(exception.message).toBe("constraint failed");
+    expect(exception.message).toEqual("UNIQUE constraint failed: cats.name");
+    expect(exception.code).toEqual("SQLITE_CONSTRAINT_UNIQUE");
+    expect(exception.errno).toEqual(2067);
+    expect(exception.byteOffset).toEqual(-1);
   }
 
   expect(db.inTransaction).toBe(false);

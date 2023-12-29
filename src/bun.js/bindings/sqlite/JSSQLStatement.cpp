@@ -812,7 +812,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
         rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
     } else {
-        // slow path: utf16 or utf8 string
+        // slow path: utf16 or latin1 string with supplemental characters
         CString utf8 = sqlString.utf8();
         rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), 0, &statement, nullptr);
     }
@@ -955,7 +955,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
         rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
     } else {
-        // slow path: utf16 or utf8 string
+        // slow path: utf16 or latin1 string with supplemental characters
         CString utf8 = sqlString.utf8();
         rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), 0, &statement, nullptr);
     }

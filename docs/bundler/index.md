@@ -1005,7 +1005,7 @@ await Bun.build({
 ```
 
 ```bash#CLI
-bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com/
+$ bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com/
 ```
 
 {% /codetabs %}

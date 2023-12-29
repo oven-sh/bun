@@ -607,3 +607,18 @@ it("#5872", () => {
   const result = query.all({ $greeting: "sup" });
   expect(result).toEqual([]);
 });
+
+it("latin1 sqlite3 column name", () => {
+  const db = new Database(":memory:");
+
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, copyright© TEXT)");
+
+  db.run("INSERT INTO foo (id, copyright©) VALUES (?, ?)", [1, "© 2021 The Authors. All rights reserved."]);
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      "copyright©": "© 2021 The Authors. All rights reserved.",
+    },
+  ]);
+});

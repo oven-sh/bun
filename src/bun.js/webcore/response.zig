@@ -2145,14 +2145,17 @@ pub const Fetch = struct {
             var file_url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
             defer file_url_string.deref();
 
-            const bun_file = Blob.findOrCreateFileFromPath(
-                .{
-                    .path = .{
-                        .string = bun.PathString.init(
-                            temp_file_path,
-                        ),
-                    },
+            var pathlike: JSC.Node.PathOrFileDescriptor = .{
+                .path = .{
+                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
+                        globalThis.throwOutOfMemory();
+                        return .zero;
+                    }),
                 },
+            };
+
+            const bun_file = Blob.findOrCreateFileFromPath(
+                &pathlike,
                 globalThis,
             );
 

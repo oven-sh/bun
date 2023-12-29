@@ -1401,6 +1401,19 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
+                    JSC.Node.BlobOrStringOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }
+                    },
                     JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {

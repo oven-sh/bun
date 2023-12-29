@@ -542,45 +542,45 @@ public:
         return std::move(*this);
     }
 
-    /* Host, port, backlog, callback */
-    TemplatedApp &&listen(std::string host, int port, int backlog, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+    /* Host, port, callback */
+    TemplatedApp &&listen(std::string host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
         if (!host.length()) {
-            return listen(port, backlog, std::move(handler));
+            return listen(port, std::move(handler));
         }
-        handler(httpContext ? httpContext->listen(host.c_str(), port, backlog, 0) : nullptr);
+        handler(httpContext ? httpContext->listen(host.c_str(), port, 0) : nullptr);
         return std::move(*this);
     }
 
-    /* Host, port, backlog, options, callback */
-    TemplatedApp &&listen(std::string host, int port, int backlog, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+    /* Host, port, options, callback */
+    TemplatedApp &&listen(std::string host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
         if (!host.length()) {
-            return listen(port, backlog, options, std::move(handler));
+            return listen(port, options, std::move(handler));
         }
-        handler(httpContext ? httpContext->listen(host.c_str(), port, backlog, options) : nullptr);
+        handler(httpContext ? httpContext->listen(host.c_str(), port, options) : nullptr);
         return std::move(*this);
     }
 
-    /* Port, backlog, callback */
-    TemplatedApp &&listen(int port, int backlog, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? httpContext->listen(nullptr, port, backlog, 0) : nullptr);
+    /* Port, callback */
+    TemplatedApp &&listen(int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+        handler(httpContext ? httpContext->listen(nullptr, port, 0) : nullptr);
         return std::move(*this);
     }
 
-    /* Port, backlog, options, callback */
-    TemplatedApp &&listen(int port, int backlog, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? httpContext->listen(nullptr, port, backlog, options) : nullptr);
+    /* Port, options, callback */
+    TemplatedApp &&listen(int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+        handler(httpContext ? httpContext->listen(nullptr, port, options) : nullptr);
         return std::move(*this);
     }
 
     /* options, callback, path to unix domain socket */
-    TemplatedApp &&listen(int backlog, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
-        handler(httpContext ? httpContext->listen(path.c_str(), backlog, options) : nullptr);
+    TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
+        handler(httpContext ? httpContext->listen(path.c_str(), options) : nullptr);
         return std::move(*this);
     }
 
     /* callback, path to unix domain socket */
-    TemplatedApp &&listen(int backlog, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
-        handler(httpContext ? httpContext->listen(path.c_str(), backlog, 0) : nullptr);
+    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
+        handler(httpContext ? httpContext->listen(path.c_str(), 0) : nullptr);
         return std::move(*this);
     }
 

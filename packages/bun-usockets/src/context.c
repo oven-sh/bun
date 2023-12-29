@@ -299,14 +299,14 @@ void us_socket_context_free(int ssl, struct us_socket_context_t *context) {
     us_free(context);
 }
 
-struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_context_t *context, const char *host, int port, int backlog, int options, int socket_ext_size) {
+struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return us_internal_ssl_socket_context_listen((struct us_internal_ssl_socket_context_t *) context, host, port, backlog, options, socket_ext_size);
+        return us_internal_ssl_socket_context_listen((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size);
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, backlog, options);
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options);
 
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
@@ -330,14 +330,14 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     return ls;
 }
 
-struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_socket_context_t *context, const char *path, int backlog, int options, int socket_ext_size) {
+struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_socket_context_t *context, const char *path, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return us_internal_ssl_socket_context_listen_unix((struct us_internal_ssl_socket_context_t *) context, path, backlog, options, socket_ext_size);
+        return us_internal_ssl_socket_context_listen_unix((struct us_internal_ssl_socket_context_t *) context, path, options, socket_ext_size);
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, backlog, options);
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, options);
 
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;

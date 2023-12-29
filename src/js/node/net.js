@@ -726,6 +726,10 @@ class Server extends EventEmitter {
     this[bunSocketServerOptions] = options;
   }
 
+  get listening() {
+    return !!this.#server;
+  }
+
   ref() {
     this.#server?.ref();
     return this;
@@ -798,10 +802,15 @@ class Server extends EventEmitter {
     return this;
   }
 
-  listen(port, hostname, onListen) {
-    let backlog;
+  listen(port, hostname, backlog, onListen) {
     let path;
     let exclusive = false;
+
+    if (typeof backlog === "function") {
+      onListen = backlog;
+      backlog = undefined;
+    }
+
     //port is actually path
     if (typeof port === "string") {
       if (Number.isSafeInteger(hostname)) {
@@ -834,6 +843,7 @@ class Server extends EventEmitter {
         exclusive = options.exclusive === true;
         const path = options.path;
         port = options.port;
+        backlog = options.backlog;
 
         if (!Number.isSafeInteger(port) || port < 0) {
           if (path) {
@@ -891,6 +901,7 @@ class Server extends EventEmitter {
           ? {
               exclusive,
               unix: path,
+              backlog: backlog,
               tls,
               socket: SocketClass[bunSocketServerHandlers],
             }
@@ -898,6 +909,7 @@ class Server extends EventEmitter {
               exclusive,
               port,
               hostname,
+              backlog: backlog,
               tls,
               socket: SocketClass[bunSocketServerHandlers],
             },

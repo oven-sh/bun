@@ -341,6 +341,7 @@ pub const SocketConfig = struct {
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
+    backlog: i32 = 511,
 
     pub fn fromJS(
         opts: JSC.JSValue,
@@ -350,6 +351,7 @@ pub const SocketConfig = struct {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
+        var backlog: i32 = 511;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -365,6 +367,12 @@ pub const SocketConfig = struct {
                 } else if (exception.* != null) {
                     return null;
                 }
+            }
+        }
+
+        if (opts.getTruthy(globalObject, "backlog")) |backlog_| {
+            if (backlog_.isNumber()) {
+                backlog = @as(i32, @intCast(backlog_.coerce(i32, globalObject)));
             }
         }
 
@@ -451,6 +459,7 @@ pub const SocketConfig = struct {
             .handlers = handlers,
             .default_data = default_data,
             .exclusive = exclusive,
+            .backlog = backlog,
         };
     }
 };
@@ -578,6 +587,7 @@ pub const Listener = struct {
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
+        const backlog = socket_config.backlog;
         var ssl = socket_config.ssl;
         var handlers = socket_config.handlers;
         var protos: ?[]const u8 = null;
@@ -674,6 +684,7 @@ pub const Listener = struct {
                         socket_context,
                         normalizeListeningHost(host),
                         c.port,
+                        backlog,
                         socket_flags,
                         8,
                     );
@@ -686,7 +697,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, backlog, socket_flags, 8);
                 },
             }
         } orelse {

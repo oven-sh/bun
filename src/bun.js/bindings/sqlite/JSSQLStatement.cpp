@@ -209,12 +209,15 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 {
     auto& vm = globalObject->vm();
     int code = sqlite3_extended_errcode(db);
+    int byteOffset = sqlite3_error_offset(db);
+
     const char* msg = sqlite3_errmsg(db);
     WTF::String str = WTF::String::fromUTF8(msg);
     JSC::JSObject* object = JSC::createError(globalObject, str);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    object->putDirect(vm, builtinNames.codePublicName(), jsNumber(code), 0);
+    object->putDirect(vm, builtinNames.codePublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     return object;
 }

@@ -16,6 +16,7 @@
 declare module "bun" {
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
+  type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
   type PathLike = Bun.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
   interface Env {
@@ -2765,7 +2766,7 @@ declare module "bun" {
      *
      * @param data
      */
-    update(data: StringOrBuffer): T;
+    update(data: BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
@@ -2789,7 +2790,7 @@ declare module "bun" {
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
     static hash(
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2800,7 +2801,7 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
+    static hash(input: BlobOrStringOrBuffer, encoding: DigestEncoding): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -2842,7 +2843,10 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
+    update(
+      input: BlobOrStringOrBuffer,
+      inputEncoding?: CryptoEncoding,
+    ): CryptoHasher;
 
     /**
      * Perform a deep copy of the hasher
@@ -2872,7 +2876,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2885,7 +2889,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       encoding: DigestEncoding,
     ): string;
 

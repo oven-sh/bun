@@ -120,6 +120,12 @@ pub const Blob = struct {
         return this.content_type_was_set or (this.store != null and this.store.?.data == .file);
     }
 
+    pub fn isBunFile(this: *const Blob) bool {
+        const store = this.store orelse return false;
+
+        return store.data == .file;
+    }
+
     const FormDataContext = struct {
         allocator: std.mem.Allocator,
         joiner: StringJoiner,

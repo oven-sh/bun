@@ -1,7 +1,14 @@
 import { test, expect, describe } from "bun:test";
 
+test("Bun.file in CryptoHasher is not supported yet", () => {
+  expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
+  expect(() => Bun.CryptoHasher.hash("sha1", Bun.file(import.meta.path))).toThrow();
+  expect(() => new Bun.CryptoHasher("sha1").update(Bun.file(import.meta.path))).toThrow();
+  expect(() => new Bun.SHA1().update(Bun.file(import.meta.path))).toThrow();
+});
+
 describe("Hash is consistent", () => {
-  const inputs = [
+  const sourceInputs = [
     Buffer.from([
       103, 87, 129, 242, 154, 82, 159, 206, 176, 124, 10, 39, 235, 214, 121, 13, 34, 155, 131, 178, 40, 34, 252, 134, 7,
       203, 130, 187, 207, 49, 26, 59,
@@ -20,12 +27,14 @@ describe("Hash is consistent", () => {
     ]),
   ];
 
+  const inputs = [...sourceInputs, ...sourceInputs.map(x => new Blob([x]))];
+
   for (let algorithm of ["sha1", "sha256", "sha512", "md5"] as const) {
     describe(algorithm, () => {
       const Class = globalThis.Bun[algorithm.toUpperCase() as "SHA1" | "SHA256" | "SHA512" | "MD5"];
       test("base64", () => {
         for (let buffer of inputs) {
-          for (let i = 0; i < 200; i++) {
+          for (let i = 0; i < 100; i++) {
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "base64")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "base64"),
             );
@@ -36,13 +45,14 @@ describe("Hash is consistent", () => {
             instance2.update(buffer);
 
             expect(instance1.digest("base64")).toEqual(instance2.digest("base64"));
+            expect(Class.hash(buffer, "base64")).toEqual(Class.hash(buffer, "base64"));
           }
         }
       });
 
       test("hex", () => {
         for (let buffer of inputs) {
-          for (let i = 0; i < 200; i++) {
+          for (let i = 0; i < 100; i++) {
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "hex")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "hex"),
             );
@@ -53,6 +63,7 @@ describe("Hash is consistent", () => {
             instance2.update(buffer);
 
             expect(instance1.digest("hex")).toEqual(instance2.digest("hex"));
+            expect(Class.hash(buffer, "hex")).toEqual(Class.hash(buffer, "hex"));
           }
         }
       });

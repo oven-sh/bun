@@ -2756,6 +2756,11 @@ declare var AbortSignal: typeof globalThis extends {
 declare namespace Bun {
   type ArrayBufferView = TypedArray | DataView;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
+  type BlobOrStringOrBuffer =
+    | string
+    | NodeJS.TypedArray
+    | ArrayBufferLike
+    | Blob;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
 }
 

@@ -133,7 +133,7 @@ pub const ZigString = extern struct {
         }
     }
 
-    pub fn toJS(this: ZigString, ctx: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
+    pub fn toJS(this: ZigString, ctx: *JSC.JSGlobalObject) JSValue {
         if (this.isGloballyAllocated()) {
             return this.toExternalValue(ctx);
         }
@@ -402,6 +402,15 @@ pub const ZigString = extern struct {
         allocator: NullableAllocator = .{},
         ptr: [*]const u8 = undefined,
         len: u32 = 0,
+
+        pub fn reportExtraMemory(this: *const Slice, vm: *JSC.VM) void {
+            if (this.allocator.get()) |allocator| {
+                // Don't report it if the memory is actually owned by JSC.
+                if (!bun.String.isWTFAllocator(allocator)) {
+                    vm.reportExtraMemory(this.len);
+                }
+            }
+        }
 
         pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
             return .{
@@ -1601,6 +1610,13 @@ pub const SystemError = extern struct {
     pub const namespace = "";
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        defer {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+            this.syscall.deref();
+        }
+
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
@@ -2537,7 +2553,7 @@ pub const JSGlobalObject = extern struct {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
-    pub inline fn toJS(globalThis: *JSGlobalObject) JSValue {
+    pub inline fn toJSValue(globalThis: *JSGlobalObject) JSValue {
         return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
     }
 
@@ -2563,6 +2579,10 @@ pub const JSGlobalObject = extern struct {
             ZigString.static("ERR_INVALID_ARG_TYPE"),
             this,
         );
+    }
+
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.Lifetime) JSC.JSValue {
+        return JSC.toJS(this, @TypeOf(value), value, lifetime);
     }
 
     pub fn throwInvalidArgumentType(
@@ -3054,10 +3074,10 @@ pub const JSMap = opaque {
 pub const JSValueReprInt = i64;
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
-    undefined = @as(JSValueReprInt, @bitCast(@as(i64, 0xa))),
-    null = @as(JSValueReprInt, @bitCast(@as(i64, 0x2))),
+    undefined = 0xa,
+    null = 0x2,
     true = FFI.TrueI64,
-    false = @as(JSValueReprInt, @bitCast(@as(i64, 0x6))),
+    false = 0x6,
     _,
 
     pub const Type = JSValueReprInt;
@@ -3527,7 +3547,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
-            globalThis.toJS(),
+            globalThis.toJSValue(),
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );
@@ -3825,7 +3845,7 @@ pub const JSValue = enum(JSValueReprInt) {
             JSValue => number,
             f32, f64 => jsNumberFromDouble(@as(f64, number)),
             c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
-            u32, u52, c_uint, i64 => jsNumberFromInt64(@as(i64, @intCast(number))),
+            c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
             comptime_int => switch (number) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
@@ -4256,6 +4276,17 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn fromUInt64NoTruncate(globalObject: *JSGlobalObject, i: u64) JSValue {
         return cppFn("fromUInt64NoTruncate", .{ globalObject, i });
     }
+
+    /// This always returns a JS BigInt using std.os.timeval from std.os.rusage
+    pub fn fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) JSValue {
+        return cppFn("fromTimevalNoTruncate", .{ globalObject, nsec, sec });
+    }
+
+    /// Sums two JS BigInts
+    pub fn bigIntSum(globalObject: *JSGlobalObject, a: JSValue, b: JSValue) JSValue {
+        return cppFn("bigIntSum", .{ globalObject, a, b });
+    }
+
     pub fn toUInt64NoTruncate(this: JSValue) u64 {
         return cppFn("toUInt64NoTruncate", .{
             this,
@@ -5427,14 +5458,7 @@ pub const CallFrame = opaque {
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            4 => Arguments(max).init(comptime @min(4, max), ptr),
-            2 => Arguments(max).init(comptime @min(2, max), ptr),
-            6 => Arguments(max).init(comptime @min(6, max), ptr),
-            3 => Arguments(max).init(comptime @min(3, max), ptr),
-            8 => Arguments(max).init(comptime @min(8, max), ptr),
-            5 => Arguments(max).init(comptime @min(5, max), ptr),
-            1 => Arguments(max).init(comptime @min(1, max), ptr),
-            7 => Arguments(max).init(comptime @min(7, max), ptr),
+            inline 1...8 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };
     }

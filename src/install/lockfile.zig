@@ -1645,7 +1645,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                     .fd = bun.toFD(file.handle),
                 },
                 .dirfd = if (!Environment.isWindows) bun.invalid_fd else @panic("TODO"),
-                .data = .{ .string = bytes.items },
+                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.from(bytes.items, bun.default_allocator) } },
             },
             .sync,
         )) {
@@ -3499,7 +3499,7 @@ pub const Package = extern struct {
                         .location = logger.Location.initOrNull(&source, source.rangeOfString(entry.value_ptr.*)),
                     };
 
-                    try log.addRangeErrorFmtWithNotes(
+                    try log.addRangeWarningFmtWithNotes(
                         &source,
                         source.rangeOfString(key_loc),
                         lockfile.allocator,

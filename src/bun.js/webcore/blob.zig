@@ -50,7 +50,7 @@ const PathOrBlob = union(enum) {
     blob: Blob,
 
     pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, args.arena.allocator(), exception)) |path| {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, exception)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -118,6 +118,12 @@ pub const Blob = struct {
 
     pub fn hasContentTypeFromUser(this: *const Blob) bool {
         return this.content_type_was_set or (this.store != null and this.store.?.data == .file);
+    }
+
+    pub fn isBunFile(this: *const Blob) bool {
+        const store = this.store orelse return false;
+
+        return store.data == .file;
     }
 
     const FormDataContext = struct {
@@ -299,7 +305,7 @@ pub const Blob = struct {
         comptime Reader: type,
         reader: Reader,
     ) !JSValue {
-        const allocator = globalThis.allocator();
+        const allocator = bun.default_allocator;
 
         const version = try reader.readInt(u8, .little);
         _ = version;
@@ -320,8 +326,7 @@ pub const Blob = struct {
                 const bytes = try readSlice(reader, bytes_len, allocator);
 
                 const blob = Blob.init(bytes, allocator, globalThis);
-                const blob_ = try allocator.create(Blob);
-                blob_.* = blob;
+                const blob_ = bun.new(Blob, blob);
 
                 break :brk blob_;
             },
@@ -332,13 +337,13 @@ pub const Blob = struct {
                     .fd => {
                         const fd = try reader.readInt(bun.FileDescriptor, .little);
 
-                        const blob = try allocator.create(Blob);
-                        blob.* = Blob.findOrCreateFileFromPath(
-                            JSC.Node.PathOrFileDescriptor{
-                                .fd = fd,
-                            },
+                        var path_or_fd = JSC.Node.PathOrFileDescriptor{
+                            .fd = fd,
+                        };
+                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                            &path_or_fd,
                             globalThis,
-                        );
+                        ));
 
                         break :brk blob;
                     },
@@ -346,16 +351,15 @@ pub const Blob = struct {
                         const path_len = try reader.readInt(u32, .little);
 
                         const path = try readSlice(reader, path_len, default_allocator);
-
-                        const blob = try allocator.create(Blob);
-                        blob.* = Blob.findOrCreateFileFromPath(
-                            JSC.Node.PathOrFileDescriptor{
-                                .path = .{
-                                    .string = bun.PathString.init(path),
-                                },
+                        var dest = JSC.Node.PathOrFileDescriptor{
+                            .path = .{
+                                .string = bun.PathString.init(path),
                             },
+                        };
+                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                            &dest,
                             globalThis,
-                        );
+                        ));
 
                         break :brk blob;
                     },
@@ -364,9 +368,7 @@ pub const Blob = struct {
                 return .zero;
             },
             .empty => brk: {
-                const blob = try allocator.create(Blob);
-                blob.* = Blob.initEmpty(globalThis);
-                break :brk blob;
+                break :brk bun.new(Blob, Blob.initEmpty(globalThis));
             },
         };
         blob.allocator = allocator;
@@ -500,8 +502,7 @@ pub const Blob = struct {
 
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
         var this = bun.cast(*Blob, ptr);
-        var new = bun.default_allocator.create(Blob) catch unreachable;
-        new.* = this.dupeWithContentType(true);
+        var new = bun.new(Blob, this.dupeWithContentType(true));
         new.allocator = bun.default_allocator;
         return new;
     }
@@ -619,7 +620,7 @@ pub const Blob = struct {
         pub fn run(handler: *@This(), blob_: Store.CopyFile.ResultType) void {
             var promise = handler.promise;
             const globalThis = handler.globalThis;
-            bun.default_allocator.destroy(handler);
+            bun.destroy(handler);
             const blob = blob_ catch |err| {
                 var error_string = ZigString.init(
                     std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{bun.asByteSlice(@errorName(err))}) catch unreachable,
@@ -629,8 +630,7 @@ pub const Blob = struct {
                 promise.reject(globalThis, error_string.toErrorInstance(globalThis));
                 return;
             };
-            var _blob = bun.default_allocator.create(Blob) catch unreachable;
-            _blob.* = blob;
+            var _blob = bun.new(Blob, blob);
             _blob.allocator = bun.default_allocator;
             promise.resolve(
                 globalThis,
@@ -692,14 +692,14 @@ pub const Blob = struct {
                     file_blob.detach();
                     _ = value.use();
                     this.promise.strong.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     promise.reject(globalThis, err);
                 },
                 .Used => {
                     file_blob.detach();
                     _ = value.use();
                     this.promise.strong.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
                 },
                 .WTFStringImpl,
@@ -730,7 +730,7 @@ pub const Blob = struct {
 
                     file_blob.detach();
                     this.promise.strong.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                 },
                 .Locked => {
                     value.Locked.onReceiveValue = thenWrap;
@@ -757,10 +757,9 @@ pub const Blob = struct {
         const source_type = std.meta.activeTag(source_blob.store.?.data);
 
         if (destination_type == .file and source_type == .bytes) {
-            var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
-            write_file_promise.* = .{
-                .globalThis = ctx.ptr(),
-            };
+            var write_file_promise = bun.new(WriteFilePromise, .{
+                .globalThis = ctx,
+            });
 
             const file_copier = Store.WriteFile.create(
                 bun.default_allocator,
@@ -801,8 +800,8 @@ pub const Blob = struct {
             // eventually, this could be like Buffer.concat
             var clone = source_blob.dupe();
             clone.allocator = bun.default_allocator;
-            var cloned = bun.default_allocator.create(Blob) catch unreachable;
-            cloned.* = clone;
+            const cloned = bun.new(Blob, clone);
+            cloned.allocator = bun.default_allocator;
             return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx));
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
@@ -838,6 +837,11 @@ pub const Blob = struct {
             }
             return .zero;
         };
+        defer {
+            if (path_or_blob == .path) {
+                path_or_blob.path.deinit();
+            }
+        }
 
         var data = args.nextEat() orelse {
             globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
@@ -910,8 +914,6 @@ pub const Blob = struct {
             bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
         {
             if (data.isString()) {
-                defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
-
                 const len = data.getLength(globalThis);
 
                 if (len < 256 * 1024) {
@@ -947,8 +949,6 @@ pub const Blob = struct {
                     }
                 }
             } else if (data.asArrayBuffer(globalThis)) |buffer_view| {
-                defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
-
                 if (buffer_view.byte_len < 256 * 1024) {
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -985,10 +985,9 @@ pub const Blob = struct {
         }
 
         // if path_or_blob is a path, convert it into a file blob
-        var destination_blob: Blob = if (path_or_blob == .path)
-            Blob.findOrCreateFileFromPath(path_or_blob.path, globalThis)
-        else
-            path_or_blob.blob.dupe();
+        var destination_blob: Blob = if (path_or_blob == .path) brk: {
+            break :brk Blob.findOrCreateFileFromPath(&path_or_blob.path, globalThis);
+        } else path_or_blob.blob.dupe();
 
         if (destination_blob.store == null) {
             globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
@@ -1016,13 +1015,12 @@ pub const Blob = struct {
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     .Locked => {
-                        var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        task.* = WriteFileWaitFromLockedValueTask{
+                        var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                             .globalThis = globalThis,
                             .file_blob = destination_blob,
                             .promise = JSC.JSPromise.Strong.init(globalThis),
                             .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
-                        };
+                        });
 
                         response.body.value.Locked.task = task;
                         response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
@@ -1050,13 +1048,12 @@ pub const Blob = struct {
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     .Locked => {
-                        var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        task.* = WriteFileWaitFromLockedValueTask{
+                        var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                             .globalThis = globalThis,
                             .file_blob = destination_blob,
                             .promise = JSC.JSPromise.Strong.init(globalThis),
                             .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
-                        };
+                        });
 
                         request.body.value.Locked.task = task;
                         request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
@@ -1342,8 +1339,7 @@ pub const Blob = struct {
             blob.content_type_was_set = false;
         }
 
-        var blob_ = allocator.create(Blob) catch unreachable;
-        blob_.* = blob;
+        var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         blob_.is_jsdom_file = true;
         return blob_;
@@ -1395,7 +1391,7 @@ pub const Blob = struct {
         var exception_ = [1]JSC.JSValueRef{null};
         const exception = &exception_;
 
-        const path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, args.arena.allocator(), exception) orelse {
+        var path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator, exception) orelse {
             if (exception_[0] == null) {
                 globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
             } else {
@@ -1404,8 +1400,9 @@ pub const Blob = struct {
 
             return .undefined;
         };
+        defer path.deinitAndUnprotect();
 
-        var blob = Blob.findOrCreateFileFromPath(path, globalObject);
+        var blob = Blob.findOrCreateFileFromPath(&path, globalObject);
 
         if (arguments.len >= 2) {
             const opts = arguments[1];
@@ -1438,34 +1435,37 @@ pub const Blob = struct {
             }
         }
 
-        var ptr = bun.default_allocator.create(Blob) catch unreachable;
-        ptr.* = blob;
+        var ptr = bun.new(Blob, blob);
         ptr.allocator = bun.default_allocator;
         return ptr.toJS(globalObject);
     }
 
-    pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
-        const allocator = vm.allocator;
+        const allocator = bun.default_allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
-            switch (path_) {
+            switch (path_.*) {
                 .path => {
                     const slice = path_.path.slice();
 
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
+                            defer {
+                                if (path_.path != .string) {
+                                    path_.deinit();
+                                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                                }
+                            }
+
                             return file.blob(globalThis).dupe();
                         }
                     }
 
-                    const cloned = (allocator.dupeZ(u8, slice) catch unreachable)[0..slice.len];
-
-                    break :brk .{
-                        .path = .{
-                            .string = bun.PathString.init(cloned),
-                        },
-                    };
+                    path_.toThreadSafe();
+                    const copy = path_.*;
+                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    break :brk copy;
                 },
                 .fd => {
                     switch (bun.FDTag.get(path_.fd)) {
@@ -1483,7 +1483,7 @@ pub const Blob = struct {
                         ),
                         else => {},
                     }
-                    break :brk path_;
+                    break :brk path_.*;
                 },
             }
         };
@@ -1525,8 +1525,7 @@ pub const Blob = struct {
         }
 
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeType, allocator: std.mem.Allocator) !*Store {
-            const store = try allocator.create(Blob.Store);
-            store.* = .{
+            const store = bun.newWithAlloc(allocator, Blob.Store, .{
                 .data = .{
                     .file = FileStore.init(
                         pathlike,
@@ -1548,17 +1547,18 @@ pub const Blob = struct {
                 },
                 .allocator = allocator,
                 .ref_count = 1,
-            };
+            });
             return store;
         }
 
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) !*Store {
-            const store = try allocator.create(Blob.Store);
-            store.* = .{
-                .data = .{ .bytes = ByteStore.init(bytes, allocator) },
+            const store = bun.newWithAlloc(allocator, Store, .{
+                .data = .{
+                    .bytes = ByteStore.init(bytes, allocator),
+                },
                 .allocator = allocator,
                 .ref_count = 1,
-            };
+            });
             return store;
         }
 
@@ -1586,12 +1586,16 @@ pub const Blob = struct {
                 },
                 .file => |file| {
                     if (file.pathlike == .path) {
-                        allocator.free(@constCast(file.pathlike.path.slice()));
+                        if (file.pathlike.path == .string) {
+                            allocator.free(@constCast(file.pathlike.path.slice()));
+                        } else {
+                            file.pathlike.path.deinit();
+                        }
                     }
                 },
             }
 
-            allocator.destroy(this);
+            bun.destroyWithAlloc(allocator, this);
         }
 
         const SerializeTag = enum(u8) {
@@ -1858,7 +1862,7 @@ pub const Blob = struct {
             }
 
             pub fn createWithCtx(
-                allocator: std.mem.Allocator,
+                _: std.mem.Allocator,
                 store: *Store,
                 onReadFileContext: *anyopaque,
                 onCompleteCallback: OnReadFileCallback,
@@ -1868,15 +1872,14 @@ pub const Blob = struct {
                 if (Environment.isWindows)
                     @compileError("dont call this function on windows");
 
-                const read_file = try allocator.create(ReadFile);
-                read_file.* = ReadFile{
+                const read_file = bun.new(ReadFile, ReadFile{
                     .file_store = store.data.file,
                     .offset = off,
                     .max_length = max_len,
                     .store = store,
                     .onCompleteCtx = onReadFileContext,
                     .onCompleteCallback = onCompleteCallback,
-                };
+                });
                 store.ref();
                 return read_file;
             }
@@ -2024,11 +2027,11 @@ pub const Blob = struct {
 
                 if (this.store == null and this.system_error != null) {
                     const system_error = this.system_error.?;
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     cb(cb_ctx, ResultType{ .err = system_error });
                     return;
                 } else if (this.store == null) {
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     if (Environment.isDebug) @panic("assertion failure - store should not be null");
                     cb(cb_ctx, ResultType{
                         .err = SystemError{
@@ -2044,13 +2047,16 @@ pub const Blob = struct {
                 const buf = this.buffer.items;
 
                 defer store.deref();
-                defer bun.default_allocator.destroy(this);
-                if (this.system_error) |err| {
+                const total_size = this.size;
+                const system_error = this.system_error;
+                bun.destroy(this);
+
+                if (system_error) |err| {
                     cb(cb_ctx, ResultType{ .err = err });
                     return;
                 }
 
-                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
+                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = total_size, .is_temporary = true } });
             }
 
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
@@ -2340,7 +2346,7 @@ pub const Blob = struct {
             pub fn finalize(this: *ReadFileUV) void {
                 defer {
                     this.store.deref();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                 }
 
                 const cb = this.on_complete_fn;
@@ -2608,18 +2614,18 @@ pub const Blob = struct {
                 onCompleteCallback: OnWriteFileCallback,
                 mkdirp_if_not_exists: bool,
             ) !*WriteFile {
-                const read_file = try allocator.create(WriteFile);
-                read_file.* = WriteFile{
+                _ = allocator;
+                const write_file = bun.new(WriteFile, WriteFile{
                     .file_blob = file_blob,
                     .bytes_blob = bytes_blob,
                     .onCompleteCtx = onWriteFileContext,
                     .onCompleteCallback = onCompleteCallback,
                     .task = .{ .callback = &doWriteLoopTask },
                     .mkdirp_if_not_exists = mkdirp_if_not_exists,
-                };
+                });
                 file_blob.store.?.ref();
                 bytes_blob.store.?.ref();
-                return read_file;
+                return write_file;
             }
 
             pub fn create(
@@ -2704,7 +2710,7 @@ pub const Blob = struct {
                 this.file_blob.store.?.deref();
 
                 if (this.system_error) |err| {
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     cb(cb_ctx, .{
                         .err = err,
                     });
@@ -2712,7 +2718,7 @@ pub const Blob = struct {
                 }
 
                 const wrote = this.total_written;
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
                 cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
@@ -2919,8 +2925,7 @@ pub const Blob = struct {
                 globalThis: *JSC.JSGlobalObject,
                 mkdirp_if_not_exists: bool,
             ) !*CopyFilePromiseTask {
-                const read_file = try allocator.create(CopyFile);
-                read_file.* = CopyFile{
+                const read_file = bun.new(CopyFile, CopyFile{
                     .store = store,
                     .source_store = source_store,
                     .offset = off,
@@ -2929,7 +2934,7 @@ pub const Blob = struct {
                     .destination_file_store = store.data.file,
                     .source_file_store = source_store.data.file,
                     .mkdirp_if_not_exists = mkdirp_if_not_exists,
-                };
+                });
                 store.ref();
                 source_store.ref();
                 return try CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
@@ -2946,7 +2951,7 @@ pub const Blob = struct {
                 }
                 this.store.?.deref();
 
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
             }
 
             pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
@@ -3017,11 +3022,12 @@ pub const Blob = struct {
             const open_source_flags = O.CLOEXEC | O.RDONLY;
 
             pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
+                var path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
                 // open source file first
                 // if it fails, we don't want the extra destination file hanging out
                 if (which == .both or which == .source) {
                     this.source_fd = switch (bun.sys.open(
-                        this.source_file_store.pathlike.path.sliceZAssume(),
+                        this.source_file_store.pathlike.path.sliceZ(&path_buf1),
                         open_source_flags,
                         0,
                     )) {
@@ -3035,7 +3041,7 @@ pub const Blob = struct {
 
                 if (which == .both or which == .destination) {
                     while (true) {
-                        const dest = this.destination_file_store.pathlike.path.sliceZAssume();
+                        const dest = this.destination_file_store.pathlike.path.sliceZ(&path_buf1);
                         this.destination_fd = switch (bun.sys.open(
                             dest,
                             open_destination_flags,
@@ -3266,10 +3272,11 @@ pub const Blob = struct {
                     if (comptime Environment.isMac) {
                         if (this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
                             do_clonefile: {
+                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
                                 // stat the output file, make sure it:
                                 // 1. Exists
-                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZAssume())) {
+                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZ(&path_buf))) {
                                     .result => |result| {
                                         stat_ = result;
 
@@ -3292,7 +3299,7 @@ pub const Blob = struct {
                                     if (this.max_length != Blob.max_size and this.max_length < @as(SizeType, @intCast(stat_.?.size))) {
                                         // If this fails...well, there's not much we can do about it.
                                         _ = bun.C.truncate(
-                                            this.destination_file_store.pathlike.path.sliceZAssume(),
+                                            this.destination_file_store.pathlike.path.sliceZ(&path_buf),
                                             @as(std.os.off_t, @intCast(this.max_length)),
                                         );
                                         this.read_len = @as(SizeType, @intCast(this.max_length));
@@ -3722,16 +3729,13 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var allocator = globalThis.allocator();
+        var allocator = bun.default_allocator;
         var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];
 
         if (this.size == 0) {
             const empty = Blob.initEmpty(globalThis);
-            var ptr = allocator.create(Blob) catch {
-                return JSC.JSValue.jsUndefined();
-            };
-            ptr.* = empty;
+            var ptr = bun.new(Blob, empty);
             ptr.allocator = allocator;
             return ptr.toJS(globalThis);
         }
@@ -3823,8 +3827,7 @@ pub const Blob = struct {
         blob.content_type_allocated = content_type_was_allocated;
         blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
 
-        var blob_ = allocator.create(Blob) catch unreachable;
-        blob_.* = blob;
+        var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_.toJS(globalThis);
     }
@@ -4031,7 +4034,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Blob {
-        var allocator = globalThis.allocator();
+        var allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(2);
         const args = arguments.ptr[0..arguments.len];
@@ -4089,8 +4092,7 @@ pub const Blob = struct {
             },
         }
 
-        var blob_ = allocator.create(Blob) catch unreachable;
-        blob_.* = blob;
+        var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_;
     }
@@ -4222,7 +4224,7 @@ pub const Blob = struct {
 
         if (this.allocator) |alloc| {
             this.allocator = null;
-            alloc.destroy(this);
+            bun.destroyWithAlloc(alloc, this);
         }
     }
 
@@ -4259,7 +4261,7 @@ pub const Blob = struct {
                 var blob = handler.context;
                 blob.allocator = null;
                 const globalThis = handler.globalThis;
-                bun.default_allocator.destroy(handler);
+                bun.destroy(handler);
                 switch (maybe_bytes) {
                     .result => |result| {
                         const bytes = result.buf;
@@ -4288,7 +4290,7 @@ pub const Blob = struct {
         pub fn run(handler: *@This(), count: Blob.Store.WriteFile.ResultType) void {
             var promise = handler.promise.swap();
             const globalThis = handler.globalThis;
-            bun.default_allocator.destroy(handler);
+            bun.destroy(handler);
             const value = promise.asValue(globalThis);
             value.ensureStillAlive();
             switch (count) {

@@ -45,9 +45,9 @@ To install, paste this into your terminal:
 
 {% codetabs %}
 
-```powershell#PowerShell
+```powershell#PowerShell/CMD
 # WARNING: No stability is guaranteed on the experimental Windows builds
-iwr bun.sh/install.ps1 | iex
+powershell -c "iwr bun.sh/install.ps1 | iex"
 ```
 
 ```powershell#Scoop

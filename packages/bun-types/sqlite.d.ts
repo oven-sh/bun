@@ -827,7 +827,17 @@ declare module "bun:sqlite" {
      *
      * @since v1.0.21
      */
-    code: number;
+    errno: number;
+
+    /**
+     * The name of the SQLite3 error code
+     *
+     * @example
+     * "SQLITE_CONSTRAINT_UNIQUE"
+     *
+     * @since v1.0.21
+     */
+    code?: string;
 
     /**
      * The UTF-8 byte offset of the sqlite3 query that failed, if known

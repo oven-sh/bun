@@ -216,7 +216,6 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     JSC::JSObject* object = JSC::createError(globalObject, str);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     String codeStr;
     switch (code) {
@@ -539,6 +538,7 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     if (!codeStr.isEmpty())
         object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
+    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
     object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     return object;
@@ -1402,7 +1402,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
 JSSQLStatementConstructor* JSSQLStatementConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, ImplementationVisibility::Public, callHostFunctionAsConstructor, String("SQLStatement"_s));
+    NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, ImplementationVisibility::Private, callHostFunctionAsConstructor, String("SQLStatement"_s));
     JSSQLStatementConstructor* ptr = new (NotNull, JSC::allocateCell<JSSQLStatementConstructor>(vm)) JSSQLStatementConstructor(vm, executable, globalObject, structure);
     ptr->finishCreation(vm);
 

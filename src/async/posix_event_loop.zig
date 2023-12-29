@@ -249,7 +249,7 @@ pub const FilePoll = struct {
 
         var ptr = poll.owner;
         switch (ptr.tag()) {
-            @field(Owner.Tag, "FIFO") => {
+            @field(Owner.Tag, "src.bun.js.webcore.streams.NewFIFO(.js)") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FIFO", .{poll.fd});
                 ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
             },
@@ -265,7 +265,7 @@ pub const FilePoll = struct {
 
                 loader.onExitNotificationTask();
             },
-            @field(Owner.Tag, "FileSink") => {
+            @field(Owner.Tag, "src.bun.js.webcore.streams.NewFileSink(.js)") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.onPoll(size_or_offset, 0);
@@ -477,9 +477,11 @@ pub const FilePoll = struct {
 
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
-    pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn disableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         // log("{x} disableKeepingProcessAlive", .{@intFromPtr(this)});
-        vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        // vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        event_loop_ctx.ioLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.remove(.has_incremented_active_count);
     }
@@ -488,12 +490,14 @@ pub const FilePoll = struct {
         return this.flags.contains(.keeps_event_loop_alive) and this.flags.contains(.has_incremented_poll_count);
     }
 
-    pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn enableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         // log("{x} enableKeepingProcessAlive", .{@intFromPtr(this)});
         if (this.flags.contains(.closed))
             return;
 
-        vm.event_loop_handle.?.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
+        // vm.event_loop_handle.?.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
+        event_loop_ctx.ioLoop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         this.flags.insert(.keeps_event_loop_alive);
         this.flags.insert(.has_incremented_active_count);
     }
@@ -521,12 +525,13 @@ pub const FilePoll = struct {
         }
     }
 
-    pub fn init(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
-        return initWithOwner(vm, fd, flags, Owner.init(owner));
+    pub fn init(evt_loop_ctx: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
+        return initWithOwner(evt_loop_ctx, fd, flags, Owner.init(owner));
     }
 
-    pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
-        var poll = vm.rareData().filePolls(vm).get();
+    pub fn initWithOwner(evt_loop_ctx_: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+        const event_loop_ctx = JSC.EventLoopCtx(evt_loop_ctx_);
+        var poll = event_loop_ctx.allocFilePoll();
         poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
@@ -570,25 +575,27 @@ pub const FilePoll = struct {
     }
 
     /// Prevent a poll from keeping the process alive.
-    pub fn unref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn unref(this: *FilePoll, event_loop_ctx_: anytype) void {
         log("unref", .{});
-        this.disableKeepingProcessAlive(vm);
+        this.disableKeepingProcessAlive(event_loop_ctx_);
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn ref(this: *FilePoll, event_loop_ctx_: anytype) void {
         if (this.flags.contains(.closed))
             return;
 
         log("ref", .{});
 
-        this.enableKeepingProcessAlive(vm);
+        this.enableKeepingProcessAlive(event_loop_ctx_);
     }
 
-    pub fn onEnded(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn onEnded(this: *FilePoll, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.insert(.closed);
-        this.deactivate(vm.event_loop_handle.?);
+        // this.deactivate(vm.event_loop_handle.?);
+        this.deactivate(event_loop_ctx.ioLoop());
     }
 
     pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {

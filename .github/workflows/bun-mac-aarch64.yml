@@ -45,6 +45,9 @@ jobs:
           - cpu: native
             arch: aarch64
             tag: bun-obj-darwin-aarch64
+          - cpu: native
+            arch: aarch64
+            tag: bun-obj-darwin-aarch64-debug
     steps:
       - uses: actions/checkout@v4
       # - name: Checkout submodules
@@ -98,10 +101,7 @@ jobs:
       matrix:
         include:
           - cpu: native
-            arch: aarch64
             tag: bun-darwin-aarch64
-            obj: bun-obj-darwin-aarch64
-            artifact: bun-obj-darwin-aarch64
             runner: macos-arm64
     steps:
       - uses: actions/checkout@v4
@@ -174,9 +174,13 @@ jobs:
           - cpu: native
             arch: aarch64
             tag: bun-darwin-aarch64
-            obj: bun-obj-darwin-aarch64
-            artifact: bun-obj-darwin-aarch64
             runner: macos-arm64
+            build-type: Release
+          - cpu: native
+            arch: aarch64
+            tag: bun-darwin-aarch64-debug
+            runner: macos-arm64
+            build-type: Debug
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules
@@ -240,7 +244,12 @@ jobs:
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
-            artifact: bun-obj-darwin-aarch64
+            runner: macos-arm64
+          - cpu: native
+            arch: aarch64
+            tag: bun-darwin-aarch64-debug
+            obj: bun-obj-darwin-aarch64-debug
+            package: bun-darwin-aarch64-debug
             runner: macos-arm64
     steps:
       - uses: actions/checkout@v4

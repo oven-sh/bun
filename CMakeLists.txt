@@ -215,7 +215,7 @@ endif()
 
 set(CI OFF)
 
-if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
+if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTION})
     set(CI ON)
 endif()
 
@@ -238,6 +238,12 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
+
+set(_DEFAULT_USE_DYNAMIC_LOADED_JS OFF)
+if((CMAKE_BUILD_TYPE STREQUAL "Debug") AND NOT CI)
+    set(_DEFAULT_USE_DYNAMIC_LOADED_JS ON)
+endif()
+
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
@@ -251,6 +257,8 @@ option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
+
+option(USE_DYNAMIC_LOADED_JS "Do not bundle JS into the binary, load from system" ${_DEFAULT_USE_DYNAMIC_LOADED_JS})
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
 option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
@@ -416,7 +424,6 @@ if(NOT WEBKIT_DIR)
     set(ASSERT_ENABLED "0")
 
     if(USE_DEBUG_JSC)
-        add_compile_definitions("BUN_DEBUG=1")
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
     elseif(NOT DEBUG AND NOT WIN32)
@@ -472,7 +479,6 @@ else()
         set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
         if(USE_DEBUG_JSC)
-            add_compile_definitions("BUN_DEBUG=1")
             set(ASSERT_ENABLED "1")
         endif()
     else()
@@ -677,7 +683,7 @@ if(NOT NO_CODEGEN)
         "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
-        COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
+        COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "--dynamic-loading=${USE_DYNAMIC_LOADED_JS}" "${BUN_WORKDIR}"
         DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Bundling JS modules"
@@ -692,7 +698,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
     "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "--dynamic-loading=${USE_DYNAMIC_LOADED_JS}" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
@@ -934,6 +940,10 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         target_compile_options(${bun} PUBLIC /O2 -flto=full)
         target_link_options(${bun} PUBLIC /LTCG)
     endif()
+endif()
+
+if(USE_DYNAMIC_LOADED_JS)
+    add_compile_definitions("BUN_USE_DEBUG_MODULE_REGISTRY=1")
 endif()
 
 if(NOT CI AND NOT WIN32)

@@ -11,7 +11,9 @@ console.log("Bundling Bun builtin functions...");
 const PARALLEL = false;
 const KEEP_TMP = true;
 
+// one day we'll use these variables
 const debug = process.argv[2] === "--debug=ON";
+const dynamicLoading = process.argv[3] === "--dynamic-loading=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
 if (!CMAKE_BUILD_ROOT) {

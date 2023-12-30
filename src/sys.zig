@@ -419,6 +419,12 @@ pub fn openDirAtWindows(
         log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
+    if (Environment.isDebug) {
+        if (rc == std.os.windows.NTSTATUS.OBJECT_PATH_SYNTAX_BAD) {
+            @breakpoint();
+        }
+    }
+
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
             return JSC.Maybe(bun.FileDescriptor){

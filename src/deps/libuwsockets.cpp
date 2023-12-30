@@ -312,7 +312,7 @@ extern "C"
     }
   }
 
-  void uws_app_listen(int ssl, uws_app_t *app, int port, int backlog,
+  void uws_app_listen(int ssl, uws_app_t *app, int port,
                       uws_listen_handler handler, void *user_data)
   {
     uws_app_listen_config_t config;
@@ -323,7 +323,7 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, backlog, [handler, config,
+      uwsApp->listen(port, [handler, config,
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
@@ -331,14 +331,14 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
 
-      uwsApp->listen(port, backlog, [handler, config,
+      uwsApp->listen(port, [handler, config,
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
   }
 
   void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
-                                  uint16_t port, int32_t backlog, int32_t options,
+                                  uint16_t port, int32_t options,
                                   uws_listen_handler handler, void *user_data)
   {
     std::string hostname = host && host[0] ? std::string(host, strlen(host)) : "";
@@ -346,7 +346,7 @@ extern "C"
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(
-          hostname, port, backlog, options,
+          hostname, port, options,
           [handler, user_data](struct us_listen_socket_t *listen_socket)
           {
             handler((struct us_listen_socket_t *)listen_socket, user_data);
@@ -356,7 +356,7 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->listen(
-          hostname, port, backlog, options,
+          hostname, port, options,
           [handler, user_data](struct us_listen_socket_t *listen_socket)
           {
             handler((struct us_listen_socket_t *)listen_socket, user_data);
@@ -365,32 +365,32 @@ extern "C"
   }
 
   /* callback, path to unix domain socket */
-  void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, int backlog, uws_listen_domain_handler handler, void *user_data)
+  void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, uws_listen_domain_handler handler, void *user_data)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(backlog, [handler, domain, user_data](struct us_listen_socket_t *listen_socket)
+      uwsApp->listen([handler, domain, user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
                      domain);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen(backlog, [handler, domain, user_data](struct us_listen_socket_t *listen_socket)
+      uwsApp->listen([handler, domain, user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
                      domain);
     }
   }
 
   /* callback, path to unix domain socket */
-  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, int backlog, int options, uws_listen_domain_handler handler, void *user_data)
+  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, int options, uws_listen_domain_handler handler, void *user_data)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(
-          backlog, options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
+          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
           { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
           domain);
     }
@@ -398,7 +398,7 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->listen(
-          backlog, options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
+          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
           { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
           domain);
     }

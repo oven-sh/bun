@@ -16,6 +16,7 @@
 declare module "bun" {
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
+  type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
   type PathLike = Bun.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
   interface Env {
@@ -1877,14 +1878,6 @@ declare module "bun" {
     maxRequestBodySize?: number;
 
     /**
-     * The backlog argument defines the maximum length to which the queue of pending connections for server.
-     * If a connection request arrives when the queue is full, the client may receive an error with an indication of ECONNREFUSED or,
-     * if the underlying protocol supports retransmission, the request may be ignored so that a later reattempt at connection succeeds.
-     * @default 511
-     */
-    backlog?: number;
-
-    /**
      * Render contextual errors? This enables bun's error page
      * @default process.env.NODE_ENV !== 'production'
      */
@@ -2765,7 +2758,7 @@ declare module "bun" {
      *
      * @param data
      */
-    update(data: StringOrBuffer): T;
+    update(data: BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
@@ -2789,7 +2782,7 @@ declare module "bun" {
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
     static hash(
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2800,7 +2793,7 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
+    static hash(input: BlobOrStringOrBuffer, encoding: DigestEncoding): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -2842,7 +2835,10 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
+    update(
+      input: BlobOrStringOrBuffer,
+      inputEncoding?: CryptoEncoding,
+    ): CryptoHasher;
 
     /**
      * Perform a deep copy of the hasher
@@ -2872,7 +2868,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2885,7 +2881,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       encoding: DigestEncoding,
     ): string;
 

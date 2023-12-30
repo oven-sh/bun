@@ -149,7 +149,6 @@ pub const ServerConfig = struct {
 
     ssl_config: ?SSLConfig = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
-    backlog: i32 = 512,
     development: bool = false,
 
     onError: JSC.JSValue = JSC.JSValue.zero,
@@ -895,12 +894,6 @@ pub const ServerConfig = struct {
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
                 if (max_request_body_size.isNumber()) {
                     args.max_request_body_size = @as(u64, @intCast(@max(0, max_request_body_size.toInt64())));
-                }
-            }
-
-            if (arg.getTruthy(global, "backlog")) |backlog| {
-                if (backlog.isNumber()) {
-                    args.backlog = @as(i32, @intCast(backlog.coerce(i32, global)));
                 }
             }
 
@@ -5991,7 +5984,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
-                        .backlog = this.config.backlog,
                         .options = if (this.config.reuse_port) 0 else 1,
                     });
                 },
@@ -6002,7 +5994,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         this,
                         onListen,
                         unix,
-                        this.config.backlog,
                         if (this.config.reuse_port) 0 else 1,
                     );
                 },

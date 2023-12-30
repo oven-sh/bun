@@ -188,6 +188,55 @@ pub fn Maybe(comptime ResultType: type) type {
     };
 }
 
+pub const BlobOrStringOrBuffer = union(enum) {
+    blob: JSC.WebCore.Blob,
+    string_or_buffer: StringOrBuffer,
+
+    pub fn deinit(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .blob => |blob| {
+                if (blob.store) |store| {
+                    store.deref();
+                }
+            },
+            .string_or_buffer => |*str| {
+                str.deinit();
+            },
+        }
+    }
+
+    pub fn slice(this: *const BlobOrStringOrBuffer) []const u8 {
+        return switch (this.*) {
+            .blob => |*blob| blob.sharedView(),
+            .string_or_buffer => |*str| str.slice(),
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        if (value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                store.ref();
+            }
+
+            return .{ .blob = blob.* };
+        }
+
+        return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
+    }
+
+    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        if (value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                store.ref();
+            }
+
+            return .{ .blob = blob.* };
+        }
+
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
+    }
+};
+
 pub const StringOrBuffer = union(enum) {
     string: bun.SliceWithUnderlyingString,
     threadsafe_string: bun.SliceWithUnderlyingString,
@@ -615,13 +664,6 @@ pub const PathLike = union(enum) {
         }
 
         return sliceZWithForceCopy(this, buf, false);
-    }
-
-    pub inline fn sliceZAssume(
-        this: PathLike,
-    ) [:0]const u8 {
-        var sliced = this.slice();
-        return sliced.ptr[0..sliced.len :0];
     }
 
     pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {

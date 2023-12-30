@@ -225,7 +225,9 @@ void JSSubtleCrypto::finishCreation(VM& vm)
 
 JSObject* JSSubtleCrypto::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSSubtleCryptoPrototype::create(vm, &globalObject, JSSubtleCryptoPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSSubtleCryptoPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSSubtleCryptoPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSSubtleCrypto::prototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -262,6 +262,8 @@ public:
     Structure* NapiPrototypeStructure() { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NAPIFunctionStructure() { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
 
+    Structure* JSSQLStatementStructure() { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
+
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     JSC::JSObject* processObject() { return m_processObject.getInitializedOnMainThread(this); }
@@ -523,6 +525,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;

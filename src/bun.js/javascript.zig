@@ -2878,7 +2878,7 @@ pub const VirtualMachine = struct {
         const show = Show{
             .system_code = !exception.system_code.eql(name) and !exception.system_code.isEmpty(),
             .syscall = !exception.syscall.isEmpty(),
-            .errno = exception.errno < 0,
+            .errno = exception.errno != 0,
             .path = !exception.path.isEmpty(),
             .fd = exception.fd != -1,
         };

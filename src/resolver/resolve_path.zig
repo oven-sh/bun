@@ -449,7 +449,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
             return str[0..separator];
         },
-        else => unreachable,
+        else => @compileError("unreachable"),
     }
 }
 
@@ -882,7 +882,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
     const platform = comptime _platform.resolve();
 
     switch (comptime platform) {
-        .auto => unreachable,
+        .auto => @compileError("unreachable"),
 
         .windows => {
             return normalizeStringWindows(

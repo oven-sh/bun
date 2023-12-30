@@ -657,16 +657,10 @@ pub const fmt = struct {
             }
 
             const mags_si = " KMGTPEZY";
-            const mags_iec = " KMGTPEZY";
-
             const log2 = math.log2(value);
             const magnitude = @min(log2 / comptime math.log2(1000), mags_si.len - 1);
             const new_value = math.lossyCast(f64, value) / math.pow(f64, 1000, math.lossyCast(f64, magnitude));
-            const suffix = switch (1000) {
-                1000 => mags_si[magnitude],
-                1024 => mags_iec[magnitude],
-                else => unreachable,
-            };
+            const suffix = mags_si[magnitude];
 
             if (suffix == ' ') {
                 try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
@@ -674,13 +668,7 @@ pub const fmt = struct {
             } else {
                 try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
             }
-
-            const buf = switch (1000) {
-                1000 => &[_]u8{ ' ', suffix, 'B' },
-                1024 => &[_]u8{ ' ', suffix, 'i', 'B' },
-                else => unreachable,
-            };
-            return writer.writeAll(buf);
+            return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
         }
     };
 
@@ -2857,6 +2845,75 @@ pub fn New(comptime T: type) type {
 
             const ptr = default_allocator.create(T) catch outOfMemory();
             ptr.* = t;
+            return ptr;
+        }
+    };
+}
+
+/// Reference-counted heap-allocated instance value.
+///
+/// `ref_count` is expected to be defined on `T` with a default value set to `1`
+pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(self.ref_count == 0);
+            }
+
+            if (comptime is_heap_breakdown_enabled) {
+                HeapBreakdown.allocator(T).destroy(self);
+            } else {
+                default_allocator.destroy(self);
+            }
+        }
+
+        pub fn ref(self: *T) void {
+            self.ref_count += 1;
+        }
+
+        pub fn deref(self: *T) void {
+            self.ref_count -= 1;
+
+            if (self.ref_count == 0) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            if (comptime is_heap_breakdown_enabled) {
+                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+                ptr.* = t;
+
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(ptr.ref_count == 1);
+                }
+
+                return ptr;
+            }
+
+            const ptr = default_allocator.create(T) catch outOfMemory();
+            ptr.* = t;
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(ptr.ref_count == 1);
+            }
+
             return ptr;
         }
     };

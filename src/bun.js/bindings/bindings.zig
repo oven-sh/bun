@@ -1610,6 +1610,13 @@ pub const SystemError = extern struct {
     pub const namespace = "";
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        defer {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+            this.syscall.deref();
+        }
+
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
@@ -3067,10 +3074,10 @@ pub const JSMap = opaque {
 pub const JSValueReprInt = i64;
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
-    undefined = @as(JSValueReprInt, @bitCast(@as(i64, 0xa))),
-    null = @as(JSValueReprInt, @bitCast(@as(i64, 0x2))),
+    undefined = 0xa,
+    null = 0x2,
     true = FFI.TrueI64,
-    false = @as(JSValueReprInt, @bitCast(@as(i64, 0x6))),
+    false = 0x6,
     _,
 
     pub const Type = JSValueReprInt;
@@ -4885,6 +4892,17 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("forEach", .{ this, globalObject, ctx, callback });
     }
 
+    /// Same as `forEach` but accepts a typed context struct without need for @ptrCasts
+    pub inline fn forEachWithContext(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        ctx: anytype,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
+    ) void {
+        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
+        return cppFn("forEach", .{ this, globalObject, ctx, func });
+    }
+
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {
         return cppFn("isIterable", .{
             this,
@@ -5451,14 +5469,7 @@ pub const CallFrame = opaque {
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            4 => Arguments(max).init(comptime @min(4, max), ptr),
-            2 => Arguments(max).init(comptime @min(2, max), ptr),
-            6 => Arguments(max).init(comptime @min(6, max), ptr),
-            3 => Arguments(max).init(comptime @min(3, max), ptr),
-            8 => Arguments(max).init(comptime @min(8, max), ptr),
-            5 => Arguments(max).init(comptime @min(5, max), ptr),
-            1 => Arguments(max).init(comptime @min(1, max), ptr),
-            7 => Arguments(max).init(comptime @min(7, max), ptr),
+            inline 1...8 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };
     }

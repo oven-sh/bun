@@ -754,8 +754,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
-        const key = value.get(globalObject, expected.toString(globalObject).getZigString(globalObject).full());
-        var pass = key != null;
+        var pass = value.hasOwnProperty(globalObject, expected.toString(globalObject).getZigString(globalObject));
 
         if (not) pass = !pass;
         if (pass) return thisValue;

@@ -3954,6 +3954,10 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
+        return cppFn("hasOwnProperty", .{ this, globalThis, key });
+    }
+
     pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSArrayIterator {
         return JSArrayIterator.init(this, global);
     }
@@ -4964,6 +4968,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "getSymbolDescription",
         "getUnixTimestamp",
         "hasProperty",
+        "hasOwnProperty",
         "isAggregateError",
         "isAnyError",
         "isAnyInt",

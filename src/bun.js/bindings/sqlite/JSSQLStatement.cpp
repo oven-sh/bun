@@ -58,7 +58,7 @@ static inline int lazyLoadSQLite()
 #define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
 #endif
 
-static std::atomic<ssize_t> sqlite_malloc_amount = 0;
+static std::atomic<int64_t> sqlite_malloc_amount = 0;
 
 static void enableFastMallocForSQLite()
 {
@@ -266,7 +266,7 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSSQLStatement* create(JSDOMGlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, ssize_t memorySizeChange = 0)
+    static JSSQLStatement* create(JSDOMGlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
     {
         Structure* structure = globalObject->JSSQLStatementStructure();
         JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
@@ -313,7 +313,7 @@ public:
     size_t extraMemorySize = 0;
 
 protected:
-    JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, ssize_t memorySizeChange = 0)
+    JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
         : Base(globalObject.vm(), structure)
         , stmt(stmt)
         , version_db(version_db)
@@ -1098,7 +1098,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     // This is inherently somewhat racy if using Worker
     // but that should be okay.
-    ssize_t currentMemoryUsage = sqlite_malloc_amount;
+    int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     int rc = SQLITE_OK;
     if (
@@ -1116,7 +1116,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    ssize_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
+    int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
         reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
@@ -1486,7 +1486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    ssize_t currentMemoryUsage = sqlite_malloc_amount;
+    int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
@@ -1534,7 +1534,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    ssize_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
+    int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
     if (memoryChange > 255) {
         vm.heap.deprecatedReportExtraMemory(memoryChange);
     }

@@ -721,25 +721,25 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                @field(Task.Tag, "src.shell.interpreter.Builtin.Ls.NewShellLsTask(.js)") => {
+                @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();
                     shell_ls_task.deinit();
                 },
-                @field(Task.Tag, "src.shell.interpreter.Builtin.Mv.NewShellMvBatchedTask(.js)") => {
+                @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
                     shell_mv_batched_task.task.runFromMainThread();
                 },
-                @field(Task.Tag, "src.shell.interpreter.Builtin.Mv.NewShellMvCheckTargetTask(.js)") => {
+                @field(Task.Tag, typeBaseName(@typeName(ShellMvCheckTargetTask))) => {
                     var shell_mv_check_target_task: *ShellMvCheckTargetTask = task.get(ShellMvCheckTargetTask).?;
                     shell_mv_check_target_task.task.runFromMainThread();
                 },
-                @field(Task.Tag, "src.shell.interpreter.Builtin.Rm.NewShellRmTask(.js)") => {
+                @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
                     var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
                     shell_rm_task.runFromMainThread();
                     shell_rm_task.deinit();
                 },
-                @field(Task.Tag, "src.shell.interpreter.NewShellGlobTask(.js)") => {
+                @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
                     shell_glob_task.runFromMainThread();
                     shell_glob_task.deinit();

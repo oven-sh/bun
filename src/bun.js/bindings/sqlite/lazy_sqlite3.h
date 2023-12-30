@@ -20,6 +20,7 @@ typedef int (*lazy_sqlite3_bind_parameter_index_type)(sqlite3_stmt*, const char*
 typedef int (*lazy_sqlite3_changes_type)(sqlite3*);
 typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_close_v2_type)(sqlite3*);
+typedef int (*lazy_sqlite3_extended_result_codes_type)(sqlite3*, int onoff);
 typedef const void* (*lazy_sqlite3_column_blob_type)(sqlite3_stmt*, int iCol);
 typedef double (*lazy_sqlite3_column_double_type)(sqlite3_stmt*, int iCol);
 typedef int (*lazy_sqlite3_column_int_type)(sqlite3_stmt*, int iCol);
@@ -32,6 +33,9 @@ typedef int (*lazy_sqlite3_column_count_type)(sqlite3_stmt* pStmt);
 typedef const char* (*lazy_sqlite3_column_decltype_type)(sqlite3_stmt*, int);
 typedef const char* (*lazy_sqlite3_column_name_type)(sqlite3_stmt*, int N);
 typedef const char* (*lazy_sqlite3_errmsg_type)(sqlite3*);
+typedef int (*lazy_sqlite3_extended_errcode_type)(sqlite3*);
+typedef int (*lazy_sqlite3_error_offset_type)(sqlite3*);
+typedef int64_t (*lazy_sqlite3_memory_used_type)();
 typedef const char* (*lazy_sqlite3_errstr_type)(int);
 typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
@@ -57,6 +61,7 @@ typedef int (*lazy_sqlite3_step_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_column_type_type)(sqlite3_stmt*, int iCol);
 typedef int (*lazy_sqlite3_db_config_type)(sqlite3*, int op, ...);
+
 typedef int (*lazy_sqlite3_load_extension_type)(
     sqlite3* db, /* Load the extension into this database connection */
     const char* zFile, /* Name of the shared library containing extension */
@@ -125,6 +130,10 @@ static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
 static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
 static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
 static lazy_sqlite3_config_type lazy_sqlite3_config;
+static lazy_sqlite3_extended_result_codes_type lazy_sqlite3_extended_result_codes;
+static lazy_sqlite3_extended_errcode_type lazy_sqlite3_extended_errcode;
+static lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
+static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -167,6 +176,10 @@ static lazy_sqlite3_config_type lazy_sqlite3_config;
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
 #define sqlite3_compileoption_used lazy_sqlite3_compileoption_used
 #define sqlite3_config lazy_sqlite3_config
+#define sqlite3_extended_result_codes lazy_sqlite3_extended_result_codes
+#define sqlite3_extended_errcode lazy_sqlite3_extended_errcode
+#define sqlite3_error_offset lazy_sqlite3_error_offset
+#define sqlite3_memory_used lazy_sqlite3_memory_used
 
 #if !OS(WINDOWS)
 #define HMODULE void*
@@ -242,6 +255,34 @@ static int lazyLoadSQLite()
     lazy_sqlite3_stmt_readonly = (lazy_sqlite3_stmt_readonly_type)dlsym(sqlite3_handle, "sqlite3_stmt_readonly");
     lazy_sqlite3_compileoption_used = (lazy_sqlite3_compileoption_used_type)dlsym(sqlite3_handle, "sqlite3_compileoption_used");
     lazy_sqlite3_config = (lazy_sqlite3_config_type)dlsym(sqlite3_handle, "sqlite3_config");
+    lazy_sqlite3_extended_result_codes = (lazy_sqlite3_extended_result_codes_type)dlsym(sqlite3_handle, "sqlite3_extended_result_codes");
+    lazy_sqlite3_extended_errcode = (lazy_sqlite3_extended_errcode_type)dlsym(sqlite3_handle, "sqlite3_extended_errcode");
+    lazy_sqlite3_error_offset = (lazy_sqlite3_error_offset_type)dlsym(sqlite3_handle, "sqlite3_error_offset");
+    lazy_sqlite3_memory_used = (lazy_sqlite3_memory_used_type)dlsym(sqlite3_handle, "sqlite3_memory_used");
+
+    if (!lazy_sqlite3_extended_result_codes) {
+        lazy_sqlite3_extended_result_codes = [](sqlite3*, int) -> int {
+            return 0;
+        };
+    }
+
+    if (!lazy_sqlite3_extended_errcode) {
+        lazy_sqlite3_extended_errcode = [](sqlite3*) -> int {
+            return 0;
+        };
+    }
+
+    if (!lazy_sqlite3_error_offset) {
+        lazy_sqlite3_error_offset = [](sqlite3*) -> int {
+            return -1;
+        };
+    }
+
+    if (!lazy_sqlite3_memory_used) {
+        lazy_sqlite3_memory_used = []() -> int64_t {
+            return 0;
+        };
+    }
 
     return 0;
 }

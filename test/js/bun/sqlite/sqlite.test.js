@@ -401,7 +401,10 @@ it("db.transaction()", () => {
     ]);
     throw new Error("Should have thrown");
   } catch (exception) {
-    expect(exception.message).toBe("constraint failed");
+    expect(exception.message).toEqual("UNIQUE constraint failed: cats.name");
+    expect(exception.code).toEqual("SQLITE_CONSTRAINT_UNIQUE");
+    expect(exception.errno).toEqual(2067);
+    expect(exception.byteOffset).toEqual(-1);
   }
 
   expect(db.inTransaction).toBe(false);
@@ -621,4 +624,31 @@ it("latin1 sqlite3 column name", () => {
       "copyright©": "© 2021 The Authors. All rights reserved.",
     },
   ]);
+});
+
+it("syntax error sets the byteOffset", () => {
+  const db = new Database(":memory:");
+  try {
+    db.query("SELECT * FROM foo!!").all();
+    throw new Error("Expected error");
+  } catch (error) {
+    if (process.platform === "darwin" && process.arch === "x64") {
+      if (error.byteOffset === -1) {
+        // older versions of macOS don't have the function which returns the byteOffset
+        // we internally use a polyfill, so we need to allow that.
+        return;
+      }
+    }
+
+    expect(error.byteOffset).toBe(17);
+  }
+});
+
+it("Missing DB throws SQLITE_CANTOPEN", () => {
+  try {
+    new Database("/definitely/not/found");
+    expect.unreachable();
+  } catch (error) {
+    expect(error.code).toBe("SQLITE_CANTOPEN");
+  }
 });

@@ -809,4 +809,43 @@ declare module "bun:sqlite" {
     | Record<string, string | bigint | TypedArray | number | boolean | null>;
 
   export default Database;
+
+  /**
+   * Errors from SQLite have a name `SQLiteError`.
+   *
+   * This class does not exist! It is not a class. It is just a type.
+   *
+   * To check if an `Error` is an SQLiteError, use `error.name === "SQLiteError"`
+   */
+  export interface SQLiteError extends Error {
+    readonly name: "SQLiteError";
+
+    /**
+     * The SQLite3 extended error code
+     *
+     * This corresponds to `sqlite3_extended_errcode`.
+     *
+     * @since v1.0.21
+     */
+    errno: number;
+
+    /**
+     * The name of the SQLite3 error code
+     *
+     * @example
+     * "SQLITE_CONSTRAINT_UNIQUE"
+     *
+     * @since v1.0.21
+     */
+    code?: string;
+
+    /**
+     * The UTF-8 byte offset of the sqlite3 query that failed, if known
+     *
+     * This corresponds to `sqlite3_error_offset`.
+     *
+     * @since v1.0.21
+     */
+    readonly byteOffset: number;
+  }
 }

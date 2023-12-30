@@ -991,6 +991,23 @@ pub const ZigConsoleClient = struct {
             .flush = true,
         };
 
+        if (message_type == .Table and len >= 1) {
+            // if value is not an object/array/iterable, don't print a table and just print it
+            var tabular_data = vals[0];
+            if (tabular_data.isObject()) {
+                const properties = if (len >= 2 and vals[1].jsType().isArray()) vals[1] else JSValue.undefined;
+                var table_printer = TablePrinter.init(
+                    global,
+                    level,
+                    tabular_data,
+                    properties,
+                );
+                table_printer.printTable(writer) catch return;
+                buffered_writer.flush() catch {};
+                return;
+            }
+        }
+
         if (message_type == .Dir and len >= 2) {
             print_length = 1;
             var opts = vals[1];
@@ -1030,6 +1047,345 @@ pub const ZigConsoleClient = struct {
             buffered_writer.flush() catch {};
         }
     }
+
+    const TablePrinter = struct {
+        const Column = struct {
+            name: String,
+            width: u32 = 1,
+        };
+
+        const RowKey = union(@This().Type) {
+            str: String,
+            num: u32,
+
+            const Type = enum { str, num };
+        };
+
+        const PADDING = 1;
+
+        globalObject: *JSGlobalObject,
+        level: MessageLevel,
+        value_formatter: ZigConsoleClient.Formatter,
+
+        tabular_data: JSValue,
+        properties: JSValue,
+
+        is_iterable: bool,
+        jstype: JSValue.JSType,
+
+        /// width of the "Values" column.
+        /// This column is not appended to "columns" from the start, because it needs to be the last column.
+        values_col_width: ?u32 = null,
+
+        values_col_idx: usize = std.math.maxInt(usize),
+
+        pub fn init(
+            globalObject: *JSGlobalObject,
+            level: MessageLevel,
+            tabular_data: JSValue,
+            properties: JSValue,
+        ) TablePrinter {
+            return TablePrinter{
+                .level = level,
+                .globalObject = globalObject,
+                .tabular_data = tabular_data,
+                .properties = properties,
+                .is_iterable = tabular_data.isIterable(globalObject),
+                .jstype = tabular_data.jsType(),
+                .value_formatter = ZigConsoleClient.Formatter{
+                    .remaining_values = &[_]JSValue{},
+                    .globalThis = globalObject,
+                    .ordered_properties = false,
+                    .quote_strings = true,
+                    .single_line = true,
+                    .max_depth = 5,
+                },
+            };
+        }
+
+        /// Compute how much horizontal space will take a JSValue when printed
+        fn getWidthForValue(this: *TablePrinter, value: JSValue) u32 {
+            var counting_writer = std.io.countingWriter(std.io.null_writer);
+            var value_formatter = this.value_formatter;
+            value_formatter.format(
+                ZigConsoleClient.Formatter.Tag.get(value, this.globalObject),
+                @TypeOf(counting_writer).Writer,
+                counting_writer.writer(),
+                value,
+                this.globalObject,
+                false,
+            );
+            return @as(u32, @intCast(counting_writer.bytes_written));
+        }
+
+        /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
+        fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) !void {
+            // update size of "(index)" column
+            const row_key_len: u32 = switch (row_key) {
+                .str => |value| @intCast(value.length()),
+                .num => |value| @intCast(std.fmt.count("{d}", .{value})),
+            };
+            columns.items[0].width = @max(columns.items[0].width, row_key_len);
+
+            // special handling for Map: column with idx=1 is "Keys"
+            if (this.jstype.isMap()) {
+                const entry_key = row_value.getIndex(this.globalObject, 0);
+                const entry_value = row_value.getIndex(this.globalObject, 1);
+                columns.items[1].width = @max(columns.items[1].width, this.getWidthForValue(entry_key));
+                this.values_col_width = @max(this.values_col_width orelse 0, this.getWidthForValue(entry_value));
+                return;
+            }
+
+            if (row_value.isObject()) {
+                // object ->
+                //  - if "properties" arg was provided: iterate the already-created columns (except for the 0-th which is the index)
+                //  - otherwise: iterate the object properties, and create the columns on-demand
+                if (!this.properties.isUndefined()) {
+                    for (1..columns.items.len) |i| {
+                        if (row_value.getWithString(this.globalObject, columns.items[i].name)) |value| {
+                            columns.items[i].width = @max(columns.items[i].width, this.getWidthForValue(value));
+                        }
+                    }
+                } else {
+                    var cols_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = false,
+                        .include_value = true,
+                    }).init(this.globalObject, row_value.asObjectRef());
+                    defer cols_iter.deinit();
+
+                    while (cols_iter.next()) |col_key| {
+                        const value = cols_iter.value;
+
+                        // find or create the column for the property
+                        var col_idx: usize = 0;
+                        while (col_idx < columns.items.len) : (col_idx += 1) {
+                            if (columns.items[col_idx].name.eql(String.init(col_key))) break;
+                        }
+                        if (col_idx == columns.items.len) {
+                            try columns.append(.{ .name = String.init(col_key) });
+                        }
+
+                        columns.items[col_idx].width = @max(columns.items[col_idx].width, this.getWidthForValue(value));
+                    }
+                }
+            } else if (this.properties.isUndefined()) {
+                // not object -> the value will go to the special "Values" column
+                this.values_col_width = @max(this.values_col_width orelse 1, this.getWidthForValue(row_value));
+            }
+        }
+
+        inline fn writeStringNTimes(writer: anytype, str: []const u8, n: usize) !void {
+            for (0..n) |_| {
+                try writer.writeAll(str);
+            }
+        }
+
+        fn printRow(
+            this: *TablePrinter,
+            writer: anytype,
+            comptime enable_ansi_colors: bool,
+            columns: *std.ArrayList(Column),
+            row_key: RowKey,
+            row_value: JSValue,
+        ) !void {
+            try writer.writeAll("│");
+            {
+                const len: u32 = switch (row_key) {
+                    .str => |value| @intCast(value.length()),
+                    .num => |value| @intCast(std.fmt.count("{d}", .{value})),
+                };
+                const pad_l = (columns.items[0].width - len) >> 1;
+                const pad_r = columns.items[0].width - len - pad_l;
+                try writer.writeByteNTimes(' ', pad_l + PADDING);
+                switch (row_key) {
+                    .str => |value| try writer.print("{}", .{value}),
+                    .num => |value| try writer.print("{d}", .{value}),
+                }
+                try writer.writeByteNTimes(' ', pad_r + PADDING);
+            }
+
+            for (1..columns.items.len) |col_idx| {
+                const col = columns.items[col_idx];
+
+                try writer.writeAll("│");
+
+                var value = JSValue.zero;
+                if (col_idx == 1 and this.jstype.isMap()) { // is the "Keys" column, when iterating a Map?
+                    value = row_value.getIndex(this.globalObject, 0);
+                } else if (col_idx == this.values_col_idx) { // is the "Values" column?
+                    if (this.jstype.isMap()) {
+                        value = row_value.getIndex(this.globalObject, 1);
+                    } else if (!row_value.isObject()) {
+                        value = row_value;
+                    }
+                } else if (row_value.isObject()) {
+                    value = row_value.getWithString(this.globalObject, col.name) orelse JSValue.zero;
+                }
+
+                if (value.isEmpty()) {
+                    try writer.writeByteNTimes(' ', col.width + 2 * PADDING);
+                } else {
+                    const len: u32 = this.getWidthForValue(value);
+
+                    const pad_l = (col.width - len) >> 1;
+                    const pad_r = col.width - len - pad_l;
+                    try writer.writeByteNTimes(' ', pad_l + PADDING);
+                    const tag = ZigConsoleClient.Formatter.Tag.get(value, this.globalObject);
+                    var value_formatter = this.value_formatter;
+                    value_formatter.format(
+                        tag,
+                        @TypeOf(writer),
+                        writer,
+                        value,
+                        this.globalObject,
+                        enable_ansi_colors,
+                    );
+                    try writer.writeByteNTimes(' ', pad_r + PADDING);
+                }
+            }
+            try writer.writeAll("│\n");
+        }
+
+        pub fn printTable(
+            this: *TablePrinter,
+            writer: anytype,
+        ) !void {
+            const globalObject = this.globalObject;
+
+            var stack_fallback = std.heap.stackFallback(@sizeOf(Column) * 16, this.globalObject.allocator());
+            var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
+            defer columns.deinit();
+
+            // create the first column "(index)", which is always present
+            columns.appendAssumeCapacity(.{
+                .name = if (this.is_iterable and !this.tabular_data.jsType().isArray()) String.static("(iteration index)") else String.static("(index)"),
+            });
+
+            // special case for Map: create the special "Key" column at index 1
+            if (this.jstype.isMap()) {
+                columns.appendAssumeCapacity(.{
+                    .name = String.static("Key"),
+                });
+            }
+
+            // if the "properties" arg was provided, pre-populate the columns
+            if (!this.properties.isUndefined()) {
+                var properties_iter = JSC.JSArrayIterator.init(this.properties, globalObject);
+                while (properties_iter.next()) |value| {
+                    try columns.append(.{
+                        .name = value.toBunString(globalObject),
+                    });
+                }
+            }
+
+            // rows first pass - calculate the column widths
+            {
+                if (this.is_iterable) {
+                    var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns };
+                    this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                        fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
+                            updateColumnsForRow(ctx.this, ctx.columns, .{ .num = ctx.idx }, value) catch {
+                                ctx.err = true;
+                            };
+                            ctx.idx += 1;
+                        }
+                    }.callback);
+                    if (ctx_.err) return error.JSError;
+                } else {
+                    var rows_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = false,
+                        .include_value = true,
+                    }).init(globalObject, this.tabular_data.asObjectRef());
+                    defer rows_iter.deinit();
+
+                    while (rows_iter.next()) |row_key| {
+                        try this.updateColumnsForRow(&columns, .{ .str = String.init(row_key) }, rows_iter.value);
+                    }
+                }
+            }
+
+            // append the special "Values" column as the last one, if it is present
+            if (this.values_col_width) |width| {
+                this.values_col_idx = columns.items.len;
+                try columns.append(.{
+                    .name = String.static("Values"),
+                    .width = width,
+                });
+            }
+
+            // print the table header (border line + column names line + border line)
+            {
+                try writer.writeAll("┌");
+                for (columns.items, 0..) |*col, i| {
+                    // also update the col width with the length of the column name itself
+                    col.width = @max(col.width, @as(u32, @intCast(col.name.length())));
+                    if (i > 0) try writer.writeAll("┬");
+                    try writeStringNTimes(writer, "─", col.width + 2 * PADDING);
+                }
+                try writer.writeAll("┐\n│");
+                for (columns.items, 0..) |col, i| {
+                    if (i > 0) try writer.writeAll("│");
+                    const len = col.name.length();
+                    const pad_l = (col.width - len) >> 1;
+                    const pad_r = col.width - len - pad_l;
+                    try writer.writeByteNTimes(' ', pad_l + PADDING);
+                    try writer.print("{}", .{col.name});
+                    try writer.writeByteNTimes(' ', pad_r + PADDING);
+                }
+                try writer.writeAll("│\n├");
+                for (columns.items, 0..) |col, i| {
+                    if (i > 0) try writer.writeAll("┼");
+                    try writeStringNTimes(writer, "─", col.width + 2 * PADDING);
+                }
+                try writer.writeAll("┤\n");
+            }
+
+            // rows second pass - print the actual table rows
+            {
+                if (this.is_iterable) {
+                    var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: *const @TypeOf(writer), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = &writer };
+                    this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                        fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    printRow(ctx.this, ctx.writer.*, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
+                                        ctx.err = true;
+                                    };
+                                },
+                            }
+                            ctx.idx += 1;
+                        }
+                    }.callback);
+                    if (ctx_.err) return error.JSError;
+                } else {
+                    var rows_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = false,
+                        .include_value = true,
+                    }).init(globalObject, this.tabular_data.asObjectRef());
+                    defer rows_iter.deinit();
+
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| {
+                            while (rows_iter.next()) |row_key| {
+                                try this.printRow(writer, enable_ansi_colors, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
+                            }
+                        },
+                    }
+                }
+            }
+
+            // print the table bottom border
+            {
+                try writer.writeAll("└");
+                try writeStringNTimes(writer, "─", columns.items[0].width + 2 * PADDING);
+                for (1..columns.items.len) |i| {
+                    try writer.writeAll("┴");
+                    try writeStringNTimes(writer, "─", columns.items[i].width + 2 * PADDING);
+                }
+                try writer.writeAll("┘\n");
+            }
+        }
+    };
 
     pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
         var holder = ZigException.Holder.init();
@@ -1240,6 +1596,7 @@ pub const ZigConsoleClient = struct {
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
+        single_line: bool = false,
         ordered_properties: bool = false,
         custom_formatted_object: CustomFormattedObject = .{},
 
@@ -1618,7 +1975,10 @@ pub const ZigConsoleClient = struct {
             globalThis: *JSGlobalObject,
             comptime enable_ansi_colors: bool,
         ) void {
-            var writer = WrappedWriter(Writer){ .ctx = writer_ };
+            var writer = WrappedWriter(Writer){
+                .ctx = writer_,
+                .estimated_line_length = &this.estimated_line_length,
+            };
             var slice = slice_;
             var i: u32 = 0;
             var len: u32 = @as(u32, @truncate(slice.len));
@@ -1684,7 +2044,7 @@ pub const ZigConsoleClient = struct {
             return struct {
                 ctx: Writer,
                 failed: bool = false,
-                estimated_line_length: *usize = undefined,
+                estimated_line_length: *usize,
 
                 pub fn print(self: *@This(), comptime fmt: string, args: anytype) void {
                     self.ctx.print(fmt, args) catch {
@@ -1798,17 +2158,24 @@ pub const ZigConsoleClient = struct {
             this.estimated_line_length += 1;
         }
 
-        pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool, comptime is_iterator: bool) type {
+        pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool, comptime is_iterator: bool, comptime single_line: bool) type {
             return struct {
                 formatter: *ZigConsoleClient.Formatter,
                 writer: Writer,
                 count: usize = 0,
                 pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
+                    if (single_line and this.count > 0) {
+                        this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
+                        this.writer.writeAll(" ") catch unreachable;
+                    }
                     if (!is_iterator) {
                         const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
                         const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
-                        this.formatter.writeIndent(Writer, this.writer) catch unreachable;
+
+                        if (!single_line) {
+                            this.formatter.writeIndent(Writer, this.writer) catch unreachable;
+                        }
                         const key_tag = Tag.getAdvanced(key, globalObject, .{ .hide_global = true });
 
                         this.formatter.format(
@@ -1830,10 +2197,11 @@ pub const ZigConsoleClient = struct {
                             enable_ansi_colors,
                         );
                     } else {
-                        this.writer.writeAll("\n") catch unreachable;
-                        this.formatter.writeIndent(Writer, this.writer) catch unreachable;
+                        if (!single_line) {
+                            this.writer.writeAll("\n") catch unreachable;
+                            this.formatter.writeIndent(Writer, this.writer) catch unreachable;
+                        }
                         const tag = Tag.getAdvanced(nextValue, globalObject, .{ .hide_global = true });
-                        this.count += 1;
                         this.formatter.format(
                             tag,
                             Writer,
@@ -1843,20 +2211,33 @@ pub const ZigConsoleClient = struct {
                             enable_ansi_colors,
                         );
                     }
-                    this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
-                    if (!is_iterator)
-                        this.writer.writeAll("\n") catch unreachable;
+                    this.count += 1;
+                    if (!single_line) {
+                        this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
+                        if (!is_iterator) {
+                            this.writer.writeAll("\n") catch unreachable;
+                        }
+                    }
                 }
             };
         }
 
-        pub fn SetIterator(comptime Writer: type, comptime enable_ansi_colors: bool) type {
+        pub fn SetIterator(comptime Writer: type, comptime enable_ansi_colors: bool, comptime single_line: bool) type {
             return struct {
                 formatter: *ZigConsoleClient.Formatter,
                 writer: Writer,
+                is_first: bool = true,
                 pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
-                    this.formatter.writeIndent(Writer, this.writer) catch {};
+                    if (single_line) {
+                        if (!this.is_first) {
+                            this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
+                            this.writer.writeAll(" ") catch unreachable;
+                        }
+                        this.is_first = false;
+                    } else {
+                        this.formatter.writeIndent(Writer, this.writer) catch {};
+                    }
                     const key_tag = Tag.getAdvanced(nextValue, globalObject, .{ .hide_global = true });
                     this.formatter.format(
                         key_tag,
@@ -1867,8 +2248,10 @@ pub const ZigConsoleClient = struct {
                         enable_ansi_colors,
                     );
 
-                    this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
-                    this.writer.writeAll("\n") catch unreachable;
+                    if (!single_line) {
+                        this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
+                        this.writer.writeAll("\n") catch unreachable;
+                    }
                 }
             };
         }
@@ -1878,6 +2261,7 @@ pub const ZigConsoleClient = struct {
                 formatter: *ZigConsoleClient.Formatter,
                 writer: Writer,
                 i: usize = 0,
+                single_line: bool,
                 always_newline: bool = false,
                 parent: JSValue,
                 const enable_ansi_colors = enable_ansi_colors_;
@@ -1886,6 +2270,7 @@ pub const ZigConsoleClient = struct {
                         var writer = WrappedWriter(Writer){
                             .ctx = this.writer,
                             .failed = false,
+                            .estimated_line_length = &this.formatter.estimated_line_length,
                         };
 
                         if (getObjectName(globalThis, value)) |name_str| {
@@ -1893,12 +2278,18 @@ pub const ZigConsoleClient = struct {
                         }
                     }
 
-                    this.always_newline = true;
+                    if (!this.single_line) {
+                        this.always_newline = true;
+                    }
                     this.formatter.estimated_line_length = this.formatter.indent * 2 + 1;
-                    this.writer.writeAll("{\n") catch {};
                     this.formatter.indent += 1;
                     this.formatter.depth += 1;
-                    this.formatter.writeIndent(Writer, this.writer) catch {};
+                    if (this.single_line) {
+                        this.writer.writeAll("{ ") catch {};
+                    } else {
+                        this.writer.writeAll("{\n") catch {};
+                        this.formatter.writeIndent(Writer, this.writer) catch {};
+                    }
                 }
 
                 pub fn forEach(
@@ -1918,6 +2309,7 @@ pub const ZigConsoleClient = struct {
                     var writer = WrappedWriter(Writer){
                         .ctx = writer_,
                         .failed = false,
+                        .estimated_line_length = &this.estimated_line_length,
                     };
 
                     const tag = Tag.getAdvanced(value, globalThis, .{ .hide_global = true });
@@ -1931,7 +2323,7 @@ pub const ZigConsoleClient = struct {
 
                     defer ctx.i += 1;
                     if (ctx.i > 0) {
-                        if (ctx.always_newline or this.always_newline_scope or this.goodTimeForANewLine()) {
+                        if (!this.single_line and (ctx.always_newline or this.always_newline_scope or this.goodTimeForANewLine())) {
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             this.resetLine();
@@ -2310,7 +2702,7 @@ pub const ZigConsoleClient = struct {
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
-                            if (this.ordered_properties or was_good_time) {
+                            if (!this.single_line and (this.ordered_properties or was_good_time)) {
                                 this.resetLine();
                                 writer.writeAll("[");
                                 writer.writeAll("\n");
@@ -2349,7 +2741,7 @@ pub const ZigConsoleClient = struct {
                             if (empty_start) |empty| {
                                 if (empty > 0) {
                                     this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                                    if (this.ordered_properties or this.goodTimeForANewLine()) {
+                                    if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
                                         was_good_time = true;
                                         writer.writeAll("\n");
                                         this.writeIndent(Writer, writer_) catch unreachable;
@@ -2368,7 +2760,7 @@ pub const ZigConsoleClient = struct {
                             }
 
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (this.ordered_properties or this.goodTimeForANewLine()) {
+                            if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
                                 writer.writeAll("\n");
                                 was_good_time = true;
                                 this.writeIndent(Writer, writer_) catch unreachable;
@@ -2390,7 +2782,7 @@ pub const ZigConsoleClient = struct {
                         if (empty_start) |empty| {
                             if (empty > 0) {
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                                if (this.ordered_properties or this.goodTimeForANewLine()) {
+                                if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
                                     writer.writeAll("\n");
                                     was_good_time = true;
                                     this.writeIndent(Writer, writer_) catch unreachable;
@@ -2411,7 +2803,7 @@ pub const ZigConsoleClient = struct {
                         }
                     }
 
-                    if (this.ordered_properties or was_good_time or this.goodTimeForANewLine()) {
+                    if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {
                         this.resetLine();
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
@@ -2507,7 +2899,7 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll("[native code]");
                 },
                 .Promise => {
-                    if (this.goodTimeForANewLine()) {
+                    if (!this.single_line and this.goodTimeForANewLine()) {
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
                     }
@@ -2574,19 +2966,32 @@ pub const ZigConsoleClient = struct {
                         return writer.print("{s} {{}}", .{map_name});
                     }
 
-                    writer.print("{s}({d}) {{\n", .{ map_name, length });
+                    switch (this.single_line) {
+                        inline else => |single_line| {
+                            writer.print("{s}({d}) {{" ++ (if (single_line) " " else "\n"), .{ map_name, length });
+                        },
+                    }
                     {
                         this.indent += 1;
                         this.depth +|= 1;
                         defer this.indent -|= 1;
                         defer this.depth -|= 1;
-                        var iter = MapIterator(Writer, enable_ansi_colors, false){
-                            .formatter = this,
-                            .writer = writer_,
-                        };
-                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        switch (this.single_line) {
+                            inline else => |single_line| {
+                                var iter = MapIterator(Writer, enable_ansi_colors, false, single_line){
+                                    .formatter = this,
+                                    .writer = writer_,
+                                };
+                                value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                                if (single_line and iter.count > 0) {
+                                    writer.writeAll(" ");
+                                }
+                            },
+                        }
                     }
-                    this.writeIndent(Writer, writer_) catch {};
+                    if (!this.single_line) {
+                        this.writeIndent(Writer, writer_) catch {};
+                    }
                     writer.writeAll("}");
                 },
                 .MapIterator => {
@@ -2600,15 +3005,26 @@ pub const ZigConsoleClient = struct {
                         this.depth +|= 1;
                         defer this.indent -|= 1;
                         defer this.depth -|= 1;
-                        var iter = MapIterator(Writer, enable_ansi_colors, true){
-                            .formatter = this,
-                            .writer = writer_,
-                        };
-                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
-                        if (iter.count > 0)
-                            writer.writeAll("\n");
+                        switch (this.single_line) {
+                            inline else => |single_line| {
+                                var iter = MapIterator(Writer, enable_ansi_colors, true, single_line){
+                                    .formatter = this,
+                                    .writer = writer_,
+                                };
+                                value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                                if (iter.count > 0) {
+                                    if (single_line) {
+                                        writer.writeAll(" ");
+                                    } else {
+                                        writer.writeAll("\n");
+                                    }
+                                }
+                            },
+                        }
                     }
-                    this.writeIndent(Writer, writer_) catch {};
+                    if (!this.single_line) {
+                        this.writeIndent(Writer, writer_) catch {};
+                    }
                     writer.writeAll("}");
                 },
                 .SetIterator => {
@@ -2622,15 +3038,22 @@ pub const ZigConsoleClient = struct {
                         this.depth +|= 1;
                         defer this.indent -|= 1;
                         defer this.depth -|= 1;
-                        var iter = MapIterator(Writer, enable_ansi_colors, true){
-                            .formatter = this,
-                            .writer = writer_,
-                        };
-                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
-                        if (iter.count > 0)
-                            writer.writeAll("\n");
+                        switch (this.single_line) {
+                            inline else => |single_line| {
+                                var iter = MapIterator(Writer, enable_ansi_colors, true, single_line){
+                                    .formatter = this,
+                                    .writer = writer_,
+                                };
+                                value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                                if (iter.count > 0 and !single_line) {
+                                    writer.writeAll("\n");
+                                }
+                            },
+                        }
                     }
-                    this.writeIndent(Writer, writer_) catch {};
+                    if (!this.single_line) {
+                        this.writeIndent(Writer, writer_) catch {};
+                    }
                     writer.writeAll("}");
                 },
                 .Set => {
@@ -2641,7 +3064,9 @@ pub const ZigConsoleClient = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    this.writeIndent(Writer, writer_) catch {};
+                    if (!this.single_line) {
+                        this.writeIndent(Writer, writer_) catch {};
+                    }
 
                     const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
 
@@ -2649,19 +3074,32 @@ pub const ZigConsoleClient = struct {
                         return writer.print("{s} {{}}", .{set_name});
                     }
 
-                    writer.print("{s}({d}) {{\n", .{ set_name, length });
+                    switch (this.single_line) {
+                        inline else => |single_line| {
+                            writer.print("{s}({d}) {{" ++ (if (single_line) " " else "\n"), .{ set_name, length });
+                        },
+                    }
                     {
                         this.indent += 1;
                         this.depth +|= 1;
                         defer this.indent -|= 1;
                         defer this.depth -|= 1;
-                        var iter = SetIterator(Writer, enable_ansi_colors){
-                            .formatter = this,
-                            .writer = writer_,
-                        };
-                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        switch (this.single_line) {
+                            inline else => |single_line| {
+                                var iter = SetIterator(Writer, enable_ansi_colors, single_line){
+                                    .formatter = this,
+                                    .writer = writer_,
+                                };
+                                value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                                if (single_line and !iter.is_first) {
+                                    writer.writeAll(" ");
+                                }
+                            },
+                        }
                     }
-                    this.writeIndent(Writer, writer_) catch {};
+                    if (this.single_line) {
+                        this.writeIndent(Writer, writer_) catch {};
+                    }
                     writer.writeAll("}");
                 },
                 .toJSON => {
@@ -2724,13 +3162,19 @@ pub const ZigConsoleClient = struct {
                         defer this.quote_strings = old_quote_strings;
                         this.writeIndent(Writer, writer_) catch unreachable;
 
-                        writer.print(
-                            comptime Output.prettyFmt("<r>type: <green>\"{s}\"<r><d>,<r>\n", enable_ansi_colors),
-                            .{
-                                event_type.label(),
+                        switch (this.single_line) {
+                            inline else => |single_line| {
+                                writer.print(
+                                    comptime Output.prettyFmt("<r>type: <green>\"{s}\"<r><d>,<r>" ++ (if (single_line) " " else "\n"), enable_ansi_colors),
+                                    .{
+                                        event_type.label(),
+                                    },
+                                );
+                                if (!single_line) {
+                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                }
                             },
-                        );
-                        this.writeIndent(Writer, writer_) catch unreachable;
+                        }
 
                         switch (event_type) {
                             .MessageEvent => {
@@ -2774,10 +3218,14 @@ pub const ZigConsoleClient = struct {
                             },
                             else => unreachable,
                         }
-                        writer.writeAll("\n");
+                        if (!this.single_line) {
+                            writer.writeAll("\n");
+                        }
                     }
 
-                    this.writeIndent(Writer, writer_) catch unreachable;
+                    if (!this.single_line) {
+                        this.writeIndent(Writer, writer_) catch unreachable;
+                    }
                     writer.writeAll("}");
                 },
                 .JSX => {
@@ -2890,16 +3338,16 @@ pub const ZigConsoleClient = struct {
                                         }
                                     }
 
-                                    if (
+                                    if (!this.single_line and (
                                     // count_without_children is necessary to prevent printing an extra newline
                                     // if there are children and one prop and the child prop is the last prop
-                                    props_iter.i + 1 < count_without_children and
+                                        props_iter.i + 1 < count_without_children and
                                         // 3 is arbitrary but basically
                                         //  <input type="text" value="foo" />
                                         //  ^ should be one line
                                         // <input type="text" value="foo" bar="true" baz={false} />
                                         //  ^ should be multiple lines
-                                        props_iter.i > 3)
+                                        props_iter.i > 3))
                                     {
                                         writer.writeAll("\n");
                                         this.writeIndent(Writer, writer_) catch unreachable;
@@ -2917,7 +3365,7 @@ pub const ZigConsoleClient = struct {
                                     else => false,
                                 };
 
-                                if (print_children) {
+                                if (print_children and !this.single_line) {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
@@ -3031,12 +3479,15 @@ pub const ZigConsoleClient = struct {
                     var iter = Iterator{
                         .formatter = this,
                         .writer = writer_,
-                        .always_newline = this.always_newline_scope or this.goodTimeForANewLine(),
+                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                        .single_line = this.single_line,
                         .parent = value,
                     };
 
                     if (this.depth > this.max_depth) {
-                        if (this.always_newline_scope or this.goodTimeForANewLine()) {
+                        if (this.single_line) {
+                            writer.writeAll(" ");
+                        } else if (this.always_newline_scope or this.goodTimeForANewLine()) {
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             this.resetLine();

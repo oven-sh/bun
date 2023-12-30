@@ -45,6 +45,12 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
+    if (UNLIKELY(type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType))) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
+        return;
+    }
+
     auto scope = DECLARE_CATCH_SCOPE(vm);
     Zig__ConsoleClient__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type),
         static_cast<uint32_t>(level), globalObject, jsArgs,

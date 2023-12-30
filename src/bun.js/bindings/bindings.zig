@@ -4892,6 +4892,17 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("forEach", .{ this, globalObject, ctx, callback });
     }
 
+    /// Same as `forEach` but accepts a typed context struct without need for @ptrCasts
+    pub inline fn forEachWithContext(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        ctx: anytype,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
+    ) void {
+        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
+        return cppFn("forEach", .{ this, globalObject, ctx, func });
+    }
+
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {
         return cppFn("isIterable", .{
             this,

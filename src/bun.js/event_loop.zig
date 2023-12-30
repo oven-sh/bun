@@ -217,9 +217,18 @@ pub const ManagedTask = struct {
 };
 
 pub const AnyTaskWithExtraContext = struct {
-    ctx: ?*anyopaque,
-    callback: *const (fn (*anyopaque, *anyopaque) void),
+    ctx: ?*anyopaque = undefined,
+    callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
     next: ?*AnyTaskWithExtraContext = null,
+
+    pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
+        this.* = .{
+            .ctx = of,
+            .callback = &@field(of, @tagName(field)),
+            .next = null,
+        };
+        return this;
+    }
 
     pub fn run(this: *AnyTaskWithExtraContext, extra: *anyopaque) void {
         @setRuntimeSafety(false);
@@ -639,6 +648,10 @@ pub const EventLoop = struct {
 
     timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
 
+    pub inline fn getEventLoopCtx(this: *EventLoop) *JSC.VirtualMachine {
+        return this.virtual_machine;
+    }
+
     pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
         if (comptime !Environment.isPosix) {
             @compileError("This function is only available on POSIX platforms");
@@ -708,27 +721,27 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                .ShellLsTask => {
+                @field(Task.Tag, "src.shell.interpreter.Builtin.Ls.NewShellLsTask(.js)") => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
-                    shell_ls_task.runFromJS();
+                    shell_ls_task.runFromMainThread();
                     shell_ls_task.deinit();
                 },
-                .ShellMvBatchedTask => {
+                @field(Task.Tag, "src.shell.interpreter.Builtin.Mv.NewShellMvBatchedTask(.js)") => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
-                    shell_mv_batched_task.task.runFromJS();
+                    shell_mv_batched_task.task.runFromMainThread();
                 },
-                .ShellMvCheckTargetTask => {
+                @field(Task.Tag, "src.shell.interpreter.Builtin.Mv.NewShellMvCheckTargetTask(.js)") => {
                     var shell_mv_check_target_task: *ShellMvCheckTargetTask = task.get(ShellMvCheckTargetTask).?;
-                    shell_mv_check_target_task.task.runFromJS();
+                    shell_mv_check_target_task.task.runFromMainThread();
                 },
-                .ShellRmTask => {
+                @field(Task.Tag, "src.shell.interpreter.Builtin.Rm.NewShellRmTask(.js)") => {
                     var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
-                    shell_rm_task.runFromJs();
+                    shell_rm_task.runFromMainThread();
                     shell_rm_task.deinit();
                 },
-                .ShellGlobTask => {
+                @field(Task.Tag, "src.shell.interpreter.NewShellGlobTask(.js)") => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
-                    shell_glob_task.runFromJS();
+                    shell_glob_task.runFromMainThread();
                     shell_glob_task.deinit();
                 },
                 .FetchTasklet => {
@@ -1372,7 +1385,7 @@ pub const EventLoop = struct {
     }
 };
 
-const EventLoopCtxJs = struct {
+pub const EventLoopCtxJs = struct {
     vm: *JSC.VirtualMachine,
 
     pub inline fn init(inner: *JSC.VirtualMachine) EventLoopCtxJs {
@@ -1381,16 +1394,24 @@ const EventLoopCtxJs = struct {
         };
     }
 
+    pub inline fn loop(this: @This()) *JSC.EventLoop {
+        return this.vm.event_loop;
+    }
+
     pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
         return this.vm.rareData().filePolls(this.vm).get();
     }
 
-    pub inline fn ioLoop(this: @This()) *JSC.PlatformEventLoop {
+    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
         return this.vm.event_loop_handle.?;
+    }
+
+    pub inline fn incrementPendingUnrefCounter(this: @This()) void {
+        this.vm.pending_unref_counter +|= 1;
     }
 };
 
-const EventLoopCtxMini = struct {
+pub const EventLoopCtxMini = struct {
     mini: *JSC.MiniEventLoop,
 
     pub fn init(inner: *JSC.MiniEventLoop) EventLoopCtxMini {
@@ -1399,16 +1420,36 @@ const EventLoopCtxMini = struct {
         };
     }
 
+    pub inline fn loop(this: @This()) *JSC.MiniEventLoop {
+        return this.mini;
+    }
+
     pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
         return this.mini.filePolls().get();
     }
 
-    pub inline fn ioLoop(this: @This()) *JSC.PlatformEventLoop {
+    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
         return this.mini.loop;
+    }
+
+    pub inline fn incrementPendingUnrefCounter(this: @This()) void {
+        _ = this; // autofix
+
+        @panic("FIXME TODO");
     }
 };
 
-pub const EventLoopKind = enum { js, mini };
+pub const EventLoopKind = enum {
+    js,
+    mini,
+
+    pub fn refType(comptime this: EventLoopKind) type {
+        return switch (this) {
+            .js => *JSC.VirtualMachine,
+            .mini => *JSC.MiniEventLoop,
+        };
+    }
+};
 
 pub fn EventLoopCtx(inner: anytype) brk: {
     if (@TypeOf(inner) == *JSC.VirtualMachine) {
@@ -1422,6 +1463,12 @@ pub fn EventLoopCtx(inner: anytype) brk: {
     if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return EventLoopCtxMini.init(inner);
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 }
+
+// pub const EventLoopRefImpl = struct {
+//     fn enqueueTask(ref: anytype) {
+//         const event_loop_ctx =
+//     }
+// };
 
 pub const MiniEventLoop = struct {
     tasks: Queue,
@@ -1441,6 +1488,10 @@ pub const MiniEventLoop = struct {
     const Queue = std.fifo.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
 
     pub const Task = AnyTaskWithExtraContext;
+
+    pub inline fn getEventLoopCtx(this: *MiniEventLoop) *MiniEventLoop {
+        return this;
+    }
 
     pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
         return this.file_polls_ orelse {
@@ -1519,7 +1570,12 @@ pub const MiniEventLoop = struct {
         this.enqueueJSCTask(&@field(ctx, @tagName(field)));
     }
 
-    pub fn enqueueTaskConcurrent(
+    pub fn enqueueTaskConcurrent(this: *MiniEventLoop, task: *AnyTaskWithExtraContext) void {
+        this.concurrent_tasks.push(task);
+        this.loop.wakeup();
+    }
+
+    pub fn enqueueTaskConcurrentWithExtraCtx(
         this: *MiniEventLoop,
         comptime Context: type,
         comptime ParentContext: type,
@@ -1591,7 +1647,7 @@ pub const AnyEventLoop = union(enum) {
                 // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
             },
             .mini => {
-                this.mini.enqueueTaskConcurrent(Context, ParentContext, ctx, Callback, field);
+                this.mini.enqueueTaskConcurrentWithExtraCtx(Context, ParentContext, ctx, Callback, field);
             },
         }
     }

@@ -49,27 +49,33 @@ pub const KeepAlive = struct {
     }
 
     /// Prevent a poll from keeping the process alive.
-    pub fn unref(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unref(this: *KeepAlive, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.subActive(1);
+        // vm.event_loop_handle.?.subActive(1);
+        event_loop_ctx.platformEventLoop().subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefConcurrently(this: *KeepAlive, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.unrefConcurrently();
+        // vm.event_loop_handle.?.unrefConcurrently();
+        event_loop_ctx.platformEventLoop().unrefConcurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unrefOnNextTick(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefOnNextTick(this: *KeepAlive, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.pending_unref_counter +|= 1;
+        // vm.pending_unref_counter +|= 1;
+        event_loop_ctx.incrementPendingUnrefCounter();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
@@ -81,19 +87,23 @@ pub const KeepAlive = struct {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn ref(this: *KeepAlive, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.event_loop_handle.?.ref();
+        event_loop_ctx.platformEventLoop().ref();
+        // vm.event_loop_handle.?.ref();
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn refConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn refConcurrently(this: *KeepAlive, event_loop_ctx_: anytype) void {
+        const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.event_loop_handle.?.refConcurrently();
+        // vm.event_loop_handle.?.refConcurrently();
+        event_loop_ctx.platformEventLoop().refConcurrently();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
@@ -481,7 +491,7 @@ pub const FilePoll = struct {
         const event_loop_ctx = JSC.EventLoopCtx(event_loop_ctx_);
         // log("{x} disableKeepingProcessAlive", .{@intFromPtr(this)});
         // vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
-        event_loop_ctx.ioLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        event_loop_ctx.platformEventLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.remove(.has_incremented_active_count);
     }
@@ -497,7 +507,7 @@ pub const FilePoll = struct {
             return;
 
         // vm.event_loop_handle.?.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
-        event_loop_ctx.ioLoop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
+        event_loop_ctx.platformEventLoop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         this.flags.insert(.keeps_event_loop_alive);
         this.flags.insert(.has_incremented_active_count);
     }
@@ -595,7 +605,7 @@ pub const FilePoll = struct {
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.insert(.closed);
         // this.deactivate(vm.event_loop_handle.?);
-        this.deactivate(event_loop_ctx.ioLoop());
+        this.deactivate(event_loop_ctx.platformEventLoop());
     }
 
     pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {

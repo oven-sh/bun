@@ -4884,7 +4884,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
             std.debug.assert(
                 // this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
-                this.poll_ref.?.unregister(JSC.EventLoopCtx(event_loop_ptr.get()).ioLoop(), false) == .result,
+                this.poll_ref.?.unregister(JSC.EventLoopCtx(event_loop_ptr.get()).platformEventLoop(), false) == .result,
             );
             // this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
             this.poll_ref.?.disableKeepingProcessAlive(event_loop_ptr.get());
@@ -4931,7 +4931,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(poll_ref.fd == fd);
             std.debug.assert(!this.isWatching());
             // switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
-            switch (poll_ref.register(JSC.EventLoopCtx(event_loop_ptr.get()).ioLoop(), flag, true)) {
+            switch (poll_ref.register(JSC.EventLoopCtx(event_loop_ptr.get()).platformEventLoop(), flag, true)) {
                 .err => |err| {
                     std.debug.panic("FilePoll.register failed: {d}", .{err.errno});
                 },

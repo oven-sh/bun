@@ -403,14 +403,22 @@ pub const Loop = struct {
         updateTimespec(&this.cached_now);
     }
 
+    extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
     pub fn updateTimespec(timespec: *os.timespec) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
-        } else if (comptime Environment.isMac) {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
+        } else if (comptime Environment.isWindows) {
+            var tv_sec: i64 = 0;
+            var tv_nsec: i64 = 0;
+
+            const rc = clock_gettime_monotonic(&tv_sec, &tv_nsec);
+            assert(rc == 0);
+
+            timespec.tv_sec = @intCast(tv_sec);
+            timespec.tv_nsec = @intCast(tv_nsec);
         } else {
-            @compileError("TODO: implement poll for this platform");
+            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
         }
     }
 };

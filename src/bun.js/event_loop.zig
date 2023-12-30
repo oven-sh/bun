@@ -623,13 +623,9 @@ pub const EventLoop = struct {
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
-    timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
+    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
 
     pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
-        if (comptime !Environment.isPosix) {
-            @compileError("This function is only available on POSIX platforms");
-        }
-
         return this.timer_reference_pool orelse brk: {
             const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
             _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);

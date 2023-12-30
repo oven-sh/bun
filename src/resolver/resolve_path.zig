@@ -1810,12 +1810,7 @@ pub const PosixToWinNormalizer = struct {
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
     ) ![:0]const u8 {
-        _ = this;
-        _ = maybe_posix_path;
-        // problem: the buffer does not exist on posix, but we need to convert []const u8 to [:0]const u8
-        // maybe we just take [:0]const u8 in?
-        @compileError("TODO: fix resolveCWDZ on posix");
-        // return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
+        return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
     }
 
     // underlying implementation:

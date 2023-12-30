@@ -1278,6 +1278,15 @@ declare module "bun:test" {
      */
     toBeInteger(): void;
     /**
+     * Asserts that a value is an `object`.
+     *
+     * @example
+     * expect({}).toBeObject();
+     * expect("notAnObject").not.toBeObject();
+     * expect(NaN).not.toBeObject();
+     */
+    toBeObject(): void;
+    /**
      * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
      *
      * @example

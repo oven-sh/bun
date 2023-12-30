@@ -1610,6 +1610,13 @@ pub const SystemError = extern struct {
     pub const namespace = "";
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        defer {
+            this.path.deref();
+            this.code.deref();
+            this.message.deref();
+            this.syscall.deref();
+        }
+
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
@@ -3836,6 +3843,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
         return switch (comptime Number) {
             JSValue => number,
+            u0 => jsNumberFromInt32(0),
             f32, f64 => jsNumberFromDouble(@as(f64, number)),
             c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
             c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
@@ -3844,7 +3852,6 @@ pub const JSValue = enum(JSValueReprInt) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
-            // u0 => jsNumberFromInt32(0),
             else => {
                 // windows
                 if (comptime Number == std.os.fd_t) {
@@ -4883,6 +4890,17 @@ pub const JSValue = enum(JSValueReprInt) {
         callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
     ) void {
         return cppFn("forEach", .{ this, globalObject, ctx, callback });
+    }
+
+    /// Same as `forEach` but accepts a typed context struct without need for @ptrCasts
+    pub inline fn forEachWithContext(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        ctx: anytype,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
+    ) void {
+        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
+        return cppFn("forEach", .{ this, globalObject, ctx, func });
     }
 
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {

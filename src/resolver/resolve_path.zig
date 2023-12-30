@@ -449,7 +449,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
             return str[0..separator];
         },
-        else => unreachable,
+        else => @compileError("unreachable"),
     }
 }
 
@@ -882,7 +882,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
     const platform = comptime _platform.resolve();
 
     switch (comptime platform) {
-        .auto => unreachable,
+        .auto => @compileError("unreachable"),
 
         .windows => {
             return normalizeStringWindows(
@@ -1810,12 +1810,7 @@ pub const PosixToWinNormalizer = struct {
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
     ) ![:0]const u8 {
-        _ = this;
-        _ = maybe_posix_path;
-        // problem: the buffer does not exist on posix, but we need to convert []const u8 to [:0]const u8
-        // maybe we just take [:0]const u8 in?
-        @compileError("TODO: fix resolveCWDZ on posix");
-        // return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
+        return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
     }
 
     // underlying implementation:

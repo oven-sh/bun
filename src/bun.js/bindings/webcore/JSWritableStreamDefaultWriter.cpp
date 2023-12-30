@@ -141,7 +141,9 @@ void JSWritableStreamDefaultWriter::finishCreation(VM& vm)
 
 JSObject* JSWritableStreamDefaultWriter::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSWritableStreamDefaultWriterPrototype::create(vm, &globalObject, JSWritableStreamDefaultWriterPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSWritableStreamDefaultWriterPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSWritableStreamDefaultWriterPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSWritableStreamDefaultWriter::prototype(VM& vm, JSDOMGlobalObject& globalObject)

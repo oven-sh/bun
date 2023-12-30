@@ -212,7 +212,9 @@ void JSURLSearchParams::finishCreation(VM& vm)
 
 JSObject* JSURLSearchParams::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSURLSearchParamsPrototype::create(vm, &globalObject, JSURLSearchParamsPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSURLSearchParamsPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSURLSearchParamsPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSURLSearchParams::prototype(VM& vm, JSDOMGlobalObject& globalObject)

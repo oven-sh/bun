@@ -618,16 +618,22 @@ pub const String = extern struct {
     pub inline fn utf16(self: String) []const u16 {
         if (self.tag == .Empty)
             return &[_]u16{};
-        std.debug.assert(self.tag == .WTFStringImpl);
-        return self.value.WTFStringImpl.utf16Slice();
+        if (self.tag == .WTFStringImpl) {
+            return self.value.WTFStringImpl.utf16Slice();
+        }
+
+        return self.toZigString().utf16SliceAligned();
     }
 
     pub inline fn latin1(self: String) []const u8 {
         if (self.tag == .Empty)
             return &[_]u8{};
 
-        std.debug.assert(self.tag == .WTFStringImpl);
-        return self.value.WTFStringImpl.latin1Slice();
+        if (self.tag == .WTFStringImpl) {
+            return self.value.WTFStringImpl.latin1Slice();
+        }
+
+        return self.toZigString().slice();
     }
 
     pub fn isUTF8(self: String) bool {
@@ -896,6 +902,16 @@ pub const String = extern struct {
             true => std.mem.indexOfScalar(u16, this.utf16(), @intCast(chr)),
             false => bun.strings.indexOfCharUsize(this.byteSlice(), chr),
         };
+    }
+
+    pub fn visibleWidth(this: *const String) usize {
+        if (this.isUTF8()) {
+            return bun.strings.visibleUTF8Width(this.utf8());
+        } else if (this.isUTF16()) {
+            return bun.strings.visibleUTF16Width(this.utf16());
+        } else {
+            return bun.strings.visibleLatin1Width(this.latin1());
+        }
     }
 
     pub fn indexOfComptimeWithCheckLen(this: String, comptime values: []const []const u8, comptime check_len: usize) ?usize {

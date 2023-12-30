@@ -1103,27 +1103,54 @@ pub const ZigConsoleClient = struct {
             };
         }
 
+        const VisibleCharacterCounter = struct {
+            width: *usize = undefined,
+
+            pub const WriteError = error{};
+
+            pub const Writer = std.io.Writer(
+                VisibleCharacterCounter,
+                VisibleCharacterCounter.WriteError,
+                VisibleCharacterCounter.write,
+            );
+
+            pub fn write(this: VisibleCharacterCounter, bytes: []const u8) WriteError!usize {
+                this.width.* += strings.visibleUTF8Width(bytes);
+                return bytes.len;
+            }
+
+            pub fn writeAll(this: VisibleCharacterCounter, bytes: []const u8) WriteError!void {
+                this.width.* += strings.visibleUTF8Width(bytes);
+            }
+        };
+
         /// Compute how much horizontal space will take a JSValue when printed
         fn getWidthForValue(this: *TablePrinter, value: JSValue) u32 {
-            var counting_writer = std.io.countingWriter(std.io.null_writer);
+            var width: usize = 0;
             var value_formatter = this.value_formatter;
+
             value_formatter.format(
                 ZigConsoleClient.Formatter.Tag.get(value, this.globalObject),
-                @TypeOf(counting_writer).Writer,
-                counting_writer.writer(),
+                VisibleCharacterCounter.Writer,
+                VisibleCharacterCounter.Writer{
+                    .context = .{
+                        .width = &width,
+                    },
+                },
                 value,
                 this.globalObject,
                 false,
             );
-            return @as(u32, @intCast(counting_writer.bytes_written));
+
+            return @truncate(width);
         }
 
         /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
         fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) !void {
             // update size of "(index)" column
             const row_key_len: u32 = switch (row_key) {
-                .str => |value| @intCast(value.length()),
-                .num => |value| @intCast(std.fmt.count("{d}", .{value})),
+                .str => |value| @intCast(value.visibleWidth()),
+                .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
             };
             columns.items[0].width = @max(columns.items[0].width, row_key_len);
 
@@ -1141,9 +1168,9 @@ pub const ZigConsoleClient = struct {
                 //  - if "properties" arg was provided: iterate the already-created columns (except for the 0-th which is the index)
                 //  - otherwise: iterate the object properties, and create the columns on-demand
                 if (!this.properties.isUndefined()) {
-                    for (1..columns.items.len) |i| {
-                        if (row_value.getWithString(this.globalObject, columns.items[i].name)) |value| {
-                            columns.items[i].width = @max(columns.items[i].width, this.getWidthForValue(value));
+                    for (columns.items[1..]) |*column| {
+                        if (row_value.getWithString(this.globalObject, column.name)) |value| {
+                            column.width = @max(column.width, this.getWidthForValue(value));
                         }
                     }
                 } else {
@@ -1157,15 +1184,20 @@ pub const ZigConsoleClient = struct {
                         const value = cols_iter.value;
 
                         // find or create the column for the property
-                        var col_idx: usize = 0;
-                        while (col_idx < columns.items.len) : (col_idx += 1) {
-                            if (columns.items[col_idx].name.eql(String.init(col_key))) break;
-                        }
-                        if (col_idx == columns.items.len) {
-                            try columns.append(.{ .name = String.init(col_key) });
-                        }
+                        const column: *Column = brk: {
+                            const col_str = String.init(col_key);
+                            for (columns.items[1..]) |*col| {
+                                if (col.name.eql(col_str)) {
+                                    break :brk col;
+                                }
+                            }
 
-                        columns.items[col_idx].width = @max(columns.items[col_idx].width, this.getWidthForValue(value));
+                            try columns.append(.{ .name = col_str });
+
+                            break :brk &columns.items[columns.items.len - 1];
+                        };
+
+                        column.width = @max(column.width, this.getWidthForValue(value));
                     }
                 }
             } else if (this.properties.isUndefined()) {
@@ -1175,6 +1207,11 @@ pub const ZigConsoleClient = struct {
         }
 
         inline fn writeStringNTimes(writer: anytype, str: []const u8, n: usize) !void {
+            if (str.len == 1) {
+                try writer.writeByteNTimes(str[0], n);
+                return;
+            }
+
             for (0..n) |_| {
                 try writer.writeAll(str);
             }
@@ -1191,17 +1228,16 @@ pub const ZigConsoleClient = struct {
             try writer.writeAll("│");
             {
                 const len: u32 = switch (row_key) {
-                    .str => |value| @intCast(value.length()),
-                    .num => |value| @intCast(std.fmt.count("{d}", .{value})),
+                    .str => |value| @truncate(value.visibleWidth()),
+                    .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
                 };
-                const pad_l = (columns.items[0].width - len) >> 1;
-                const pad_r = columns.items[0].width - len - pad_l;
-                try writer.writeByteNTimes(' ', pad_l + PADDING);
+                const needed = columns.items[0].width -| len;
+                try writer.writeByteNTimes(' ', PADDING);
                 switch (row_key) {
                     .str => |value| try writer.print("{}", .{value}),
                     .num => |value| try writer.print("{d}", .{value}),
                 }
-                try writer.writeByteNTimes(' ', pad_r + PADDING);
+                try writer.writeByteNTimes(' ', needed + PADDING);
             }
 
             for (1..columns.items.len) |col_idx| {
@@ -1223,13 +1259,11 @@ pub const ZigConsoleClient = struct {
                 }
 
                 if (value.isEmpty()) {
-                    try writer.writeByteNTimes(' ', col.width + 2 * PADDING);
+                    try writer.writeByteNTimes(' ', col.width + 2 + PADDING);
                 } else {
                     const len: u32 = this.getWidthForValue(value);
-
-                    const pad_l = (col.width - len) >> 1;
-                    const pad_r = col.width - len - pad_l;
-                    try writer.writeByteNTimes(' ', pad_l + PADDING);
+                    const needed = col.width - len;
+                    try writer.writeByteNTimes(' ', PADDING);
                     const tag = ZigConsoleClient.Formatter.Tag.get(value, this.globalObject);
                     var value_formatter = this.value_formatter;
                     value_formatter.format(
@@ -1240,7 +1274,8 @@ pub const ZigConsoleClient = struct {
                         this.globalObject,
                         enable_ansi_colors,
                     );
-                    try writer.writeByteNTimes(' ', pad_r + PADDING);
+
+                    try writer.writeByteNTimes(' ', needed + PADDING);
                 }
             }
             try writer.writeAll("│\n");
@@ -1256,9 +1291,9 @@ pub const ZigConsoleClient = struct {
             var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
             defer columns.deinit();
 
-            // create the first column "(index)", which is always present
+            // create the first column "#" which is always present
             columns.appendAssumeCapacity(.{
-                .name = if (this.is_iterable and !this.tabular_data.jsType().isArray()) String.static("(iteration index)") else String.static("(index)"),
+                .name = String.static("#"),
             });
 
             // special case for Map: create the special "Key" column at index 1
@@ -1315,27 +1350,30 @@ pub const ZigConsoleClient = struct {
 
             // print the table header (border line + column names line + border line)
             {
+                for (columns.items) |*col| {
+                    // also update the col width with the length of the column name itself
+                    col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidth())));
+                }
+
                 try writer.writeAll("┌");
                 for (columns.items, 0..) |*col, i| {
-                    // also update the col width with the length of the column name itself
-                    col.width = @max(col.width, @as(u32, @intCast(col.name.length())));
                     if (i > 0) try writer.writeAll("┬");
-                    try writeStringNTimes(writer, "─", col.width + 2 * PADDING);
+                    try writeStringNTimes(writer, "─", col.width + (PADDING * 2));
                 }
+
                 try writer.writeAll("┐\n│");
                 for (columns.items, 0..) |col, i| {
                     if (i > 0) try writer.writeAll("│");
-                    const len = col.name.length();
-                    const pad_l = (col.width - len) >> 1;
-                    const pad_r = col.width - len - pad_l;
-                    try writer.writeByteNTimes(' ', pad_l + PADDING);
+                    const len = col.name.visibleWidth();
+                    const needed = col.width -| len;
+                    try writer.writeByteNTimes(' ', 1);
                     try writer.print("{}", .{col.name});
-                    try writer.writeByteNTimes(' ', pad_r + PADDING);
+                    try writer.writeByteNTimes(' ', needed + PADDING);
                 }
                 try writer.writeAll("│\n├");
                 for (columns.items, 0..) |col, i| {
                     if (i > 0) try writer.writeAll("┼");
-                    try writeStringNTimes(writer, "─", col.width + 2 * PADDING);
+                    try writeStringNTimes(writer, "─", col.width + (PADDING * 2));
                 }
                 try writer.writeAll("┤\n");
             }
@@ -1377,10 +1415,10 @@ pub const ZigConsoleClient = struct {
             // print the table bottom border
             {
                 try writer.writeAll("└");
-                try writeStringNTimes(writer, "─", columns.items[0].width + 2 * PADDING);
+                try writeStringNTimes(writer, "─", columns.items[0].width + (PADDING * 2));
                 for (1..columns.items.len) |i| {
                     try writer.writeAll("┴");
-                    try writeStringNTimes(writer, "─", columns.items[i].width + 2 * PADDING);
+                    try writeStringNTimes(writer, "─", columns.items[i].width + (PADDING * 2));
                 }
                 try writer.writeAll("┘\n");
             }

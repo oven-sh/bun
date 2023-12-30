@@ -391,39 +391,12 @@ pub const Interpreter = struct {
         this.deinit();
     }
 
-    /// For some reason, bash does not allow braces to be expanded in
-    /// assignments. It does allow glob expansion, but only AFTER the
-    /// variable has expanded:
-    ///
-    /// ```bash
-    /// FOO=*.json
-    /// echo $FOO # prints something like `foo.json bar.json`
-    /// touch WHY.json
-    /// echo $FOO # prints `foo.json bar.json WHY.json`
-    /// ```
-    /// FIXME: support cmd substitution (reequires IO)
-    pub fn assignVar(this: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) void {
-        // All the extra allocations needed to calculate the final resultant value are done in a temp arena,
-        // then the final result is copied into the interpreter's arena.
-        var arena = Arena.init(this.allocator);
-        defer arena.deinit();
-        const arena_alloc = arena.allocator();
-
-        var expander = ExpansionCtx(.{ .for_spawn = false, .single = true }).init(
-            this,
-            arena_alloc,
-            {},
-        );
-
-        // This will do variable expansion, but not brace expansion or glob expansion
-        expander.evalNoBraceExpansion(&assign.value) catch |e| OOM(e);
-
-        const value = this.arena.allocator().dupeZ(u8, expander.out.value.?) catch |e| OOM(e);
-
+    pub fn assignVar(this: *Interpreter, label: []const u8, value_: [:0]const u8, assign_ctx: AssignCtx) void {
+        const value = this.arena.allocator().dupeZ(u8, value_) catch |e| OOM(e);
         (switch (assign_ctx) {
-            .cmd => this.cmd_local_env.put(assign.label, value),
-            .shell => this.shell_env.put(assign.label, value),
-            .exported => this.export_env.put(assign.label, value),
+            .cmd => this.cmd_local_env.put(label, value),
+            .shell => this.shell_env.put(label, value),
+            .exported => this.export_env.put(label, value),
         }) catch |e| OOM(e);
     }
 
@@ -546,6 +519,7 @@ pub const Expansion = struct {
     const ParentPtr = StatePtrUnion(.{
         Cmd,
         // FIXME support assigns here too
+        Assigns,
     });
 
     const ChildPtr = StatePtrUnion(.{
@@ -590,16 +564,24 @@ pub const Expansion = struct {
         parent: ParentPtr,
         out_result: Result,
     ) void {
-        // var expansion = interpreter.allocator.create(Expansion) catch bun.outOfMemory();
-        expansion.node = node;
-        expansion.base = .{ .kind = .expansion, .interpreter = interpreter };
-        expansion.parent = parent;
+        expansion.* = .{
+            .node = node,
+            .base = .{ .kind = .expansion, .interpreter = interpreter },
+            .parent = parent,
 
-        expansion.word_idx = 0;
-        expansion.state = .normal;
-        expansion.child_state = .idle;
-        expansion.out = out_result;
-        expansion.out_idx = 0;
+            .word_idx = 0,
+            .state = .normal,
+            .child_state = .idle,
+            .out = out_result,
+            .out_idx = 0,
+            .current_out = std.ArrayList(u8).init(interpreter.allocator),
+        };
+        // var expansion = interpreter.allocator.create(Expansion) catch bun.outOfMemory();
+    }
+
+    pub fn deinit(expansion: *Expansion) void {
+        // FIXME
+        _ = expansion; // doesn't allocate so this should be fine
     }
 
     pub fn start(this: *Expansion) void {
@@ -609,7 +591,6 @@ pub const Expansion = struct {
         }
 
         this.state = .normal;
-        this.current_out = std.ArrayList(u8).init(this.base.interpreter.allocator);
         this.next();
     }
 
@@ -790,8 +771,20 @@ pub const Expansion = struct {
             }
 
             const stdout = this.child_state.cmd_subst.cmd.stdoutSlice() orelse @panic("Should not happen");
-            this.current_out.appendSlice(stdout) catch bun.outOfMemory();
-            // FIXME check if output is empty, trim output, also I think it needs to be split into muliple words?
+            if (stdout.len > 0) {
+                var trimmed = stdout;
+
+                // Posix standard trims newlines from the end of the output of command substitution
+                var i: usize = trimmed.len - 1;
+                while (i >= 0) : (i -= 1) {
+                    if (trimmed[i] == '\n') {
+                        trimmed = trimmed[0..i];
+                    } else break;
+                    if (i == 0) break;
+                }
+                // FIXME should we split this by whitespace
+                this.current_out.appendSlice(trimmed) catch bun.outOfMemory();
+            }
 
             this.word_idx += 1;
             this.child_state = .idle;
@@ -825,6 +818,7 @@ pub const Expansion = struct {
         this.next();
     }
 
+    /// If the atom is actually a command substitution then does nothing and returns true
     pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8)) bool {
         switch (atom.*) {
             .Text => |txt| {
@@ -1238,6 +1232,7 @@ pub const State = struct {
 const StateKind = enum(u8) {
     script,
     stmt,
+    assign,
     cmd,
     cond,
     pipeline,
@@ -1355,38 +1350,130 @@ pub const Script = struct {
 /// In pipelines and conditional expressions, assigns (e.g. `FOO=bar BAR=baz &&
 /// echo hi` or `FOO=bar BAR=baz | echo hi`) have no effect on the environment
 /// of the shell, so we can skip them.
-const AssignChild = struct {
+const Assigns = struct {
+    base: State,
+    node: []const ast.Assign,
+    parent: ParentPtr,
+    state: union(enum) {
+        idle,
+        expanding: struct {
+            idx: u32 = 0,
+            current_expansion_result: std.ArrayList([:0]const u8),
+            expansion: Expansion,
+        },
+        done,
+    },
+    ctx: AssignCtx,
+
     const ParentPtr = StatePtrUnion(.{
         Stmt,
         Cond,
+        Cmd,
         Pipeline,
     });
 
-    pub inline fn deinit(this: AssignChild) void {
+    const ChildPtr = StatePtrUnion(.{
+        Expansion,
+    });
+
+    pub inline fn deinit(this: *Assigns) void {
+        // FIXME
         _ = this;
     }
 
-    pub inline fn start(this: AssignChild) void {
-        _ = this;
+    pub inline fn start(this: *Assigns) void {
+        return this.next();
     }
 
-    pub fn exec(
-        interpreter: *Interpreter,
-        parent: ParentPtr,
-        assigns: []const ast.Assign,
-        assign_ctx: AssignCtx,
-    ) void {
-        for (assigns) |*assign| {
-            interpreter.assignVar(assign, assign_ctx);
-        }
-        var assign_child: AssignChild = .{};
-        parent.childDone(&assign_child, 0);
+    pub fn init(this: *Assigns, interpreter: *Interpreter, node: []const ast.Assign, ctx: AssignCtx, parent: ParentPtr) void {
+        this.* = .{
+            .base = .{ .kind = .assign, .interpreter = interpreter },
+            .node = node,
+            .parent = parent,
+            .state = .idle,
+            .ctx = ctx,
+        };
     }
 
-    pub fn execNoCallParent(interpreter: *Interpreter, assigns: []const ast.Assign, assign_ctx: AssignCtx) void {
-        for (assigns) |*assign| {
-            interpreter.assignVar(assign, assign_ctx);
+    pub fn next(this: *Assigns) void {
+        while (!(this.state == .done)) {
+            switch (this.state) {
+                .idle => {
+                    this.state = .{ .expanding = .{
+                        .current_expansion_result = std.ArrayList([:0]const u8).init(this.base.interpreter.allocator),
+                        .expansion = undefined,
+                    } };
+                    continue;
+                },
+                .expanding => {
+                    if (this.state.expanding.idx >= this.node.len) {
+                        this.state = .done;
+                        continue;
+                    }
+
+                    Expansion.init(
+                        this.base.interpreter,
+                        &this.state.expanding.expansion,
+                        &this.node[this.state.expanding.idx].value,
+                        Expansion.ParentPtr.init(this),
+                        .{
+                            .array_of_slice = &this.state.expanding.current_expansion_result,
+                        },
+                    );
+                    this.state.expanding.expansion.start();
+                    return;
+                },
+                .done => unreachable,
+            }
         }
+
+        this.parent.childDone(this, 0);
+    }
+
+    pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: u8) void {
+        _ = exit_code;
+
+        if (child.ptr.is(Expansion)) {
+            var expanding = &this.state.expanding;
+
+            const label = this.node[expanding.idx].label;
+
+            if (expanding.current_expansion_result.items.len == 1) {
+                const value = expanding.current_expansion_result.items[0];
+                this.base.interpreter.assignVar(label, value, this.ctx);
+            } else {
+                const size = brk: {
+                    var total: usize = 0;
+                    for (expanding.current_expansion_result.items) |slice| {
+                        total += slice.len;
+                    }
+                    break :brk total;
+                };
+
+                const value = brk: {
+                    var merged = this.base.interpreter.allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
+                    var i: usize = 0;
+                    for (expanding.current_expansion_result.items) |slice| {
+                        @memcpy(merged[i .. i + slice.len], slice[0..slice.len]);
+                        i += slice.len;
+                    }
+                    break :brk merged;
+                };
+
+                this.base.interpreter.assignVar(label, value, this.ctx);
+            }
+
+            for (expanding.current_expansion_result.items) |slice| {
+                this.base.interpreter.allocator.free(slice);
+            }
+
+            expanding.idx += 1;
+            expanding.current_expansion_result.clearRetainingCapacity();
+            this.next();
+            return;
+        }
+
+        unreachable;
     }
 };
 
@@ -1409,7 +1496,7 @@ pub const Stmt = struct {
         Cond,
         Pipeline,
         Cmd,
-        AssignChild,
+        Assigns,
     });
 
     pub fn init(
@@ -1439,11 +1526,14 @@ pub const Stmt = struct {
             std.debug.assert(this.last_exit_code == null);
             std.debug.assert(this.currently_executing == null);
         }
+        this.next();
+    }
 
-        if (this.node.exprs.len == 0)
+    pub fn next(this: *Stmt) void {
+        if (this.idx >= this.node.exprs.len)
             return this.parent.childDone(Script.ChildPtr.init(this), 0);
 
-        const child = &this.node.exprs[0];
+        const child = &this.node.exprs[this.idx];
         switch (child.*) {
             .cond => {
                 const cond = Cond.init(this.base.interpreter, child.cond, Cond.ParentPtr.init(this), this.io);
@@ -1461,7 +1551,9 @@ pub const Stmt = struct {
                 pipeline.start();
             },
             .assign => |assigns| {
-                AssignChild.exec(this.base.interpreter, AssignChild.ParentPtr.init(this), assigns, .shell);
+                var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
+                assign_machine.init(this.base.interpreter, assigns, .shell, Assigns.ParentPtr.init(this));
+                assign_machine.start();
             },
         }
     }
@@ -1470,26 +1562,12 @@ pub const Stmt = struct {
         const data = child.ptr.repr.data;
         log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
         this.last_exit_code = exit_code;
-        const next_idx = this.idx + 1;
+        this.idx += 1;
         const data2 = child.ptr.repr.data;
         log("{d} {d}", .{ data, data2 });
         child.deinit();
         this.currently_executing = null;
-        if (next_idx >= this.node.exprs.len)
-            return this.parent.childDone(Script.ChildPtr.init(this), exit_code);
-
-        const next_child = &this.node.exprs[next_idx];
-        switch (next_child.*) {
-            .cond => {
-                const cond = Cond.init(this.base.interpreter, next_child.cond, Cond.ParentPtr.init(this), this.io);
-                this.currently_executing = ChildPtr.init(cond);
-                cond.start();
-            },
-            .assign => |assigns| {
-                AssignChild.exec(this.base.interpreter, AssignChild.ParentPtr.init(this), assigns, .shell);
-            },
-            else => @panic("TODO"),
-        }
+        this.next();
     }
 
     pub fn deinit(this: *Stmt) void {
@@ -1515,7 +1593,7 @@ pub const Cond = struct {
         Cmd,
         Pipeline,
         Cond,
-        AssignChild,
+        Assigns,
     });
 
     const ParentPtr = StatePtrUnion(.{
@@ -1643,7 +1721,7 @@ pub const Pipeline = struct {
 
     const ChildPtr = StatePtrUnion(.{
         Cmd,
-        AssignChild,
+        Assigns,
     });
 
     const CmdOrResult = union(enum) {
@@ -1820,6 +1898,7 @@ pub const Cmd = struct {
     parent: ParentPtr,
 
     spawn_arena: bun.ArenaAllocator,
+
     /// This allocated by the above arena
     args: std.ArrayList(?[*:0]const u8),
 
@@ -1829,7 +1908,9 @@ pub const Cmd = struct {
     freed: bool = false,
 
     state: union(enum) {
-        expansion: struct {
+        idle,
+        expanding_assigns: Assigns,
+        expanding_args: struct {
             idx: u32 = 0,
             expansion: Expansion,
         },
@@ -1943,6 +2024,7 @@ pub const Cmd = struct {
     });
 
     const ChildPtr = StatePtrUnion(.{
+        Assigns,
         Expansion,
     });
 
@@ -1966,9 +2048,7 @@ pub const Cmd = struct {
 
             .exit_code = null,
             .io = io,
-            .state = .{
-                .expansion = .{ .idx = 0, .expansion = undefined },
-            },
+            .state = .idle,
         };
 
         return cmd;
@@ -1977,8 +2057,17 @@ pub const Cmd = struct {
     pub fn next(this: *Cmd) void {
         while (!(this.state == .done or this.state == .err)) {
             switch (this.state) {
-                .expansion => {
-                    if (this.state.expansion.idx >= this.node.name_and_args.len) {
+                .idle => {
+                    this.state = .{ .expanding_assigns = undefined };
+                    Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.node.assigns, .cmd, Assigns.ParentPtr.init(this));
+                    this.state.expanding_assigns.start();
+                    return; // yield execution
+                },
+                .expanding_assigns => {
+                    return; // yield execution
+                },
+                .expanding_args => {
+                    if (this.state.expanding_args.idx >= this.node.name_and_args.len) {
                         this.transitionToExecStateAndYield();
                         // yield execution to subproc
                         return;
@@ -1986,17 +2075,17 @@ pub const Cmd = struct {
 
                     Expansion.init(
                         this.base.interpreter,
-                        &this.state.expansion.expansion,
-                        &this.node.name_and_args[this.state.expansion.idx],
+                        &this.state.expanding_args.expansion,
+                        &this.node.name_and_args[this.state.expanding_args.idx],
                         Expansion.ParentPtr.init(this),
                         .{
                             .array_of_ptr = &this.args,
                         },
                     );
 
-                    this.state.expansion.idx += 1;
+                    this.state.expanding_args.idx += 1;
 
-                    this.state.expansion.expansion.start();
+                    this.state.expanding_args.expansion.start();
                     // yield execution to expansion
                     return;
                 },
@@ -2031,7 +2120,19 @@ pub const Cmd = struct {
     }
 
     pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: u8) void {
-        _ = exit_code;
+        _ = exit_code; // autofix
+
+        if (child.ptr.is(Assigns)) {
+            this.state.expanding_assigns.deinit();
+            this.state = .{
+                .expanding_args = .{
+                    .expansion = undefined,
+                },
+            };
+            this.next();
+            return;
+        }
+
         if (child.ptr.is(Expansion)) {
             this.next();
             return;
@@ -2046,9 +2147,9 @@ pub const Cmd = struct {
         var arena = &this.spawn_arena;
         var arena_allocator = arena.allocator();
 
-        for (this.node.assigns) |*assign| {
-            this.base.interpreter.assignVar(assign, .cmd);
-        }
+        // for (this.node.assigns) |*assign| {
+        //     this.base.interpreter.assignVar(assign, .cmd);
+        // }
 
         var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.global.bunVM(), false);
 

@@ -1793,7 +1793,7 @@ pub const Parser = struct {
 
     fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
         var assigns = std.ArrayList(AST.Assign).init(self.alloc);
-        while (!self.match_any(&.{ .Semicolon, .Eof })) {
+        while (!self.check_any(&.{ .Semicolon, .Eof })) {
             if (try self.parse_assign()) |assign| {
                 try assigns.append(assign);
             } else {
@@ -2066,6 +2066,16 @@ pub const Parser = struct {
         inline for (toktags) |tag| {
             if (peeked == tag) {
                 _ = self.advance();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn check_any(self: *Parser, comptime toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        inline for (toktags) |tag| {
+            if (peeked == tag) {
                 return true;
             }
         }

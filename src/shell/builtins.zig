@@ -64,7 +64,7 @@ pub fn NewBuiltin(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         arena: *bun.ArenaAllocator,
         /// The following are allocated with the above arena
-        args: *std.ArrayList(?[*:0]const u8),
+        args: *const std.ArrayList(?[*:0]const u8),
         args_slice: ?[]const [:0]const u8 = null,
         export_env: std.StringArrayHashMap([:0]const u8),
         cmd_local_env: std.StringArrayHashMap([:0]const u8),
@@ -252,7 +252,7 @@ pub fn NewBuiltin(comptime EventLoopKind: JSC.EventLoopKind) type {
             kind: Kind,
             arena: *bun.ArenaAllocator,
             node: *const ast.Cmd,
-            args: *std.ArrayList(?[*:0]const u8),
+            args: *const std.ArrayList(?[*:0]const u8),
             export_env: std.StringArrayHashMap([:0]const u8),
             cmd_local_env: std.StringArrayHashMap([:0]const u8),
             io_: *IO,

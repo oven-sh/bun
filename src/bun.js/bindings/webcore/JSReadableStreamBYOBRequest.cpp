@@ -137,7 +137,9 @@ void JSReadableStreamBYOBRequest::finishCreation(VM& vm)
 
 JSObject* JSReadableStreamBYOBRequest::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableStreamBYOBRequestPrototype::create(vm, &globalObject, JSReadableStreamBYOBRequestPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableStreamBYOBRequestPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableStreamBYOBRequestPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableStreamBYOBRequest::prototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -191,7 +191,9 @@ void JSEventEmitter::finishCreation(VM& vm)
 
 JSObject* JSEventEmitter::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSEventEmitterPrototype::create(vm, &globalObject, JSEventEmitterPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSEventEmitterPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSEventEmitterPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSEventEmitter::prototype(VM& vm, JSDOMGlobalObject& globalObject)

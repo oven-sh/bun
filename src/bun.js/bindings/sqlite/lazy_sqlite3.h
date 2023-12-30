@@ -274,7 +274,7 @@ static int lazyLoadSQLite()
 
     if (!lazy_sqlite3_error_offset) {
         lazy_sqlite3_error_offset = [](sqlite3*) -> int {
-            return 0;
+            return -1;
         };
     }
 

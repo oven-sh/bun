@@ -632,6 +632,14 @@ it("syntax error sets the byteOffset", () => {
     db.query("SELECT * FROM foo!!").all();
     throw new Error("Expected error");
   } catch (error) {
+    if (process.platform === "darwin" && process.arch === "x64") {
+      if (error.byteOffset === -1) {
+        // older versions of macOS don't have the function which returns the byteOffset
+        // we internally use a polyfill, so we need to allow that.
+        return;
+      }
+    }
+
     expect(error.byteOffset).toBe(17);
   }
 });

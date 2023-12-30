@@ -1291,9 +1291,9 @@ pub const ZigConsoleClient = struct {
             var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
             defer columns.deinit();
 
-            // create the first column "#" which is always present
+            // create the first column " " which is always present
             columns.appendAssumeCapacity(.{
-                .name = String.static("#"),
+                .name = String.static(" "),
             });
 
             // special case for Map: create the special "Key" column at index 1

@@ -35,6 +35,7 @@ typedef const char* (*lazy_sqlite3_column_name_type)(sqlite3_stmt*, int N);
 typedef const char* (*lazy_sqlite3_errmsg_type)(sqlite3*);
 typedef int (*lazy_sqlite3_extended_errcode_type)(sqlite3*);
 typedef int (*lazy_sqlite3_error_offset_type)(sqlite3*);
+typedef int64_t (*lazy_sqlite3_memory_used_type)();
 typedef const char* (*lazy_sqlite3_errstr_type)(int);
 typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
@@ -132,6 +133,7 @@ static lazy_sqlite3_config_type lazy_sqlite3_config;
 static lazy_sqlite3_extended_result_codes_type lazy_sqlite3_extended_result_codes;
 static lazy_sqlite3_extended_errcode_type lazy_sqlite3_extended_errcode;
 static lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
+static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -177,6 +179,7 @@ static lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
 #define sqlite3_extended_result_codes lazy_sqlite3_extended_result_codes
 #define sqlite3_extended_errcode lazy_sqlite3_extended_errcode
 #define sqlite3_error_offset lazy_sqlite3_error_offset
+#define sqlite3_memory_used lazy_sqlite3_memory_used
 
 #if !OS(WINDOWS)
 #define HMODULE void*
@@ -255,6 +258,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_extended_result_codes = (lazy_sqlite3_extended_result_codes_type)dlsym(sqlite3_handle, "sqlite3_extended_result_codes");
     lazy_sqlite3_extended_errcode = (lazy_sqlite3_extended_errcode_type)dlsym(sqlite3_handle, "sqlite3_extended_errcode");
     lazy_sqlite3_error_offset = (lazy_sqlite3_error_offset_type)dlsym(sqlite3_handle, "sqlite3_error_offset");
+    lazy_sqlite3_memory_used = (lazy_sqlite3_memory_used_type)dlsym(sqlite3_handle, "sqlite3_memory_used");
     return 0;
 }
 

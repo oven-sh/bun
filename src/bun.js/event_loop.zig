@@ -623,7 +623,7 @@ pub const EventLoop = struct {
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
-    timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
+    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
 
     pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
         return this.timer_reference_pool orelse brk: {

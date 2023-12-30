@@ -1698,7 +1698,7 @@ pub const Subprocess = struct {
             const exitCode = subprocess.exit_code orelse 1;
             const stdout = subprocess.stdout.toBufferedValue(globalThis);
             const stderr = subprocess.stderr.toBufferedValue(globalThis);
-            const resource_usage = subprocess.createResourceUsage(globalThis);
+            const resource_usage = subprocess.createResourceUsageObject(globalThis);
             subprocess.finalizeSync();
 
             const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);

@@ -139,7 +139,7 @@ extern "C" void dump_zone_malloc_stats()
 #define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
-extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* ns_sec)
+extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
     static LARGE_INTEGER ticksPerSec;
     LARGE_INTEGER ticks;

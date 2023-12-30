@@ -259,6 +259,31 @@ static int lazyLoadSQLite()
     lazy_sqlite3_extended_errcode = (lazy_sqlite3_extended_errcode_type)dlsym(sqlite3_handle, "sqlite3_extended_errcode");
     lazy_sqlite3_error_offset = (lazy_sqlite3_error_offset_type)dlsym(sqlite3_handle, "sqlite3_error_offset");
     lazy_sqlite3_memory_used = (lazy_sqlite3_memory_used_type)dlsym(sqlite3_handle, "sqlite3_memory_used");
+
+    if (!lazy_sqlite3_extended_result_codes) {
+        lazy_sqlite3_extended_result_codes = [](sqlite3*, int) -> int {
+            return 0;
+        };
+    }
+
+    if (!lazy_sqlite3_extended_errcode) {
+        lazy_sqlite3_extended_errcode = [](sqlite3*) -> int {
+            return 0;
+        };
+    }
+
+    if (!lazy_sqlite3_error_offset) {
+        lazy_sqlite3_error_offset = [](sqlite3*) -> int {
+            return 0;
+        };
+    }
+
+    if (!lazy_sqlite3_memory_used) {
+        lazy_sqlite3_memory_used = []() -> int64_t {
+            return 0;
+        };
+    }
+
     return 0;
 }
 

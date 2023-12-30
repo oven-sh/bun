@@ -218,14 +218,18 @@ Structure* RequireFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* structure = Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    structure->setMayBePrototype(true);
+    return structure;
 }
 
 Structure* RequireResolveFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* structure = Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    structure->setMayBePrototype(true);
+    return structure;
 }
 
 RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)
@@ -518,7 +522,9 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
     }
 
     DECLARE_INFO;

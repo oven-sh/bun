@@ -341,7 +341,9 @@ void JSFetchHeaders::computeMemoryCost()
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSFetchHeadersPrototype::create(vm, &globalObject, JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSFetchHeadersPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSFetchHeaders::prototype(VM& vm, JSDOMGlobalObject& globalObject)

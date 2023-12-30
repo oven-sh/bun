@@ -130,7 +130,9 @@ void JSReadableStreamSource::finishCreation(VM& vm)
 
 JSObject* JSReadableStreamSource::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableStreamSourcePrototype::create(vm, &globalObject, JSReadableStreamSourcePrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableStreamSourcePrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableStreamSourcePrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableStreamSource::prototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -978,9 +978,9 @@ pub const ZigConsoleClient = struct {
             Output.enable_ansi_colors_stdout;
 
         var buffered_writer = if (level == .Warning or level == .Error)
-            console.error_writer
+            &console.error_writer
         else
-            console.writer;
+            &console.writer;
         var writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 

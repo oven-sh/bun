@@ -5525,11 +5525,11 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
 }
 
 pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
-    if (cp < 0x1100) {
+    if (!(cp >= 0x1100)) {
         return false;
     }
 
-    if (cp < 0x115f) {
+    if (cp <= 0x115f) {
         return true;
     }
 
@@ -5583,14 +5583,35 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
     return 1;
 }
 
-pub fn visibleASCIIWidth(input: anytype) usize {
+pub fn visibleASCIIWidth(input_: anytype) usize {
     var length: usize = 0;
+    var input = input_;
+
+    if (comptime Environment.enableSIMD) {
+        // https://zig.godbolt.org/z/hxhjncvq7
+        const ElementType = std.meta.Child(@TypeOf(input_));
+        const simd = 16 / @sizeOf(ElementType);
+        if (input.len >= simd) {
+            const input_end = input.ptr + input.len - (input.len % simd);
+            while (input.ptr != input_end) {
+                const chunk: @Vector(simd, ElementType) = input[0..simd].*;
+                input = input[simd..];
+
+                const cmp: @Vector(simd, ElementType) = @splat(0x1f);
+                const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
+                const match: @Vector(simd, ElementType) = match1;
+
+                length += @reduce(.Add, match);
+            }
+        }
+
+        // this is a deliberate compiler optimization
+        // it disables auto-vectorizing the "input" for loop.
+        if (!(input.len < simd)) unreachable;
+    }
+
     for (input) |c| {
-        // this does get partially auto-vectorized
-        length += switch (c) {
-            0...0x1f => 0,
-            else => 1,
-        };
+        length += if (c > 0x1f) 1 else 0;
     }
 
     return length;
@@ -5628,13 +5649,13 @@ pub fn visibleUTF8Width(input: []const u8) usize {
 pub fn visibleUTF16Width(input: []const u16) usize {
     var bytes = input;
     var len: usize = 0;
-    while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, true)) |i| {
-        len += i;
+    while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
+        len += visibleASCIIWidth(bytes[0..i]);
+        bytes = bytes[i..];
 
         const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
         len += visibleCodepointWidthType(u32, utf8.code_point);
-
-        bytes = bytes[@min(@as(usize, i) + @as(usize, utf8.len), bytes.len)..];
+        bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
     }
 
     len += visibleASCIIWidth(bytes);

@@ -1152,7 +1152,8 @@ pub const String = extern struct {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        return JSC.jsNumber(str.visibleWidth());
+        const width = str.visibleWidth();
+        return JSC.jsNumber(width);
     }
 };
 

@@ -113,6 +113,17 @@ describe("console.table", () => {
         ],
       },
     ],
+    [
+      "headers object",
+      {
+        args: () => [
+          new Headers([
+            ["abc", "bun"],
+            ["potato", "tomato"],
+          ]),
+        ],
+      },
+    ],
   ])("expected output for: %s", (label, { args }) => {
     const { stdout } = spawnSync({
       cmd: [bunExe(), `${import.meta.dir}/console-table-run.ts`, args.toString()],

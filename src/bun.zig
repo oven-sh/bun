@@ -605,6 +605,10 @@ pub const fmt = struct {
 
     // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
     pub fn fastDigitCount(x: u64) u64 {
+        if (x == 0) {
+            return 1;
+        }
+
         const table = [_]u64{
             4294967296,
             8589934582,

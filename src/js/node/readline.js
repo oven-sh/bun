@@ -113,7 +113,6 @@ var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, Strin
 // Section: "Internal" modules
 // ----------------------------------------------------------------------------
 
-
 var internalGetStringWidth;
 /**
  * Returns the number of columns required to display the given string.

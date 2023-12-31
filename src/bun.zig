@@ -2832,7 +2832,13 @@ pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
 
 pub fn New(comptime T: type) type {
     return struct {
+        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+
         pub inline fn destroy(self: *T) void {
+            if (comptime Environment.allow_assert) {
+                allocation_logger("destroy({*})", .{self});
+            }
+
             if (comptime is_heap_breakdown_enabled) {
                 HeapBreakdown.allocator(T).destroy(self);
             } else {
@@ -2844,11 +2850,18 @@ pub fn New(comptime T: type) type {
             if (comptime is_heap_breakdown_enabled) {
                 const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
                 ptr.* = t;
+                if (comptime Environment.allow_assert) {
+                    allocation_logger("new() = {*}", .{ptr});
+                }
                 return ptr;
             }
 
             const ptr = default_allocator.create(T) catch outOfMemory();
             ptr.* = t;
+
+            if (comptime Environment.allow_assert) {
+                allocation_logger("new() = {*}", .{ptr});
+            }
             return ptr;
         }
     };
@@ -2871,9 +2884,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     }
 
     return struct {
+        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+
         pub fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(self.ref_count == 0);
+                allocation_logger("destroy() = {*}", .{self});
             }
 
             if (comptime is_heap_breakdown_enabled) {
@@ -2906,6 +2922,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(ptr.ref_count == 1);
+                    allocation_logger("new() = {*}", .{ptr});
                 }
 
                 return ptr;
@@ -2916,6 +2933,7 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
 
             if (comptime Environment.allow_assert) {
                 std.debug.assert(ptr.ref_count == 1);
+                allocation_logger("new() = {*}", .{ptr});
             }
 
             return ptr;

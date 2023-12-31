@@ -262,7 +262,6 @@ describe("WebSocket", () => {
     const server = Bun.serve({
       port: 0,
       fetch(req, server) {
-        done();
         server.stop();
         return new Response();
       },
@@ -271,9 +270,17 @@ describe("WebSocket", () => {
         message(ws) {
           ws.close();
         },
+        close() {},
       },
     });
-    new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    ws.onopen = () => {
+      ws.send("Hello World!");
+    };
+
+    ws.onclose = () => {
+      done();
+    };
   });
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {

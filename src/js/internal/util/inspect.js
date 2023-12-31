@@ -2569,14 +2569,14 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 
-var internalGetStringWidth;
+var internalGetStringWidth = $lazy("getStringWidth");
 /**
  * Returns the number of columns required to display the given string.
  */
 function getStringWidth(str, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize(str, "NFC");
-  return (internalGetStringWidth ??= $lazy("getStringWidth"))(str);
+  return internalGetStringWidth(str);
 }
 
 // Regex used for ansi escape code splitting

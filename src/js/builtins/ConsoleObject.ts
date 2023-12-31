@@ -168,12 +168,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     return (RegExpPrototypeSymbolReplace as any).$call(ansi, str, "");
   }
 
-  var internalGetStringWidth = function (str) {
-    const native = $lazy("getStringWidth");
-    internalGetStringWidth = native;
-
-    return native(str);
-  };
+  var internalGetStringWidth = $lazy("getStringWidth");
 
   /**
    * Returns the number of columns required to display the given string.

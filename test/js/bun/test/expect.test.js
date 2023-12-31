@@ -3187,15 +3187,32 @@ describe("expect()", () => {
   });
 
   test("toBeEmptyObject()", () => {
-    expect({}).toBeEmptyObject();
-    expect([]).toBeEmptyObject();
-    expect(new Set()).toBeEmptyObject();
-    expect(new Map()).toBeEmptyObject();
+    // Map and Set are not considered as object in jest-extended
+    // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
     expect(new Map().set('a', 1)).not.toBeEmptyObject();
+    expect(new Map()).not.toBeEmptyObject();
+    expect(new Set()).not.toBeEmptyObject();
+    expect(new Set().add('1')).not.toBeEmptyObject();
+    expect([]).toBeEmptyObject();
+    expect({}).toBeEmptyObject();
     expect([1, 2]).not.toBeEmptyObject();
     expect({ a: 'hello' }).not.toBeEmptyObject();
     expect(true).not.toBeEmptyObject();
     expect("notAnObject").not.toBeEmptyObject();
+
+    const object1 = {};
+
+    Object.defineProperty(object1, 'property1', {
+      value: 42,
+    });
+
+    // Object.keys for non-enumerable properties returns an empty array
+    // jest-extended returns true for non enumerable object
+    expect(object1).toBeEmptyObject();
+
+    // jest-extended return false for Symbol
+    expect(Symbol("a")).not.toBeEmptyObject();
+    expect(Symbol()).not.toBeEmptyObject();
   });
 
   test("toBeNil()", () => {

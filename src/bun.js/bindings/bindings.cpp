@@ -2455,6 +2455,48 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     return JSC::JSValue::encode(object);
 }
 
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue) {
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).getObject();
+    JSC::JSType type = object->type();
+
+    switch(type){
+        // Map and Set always return empty array for Object.keys
+        case JSC::JSSetType:
+        case JSC::JSMapType:
+            return JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0));
+        default:
+            break;
+    }
+
+    if (!object)
+        return JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0));
+
+    JSC::PropertyNameArray properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    {
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        object->getPropertyNames(globalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
+        if (scope.exception()) {
+            scope.clearException();
+            return JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0));
+        }
+    } 
+
+    auto vector = properties.data()->propertyNameVector();
+
+    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, vector.size());
+
+    for (size_t i = 0; i < vector.size(); ++i) {
+        if(vector[i].isEmpty() || vector[i].isNull())
+            continue;
+            
+        array->putDirectIndex(globalObject, i, JSC::jsString(vm, WTF::String(vector[i].string())));
+    }
+
+    return JSC::JSValue::encode(array);
+}
+
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
     Bun__ArrayBuffer* arg2)
 {

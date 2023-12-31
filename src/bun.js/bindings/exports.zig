@@ -1002,7 +1002,10 @@ pub const ZigConsoleClient = struct {
                     tabular_data,
                     properties,
                 );
-                table_printer.printTable(writer) catch return;
+
+                switch (enable_colors) {
+                    inline else => |colors| table_printer.printTable(Writer, writer, colors) catch return,
+                }
                 buffered_writer.flush() catch {};
                 return;
             }
@@ -1096,7 +1099,7 @@ pub const ZigConsoleClient = struct {
                     .remaining_values = &[_]JSValue{},
                     .globalThis = globalObject,
                     .ordered_properties = false,
-                    .quote_strings = true,
+                    .quote_strings = false,
                     .single_line = true,
                     .max_depth = 5,
                 },
@@ -1206,8 +1209,8 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        inline fn writeStringNTimes(writer: anytype, str: []const u8, n: usize) !void {
-            if (str.len == 1) {
+        fn writeStringNTimes(comptime Writer: type, writer: Writer, comptime str: []const u8, n: usize) !void {
+            if (comptime str.len == 1) {
                 try writer.writeByteNTimes(str[0], n);
                 return;
             }
@@ -1219,7 +1222,8 @@ pub const ZigConsoleClient = struct {
 
         fn printRow(
             this: *TablePrinter,
-            writer: anytype,
+            comptime Writer: type,
+            writer: Writer,
             comptime enable_ansi_colors: bool,
             columns: *std.ArrayList(Column),
             row_key: RowKey,
@@ -1232,12 +1236,14 @@ pub const ZigConsoleClient = struct {
                     .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
                 };
                 const needed = columns.items[0].width -| len;
-                try writer.writeByteNTimes(' ', PADDING);
+
+                // Right-align the number column
+                try writer.writeByteNTimes(' ', needed + PADDING);
                 switch (row_key) {
                     .str => |value| try writer.print("{}", .{value}),
                     .num => |value| try writer.print("{d}", .{value}),
                 }
-                try writer.writeByteNTimes(' ', needed + PADDING);
+                try writer.writeByteNTimes(' ', PADDING);
             }
 
             for (1..columns.items.len) |col_idx| {
@@ -1262,13 +1268,20 @@ pub const ZigConsoleClient = struct {
                     try writer.writeByteNTimes(' ', col.width + 2 + PADDING);
                 } else {
                     const len: u32 = this.getWidthForValue(value);
-                    const needed = col.width - len;
+                    const needed = col.width -| len;
                     try writer.writeByteNTimes(' ', PADDING);
                     const tag = ZigConsoleClient.Formatter.Tag.get(value, this.globalObject);
                     var value_formatter = this.value_formatter;
+                    defer {
+                        if (value_formatter.map_node) |node| {
+                            node.data = value_formatter.map;
+                            node.data.clearRetainingCapacity();
+                            node.release();
+                        }
+                    }
                     value_formatter.format(
                         tag,
-                        @TypeOf(writer),
+                        Writer,
                         writer,
                         value,
                         this.globalObject,
@@ -1283,7 +1296,9 @@ pub const ZigConsoleClient = struct {
 
         pub fn printTable(
             this: *TablePrinter,
-            writer: anytype,
+            comptime Writer: type,
+            writer: Writer,
+            comptime enable_ansi_colors: bool,
         ) !void {
             const globalObject = this.globalObject;
 
@@ -1294,6 +1309,7 @@ pub const ZigConsoleClient = struct {
             // create the first column " " which is always present
             columns.appendAssumeCapacity(.{
                 .name = String.static(" "),
+                .width = 1,
             });
 
             // special case for Map: create the special "Key" column at index 1
@@ -1358,22 +1374,30 @@ pub const ZigConsoleClient = struct {
                 try writer.writeAll("┌");
                 for (columns.items, 0..) |*col, i| {
                     if (i > 0) try writer.writeAll("┬");
-                    try writeStringNTimes(writer, "─", col.width + (PADDING * 2));
+                    try writeStringNTimes(Writer, writer, "─", col.width + (PADDING * 2));
                 }
 
                 try writer.writeAll("┐\n│");
+
                 for (columns.items, 0..) |col, i| {
                     if (i > 0) try writer.writeAll("│");
                     const len = col.name.visibleWidth();
                     const needed = col.width -| len;
                     try writer.writeByteNTimes(' ', 1);
+                    if (comptime enable_ansi_colors) {
+                        try writer.writeAll(Output.prettyFmt("<r><b>", true));
+                    }
                     try writer.print("{}", .{col.name});
+                    if (comptime enable_ansi_colors) {
+                        try writer.writeAll(Output.prettyFmt("<r>", true));
+                    }
                     try writer.writeByteNTimes(' ', needed + PADDING);
                 }
+
                 try writer.writeAll("│\n├");
                 for (columns.items, 0..) |col, i| {
                     if (i > 0) try writer.writeAll("┼");
-                    try writeStringNTimes(writer, "─", col.width + (PADDING * 2));
+                    try writeStringNTimes(Writer, writer, "─", col.width + (PADDING * 2));
                 }
                 try writer.writeAll("┤\n");
             }
@@ -1381,16 +1405,12 @@ pub const ZigConsoleClient = struct {
             // rows second pass - print the actual table rows
             {
                 if (this.is_iterable) {
-                    var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: *const @TypeOf(writer), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = &writer };
+                    var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: Writer, idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = writer };
                     this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
                         fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    printRow(ctx.this, ctx.writer.*, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
-                                        ctx.err = true;
-                                    };
-                                },
-                            }
+                            printRow(ctx.this, Writer, ctx.writer, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
+                                ctx.err = true;
+                            };
                             ctx.idx += 1;
                         }
                     }.callback);
@@ -1402,12 +1422,8 @@ pub const ZigConsoleClient = struct {
                     }).init(globalObject, this.tabular_data.asObjectRef());
                     defer rows_iter.deinit();
 
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            while (rows_iter.next()) |row_key| {
-                                try this.printRow(writer, enable_ansi_colors, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
-                            }
-                        },
+                    while (rows_iter.next()) |row_key| {
+                        try this.printRow(Writer, writer, enable_ansi_colors, &columns, .{ .str = String.init(row_key) }, rows_iter.value);
                     }
                 }
             }
@@ -1415,10 +1431,10 @@ pub const ZigConsoleClient = struct {
             // print the table bottom border
             {
                 try writer.writeAll("└");
-                try writeStringNTimes(writer, "─", columns.items[0].width + (PADDING * 2));
-                for (1..columns.items.len) |i| {
+                try writeStringNTimes(Writer, writer, "─", columns.items[0].width + (PADDING * 2));
+                for (columns.items[1..]) |*column| {
                     try writer.writeAll("┴");
-                    try writeStringNTimes(writer, "─", columns.items[i].width + (PADDING * 2));
+                    try writeStringNTimes(Writer, writer, "─", column.width + (PADDING * 2));
                 }
                 try writer.writeAll("┘\n");
             }
@@ -2513,12 +2529,14 @@ pub const ZigConsoleClient = struct {
                     this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
                 },
                 .String => {
-                    var str = ZigString.init("");
-                    value.toZigString(&str, this.globalThis);
-                    this.addForNewLine(str.len);
+                    var str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
+                        writer.failed = true;
+                        return;
+                    };
+                    this.addForNewLine(str.length());
 
                     if (this.quote_strings and jsType != .RegExpObject) {
-                        if (str.len == 0) {
+                        if (str.isEmpty()) {
                             writer.writeAll("\"\"");
                             return;
                         }
@@ -2530,12 +2548,12 @@ pub const ZigConsoleClient = struct {
                         defer if (comptime enable_ansi_colors)
                             writer.writeAll(Output.prettyFmt("<r>", true));
 
-                        if (str.is16Bit()) {
+                        if (str.isUTF16()) {
                             this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
                             return;
                         }
 
-                        JSPrinter.writeJSONString(str.slice(), Writer, writer_, .latin1) catch unreachable;
+                        JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
 
                         return;
                     }
@@ -2544,15 +2562,15 @@ pub const ZigConsoleClient = struct {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }
 
-                    if (str.is16Bit()) {
+                    if (str.isUTF16()) {
                         // streaming print
                         writer.print("{}", .{str});
-                    } else if (strings.isAllASCII(str.slice())) {
+                    } else if (str.asUTF8()) |slice| {
                         // fast path
-                        writer.writeAll(str.slice());
-                    } else if (str.len > 0) {
+                        writer.writeAll(slice);
+                    } else if (!str.isEmpty()) {
                         // slow path
-                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);

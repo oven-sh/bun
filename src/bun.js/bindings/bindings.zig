@@ -261,7 +261,7 @@ pub const ZigString = extern struct {
 
     pub fn substringWithLen(this: ZigString, start_index: usize, end_index: usize) ZigString {
         if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[start_index..end_index]);
+            return ZigString.from16SliceMaybeGlobal(this.utf16SliceAligned()[start_index..end_index], this.isGloballyAllocated());
         }
 
         var out = ZigString.init(this.slice()[start_index..end_index]);
@@ -640,6 +640,15 @@ pub const ZigString = extern struct {
 
     pub fn from16Slice(slice_: []const u16) ZigString {
         return from16(slice_.ptr, slice_.len);
+    }
+
+    fn from16SliceMaybeGlobal(slice_: []const u16, global: bool) ZigString {
+        var str = init(@as([*]const u8, @alignCast(@ptrCast(slice_.ptr)))[0..slice_.len]);
+        str.markUTF16();
+        if (global) {
+            str.mark();
+        }
+        return str;
     }
 
     /// Globally-allocated memory only

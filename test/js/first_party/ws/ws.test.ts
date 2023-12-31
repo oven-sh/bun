@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
-import { WebSocket, WebSocketServer } from "ws";
+import { Server, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {
@@ -236,6 +236,65 @@ describe("WebSocket", () => {
       expect(wasClean).toBeFalse();
       done();
     });
+  });
+  test("prototype properties are set correctly", (ws, done) => {
+    expect(ws.CLOSED).toBeDefined();
+    expect(ws.CLOSING).toBeDefined();
+    expect(ws.CONNECTING).toBeDefined();
+    expect(ws.OPEN).toBeDefined();
+    done();
+  });
+  it("sets static properties correctly", () => {
+    expect(WebSocket.CLOSED).toBeDefined();
+    expect(WebSocket.CLOSING).toBeDefined();
+    expect(WebSocket.CONNECTING).toBeDefined();
+    expect(WebSocket.OPEN).toBeDefined();
+  });
+});
+
+describe("WebSocketServer", () => {
+  it("sets websocket prototype properties correctly", done => {
+    const wss = new WebSocketServer({ port: 0 });
+
+    wss.on("connection", ws => {
+      try {
+        expect(ws.CLOSED).toBeDefined();
+        expect(ws.CLOSING).toBeDefined();
+        expect(ws.CONNECTING).toBeDefined();
+        expect(ws.OPEN).toBeDefined();
+        return done();
+      } catch (err) {
+        done(err);
+      } finally {
+        wss.close();
+        ws.close();
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+  });
+});
+
+describe("Server", () => {
+  it("sets websocket prototype properties correctly", done => {
+    const wss = new Server({ port: 0 });
+
+    wss.on("connection", ws => {
+      try {
+        expect(ws.CLOSED).toBeDefined();
+        expect(ws.CLOSING).toBeDefined();
+        expect(ws.CONNECTING).toBeDefined();
+        expect(ws.OPEN).toBeDefined();
+        return done();
+      } catch (err) {
+        done(err);
+      } finally {
+        wss.close();
+        ws.close();
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
   });
 });
 

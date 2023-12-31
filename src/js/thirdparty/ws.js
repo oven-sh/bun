@@ -1139,6 +1139,26 @@ Object.defineProperty(BunWebSocket.prototype, "CLOSED", {
   value: readyStates.indexOf("CLOSED"),
 });
 
+Object.defineProperty(BunWebSocketMocked.prototype, "CONNECTING", {
+  enumerable: true,
+  value: readyStates.indexOf("CONNECTING"),
+});
+
+Object.defineProperty(BunWebSocketMocked.prototype, "OPEN", {
+  enumerable: true,
+  value: readyStates.indexOf("OPEN"),
+});
+
+Object.defineProperty(BunWebSocketMocked.prototype, "CLOSING", {
+  enumerable: true,
+  value: readyStates.indexOf("CLOSING"),
+});
+
+Object.defineProperty(BunWebSocketMocked.prototype, "CLOSED", {
+  enumerable: true,
+  value: readyStates.indexOf("CLOSED"),
+});
+
 class Sender {
   constructor() {
     throw new Error("Not supported yet in Bun");

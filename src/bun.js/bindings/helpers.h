@@ -169,7 +169,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(&untag(str.ptr)[ptr.off], ptr.len);
+        return WTF::String::fromUTF8ReplacingInvalidSequences(&untag(str.ptr)[ptr.off], ptr.len);
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
@@ -184,7 +184,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(&untag(str.ptr)[ptr.off], ptr.len);
+        return WTF::String::fromUTF8ReplacingInvalidSequences(&untag(str.ptr)[ptr.off], ptr.len);
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
@@ -199,7 +199,7 @@ static const WTF::String toStringCopy(ZigString str)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(untag(str.ptr), str.len);
+        return WTF::String::fromUTF8ReplacingInvalidSequences(untag(str.ptr), str.len);
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
@@ -352,7 +352,13 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
 {
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSObject* result = JSC::createError(globalObject, toStringCopy(*str));
+    WTF::String message = toStringCopy(*str);
+    if (UNLIKELY(message.isNull() && str->len > 0)) {
+        // pending exception while creating an error.
+        return JSC::JSValue();
+    }
+
+    JSC::JSObject* result = JSC::createError(globalObject, message);
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return JSC::JSValue(result);

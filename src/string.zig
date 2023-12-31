@@ -643,6 +643,30 @@ pub const String = extern struct {
         return self.value.ZigString.isUTF8();
     }
 
+    pub inline fn asUTF8(self: String) ?[]const u8 {
+        if (self.tag == .WTFStringImpl) {
+            if (self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice())) {
+                return self.value.WTFStringImpl.latin1Slice();
+            }
+
+            return null;
+        }
+
+        if (self.tag == .ZigString or self.tag == .StaticZigString) {
+            if (self.value.ZigString.isUTF8()) {
+                return self.value.ZigString.slice();
+            }
+
+            if (bun.strings.isAllASCII(self.toZigString().slice())) {
+                return self.value.ZigString.slice();
+            }
+
+            return null;
+        }
+
+        return "";
+    }
+
     pub fn encoding(self: String) bun.strings.Encoding {
         if (self.isUTF16()) {
             return .utf16;

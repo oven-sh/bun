@@ -1132,8 +1132,10 @@ pub const ZigConsoleClient = struct {
             var width: usize = 0;
             var value_formatter = this.value_formatter;
 
+            const tag = ZigConsoleClient.Formatter.Tag.get(value, this.globalObject);
+            value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
             value_formatter.format(
-                ZigConsoleClient.Formatter.Tag.get(value, this.globalObject),
+                tag,
                 VisibleCharacterCounter.Writer,
                 VisibleCharacterCounter.Writer{
                     .context = .{
@@ -1272,6 +1274,9 @@ pub const ZigConsoleClient = struct {
                     try writer.writeByteNTimes(' ', PADDING);
                     const tag = ZigConsoleClient.Formatter.Tag.get(value, this.globalObject);
                     var value_formatter = this.value_formatter;
+
+                    value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
+
                     defer {
                         if (value_formatter.map_node) |node| {
                             node.data = value_formatter.map;

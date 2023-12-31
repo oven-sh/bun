@@ -732,6 +732,57 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toContainKey(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainKey() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = value.hasOwnProperty(globalObject, expected.toString(globalObject).getZigString(globalObject));
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toContainKey", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toContainKey", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toContainEqual(
         this: *Expect,
         globalObject: *JSC.JSGlobalObject,

@@ -244,6 +244,7 @@ pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindi
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getSymbolDescription(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getUnixTimestamp(JSValue0: JSC__JSValue) f64;
+pub extern fn JSC__JSValue__hasOwnProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ZigString) bool;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;

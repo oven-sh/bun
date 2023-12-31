@@ -346,6 +346,7 @@ CPP_DECL void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobal
 CPP_DECL JSC__JSValue JSC__JSValue__getPrototype(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__getSymbolDescription(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue JSValue0);
+CPP_DECL bool JSC__JSValue__hasOwnProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString arg2);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);

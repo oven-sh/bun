@@ -2243,13 +2243,13 @@ describe("expect()", () => {
   });
 
   test("toContainKey", () => {
-    const o = { a: 'foo', b: 'bar', c: 'baz' };
-    expect(o).toContainKey('a');
-    expect(o).toContainKey('b');
-    expect(o).toContainKey('c');
-    expect(o).not.toContainKey('z');
-    expect(o).not.toContainKey({ a:'foo' });
-  })
+    const o = { a: "foo", b: "bar", c: "baz" };
+    expect(o).toContainKey("a");
+    expect(o).toContainKey("b");
+    expect(o).toContainKey("c");
+    expect(o).not.toContainKey("z");
+    expect(o).not.toContainKey({ a: "foo" });
+  });
 
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
@@ -3290,6 +3290,20 @@ describe("expect()", () => {
     expect(NaN).not.toBeInteger();
     expect("").not.toBeInteger();
     expect({}).not.toBeInteger();
+  });
+
+  test("toBeObject()", () => {
+    expect({}).toBeObject();
+    expect(class A {}).toBeObject();
+    expect([]).toBeObject();
+    expect(new Set()).toBeObject();
+    expect(new Map()).toBeObject();
+    expect(new Array(0)).toBeObject();
+    expect({ e: 1, e2: 2 }).toBeObject();
+    expect("notAnObject").not.toBeObject();
+    expect(1).not.toBeObject();
+    expect(NaN).not.toBeObject();
+    expect(undefined).not.toBeObject();
   });
 
   test("toBeFinite()", () => {

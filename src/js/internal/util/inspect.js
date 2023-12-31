@@ -618,8 +618,6 @@ const meta = [
   "\\x9F", // x9F
 ];
 
-let getStringWidth;
-
 function getUserOptions(ctx, isCrossContext) {
   const ret = {
     stylize: ctx.stylize,
@@ -2571,16 +2569,14 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 
-{
-  var internalGetStringWidth;
-  /**
-   * Returns the number of columns required to display the given string.
-   */
-  getStringWidth = function getStringWidth(str, removeControlChars = true) {
-    if (removeControlChars) str = stripVTControlCharacters(str);
-    str = StringPrototypeNormalize(str, "NFC");
-    return (internalGetStringWidth ??= $lazy("getStringWidth"))(str);
-  };
+var internalGetStringWidth;
+/**
+ * Returns the number of columns required to display the given string.
+ */
+function getStringWidth(str, removeControlChars = true) {
+  if (removeControlChars) str = stripVTControlCharacters(str);
+  str = StringPrototypeNormalize(str, "NFC");
+  return (internalGetStringWidth ??= $lazy("getStringWidth"))(str);
 }
 
 // Regex used for ansi escape code splitting

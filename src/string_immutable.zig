@@ -4414,16 +4414,30 @@ test "firstNonASCII16" {
     }
 }
 
+const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
-        shared_temp_buffer_ptr = bun.default_allocator.create([32 * 1024]u8) catch unreachable;
+        shared_temp_buffer_ptr = bun.default_allocator.create(SharedTempBuffer) catch unreachable;
         break :brk shared_temp_buffer_ptr.?;
     });
 }
-threadlocal var shared_temp_buffer_ptr: ?*[32 * 1024]u8 = null;
+threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
 
 pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
     var chunk = getSharedBuffer();
+
+    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
+    shared_temp_buffer_ptr = null;
+    defer {
+        if (shared_temp_buffer_ptr) |existing| {
+            if (existing != chunk.ptr) {
+                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+            }
+        } else {
+            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
+        }
+    }
+
     var slice = slice_;
 
     while (slice.len > 0) {
@@ -4467,6 +4481,18 @@ pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
     var chunk = getSharedBuffer();
     var slice = slice_;
+
+    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
+    shared_temp_buffer_ptr = null;
+    defer {
+        if (shared_temp_buffer_ptr) |existing| {
+            if (existing != chunk.ptr) {
+                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+            }
+        } else {
+            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
+        }
+    }
 
     while (strings.firstNonASCII(slice)) |i| {
         if (i > 0) {

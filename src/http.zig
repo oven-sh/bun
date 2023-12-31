@@ -46,7 +46,7 @@ var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
 var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
-
+const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 const print_every = 0;
 var print_every_i: usize = 0;
 
@@ -3485,28 +3485,119 @@ pub fn handleResponseMetadata(
             switch (status_code) {
                 302, 301, 307, 308, 303 => {
                     var is_same_origin = true;
+
                     {
-                        const original_url = this.url;
+                        var url_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        defer url_arena.deinit();
+                        var fba = std.heap.stackFallback(4096, url_arena.allocator());
+                        const url_allocator = fba.get();
+                        if (strings.indexOf(location, "://")) |i| {
+                            var string_builder = bun.StringBuilder{};
 
-                        const new_url_ = bun.JSC.URL.join(
-                            bun.String.fromUTF8(original_url.href),
-                            bun.String.fromUTF8(location),
-                        );
-                        defer new_url_.deref();
+                            const is_protocol_relative = i == 0;
+                            const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
+                            const is_http = strings.eqlComptime(protocol_name, "http");
+                            if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
+                                return error.UnsupportedRedirectProtocol;
+                            }
 
-                        if (new_url_.isEmpty()) {
-                            return error.InvalidRedirectURL;
+                            if ((protocol_name.len * @as(usize, @intFromBool(is_protocol_relative))) + location.len > MAX_REDIRECT_URL_LENGTH) {
+                                return error.RedirectURLTooLong;
+                            }
+
+                            string_builder.count(location);
+
+                            if (is_protocol_relative) {
+                                if (is_http) {
+                                    string_builder.count("http");
+                                } else {
+                                    string_builder.count("https");
+                                }
+                            }
+
+                            try string_builder.allocate(url_allocator);
+
+                            if (is_protocol_relative) {
+                                if (is_http) {
+                                    _ = string_builder.append("http");
+                                } else {
+                                    _ = string_builder.append("https");
+                                }
+                            }
+
+                            _ = string_builder.append(location);
+
+                            if (comptime Environment.allow_assert)
+                                std.debug.assert(string_builder.cap == string_builder.len);
+
+                            const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
+                            defer normalized_url.deref();
+                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
+
+                            const new_url = URL.parse(normalized_url_str);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            this.url = new_url;
+                            this.redirect = normalized_url_str;
+                        } else if (strings.hasPrefixComptime(location, "//")) {
+                            var string_builder = bun.StringBuilder{};
+
+                            const protocol_name = this.url.displayProtocol();
+
+                            if (protocol_name.len + 1 + location.len > MAX_REDIRECT_URL_LENGTH) {
+                                return error.RedirectURLTooLong;
+                            }
+
+                            const is_http = strings.eqlComptime(protocol_name, "http");
+
+                            if (is_http) {
+                                string_builder.count("http:");
+                            } else {
+                                string_builder.count("https:");
+                            }
+
+                            string_builder.count(location);
+
+                            try string_builder.allocate(url_allocator);
+
+                            if (is_http) {
+                                _ = string_builder.append("http:");
+                            } else {
+                                _ = string_builder.append("https:");
+                            }
+
+                            _ = string_builder.append(location);
+
+                            if (comptime Environment.allow_assert)
+                                std.debug.assert(string_builder.cap == string_builder.len);
+
+                            const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
+                            defer normalized_url.deref();
+                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
+
+                            const new_url = URL.parse(normalized_url_str);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            this.url = new_url;
+                            this.redirect = normalized_url_str;
+                        } else {
+                            const original_url = this.url;
+
+                            const new_url_ = bun.JSC.URL.join(
+                                bun.String.fromBytes(original_url.href),
+                                bun.String.fromBytes(location),
+                            );
+                            defer new_url_.deref();
+
+                            if (new_url_.isEmpty()) {
+                                return error.InvalidRedirectURL;
+                            }
+
+                            const new_url = new_url_.toOwnedSlice(bun.default_allocator) catch {
+                                return error.RedirectURLTooLong;
+                            };
+                            this.url = URL.parse(new_url);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            this.redirect = new_url;
                         }
-
-                        const new_url = new_url_.toOwnedSlice(bun.default_allocator) catch {
-                            return error.RedirectURLTooLong;
-                        };
-                        this.url = URL.parse(new_url);
-                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
-                        if (this.redirect.len > 0) {
-                            bun.default_allocator.free(this.redirect);
-                        }
-                        this.redirect = new_url;
                     }
 
                     // If one of the following is true

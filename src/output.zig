@@ -733,8 +733,10 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
 
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (Environment.isDebug)
+    if (Environment.isDebug) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
+        flush();
+    }
 }
 
 /// Print a red error message. The first argument takes an `error_name` value, which can be either

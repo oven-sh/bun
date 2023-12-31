@@ -3,27 +3,10 @@ const std = @import("std");
 const HeapBreakdown = @This();
 
 pub fn allocator(comptime T: type) std.mem.Allocator {
-    const Holder = struct {
-        pub var zone_t: std.atomic.Value(?*malloc_zone_t) = std.atomic.Value(?*malloc_zone_t).init(null);
-        pub var zone_t_lock: bun.Lock = bun.Lock.init();
-    };
-    const zone = Holder.zone_t.load(.Monotonic) orelse brk: {
-        Holder.zone_t_lock.lock();
-        defer Holder.zone_t_lock.unlock();
-
-        if (Holder.zone_t.load(.Monotonic)) |z| {
-            break :brk z;
-        }
-
-        const z = malloc_zone_t.create(T);
-        Holder.zone_t.store(z, .Monotonic);
-        break :brk z;
-    };
-
-    return zone.getAllocator();
+    return malloc_zone_t.get(T).getAllocator();
 }
 
-const malloc_zone_t = opaque {
+pub const malloc_zone_t = opaque {
     const Allocator = std.mem.Allocator;
     const vm_size_t = usize;
 
@@ -47,6 +30,25 @@ const malloc_zone_t = opaque {
     pub extern fn malloc_set_zone_name(zone: *malloc_zone_t, name: ?[*:0]const u8) void;
     pub extern fn malloc_get_zone_name(zone: *malloc_zone_t) ?[*:0]const u8;
     pub extern fn malloc_zone_pressure_relief(zone: *malloc_zone_t, goal: usize) usize;
+
+    pub fn get(comptime T: type) *malloc_zone_t {
+        const Holder = struct {
+            pub var zone_t: std.atomic.Value(?*malloc_zone_t) = std.atomic.Value(?*malloc_zone_t).init(null);
+            pub var zone_t_lock: bun.Lock = bun.Lock.init();
+        };
+        return Holder.zone_t.load(.Monotonic) orelse brk: {
+            Holder.zone_t_lock.lock();
+            defer Holder.zone_t_lock.unlock();
+
+            if (Holder.zone_t.load(.Monotonic)) |z| {
+                break :brk z;
+            }
+
+            const z = malloc_zone_t.create(T);
+            Holder.zone_t.store(z, .Monotonic);
+            break :brk z;
+        };
+    }
 
     fn alignedAlloc(zone: *malloc_zone_t, len: usize, alignment: usize) ?[*]u8 {
         // The posix_memalign only accepts alignment values that are a

@@ -21,6 +21,7 @@ const Api = @import("./api/schema.zig").Api;
 const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
+const Brotli = bun.brotli;
 const StringBuilder = @import("./string_builder.zig");
 const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -45,7 +46,7 @@ var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
 var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
-
+const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 const print_every = 0;
 var print_every_i: usize = 0;
 
@@ -113,6 +114,16 @@ pub const HTTPRequestBody = union(enum) {
         };
     }
 };
+
+pub fn canUseBrotli() bool {
+    if (Environment.isMac) {
+        if (bun.CompressionFramework.isAvailable()) {
+            return true;
+        }
+    }
+
+    return bun.brotli.hasBrotli();
+}
 
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
@@ -1194,6 +1205,130 @@ pub const CertificateInfo = struct {
     }
 };
 
+const Decompressor = union(enum) {
+    zlib: *Zlib.ZlibReaderArrayList,
+    brotli: *Brotli.BrotliReaderArrayList,
+    CompressionFramework: *bun.CompressionFramework.DecompressionArrayList,
+    none: void,
+
+    pub fn deinit(this: *Decompressor) void {
+        switch (this.*) {
+            inline .brotli, .CompressionFramework, .zlib => |that| {
+                that.deinit();
+                this.* = .{ .none = {} };
+            },
+            .none => {},
+        }
+    }
+
+    pub fn updateBuffers(this: *Decompressor, encoding: Encoding, buffer: []const u8, body_out_str: *MutableString) !void {
+        if (!encoding.isCompressed()) {
+            return;
+        }
+
+        if (this.* == .none) {
+            switch (encoding) {
+                .gzip, .deflate => {
+                    this.* = .{
+                        .zlib = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
+                            buffer,
+                            &body_out_str.list,
+                            body_out_str.allocator,
+                            default_allocator,
+                            .{
+                                // zlib.MAX_WBITS = 15
+                                // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
+                                // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
+                                // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
+                                .windowBits = if (encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
+                            },
+                        ),
+                    };
+                    return;
+                },
+                .brotli => {
+                    if (bun.CompressionFramework.isAvailable()) {
+                        this.* = .{
+                            .CompressionFramework = try bun.CompressionFramework.DecompressionArrayList.initWithOptions(
+                                buffer,
+                                &body_out_str.list,
+                                body_out_str.allocator,
+                                .BROTLI,
+                            ),
+                        };
+                    } else {
+                        this.* = .{
+                            .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
+                                buffer,
+                                &body_out_str.list,
+                                body_out_str.allocator,
+                                .{},
+                            ),
+                        };
+                    }
+
+                    return;
+                },
+                else => @panic("Invalid encoding. This code should not be reachable"),
+            }
+        }
+
+        switch (this.*) {
+            .zlib => |reader| {
+                std.debug.assert(reader.zlib.avail_in == 0);
+                reader.zlib.next_in = buffer.ptr;
+                reader.zlib.avail_in = @as(u32, @truncate(buffer.len));
+
+                const initial = body_out_str.list.items.len;
+                body_out_str.list.expandToCapacity();
+                if (body_out_str.list.capacity == initial) {
+                    try body_out_str.list.ensureUnusedCapacity(body_out_str.allocator, 4096);
+                    body_out_str.list.expandToCapacity();
+                }
+                reader.list = body_out_str.list;
+                reader.zlib.next_out = @ptrCast(&body_out_str.list.items[initial]);
+                reader.zlib.avail_out = @as(u32, @truncate(body_out_str.list.capacity - initial));
+                // we reset the total out so we can track how much we decompressed this time
+                reader.zlib.total_out = @truncate(initial);
+            },
+            .brotli => |reader| {
+                reader.input = buffer;
+                reader.total_in = @as(u32, @truncate(buffer.len));
+
+                const initial = body_out_str.list.items.len;
+                reader.list = body_out_str.list;
+                reader.total_out = @truncate(initial);
+            },
+            .CompressionFramework => |reader| {
+                if (comptime !Environment.isMac) {
+                    @panic("CompressionFramework is not supported on this platform. This code should not be reachable");
+                }
+
+                reader.input = buffer;
+                reader.total_in = @as(u32, @truncate(buffer.len));
+
+                const initial = body_out_str.list.items.len;
+
+                reader.list = body_out_str.list;
+                reader.total_out = @truncate(initial);
+            },
+            else => @panic("Invalid encoding. This code should not be reachable"),
+        }
+    }
+
+    pub fn readAll(this: *Decompressor, is_done: bool) !void {
+        switch (this.*) {
+            .zlib => |zlib| try zlib.readAll(),
+            .brotli => |brotli| try brotli.readAll(is_done),
+            .CompressionFramework => |framework| if (!bun.Environment.isMac)
+                unreachable
+            else
+                try framework.readAll(is_done),
+            .none => {},
+        }
+    }
+};
+
 pub const InternalState = struct {
     response_message_buffer: MutableString = undefined,
     /// pending response is the temporary storage for the response headers, url and status code
@@ -1214,7 +1349,7 @@ pub const InternalState = struct {
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
     chunked_decoder: picohttp.phr_chunked_decoder = .{},
-    zlib_reader: ?*Zlib.ZlibReaderArrayList = null,
+    decompressor: Decompressor = .{ .none = {} },
     stage: Stage = Stage.pending,
     /// This is owned by the user and should not be freed here
     body_out_str: ?*MutableString = null,
@@ -1251,10 +1386,7 @@ pub const InternalState = struct {
 
         const body_msg = this.body_out_str;
         if (body_msg) |body| body.reset();
-        if (this.zlib_reader) |reader| {
-            this.zlib_reader = null;
-            reader.deinit();
-        }
+        this.decompressor.deinit();
 
         // just in case we check and free to avoid leaks
         if (this.cloned_metadata != null) {
@@ -1279,14 +1411,11 @@ pub const InternalState = struct {
     }
 
     pub fn getBodyBuffer(this: *InternalState) *MutableString {
-        switch (this.encoding) {
-            Encoding.gzip, Encoding.deflate => {
-                return &this.compressed_body;
-            },
-            else => {
-                return this.body_out_str.?;
-            },
+        if (this.encoding.isCompressed()) {
+            return &this.compressed_body;
         }
+
+        return this.body_out_str.?;
     }
 
     fn isDone(this: *InternalState) bool {
@@ -1302,54 +1431,19 @@ pub const InternalState = struct {
         return this.received_last_chunk;
     }
 
-    fn decompressConst(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
+    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
         log("Decompressing {d} bytes\n", .{buffer.len});
-        std.debug.assert(!body_out_str.owns(buffer));
+
         defer this.compressed_body.reset();
         var gzip_timer: std.time.Timer = undefined;
 
         if (extremely_verbose)
             gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
 
-        var reader: *Zlib.ZlibReaderArrayList = undefined;
-        if (this.zlib_reader) |current_reader| {
-            std.debug.assert(current_reader.zlib.avail_in == 0);
-            reader = current_reader;
-            reader.zlib.next_in = buffer.ptr;
-            reader.zlib.avail_in = @as(u32, @truncate(buffer.len));
-
-            const initial = body_out_str.list.items.len;
-            body_out_str.list.expandToCapacity();
-            if (body_out_str.list.capacity == initial) {
-                try body_out_str.list.ensureUnusedCapacity(body_out_str.allocator, 4096);
-                body_out_str.list.expandToCapacity();
-            }
-            reader.list = body_out_str.list;
-            reader.zlib.next_out = @ptrCast(&body_out_str.list.items[initial]);
-            reader.zlib.avail_out = @as(u32, @truncate(body_out_str.list.capacity - initial));
-            // we reset the total out so we can track how much we decompressed this time
-            reader.zlib.total_out = @truncate(initial);
-        } else {
-            reader = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
-                buffer,
-                &body_out_str.list,
-                body_out_str.allocator,
-                default_allocator,
-                .{
-                    // TODO: add br support today we support gzip and deflate only
-                    // zlib.MAX_WBITS = 15
-                    // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                    // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
-                    // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
-                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
-                },
-            );
-            this.zlib_reader = reader;
-        }
-
-        reader.readAll() catch |err| {
+        try this.decompressor.updateBuffers(this.encoding, buffer, body_out_str);
+        this.decompressor.readAll(this.isDone()) catch |err| {
             if (this.isDone() or error.ShortRead != err) {
-                Output.prettyErrorln("<r><red>Zlib error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
+                Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
                 Output.flush();
                 return err;
             }
@@ -1360,14 +1454,14 @@ pub const InternalState = struct {
     }
 
     fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString) !void {
-        try this.decompressConst(buffer.list.items, body_out_str);
+        try this.decompressBytes(buffer.list.items, body_out_str);
     }
 
     pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !usize {
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
-            Encoding.gzip, Encoding.deflate => {
+            Encoding.brotli, Encoding.gzip, Encoding.deflate => {
                 try this.decompress(buffer, body_out_str);
             },
             else => {
@@ -1397,7 +1491,7 @@ verbose: bool = Environment.isTest,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
-redirect: ?*URLBufferPool.Node = null,
+redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
 received_keep_alive: bool = false,
@@ -1445,9 +1539,9 @@ pub fn init(
 }
 
 pub fn deinit(this: *HTTPClient) void {
-    if (this.redirect) |redirect| {
-        redirect.release();
-        this.redirect = null;
+    if (this.redirect.len > 0) {
+        bun.default_allocator.free(this.redirect);
+        this.redirect = &.{};
     }
     if (this.proxy_authorization) |auth| {
         this.allocator.free(auth);
@@ -1522,8 +1616,7 @@ pub const Encoding = enum {
 
     pub fn isCompressed(this: Encoding) bool {
         return switch (this) {
-            // we don't support brotli yet
-            .gzip, .deflate => true,
+            .brotli, .gzip, .deflate => true,
             else => false,
         };
     }
@@ -1536,8 +1629,10 @@ const connection_closing_header = picohttp.Header{ .name = "Connection", .value 
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
-const accept_encoding_compression = "gzip, deflate";
+const accept_encoding_compression = "gzip, deflate, br";
+const accept_encoding_compression_no_brotli = "gzip, deflate";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
+const accept_encoding_header_compression_no_brotli = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression_no_brotli };
 const accept_encoding_header_no_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_no_compression };
 
 const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_client)
@@ -2052,7 +2147,12 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_accept_encoding and !this.disable_decompression) {
-        request_headers_buf[header_count] = accept_encoding_header;
+        if (canUseBrotli()) {
+            request_headers_buf[header_count] = accept_encoding_header;
+        } else {
+            request_headers_buf[header_count] = accept_encoding_header_compression_no_brotli;
+        }
+
         header_count += 1;
     }
 
@@ -2573,15 +2673,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 return;
             }
 
-            var deferred_redirect: ?*URLBufferPool.Node = null;
             const should_continue = this.handleResponseMetadata(
                 &response,
-                // If there are multiple consecutive redirects
-                // and the redirect differs in hostname
-                // the new URL buffer may point to invalid memory after
-                // this function is called
-                // That matters because for Keep Alive, the hostname must point to valid memory
-                &deferred_redirect,
             ) catch |err| {
                 if (err == error.Redirect) {
                     this.state.response_message_buffer.deinit();
@@ -2601,11 +2694,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                         socket.close(0, null);
                     }
 
-                    if (deferred_redirect) |redirect| {
-                        std.debug.assert(redirect != this.redirect);
-                        // connected_url no longer points to valid memory
-                        redirect.release();
-                    }
                     this.connected_url = URL{};
                     this.doRedirect();
                     return;
@@ -3041,7 +3129,8 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
             try body_buffer.growBy(@max(@as(usize, @intFromFloat(min)), 32));
         }
 
-        try this.state.decompressConst(incoming_data, body_buffer);
+        // std.debug.assert(!body_buffer.owns(b));
+        try this.state.decompressBytes(incoming_data, body_buffer);
     } else {
         try this.state.getBodyBuffer().appendSliceExact(incoming_data);
     }
@@ -3269,7 +3358,6 @@ const ShouldContinue = enum {
 pub fn handleResponseMetadata(
     this: *HTTPClient,
     response: *picohttp.Response,
-    deferred_redirect: *?*URLBufferPool.Node,
 ) !ShouldContinue {
     var location: string = "";
     var pretend_304 = false;
@@ -3298,6 +3386,9 @@ pub fn handleResponseMetadata(
                     } else if (strings.eqlComptime(header.value, "deflate")) {
                         this.state.encoding = Encoding.deflate;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                    } else if (strings.eqlComptime(header.value, "br")) {
+                        this.state.encoding = Encoding.brotli;
+                        this.state.content_encoding_i = @as(u8, @truncate(header_i));
                     }
                 }
             },
@@ -3309,6 +3400,10 @@ pub fn handleResponseMetadata(
                 } else if (strings.eqlComptime(header.value, "deflate")) {
                     if (!this.disable_decompression) {
                         this.state.transfer_encoding = Encoding.deflate;
+                    }
+                } else if (strings.eqlComptime(header.value, "br")) {
+                    if (!this.disable_decompression) {
+                        this.state.transfer_encoding = Encoding.brotli;
                     }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;
@@ -3391,89 +3486,118 @@ pub fn handleResponseMetadata(
                 302, 301, 307, 308, 303 => {
                     var is_same_origin = true;
 
-                    if (strings.indexOf(location, "://")) |i| {
-                        var url_buf = URLBufferPool.get(default_allocator);
+                    {
+                        var url_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                        defer url_arena.deinit();
+                        var fba = std.heap.stackFallback(4096, url_arena.allocator());
+                        const url_allocator = fba.get();
+                        if (strings.indexOf(location, "://")) |i| {
+                            var string_builder = bun.StringBuilder{};
 
-                        const is_protocol_relative = i == 0;
-                        const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
-                        const is_http = strings.eqlComptime(protocol_name, "http");
-                        if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
-                            return error.UnsupportedRedirectProtocol;
-                        }
-
-                        if ((protocol_name.len * @as(usize, @intFromBool(is_protocol_relative))) + location.len > url_buf.data.len) {
-                            return error.RedirectURLTooLong;
-                        }
-
-                        deferred_redirect.* = this.redirect;
-                        var url_buf_len = location.len;
-                        if (is_protocol_relative) {
-                            if (is_http) {
-                                url_buf.data[0.."http".len].* = "http".*;
-                                bun.copy(u8, url_buf.data["http".len..], location);
-                                url_buf_len += "http".len;
-                            } else {
-                                url_buf.data[0.."https".len].* = "https".*;
-                                bun.copy(u8, url_buf.data["https".len..], location);
-                                url_buf_len += "https".len;
+                            const is_protocol_relative = i == 0;
+                            const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
+                            const is_http = strings.eqlComptime(protocol_name, "http");
+                            if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
+                                return error.UnsupportedRedirectProtocol;
                             }
+
+                            if ((protocol_name.len * @as(usize, @intFromBool(is_protocol_relative))) + location.len > MAX_REDIRECT_URL_LENGTH) {
+                                return error.RedirectURLTooLong;
+                            }
+
+                            string_builder.count(location);
+
+                            if (is_protocol_relative) {
+                                if (is_http) {
+                                    string_builder.count("http");
+                                } else {
+                                    string_builder.count("https");
+                                }
+                            }
+
+                            try string_builder.allocate(url_allocator);
+
+                            if (is_protocol_relative) {
+                                if (is_http) {
+                                    _ = string_builder.append("http");
+                                } else {
+                                    _ = string_builder.append("https");
+                                }
+                            }
+
+                            _ = string_builder.append(location);
+
+                            if (comptime Environment.allow_assert)
+                                std.debug.assert(string_builder.cap == string_builder.len);
+
+                            const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
+                            defer normalized_url.deref();
+                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
+
+                            const new_url = URL.parse(normalized_url_str);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            this.url = new_url;
+                            this.redirect = normalized_url_str;
+                        } else if (strings.hasPrefixComptime(location, "//")) {
+                            var string_builder = bun.StringBuilder{};
+
+                            const protocol_name = this.url.displayProtocol();
+
+                            if (protocol_name.len + 1 + location.len > MAX_REDIRECT_URL_LENGTH) {
+                                return error.RedirectURLTooLong;
+                            }
+
+                            const is_http = strings.eqlComptime(protocol_name, "http");
+
+                            if (is_http) {
+                                string_builder.count("http:");
+                            } else {
+                                string_builder.count("https:");
+                            }
+
+                            string_builder.count(location);
+
+                            try string_builder.allocate(url_allocator);
+
+                            if (is_http) {
+                                _ = string_builder.append("http:");
+                            } else {
+                                _ = string_builder.append("https:");
+                            }
+
+                            _ = string_builder.append(location);
+
+                            if (comptime Environment.allow_assert)
+                                std.debug.assert(string_builder.cap == string_builder.len);
+
+                            const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
+                            defer normalized_url.deref();
+                            const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
+
+                            const new_url = URL.parse(normalized_url_str);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            this.url = new_url;
+                            this.redirect = normalized_url_str;
                         } else {
-                            bun.copy(u8, &url_buf.data, location);
+                            const original_url = this.url;
+
+                            const new_url_ = bun.JSC.URL.join(
+                                bun.String.fromBytes(original_url.href),
+                                bun.String.fromBytes(location),
+                            );
+                            defer new_url_.deref();
+
+                            if (new_url_.isEmpty()) {
+                                return error.InvalidRedirectURL;
+                            }
+
+                            const new_url = new_url_.toOwnedSlice(bun.default_allocator) catch {
+                                return error.RedirectURLTooLong;
+                            };
+                            this.url = URL.parse(new_url);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            this.redirect = new_url;
                         }
-
-                        const new_url = URL.parse(url_buf.data[0..url_buf_len]);
-                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
-                        this.url = new_url;
-                        this.redirect = url_buf;
-                    } else if (strings.hasPrefixComptime(location, "//")) {
-                        var url_buf = URLBufferPool.get(default_allocator);
-
-                        const protocol_name = this.url.displayProtocol();
-
-                        if (protocol_name.len + 1 + location.len > url_buf.data.len) {
-                            return error.RedirectURLTooLong;
-                        }
-
-                        deferred_redirect.* = this.redirect;
-                        var url_buf_len = location.len;
-
-                        if (strings.eqlComptime(protocol_name, "http")) {
-                            url_buf.data[0.."http:".len].* = "http:".*;
-                            bun.copy(u8, url_buf.data["http:".len..], location);
-                            url_buf_len += "http:".len;
-                        } else {
-                            url_buf.data[0.."https:".len].* = "https:".*;
-                            bun.copy(u8, url_buf.data["https:".len..], location);
-                            url_buf_len += "https:".len;
-                        }
-
-                        const new_url = URL.parse(url_buf.data[0..url_buf_len]);
-                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
-                        this.url = new_url;
-                        this.redirect = url_buf;
-                    } else {
-                        var url_buf = URLBufferPool.get(default_allocator);
-                        var fba = std.heap.FixedBufferAllocator.init(&url_buf.data);
-                        const original_url = this.url;
-
-                        const new_url_ = bun.JSC.URL.join(
-                            bun.String.fromUTF8(original_url.href),
-                            bun.String.fromUTF8(location),
-                        );
-                        defer new_url_.deref();
-
-                        if (new_url_.isEmpty()) {
-                            return error.InvalidRedirectURL;
-                        }
-
-                        const new_url = new_url_.toOwnedSlice(fba.allocator()) catch {
-                            return error.RedirectURLTooLong;
-                        };
-                        this.url = URL.parse(new_url);
-
-                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
-                        deferred_redirect.* = this.redirect;
-                        this.redirect = url_buf;
                     }
 
                     // If one of the following is true

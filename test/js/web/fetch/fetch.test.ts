@@ -1747,7 +1747,8 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
-it("should throw RedirectURLTooLong when location is too long", async () => {
+it("should allow very long redirect URLS", async () => {
+  const Location = "/" + "B".repeat(32 * 1024);
   const server = Bun.serve({
     port: 0,
     async fetch(request: Request) {
@@ -1756,7 +1757,7 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
       if (url.pathname == "/redirect") {
         return new Response("redirecting", {
           headers: {
-            "Location": "B".repeat(8193),
+            Location,
           },
           status: 302,
         });
@@ -1767,17 +1768,10 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
     },
   });
 
-  let err = undefined;
-  try {
-    gc();
-    const resp = await fetch(`http://${server.hostname}:${server.port}/redirect`);
-  } catch (error) {
-    gc();
-    err = error;
-  }
-  expect(err).not.toBeUndefined();
-  expect(err).toBeInstanceOf(Error);
-  expect(err.code).toStrictEqual("RedirectURLTooLong");
+  const { url, status } = await fetch(`http://${server.hostname}:${server.port}/redirect`);
+
+  expect(url).toBe(`http://${server.hostname}:${server.port}${Location}`);
+  expect(status).toBe(404);
   server.stop(true);
 });
 

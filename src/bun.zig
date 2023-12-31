@@ -2794,7 +2794,7 @@ pub noinline fn outOfMemory() noreturn {
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
 
-const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
 
 /// Globally-allocate a value on the heap.
 ///
@@ -3010,3 +3010,9 @@ pub const S = if (Environment.isWindows) windows.libuv.S else std.os.S;
 
 /// Deprecated!
 pub const trait = @import("./trait.zig");
+
+pub const brotli = @import("./brotli.zig");
+
+/// macOS-only libcompression
+/// It supports brotli without needing to link to libbrotlidec
+pub const CompressionFramework = @import("./deps/libcompression.zig").CompressionFramework;

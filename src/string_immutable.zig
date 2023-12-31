@@ -4414,16 +4414,30 @@ test "firstNonASCII16" {
     }
 }
 
+const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
-        shared_temp_buffer_ptr = bun.default_allocator.create([32 * 1024]u8) catch unreachable;
+        shared_temp_buffer_ptr = bun.default_allocator.create(SharedTempBuffer) catch unreachable;
         break :brk shared_temp_buffer_ptr.?;
     });
 }
-threadlocal var shared_temp_buffer_ptr: ?*[32 * 1024]u8 = null;
+threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
 
 pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
     var chunk = getSharedBuffer();
+
+    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
+    shared_temp_buffer_ptr = null;
+    defer {
+        if (shared_temp_buffer_ptr) |existing| {
+            if (existing != chunk.ptr) {
+                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+            }
+        } else {
+            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
+        }
+    }
+
     var slice = slice_;
 
     while (slice.len > 0) {
@@ -4467,6 +4481,18 @@ pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
     var chunk = getSharedBuffer();
     var slice = slice_;
+
+    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
+    shared_temp_buffer_ptr = null;
+    defer {
+        if (shared_temp_buffer_ptr) |existing| {
+            if (existing != chunk.ptr) {
+                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+            }
+        } else {
+            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
+        }
+    }
 
     while (strings.firstNonASCII(slice)) |i| {
         if (i > 0) {
@@ -5451,4 +5477,192 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
 
 pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
     return strings.contains(path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str);
+}
+
+pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
+    if (cp <= 0x1f) {
+        return true;
+    }
+
+    if (cp >= 0x7f and cp <= 0x9f) {
+        // C1 control characters
+        return true;
+    }
+
+    if (comptime @sizeOf(T) == 1) {
+        return false;
+    }
+
+    if (cp >= 0x300 and cp <= 0x36f) {
+        // Combining Diacritical Marks
+        return true;
+    }
+    if (cp >= 0x300 and cp <= 0x36f)
+        // Combining Diacritical Marks
+        return true;
+
+    if (cp >= 0x200b and cp <= 0x200f) {
+        // Modifying Invisible Characters
+        return true;
+    }
+
+    if (cp >= 0x20d0 and cp <= 0x20ff)
+        // Combining Diacritical Marks for Symbols
+        return true;
+
+    if (cp >= 0xfe00 and cp <= 0xfe0f)
+        // Variation Selectors
+        return true;
+    if (cp >= 0xfe20 and cp <= 0xfe2f)
+        // Combining Half Marks
+        return true;
+
+    if (cp >= 0xe0100 and cp <= 0xe01ef)
+        // Variation Selectors
+        return true;
+
+    return false;
+}
+
+pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
+    if (!(cp >= 0x1100)) {
+        return false;
+    }
+
+    if (cp <= 0x115f) {
+        return true;
+    }
+
+    if (cp == 0x2329 or // LEFT-POINTING ANGLE BRACKET
+        cp == 0x232a) // RIGHT-POINTING ANGLE BRACKET
+        return true;
+
+    // CJK Radicals Supplement .. Enclosed CJK Letters and Months
+    return (cp >= 0x2e80 and cp <= 0x3247 and cp != 0x303f) or
+        // Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
+        (cp >= 0x3250 and cp <= 0x4dbf) or
+        // CJK Unified Ideographs .. Yi Radicals
+        (cp >= 0x4e00 and cp <= 0xa4c6) or
+        // Hangul Jamo Extended-A
+        (cp >= 0xa960 and cp <= 0xa97c) or
+        // Hangul Syllables
+        (cp >= 0xac00 and cp <= 0xd7a3) or
+        // CJK Compatibility Ideographs
+        (cp >= 0xf900 and cp <= 0xfaff) or
+        // Vertical Forms
+        (cp >= 0xfe10 and cp <= 0xfe19) or
+        // CJK Compatibility Forms .. Small Form Variants
+        (cp >= 0xfe30 and cp <= 0xfe6b) or
+        // Halfwidth and Fullwidth Forms
+        (cp >= 0xff01 and cp <= 0xff60) or
+        (cp >= 0xffe0 and cp <= 0xffe6) or
+        // Kana Supplement
+        (cp >= 0x1b000 and cp <= 0x1b001) or
+        // Enclosed Ideographic Supplement
+        (cp >= 0x1f200 and cp <= 0x1f251) or
+        // Miscellaneous Symbols and Pictographs 0x1f300 - 0x1f5ff
+        // Emoticons 0x1f600 - 0x1f64f
+        (cp >= 0x1f300 and cp <= 0x1f64f) or
+        // CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
+        (cp >= 0x20000 and cp <= 0x3fffd);
+}
+
+pub fn visibleCodepointWidth(cp: anytype) u3 {
+    return visibleCodepointWidthType(@TypeOf(cp), cp);
+}
+
+pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
+    if (isZeroWidthCodepointType(T, cp)) {
+        return 0;
+    }
+
+    if (isFullWidthCodepointType(T, cp)) {
+        return 2;
+    }
+
+    return 1;
+}
+
+pub fn visibleASCIIWidth(input_: anytype) usize {
+    var length: usize = 0;
+    var input = input_;
+
+    if (comptime Environment.enableSIMD) {
+        // https://zig.godbolt.org/z/hxhjncvq7
+        const ElementType = std.meta.Child(@TypeOf(input_));
+        const simd = 16 / @sizeOf(ElementType);
+        if (input.len >= simd) {
+            const input_end = input.ptr + input.len - (input.len % simd);
+            while (input.ptr != input_end) {
+                const chunk: @Vector(simd, ElementType) = input[0..simd].*;
+                input = input[simd..];
+
+                const cmp: @Vector(simd, ElementType) = @splat(0x1f);
+                const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
+                const match: @Vector(simd, ElementType) = match1;
+
+                length += @reduce(.Add, match);
+            }
+        }
+
+        // this is a deliberate compiler optimization
+        // it disables auto-vectorizing the "input" for loop.
+        if (!(input.len < simd)) unreachable;
+    }
+
+    for (input) |c| {
+        length += if (c > 0x1f) 1 else 0;
+    }
+
+    return length;
+}
+
+pub fn visibleUTF8Width(input: []const u8) usize {
+    var bytes = input;
+    var len: usize = 0;
+    while (bun.strings.firstNonASCII(bytes)) |i| {
+        len += visibleASCIIWidth(bytes[0..i]);
+
+        const byte = bytes[i];
+        const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
+        const cp_bytes: [4]u8 = switch (skip) {
+            inline 1, 2, 3, 4 => |cp_len| .{
+                byte,
+                if (comptime cp_len > 1) bytes[1] else 0,
+                if (comptime cp_len > 2) bytes[2] else 0,
+                if (comptime cp_len > 3) bytes[3] else 0,
+            },
+            else => unreachable,
+        };
+
+        const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+        len += visibleCodepointWidthType(u32, cp);
+
+        bytes = bytes[@min(i + skip, bytes.len)..];
+    }
+
+    len += visibleASCIIWidth(bytes);
+
+    return len;
+}
+
+pub fn visibleUTF16Width(input: []const u16) usize {
+    var bytes = input;
+    var len: usize = 0;
+    while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
+        len += visibleASCIIWidth(bytes[0..i]);
+        bytes = bytes[i..];
+
+        const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
+        len += visibleCodepointWidthType(u32, utf8.code_point);
+        bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
+    }
+
+    len += visibleASCIIWidth(bytes);
+
+    return len;
+}
+
+pub fn visibleLatin1Width(input: []const u8) usize {
+    return visibleASCIIWidth(input);
 }

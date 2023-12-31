@@ -1617,8 +1617,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (returnedException) {
-        throwException(globalObject, scope, returnedException.get());
+    if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
         return {};
     }
 
@@ -1657,8 +1661,12 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject, args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(returnedException)) {
-        throwException(globalObject, scope, returnedException.get());
+    if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
         return {};
     }
 

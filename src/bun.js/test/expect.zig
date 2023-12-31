@@ -524,12 +524,12 @@ pub const Expect = struct {
                 .globalObject = globalObject,
                 .not = not,
             };
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = comptime signature ++ "\n\n{any}\n";
             if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
+                globalObject.throw(comptime Output.prettyFmt(fmt, true), .{diff_format});
                 return .zero;
             }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+            globalObject.throw(comptime Output.prettyFmt(fmt, false), .{diff_format});
             return .zero;
         }
 

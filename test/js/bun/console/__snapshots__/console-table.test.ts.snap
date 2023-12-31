@@ -1,0 +1,176 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`console.table expected output for: not object (number) 1`] = `
+"42
+"
+`;
+
+exports[`console.table expected output for: not object (string) 1`] = `
+"bun
+"
+`;
+
+exports[`console.table expected output for: object - empty 1`] = `
+"┌───┐
+│   │
+├───┤
+└───┘
+"
+`;
+
+exports[`console.table expected output for: object 1`] = `
+"┌───┬────────┐
+│   │ Values │
+├───┼────────┤
+│ a │ 42     │
+│ b │ bun    │
+└───┴────────┘
+"
+`;
+
+exports[`console.table expected output for: array - empty 1`] = `
+"┌───┐
+│   │
+├───┤
+└───┘
+"
+`;
+
+exports[`console.table expected output for: array - plain 1`] = `
+"┌───┬────────┐
+│   │ Values │
+├───┼────────┤
+│ 0 │ 42     │
+│ 1 │ bun    │
+└───┴────────┘
+"
+`;
+
+exports[`console.table expected output for: array - object 1`] = `
+"┌───┬────┬─────┐
+│   │ a  │ b   │
+├───┼────┼─────┤
+│ 0 │ 42 │ bun │
+└───┴────┴─────┘
+"
+`;
+
+exports[`console.table expected output for: array - objects with diff props 1`] = `
+"┌───┬─────┬────┐
+│   │ b   │ a  │
+├───┼─────┼────┤
+│ 0 │ bun │     │
+│ 1 │      │ 42 │
+└───┴─────┴────┘
+"
+`;
+
+exports[`console.table expected output for: array - mixed 1`] = `
+"┌───┬────┬─────┬────────┐
+│   │ a  │ b   │ Values │
+├───┼────┼─────┼────────┤
+│ 0 │ 42 │ bun │         │
+│ 1 │     │      │ 42     │
+└───┴────┴─────┴────────┘
+"
+`;
+
+exports[`console.table expected output for: set 1`] = `
+"┌───┬────────┐
+│   │ Values │
+├───┼────────┤
+│ 0 │ 42     │
+│ 1 │ bun    │
+└───┴────────┘
+"
+`;
+
+exports[`console.table expected output for: map 1`] = `
+"┌───┬─────┬────────┐
+│   │ Key │ Values │
+├───┼─────┼────────┤
+│ 0 │ a   │ 42     │
+│ 1 │ b   │ bun    │
+│ 2 │ 42  │ c      │
+└───┴─────┴────────┘
+"
+`;
+
+exports[`console.table expected output for: properties 1`] = `
+"┌───┬─────┬───┬────┐
+│   │ b   │ c │ a  │
+├───┼─────┼───┼────┤
+│ 0 │ bun │    │ 42 │
+└───┴─────┴───┴────┘
+"
+`;
+
+exports[`console.table expected output for: properties - empty 1`] = `
+"┌───┐
+│   │
+├───┤
+│ 0 │
+└───┘
+"
+`;
+
+exports[`console.table expected output for: values - array 1`] = `
+"┌───┬─────────────────────────────────┐
+│   │ value                           │
+├───┼─────────────────────────────────┤
+│ 0 │ { a: 42, b: "bun" }             │
+│ 1 │ [ 42, "bun" ]                   │
+│ 2 │ Set(2) { 42, "bun" }            │
+│ 3 │ Map(2) { 42: "bun", "bun": 42 } │
+└───┴─────────────────────────────────┘
+"
+`;
+
+
+exports[`console.table json fixture 1`] = `
+"┌────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬───────┬──────────────────────┬────────────┐
+│    │ title                                                                                                                │ state │ created_at           │ id         │
+├────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────┼──────────────────────┼────────────┤
+│  0 │ Respond handling issue for Most of Google Cloud API (vision, document, etc.)                                         │ open  │ 2023-12-30T04:43:36Z │ 2060630898 │
+│  1 │ @elastic/elasticsearch@8.11.0 not working due to missing undici.Pool.request                                         │ open  │ 2023-12-29T20:26:07Z │ 2060382675 │
+│  2 │ fs.watch skips save events                                                                                           │ open  │ 2023-12-29T14:00:48Z │ 2060059045 │
+│  3 │ Remix running with node, not bun                                                                                     │ open  │ 2023-12-29T13:52:26Z │ 2060043035 │
+│  4 │ 'fetch' upload with formdata is different than node                                                                  │ open  │ 2023-12-29T13:04:03Z │ 2059869225 │
+│  5 │ Error throw with an object causes an empty error log line                                                            │ open  │ 2023-12-29T12:35:33Z │ 2059655921 │
+│  6 │ setTimeout is 4x slower than node                                                                                    │ open  │ 2023-12-29T12:28:59Z │ 2059611949 │
+│  7 │ Failing when adding new "workspace:*" dependencies                                                                   │ open  │ 2023-12-29T12:04:12Z │ 2059483332 │
+│  8 │ feat(build): adjust arch linux auto detect to include manjaro                                                        │ open  │ 2023-12-29T11:18:32Z │ 2059335554 │
+│  9 │ Make next-build test less flaky                                                                                      │ open  │ 2023-12-29T10:06:08Z │ 2059272416 │
+│ 10 │ Try to make fs.watch tests less flaky                                                                                │ open  │ 2023-12-29T08:14:46Z │ 2059184911 │
+│ 11 │ Compile code that relies on Workers                                                                                  │ open  │ 2023-12-29T00:33:49Z │ 2058961498 │
+│ 12 │ Add --ignore-scripts option on bun install command shown in the benchmark                                            │ open  │ 2023-12-28T23:09:55Z │ 2058931278 │
+│ 13 │ fix: add ws properties to BunWebSocketMocked prototype                                                               │ open  │ 2023-12-28T21:24:26Z │ 2058831269 │
+│ 14 │ WebSocket "close" event not firing                                                                                   │ open  │ 2023-12-28T19:25:01Z │ 2058755917 │
+│ 15 │ Bun's 'ws' mock is missing readonly instance members                                                                 │ open  │ 2023-12-28T17:48:58Z │ 2058684399 │
+│ 16 │ Bun.Glob onlyDirectories Support                                                                                     │ open  │ 2023-12-28T15:13:38Z │ 2058550162 │
+│ 17 │ React@canary ssr with suspense got 'Welcome to Bun! To get started, return a Response object.' in middle of response │ open  │ 2023-12-28T12:19:38Z │ 2058371954 │
+│ 18 │ Bun.build with sourcemap: 'inline' changes assets imports URLs                                                       │ open  │ 2023-12-28T11:10:37Z │ 2058308543 │
+│ 19 │ Can't build with knex module                                                                                         │ open  │ 2023-12-28T10:24:59Z │ 2058264026 │
+│ 20 │ OutgoingResponse.writeHead should work                                                                               │ open  │ 2023-12-28T08:00:59Z │ 2058121229 │
+│ 21 │ Add Scoop installation reference for Windows                                                                         │ open  │ 2023-12-28T07:21:55Z │ 2058087851 │
+│ 22 │ Multer-s3 breaks on bun but works fine with node when contentType: multerS3.AUTO_CONTENT_TYPE                        │ open  │ 2023-12-28T03:32:57Z │ 2057948132 │
+│ 23 │ HuggingFace failure                                                                                                  │ open  │ 2023-12-28T02:08:48Z │ 2057908659 │
+│ 24 │ Unable to handle test generation helper correctly                                                                    │ open  │ 2023-12-28T01:06:19Z │ 2057880878 │
+│ 25 │ peerDependencies not honored over dependencies when both are specified                                               │ open  │ 2023-12-27T20:09:48Z │ 2057739037 │
+│ 26 │ Cannot find module 'backend/node_modules/prisma/build/index.js'                                                      │ open  │ 2023-12-27T14:31:15Z │ 2057441216 │
+│ 27 │ Segmentation Fault Crash when using Prisma                                                                           │ open  │ 2023-12-27T10:28:07Z │ 2057197057 │
+│ 28 │ Ensure duplicated 'devDependencies' are chosen before 'dependencies'                                                 │ open  │ 2023-12-27T09:32:40Z │ 2057137439 │
+│ 29 │ Enhancing trusted dependency list with checksums and blacklists                                                      │ open  │ 2023-12-27T09:17:21Z │ 2057121878 │
+└────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────┴──────────────────────┴────────────┘
+"
+`;
+
+exports[`console.table expected output for: headers object 1`] = `
+"┌───┬────────┬────────┐
+│   │ 0      │ 1      │
+├───┼────────┼────────┤
+│ 0 │ abc    │ bun    │
+│ 1 │ potato │ tomato │
+└───┴────────┴────────┘
+"
+`;

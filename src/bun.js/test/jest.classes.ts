@@ -415,6 +415,10 @@ export default [
         fn: "toContain",
         length: 1,
       },
+      toContainKey: {
+        fn: "toContainKey",
+        length: 1,
+      },
       toContainEqual: {
         fn: "toContainEqual",
         length: 1,

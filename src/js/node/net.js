@@ -726,6 +726,10 @@ class Server extends EventEmitter {
     this[bunSocketServerOptions] = options;
   }
 
+  get listening() {
+    return !!this.#server;
+  }
+
   ref() {
     this.#server?.ref();
     return this;

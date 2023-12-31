@@ -524,12 +524,12 @@ pub const Expect = struct {
                 .globalObject = globalObject,
                 .not = not,
             };
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = comptime signature ++ "\n\n{any}\n";
             if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
+                globalObject.throw(comptime Output.prettyFmt(fmt, true), .{diff_format});
                 return .zero;
             }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+            globalObject.throw(comptime Output.prettyFmt(fmt, false), .{diff_format});
             return .zero;
         }
 
@@ -2669,6 +2669,33 @@ pub const Expect = struct {
         }
 
         const fmt = comptime getSignature("toBeInteger", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeObject", "") orelse return .zero;
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        const pass = value.isObject() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeObject", "", true) ++ "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeObject", "", false) ++ "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{any}<r>\n";
         globalThis.throwPretty(fmt, .{received});
         return .zero;
     }

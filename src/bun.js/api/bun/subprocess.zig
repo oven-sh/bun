@@ -22,9 +22,36 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const PosixSpawn = bun.posix.spawn;
 
+const win_rusage = struct {
+    utime: struct {
+        tv_sec: u0 = 0,
+        tv_usec: u0 = 0,
+    },
+    stime: struct {
+        tv_sec: u0 = 0,
+        tv_usec: u0 = 0,
+    },
+    maxrss: u0 = 0,
+    ixrss: u0 = 0,
+    idrss: u0 = 0,
+    isrss: u0 = 0,
+    minflt: u0 = 0,
+    majflt: u0 = 0,
+    nswap: u0 = 0,
+    inblock: u0 = 0,
+    oublock: u0 = 0,
+    msgsnd: u0 = 0,
+    msgrcv: u0 = 0,
+    nsignals: u0 = 0,
+    nvcsw: u0 = 0,
+    nivcsw: u0 = 0,
+};
+
+const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
+
 pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
-    rusage: if (Environment.isWindows) u0 else std.os.rusage,
+    rusage: Rusage,
 
     pub fn constructor(
         _: *JSC.JSGlobalObject,
@@ -153,7 +180,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
-    pid_rusage: if (Environment.isWindows) ?u0 else ?std.os.rusage = null,
+    pid_rusage: if (Environment.isWindows) ?win_rusage else ?Rusage = null,
 
     pub const Flags = packed struct(u3) {
         is_sync: bool = false,
@@ -1671,7 +1698,7 @@ pub const Subprocess = struct {
             const exitCode = subprocess.exit_code orelse 1;
             const stdout = subprocess.stdout.toBufferedValue(globalThis);
             const stderr = subprocess.stderr.toBufferedValue(globalThis);
-            const resource_usage = subprocess.createResourceUsage(globalThis);
+            const resource_usage = subprocess.createResourceUsageObject(globalThis);
             subprocess.finalizeSync();
 
             const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
@@ -1843,7 +1870,7 @@ pub const Subprocess = struct {
             };
         };
 
-        var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+        var rusage_result: Rusage = std.mem.zeroes(Rusage);
         var has_rusage = false;
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
@@ -2109,11 +2136,11 @@ pub const Subprocess = struct {
         sync: bool,
         this_jsvalue: JSC.JSValue,
     ) void {
-        var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+        var rusage_result: Rusage = std.mem.zeroes(Rusage);
         this.onWaitPid(sync, this_jsvalue, PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result), rusage_result);
     }
 
-    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: std.os.rusage) void {
+    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: Rusage) void {
         if (Environment.isWindows) {
             @panic("windows doesnt support subprocess yet. haha");
         }
@@ -2726,7 +2753,7 @@ pub const Subprocess = struct {
 
         pub const WaitPidResultTask = struct {
             result: JSC.Maybe(PosixSpawn.WaitPidResult),
-            rusage: std.os.rusage,
+            rusage: Rusage,
             subprocess: *Subprocess,
 
             pub fn runFromJSThread(self: *@This()) void {
@@ -2806,7 +2833,7 @@ pub const Subprocess = struct {
                     continue;
                 }
 
-                var rusage_result: std.os.rusage = std.mem.zeroes(std.os.rusage);
+                var rusage_result: Rusage = std.mem.zeroes(Rusage);
 
                 const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, &rusage_result);
                 if (result == .err or (result == .result and result.result.pid == process.pid)) {

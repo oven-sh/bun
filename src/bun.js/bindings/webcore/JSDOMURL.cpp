@@ -268,7 +268,9 @@ void JSDOMURL::finishCreation(VM& vm)
 
 JSObject* JSDOMURL::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSDOMURLPrototype::create(vm, &globalObject, JSDOMURLPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSDOMURLPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSDOMURLPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSDOMURL::prototype(VM& vm, JSDOMGlobalObject& globalObject)

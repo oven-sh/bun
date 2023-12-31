@@ -5,7 +5,7 @@ var {
   // @ts-ignore
 } = readline[Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")];
 
-it("should treat should handle invisible ASCII character at any position", () => {
+it("handles invisible ASCII character at any position", () => {
   const visible = "a";
   const invisible = String.fromCharCode(3);
   for (let i = 0; i < 48; i++) {
@@ -15,7 +15,7 @@ it("should treat should handle invisible ASCII character at any position", () =>
   }
 });
 
-it("should treat should handle visible ASCII character at any position", () => {
+it("handles visible ASCII character at any position", () => {
   const visible = "a";
   const invisible = String.fromCharCode(3);
   for (let i = 0; i < 48; i++) {
@@ -25,7 +25,7 @@ it("should treat should handle visible ASCII character at any position", () => {
   }
 });
 
-it("should treat should handle alternating characters", () => {
+it("handles alternating characters", () => {
   // In node, this is `process.binding("icu").getStringWidth`
   expect(getStringWidth("あ")).toBe(2);
   expect(getStringWidth("'あ")).toBe(3);

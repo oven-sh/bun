@@ -6023,3 +6023,7 @@ pub const ScriptExecutionStatus = enum(i32) {
     suspended = 1,
     stopped = 2,
 };
+
+comptime {
+    _ = bun.String.BunString__getStringWidth;
+}

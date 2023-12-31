@@ -737,8 +737,13 @@ pub const String = extern struct {
         if (self.tag == .WTFStringImpl)
             return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString)
-            return self.value.ZigString.isUTF8();
+        if (self.tag == .ZigString or self.tag == .StaticZigString) {
+            if (self.value.ZigString.isUTF8()) {
+                return true;
+            }
+
+            return bun.strings.isAllASCII(self.toZigString().slice());
+        }
 
         return self.tag == .Empty;
     }
@@ -1130,6 +1135,24 @@ pub const String = extern struct {
     /// Note: the callee owns the resulting string and must call `.deref()` on it once done
     pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) !String {
         return try concat(strings.len, allocator, strings);
+    }
+
+    pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var str: String = String.dead;
+
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or !args.ptr[0].isString()) {
+            return JSC.jsNumber(@as(i32, 0));
+        }
+
+        str = args[0].toBunString(globalObject);
+
+        if (str.isEmpty()) {
+            return JSC.jsNumber(@as(i32, 0));
+        }
+
+        return JSC.jsNumber(str.visibleWidth());
     }
 };
 

@@ -1619,6 +1619,8 @@ enum ReadableStreamTag : int32_t {
     Bytes = 4,
 };
 
+extern "C" JSC_DECLARE_HOST_FUNCTION(BunString__getStringWidth);
+
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -1751,7 +1753,12 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "parseArgs"_s)),
                 JSC::JSFunction::create(vm, globalObject, 1, "parseArgs"_s, Bun__NodeUtil__jsParseArgs, ImplementationVisibility::Public), NoIntrinsic);
+
             return JSValue::encode(obj);
+        }
+
+        if (string == "getStringWidth"_s) {
+            return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 1, "getStringWidth"_s, BunString__getStringWidth, ImplementationVisibility::Public));
         }
 
         if (string == "pathToFileURL"_s) {

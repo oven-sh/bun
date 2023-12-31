@@ -5950,9 +5950,8 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, self.iter_i);
             self.iter_i += 1;
 
-            const len = JSC.C.JSStringGetLength(property_name_ref);
-
             if (comptime options.skip_empty_name) {
+                const len = JSC.C.JSStringGetLength(property_name_ref);
                 if (len == 0) return self.next();
             }
 

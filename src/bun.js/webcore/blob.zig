@@ -3484,6 +3484,10 @@ pub const Blob = struct {
             return this.ptr[0..this.len];
         }
 
+        pub fn allocatedSlice(this: ByteStore) []u8 {
+            return this.ptr[0..this.cap];
+        }
+
         pub fn deinit(this: *ByteStore) void {
             bun.default_allocator.free(this.stored_name.slice());
             this.allocator.free(this.ptr[0..this.cap]);
@@ -4131,15 +4135,14 @@ pub const Blob = struct {
         };
     }
 
-    pub fn create(
-        bytes_: []const u8,
+    pub fn createWithBytesAndAllocator(
+        bytes: []u8,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
         was_string: bool,
     ) Blob {
-        const bytes = allocator.dupe(u8, bytes_) catch @panic("Out of memory");
         return Blob{
-            .size = @as(SizeType, @truncate(bytes_.len)),
+            .size = @as(SizeType, @truncate(bytes.len)),
             .store = if (bytes.len > 0)
                 Blob.Store.init(bytes, allocator) catch unreachable
             else
@@ -4148,6 +4151,50 @@ pub const Blob = struct {
             .content_type = if (was_string) MimeType.text.value else "",
             .globalThis = globalThis,
         };
+    }
+
+    pub fn tryCreate(
+        bytes_: []const u8,
+        allocator_: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+        was_string: bool,
+    ) !Blob {
+        if (comptime Environment.isLinux) {
+            if (bun.linux.memfd_allocator.shouldUse(bytes_)) {
+                switch (bun.linux.memfd_allocator.create(bytes_)) {
+                    .err => {},
+                    .result => |result| {
+                        const store = bun.new(
+                            Store,
+                            Store{
+                                .data = .{
+                                    .bytes = result,
+                                },
+                                .allocator = bun.default_allocator,
+                                .ref_count = 1,
+                            },
+                        );
+                        var blob = initWithStore(store, globalThis);
+                        if (was_string and blob.content_type.len == 0) {
+                            blob.content_type = MimeType.text.value;
+                        }
+
+                        return blob;
+                    },
+                }
+            }
+        }
+
+        return createWithBytesAndAllocator(try allocator_.dupe(u8, bytes_), allocator_, globalThis, was_string);
+    }
+
+    pub fn create(
+        bytes_: []const u8,
+        allocator_: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+        was_string: bool,
+    ) Blob {
+        return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
     }
 
     pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
@@ -4513,6 +4560,36 @@ pub const Blob = struct {
     pub fn toArrayBufferWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
         switch (comptime lifetime) {
             .clone => {
+                if (comptime Environment.isLinux) {
+                    // If we can use a copy-on-write clone of the buffer, do so.
+                    if (this.store) |store| {
+                        if (store.data == .bytes) {
+                            const allocated_slice = store.data.bytes.allocatedSlice();
+                            if (bun.isSliceInBuffer(buf, allocated_slice)) {
+                                if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
+                                    allocator.ref();
+                                    defer allocator.deref();
+
+                                    const byteOffset = @as(usize, @intFromPtr(buf.ptr)) -| @as(usize, @intFromPtr(allocated_slice.ptr));
+                                    const byteLength = buf.len;
+
+                                    const result = JSC.ArrayBuffer.toArrayBufferFromSharedMemfd(
+                                        @intCast(allocator.fd),
+                                        global,
+                                        byteOffset,
+                                        byteLength,
+                                        allocated_slice.len,
+                                    );
+                                    bloblog("toArrayBuffer COW clone({d}, {d}) = {d}", .{ byteOffset, byteLength, @intFromBool(result != .zero) });
+
+                                    if (result != .zero) {
+                                        return result;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 return JSC.ArrayBuffer.create(global, buf, .ArrayBuffer);
             },
             .share => {
@@ -4674,9 +4751,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.BigUint64Array,
                 JSC.JSValue.JSType.DataView,
                 => {
-                    const buf = try bun.default_allocator.dupe(u8, top_value.asArrayBuffer(global).?.byteSlice());
-
-                    return Blob.init(buf, bun.default_allocator, global);
+                    return try Blob.tryCreate(top_value.asArrayBuffer(global).?.byteSlice(), bun.default_allocator, global, false);
                 },
 
                 .DOMWrapper => {

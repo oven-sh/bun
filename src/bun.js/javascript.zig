@@ -1255,6 +1255,8 @@ pub const VirtualMachine = struct {
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
 
+    pub var is_smol_mode = false;
+
     pub fn init(opts: Options) !*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
@@ -1342,6 +1344,9 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.smol = opts.smol;
+
+        if (opts.smol)
+            is_smol_mode = opts.smol;
 
         if (source_code_printer == null) {
             const writer = try js_printer.BufferWriter.init(allocator);

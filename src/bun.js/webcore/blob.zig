@@ -4571,7 +4571,7 @@ pub const Blob = struct {
                                     defer allocator.deref();
 
                                     const byteOffset = @as(usize, @intFromPtr(buf.ptr)) -| @as(usize, @intFromPtr(allocated_slice.ptr));
-                                    const byteLength = allocated_slice.len;
+                                    const byteLength = buf.len;
 
                                     const result = JSC.ArrayBuffer.toArrayBufferFromSharedMemfd(
                                         @intCast(allocator.fd),

@@ -1155,6 +1155,9 @@ pub fn assertDefined(val: anytype) void {
 }
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
+pub const linux = struct {
+    pub const memfd_allocator = @import("./linux_memfd_allocator.zig").LinuxMemFdAllocator;
+};
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {

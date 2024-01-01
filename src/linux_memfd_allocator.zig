@@ -82,7 +82,7 @@ pub const LinuxMemFdAllocator = struct {
         };
     };
 
-    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: u32) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
         var size = len;
 
         // size rounded up to nearest page
@@ -92,7 +92,7 @@ pub const LinuxMemFdAllocator = struct {
             null,
             @min(size, this.size),
             std.os.PROT.READ | std.os.PROT.WRITE,
-            std.os.MAP.PRIVATE | 0,
+            std.os.MAP.SHARED | flags,
             this.fd,
             offset,
         )) {
@@ -117,7 +117,13 @@ pub const LinuxMemFdAllocator = struct {
             return false;
         }
 
-        return bytes.len >= 1024 * 1024 * 2;
+        if (bun.JSC.VirtualMachine.is_smol_mode) {
+            return bytes.len >= 1024 * 1024 * 1;
+        }
+
+        // This is a net 2x - 4x slowdown to new Blob([huge])
+        // so we must be careful
+        return bytes.len >= 1024 * 1024 * 8;
     }
 
     pub fn create(bytes: []const u8) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
@@ -128,7 +134,10 @@ pub const LinuxMemFdAllocator = struct {
         const rc = brk: {
             var label_buf: [128]u8 = undefined;
             const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .Monotonic)}) catch "";
+
+            // Using huge pages was slower.
             const code = std.os.linux.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
+
             bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
             break :brk code;
         };
@@ -143,14 +152,14 @@ pub const LinuxMemFdAllocator = struct {
 
         const fd = bun.toFD(rc);
 
-        var remain = bytes;
-
-        if (remain.len > 0)
+        if (bytes.len > 0)
             // Hint at the size of the file
-            _ = bun.sys.ftruncate(fd, @intCast(remain.len));
+            _ = bun.sys.ftruncate(fd, @intCast(bytes.len));
 
         // Dump all the bytes in there
         var written: isize = 0;
+
+        var remain = bytes;
         while (remain.len > 0) {
             switch (bun.sys.pwrite(fd, remain, written)) {
                 .err => |err| {
@@ -180,7 +189,7 @@ pub const LinuxMemFdAllocator = struct {
             .size = bytes.len,
         });
 
-        switch (linux_memfd_allocator.alloc(bytes.len, 0)) {
+        switch (linux_memfd_allocator.alloc(bytes.len, 0, 0)) {
             .result => |res| {
                 return .{ .result = res };
             },

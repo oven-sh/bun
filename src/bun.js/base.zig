@@ -27,211 +27,77 @@ const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
 
-fn ObjectPtrType(comptime Type: type) type {
-    if (Type == void) return Type;
-    return *Type;
-}
-
-const Internal = struct {
-    pub fn toJSWithType(globalThis: *JSC.JSGlobalObject, comptime Type: type, value: Type, exception: JSC.C.ExceptionRef) JSValue {
-        // TODO: refactor withType to use this instead of the other way around
-        return JSC.JSValue.c(To.JS.withType(Type, value, globalThis, exception));
-    }
-
-    pub fn toJS(globalThis: *JSC.JSGlobalObject, value: anytype, exception: JSC.C.ExceptionRef) JSValue {
-        return toJSWithType(globalThis, @TypeOf(value), value, exception);
-    }
+pub const Lifetime = enum {
+    allocated,
+    temporary,
 };
-
-pub usingnamespace Internal;
-
-pub const To = struct {
-    pub const Cpp = struct {
-        pub fn PropertyGetter(
-            comptime Type: type,
-        ) type {
-            return comptime fn (
-                this: ObjectPtrType(Type),
-                globalThis: *JSC.JSGlobalObject,
-            ) callconv(.C) JSC.JSValue;
+pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: ValueType, comptime lifetime: Lifetime) JSC.JSValue {
+    const Type = comptime brk: {
+        var CurrentType = ValueType;
+        if (@typeInfo(ValueType) == .Optional) {
+            CurrentType = @typeInfo(ValueType).Optional.child;
         }
-
-        const toJS = Internal.toJSWithType;
-
-        pub fn GetterFn(comptime Type: type, comptime decl: std.meta.DeclEnum(Type)) PropertyGetter(Type) {
-            return struct {
-                pub fn getter(
-                    this: ObjectPtrType(Type),
-                    globalThis: *JSC.JSGlobalObject,
-                ) callconv(.C) JSC.JSValue {
-                    var exception_ref = [_]JSC.C.JSValueRef{null};
-                    var exception: JSC.C.ExceptionRef = &exception_ref;
-                    const result = toJS(globalThis, @call(.auto, @field(Type, @tagName(decl)), .{this}), exception);
-                    if (exception.* != null) {
-                        globalThis.throwValue(JSC.JSValue.c(exception.*));
-                        return .zero;
-                    }
-
-                    return result;
-                }
-            }.getter;
-        }
+        break :brk if (@typeInfo(CurrentType) == .Pointer and @typeInfo(CurrentType).Pointer.size == .One)
+            @typeInfo(CurrentType).Pointer.child
+        else
+            CurrentType;
     };
-    pub const JS = struct {
-        pub fn withType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return withTypeClone(Type, value, context, exception, false);
-        }
 
-        pub fn withTypeClone(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef, clone: bool) JSC.C.JSValueRef {
-            if (comptime std.meta.trait.isNumber(Type)) {
-                return JSC.JSValue.jsNumberWithType(Type, value).asRef();
+    if (comptime bun.trait.isNumber(Type)) {
+        return JSC.JSValue.jsNumberWithType(Type, if (comptime Type != ValueType) value.* else value);
+    }
+
+    switch (comptime Type) {
+        void => return .undefined,
+        bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
+        *JSC.JSGlobalObject => return value.toJSValue(),
+        []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
+            const str = bun.String.create(value);
+            defer str.deref();
+            return str.toJS(globalObject);
+        },
+        []const bun.String => {
+            defer {
+                for (value) |out| {
+                    out.deref();
+                }
+                bun.default_allocator.free(value);
+            }
+            return bun.String.toJSArray(globalObject, value);
+        },
+        JSC.JSValue => return if (Type != ValueType) value.* else value,
+
+        else => {
+
+            // Recursion can stack overflow here
+            if (bun.trait.isSlice(Type)) {
+                const Child = comptime std.meta.Child(Type);
+
+                var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                for (value, 0..) |*item, i| {
+                    const res = toJS(globalObject, *Child, item, lifetime);
+                    if (res == .zero) return .zero;
+                    array.putIndex(
+                        globalObject,
+                        @truncate(i),
+                        res,
+                    );
+                }
+                return array;
             }
 
-            var zig_str: JSC.ZigString = undefined;
+            if (comptime @hasDecl(Type, "toJSNewlyCreated") and @typeInfo(@TypeOf(@field(Type, "toJSNewlyCreated"))).Fn.params.len == 2) {
+                return value.toJSNewlyCreated(globalObject);
+            }
 
-            return switch (comptime Type) {
-                void => JSC.C.JSValueMakeUndefined(context),
-                bool => JSC.C.JSValueMakeBoolean(context, value),
-                []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => brk: {
-                    zig_str = ZigString.init(value);
-                    const val = zig_str.toValueAuto(context.ptr());
+            if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
+                return value.toJS(globalObject);
+            }
 
-                    break :brk val.asObjectRef();
-                },
-                []const JSC.ZigString => {
-                    var array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
-                    const values: []const JSC.ZigString = value;
-                    defer bun.default_allocator.free(values);
-                    if (clone) {
-                        for (values) |out| {
-                            if (out.isGloballyAllocated()) {
-                                out.deinitGlobal();
-                            }
-                        }
-                    }
-
-                    return array;
-                },
-                []const bun.String => {
-                    defer {
-                        for (value) |out| {
-                            out.deref();
-                        }
-                        bun.default_allocator.free(value);
-                    }
-                    return bun.String.toJSArray(context, value).asObjectRef();
-                },
-                []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
-                    if (value.len == 0)
-                        return JSC.C.JSObjectMakeArray(context, 0, null, exception);
-
-                    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-                    var allocator = stack_fallback.get();
-
-                    var zig_strings = allocator.alloc(ZigString, value.len) catch unreachable;
-                    defer if (stack_fallback.fixed_buffer_allocator.end_index >= 511) allocator.free(zig_strings);
-
-                    for (value, 0..) |path_string, i| {
-                        if (comptime Type == []const PathString) {
-                            zig_strings[i] = ZigString.init(path_string.slice());
-                        } else {
-                            zig_strings[i] = ZigString.init(path_string);
-                        }
-                    }
-                    // there is a possible C ABI bug or something here when the ptr is null
-                    // it should not be segfaulting but it is
-                    // that's why we check at the top of this function
-                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
-
-                    if (clone and value.len > 0) {
-                        for (value) |path_string| {
-                            if (comptime Type == []const PathString) {
-                                bun.default_allocator.free(path_string.slice());
-                            } else {
-                                bun.default_allocator.free(path_string);
-                            }
-                        }
-                        bun.default_allocator.free(value);
-                    }
-
-                    return array;
-                },
-
-                JSC.C.JSValueRef => value,
-
-                else => {
-                    const Info: std.builtin.Type = comptime @typeInfo(Type);
-                    if (comptime Info == .Enum) {
-                        const Enum: std.builtin.Type.Enum = Info.Enum;
-                        if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
-                            zig_str = JSC.ZigString.init(@tagName(value));
-                            return zig_str.toValue(context.ptr()).asObjectRef();
-                        }
-                    }
-
-                    // Recursion can stack overflow here
-                    if (comptime std.meta.trait.isSlice(Type)) {
-                        const Child = comptime std.meta.Child(Type);
-
-                        var array = JSC.JSValue.createEmptyArray(context, value.len);
-                        for (value, 0..) |item, i| {
-                            array.putIndex(
-                                context,
-                                @truncate(i),
-                                JSC.JSValue.c(To.JS.withType(Child, item, context, exception)),
-                            );
-
-                            if (exception.* != null) {
-                                return null;
-                            }
-                        }
-                        return array.asObjectRef();
-                    }
-
-                    if (comptime std.meta.trait.isZigString(Type)) {
-                        zig_str = JSC.ZigString.init(value);
-                        return zig_str.toValue(context.ptr()).asObjectRef();
-                    }
-
-                    if (comptime Info == .Pointer) {
-                        const Child = comptime std.meta.Child(Type);
-                        if (comptime std.meta.trait.isContainer(Child) and @hasDecl(Child, "Class") and @hasDecl(Child.Class, "isJavaScriptCoreClass")) {
-                            return Child.Class.make(context, value);
-                        }
-                    }
-
-                    if (comptime Info == .Struct) {
-                        if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
-                            if (comptime !@hasDecl(Type, "finalize")) {
-                                @compileError(std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
-                            }
-
-                            if (comptime !@hasDecl(Type, "toJS")) {
-                                var val = bun.default_allocator.create(Type) catch unreachable;
-                                val.* = value;
-                                return Type.Class.make(context, val);
-                            }
-                        }
-                    }
-
-                    if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
-                        var val = bun.default_allocator.create(Type) catch unreachable;
-                        val.* = value;
-                        return val.toJS(context).asObjectRef();
-                    }
-
-                    const res = value.toJS(context, exception);
-
-                    if (@TypeOf(res) == JSC.C.JSValueRef) {
-                        return res;
-                    } else if (@TypeOf(res) == JSC.JSValue) {
-                        return res.asObjectRef();
-                    }
-                },
-            };
-        }
-    };
-};
+            @compileError("dont know how to convert " ++ @typeName(ValueType) ++ " to JS");
+        },
+    }
+}
 
 pub const Properties = struct {
     pub const UTF8 = struct {
@@ -311,7 +177,7 @@ pub fn createError(
         var fallback = std.heap.stackFallback(256, default_allocator);
         var allocator = fallback.get();
 
-        var buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
+        const buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         // it alwayas clones
@@ -343,7 +209,7 @@ pub fn toTypeErrorWithCode(
         zig_str = JSC.ZigString.init(fmt);
         zig_str.detectEncoding();
     } else {
-        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        const buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
         zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         zig_str.mark();
@@ -401,6 +267,95 @@ pub const ArrayBuffer = extern struct {
     typed_array_type: JSC.JSValue.JSType = .Cell,
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
+
+    extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
+
+    // 4 MB or so is pretty good for mmap()
+    const mmap_threshold = 1024 * 1024 * 4;
+
+    /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
+    /// Do not use this for pipes, however tempting it may seem.
+    pub fn toJSBufferFromFd(fd: bun.FileDescriptor, size: usize, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const buffer_value = Bun__createUint8ArrayForCopy(globalObject, null, size, true);
+        if (buffer_value == .zero) {
+            return .zero;
+        }
+
+        var array_buffer = buffer_value.asArrayBuffer(globalObject) orelse @panic("Unexpected");
+        var bytes = array_buffer.byteSlice();
+
+        buffer_value.ensureStillAlive();
+
+        var read: isize = 0;
+        while (bytes.len > 0) {
+            switch (bun.sys.pread(fd, bytes, read)) {
+                .result => |amount| {
+                    bytes = bytes[amount..];
+                    read += @intCast(amount);
+
+                    if (amount == 0) {
+                        if (bytes.len > 0) {
+                            @memset(bytes, 0);
+                        }
+                        break;
+                    }
+                },
+                .err => |err| {
+                    globalObject.throwValue(err.toJSC(globalObject));
+                    return .zero;
+                },
+            }
+        }
+
+        buffer_value.ensureStillAlive();
+
+        return buffer_value;
+    }
+
+    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize) JSC.JSValue;
+    pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
+
+    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const stat = switch (bun.sys.fstat(fd)) {
+            .err => |err| {
+                globalObject.throwValue(err.toJSC(globalObject));
+                _ = bun.sys.close(fd);
+                return .zero;
+            },
+            .result => |fstat| fstat,
+        };
+
+        const size = stat.size;
+
+        if (size == 0) {
+            _ = bun.sys.close(fd);
+            return createBuffer(globalObject, "");
+        }
+
+        // mmap() is kind of expensive to do
+        // It creates a new memory mapping.
+        // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
+        // So we clone it when it's small.
+        if (size < mmap_threshold) {
+            const result = toJSBufferFromFd(fd, @intCast(size), globalObject);
+            _ = bun.sys.close(fd);
+            return result;
+        }
+
+        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.SHARED | 0, fd, 0);
+        _ = bun.sys.close(fd);
+
+        switch (result) {
+            .result => |buf| {
+                return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
+            },
+            .err => |err| {
+                globalObject.throwValue(err.toJSC(globalObject));
+
+                return .zero;
+            },
+        }
+    }
 
     pub const Strong = struct {
         array_buffer: ArrayBuffer,
@@ -610,7 +565,7 @@ pub const ArrayBuffer = extern struct {
 };
 
 pub const MarkedArrayBuffer = struct {
-    buffer: ArrayBuffer,
+    buffer: ArrayBuffer = .{},
     allocator: ?std.mem.Allocator = null,
 
     pub const Stream = ArrayBuffer.Stream;
@@ -633,7 +588,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
-        var buf = try allocator.dupe(u8, str);
+        const buf = try allocator.dupe(u8, str);
         return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
@@ -669,13 +624,13 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
-        var container = try allocator.create(MarkedArrayBuffer);
+        const container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
         return container;
     }
 
-    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
-        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
+    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
     pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
@@ -703,7 +658,18 @@ pub const MarkedArrayBuffer = struct {
         );
     }
 
-    pub const toJS = toJSObjectRef;
+    // TODO: refactor this
+    pub fn toJS(this: *MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var exception = [_]JSC.C.JSValueRef{null};
+        const obj = this.toJSObjectRef(globalObject, &exception);
+
+        if (exception[0] != null) {
+            globalObject.throwValue(JSC.JSValue.c(exception[0]));
+            return .zero;
+        }
+
+        return JSC.JSValue.c(obj);
+    }
 };
 
 // expensive heap reference-counted string type
@@ -1242,7 +1208,7 @@ pub fn wrapInstanceMethod(
                 break :brk false;
             };
             var exception_value = [_]JSC.C.JSValueRef{null};
-            var exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
+            const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
@@ -1264,7 +1230,7 @@ pub fn wrapInstanceMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1273,22 +1239,7 @@ pub fn wrapInstanceMethod(
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
-                                    globalThis.throwInvalidArguments("expected string or buffer", .{});
-                                    iter.deinit();
-                                    return JSC.JSValue.zero;
-                                };
-                            } else {
-                                args[i] = null;
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                                     globalThis.throwInvalidArguments("expected string or buffer", .{});
                                     iter.deinit();
                                     return JSC.JSValue.zero;
@@ -1436,7 +1387,7 @@ pub fn wrapStaticMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1444,7 +1395,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
                                 globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1453,27 +1404,17 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
-                    JSC.Node.SliceOrBuffer => {
-                        const arg = iter.nextEat() orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
-                            iter.deinit();
-                            return JSC.JSValue.zero;
-                        };
-                        args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
-                            iter.deinit();
-                            return JSC.JSValue.zero;
-                        };
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
+                    JSC.Node.BlobOrStringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
-                                globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
                             };
                         } else {
-                            args[i] = null;
+                            globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
                         }
                     },
                     JSC.ArrayBuffer => {
@@ -1721,28 +1662,28 @@ pub const AsyncTaskTracker = struct {
 
 pub const MemoryReportingAllocator = struct {
     child_allocator: std.mem.Allocator,
-    memory_cost: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+    memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     const log = Output.scoped(.MEM, false);
 
     fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
-        var result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+        const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
         _ = this.memory_cost.fetchAdd(n, .Monotonic);
         if (comptime Environment.allow_assert)
-            log("malloc({d}) = {d}", .{ n, this.memory_cost.loadUnchecked() });
+            log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
         return result;
     }
 
     pub fn discard(this: *MemoryReportingAllocator, buf: []const u8) void {
         _ = this.memory_cost.fetchSub(buf.len, .Monotonic);
         if (comptime Environment.allow_assert)
-            log("discard({d}) = {d}", .{ buf.len, this.memory_cost.loadUnchecked() });
+            log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
     fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
         if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
             _ = this.memory_cost.fetchAdd(new_len -| buf.len, .Monotonic);
             if (comptime Environment.allow_assert)
-                log("resize() = {d}", .{this.memory_cost.loadUnchecked()});
+                log("resize() = {d}", .{this.memory_cost.raw});
             return true;
         } else {
             return false;
@@ -1757,7 +1698,7 @@ pub const MemoryReportingAllocator = struct {
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
             // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
-            log("free({d}) = {d}", .{ buf.len, this.memory_cost.loadUnchecked() });
+            log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }
 

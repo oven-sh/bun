@@ -126,6 +126,10 @@ Some methods are not optimized yet.
 
 🟡 See [`node:util`](#node-util).
 
+### [`node:test`](https://nodejs.org/api/test.html)
+
+🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
+
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
 🟢 Recommended to use global `setTimeout`, et. al. instead.

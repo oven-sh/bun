@@ -4,8 +4,6 @@ const bun = @import("root").bun;
 const MimeType = HTTPClient.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
-const NetworkThread = HTTPClient.NetworkThread;
-const AsyncIO = NetworkThread.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -392,7 +390,7 @@ pub const ReadableStream = struct {
             if (bytes[0] != 1) {
                 return bun.invalid_fd;
             }
-            var out: u64 = 0;
+            const out: u64 = 0;
             @as([8]u8, @bitCast(out))[0..7].* = bytes[1..8].*;
             return @as(bun.FileDescriptor, @intCast(out));
         }
@@ -517,6 +515,7 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                                .syscall = .write,
                             },
                         };
                     }
@@ -534,26 +533,28 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
-                            },
-                        };
-                    }
-                    const fd = fd_value.toInt64();
-                    if (fd < 0) {
-                        return .{
-                            .err = Syscall.Error{
-                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .syscall = .write,
                             },
                         };
                     }
 
-                    return .{
-                        .FileSink = .{
-                            .chunk_size = chunk_size,
-                            .input_path = .{
-                                .fd = @as(bun.FileDescriptor, @intCast(fd)),
+                    if (bun.FDImpl.fromJS(fd_value)) |fd| {
+                        return .{
+                            .FileSink = .{
+                                .chunk_size = chunk_size,
+                                .input_path = .{
+                                    .fd = fd.encode(),
+                                },
                             },
-                        },
-                    };
+                        };
+                    } else {
+                        return .{
+                            .err = Syscall.Error{
+                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .syscall = .write,
+                            },
+                        };
+                    }
                 }
 
                 return .{
@@ -663,7 +664,7 @@ pub const StreamResult = union(Tag) {
             };
 
             pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
-                var prom = JSPromise.create(globalThis);
+                const prom = JSPromise.create(globalThis);
                 this.future = .{
                     .promise = .{ .promise = prom, .globalThis = globalThis },
                 };
@@ -768,7 +769,7 @@ pub const StreamResult = union(Tag) {
         }
 
         pub fn promise(this: *Pending, globalObject: *JSC.JSGlobalObject) *JSC.JSPromise {
-            var prom = JSC.JSPromise.create(globalObject);
+            const prom = JSC.JSPromise.create(globalObject);
             this.future = .{
                 .promise = .{
                     .promise = prom,
@@ -1050,7 +1051,7 @@ pub const Sink = struct {
     pub const UTF8Fallback = struct {
         const stack_size = 1024;
         pub fn writeLatin1(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
-            var str = input.slice();
+            const str = input.slice();
             if (strings.isAllASCII(str)) {
                 return writeFn(
                     ctx,
@@ -1086,7 +1087,7 @@ pub const Sink = struct {
         }
 
         pub fn writeUTF16(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
-            var str: []const u16 = std.mem.bytesAsSlice(u16, input.slice());
+            const str: []const u16 = std.mem.bytesAsSlice(u16, input.slice());
 
             if (stack_size >= str.len * 2) {
                 var buf: [stack_size]u8 = undefined;
@@ -1103,7 +1104,7 @@ pub const Sink = struct {
             }
 
             {
-                var allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
+                const allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
                 if (input.isDone()) {
                     return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
                 } else {
@@ -1285,7 +1286,7 @@ pub const FileSink = struct {
                 },
             };
 
-            this.mode = stat.mode;
+            this.mode = @intCast(stat.mode);
             this.auto_truncate = this.auto_truncate and (bun.isRegularFile(this.mode));
         } else {
             this.auto_truncate = false;
@@ -1607,7 +1608,7 @@ pub const FileSink = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*FileSink {
-        var this = try allocator.create(FileSink);
+        const this = try allocator.create(FileSink);
         this.* = FileSink{
             .buffer = bun.ByteList{},
             .allocator = allocator,
@@ -1885,7 +1886,7 @@ pub const ArrayBufferSink = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
-        var this = try allocator.create(ArrayBufferSink);
+        const this = try allocator.create(ArrayBufferSink);
         this.* = ArrayBufferSink{
             .bytes = bun.ByteList.init(&.{}),
             .allocator = allocator,
@@ -2120,7 +2121,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime !@hasField(SinkType, "signal"))
                 return;
 
-            var ptr = this.sink.signal.ptr;
+            const ptr = this.sink.signal.ptr;
             if (this.sink.signal.isDead())
                 return;
             this.sink.signal.clear();
@@ -2491,7 +2492,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn handleFirstWriteIfNecessary(this: *@This()) void {
             if (this.onFirstWrite) |onFirstWrite| {
-                var ctx = this.ctx;
+                const ctx = this.ctx;
                 this.ctx = null;
                 this.onFirstWrite = null;
                 onFirstWrite(ctx);
@@ -3390,7 +3391,7 @@ pub const ByteBlobLoader = struct {
         temporary = temporary[this.offset..];
         temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-        var cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch @panic("Out of memory");
+        const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch @panic("Out of memory");
         this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
         this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 
@@ -3528,7 +3529,7 @@ pub const ByteStream = struct {
 
         if (this.pending.state == .pending) {
             std.debug.assert(this.buffer.items.len == 0);
-            var to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
+            const to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
             std.debug.assert(to_copy.ptr != chunk.ptr);
             @memcpy(to_copy, chunk[0..to_copy.len]);
@@ -3642,7 +3643,7 @@ pub const ByteStream = struct {
                 this.buffer.items.len - this.offset,
                 buffer.len,
             );
-            var remaining_in_buffer = this.buffer.items[this.offset..][0..to_write];
+            const remaining_in_buffer = this.buffer.items[this.offset..][0..to_write];
 
             @memcpy(buffer[0..to_write], this.buffer.items[this.offset..][0..to_write]);
 
@@ -4061,12 +4062,6 @@ pub const FIFO = struct {
         /// provided via kqueue(), only on macOS
         kqueue_read_amt: ?u32,
     ) ReadResult {
-        if (comptime Environment.isWindows) {
-            return ReadResult{
-                .err = Syscall.Error.todo,
-            };
-        }
-
         const available_to_read = this.getAvailableToRead(
             if (kqueue_read_amt != null)
                 @as(i64, @intCast(kqueue_read_amt.?))
@@ -4220,10 +4215,10 @@ pub const File = struct {
 
         var fd = if (file.pathlike != .path)
             // We will always need to close the file descriptor.
-            switch (Syscall.dup(@intCast(file.pathlike.fd))) {
+            switch (Syscall.dup(file.pathlike.fd)) {
                 .result => |_fd| _fd,
                 .err => |err| {
-                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
+                    return .{ .err = err.withFd(file.pathlike.fd) };
                 },
             }
         else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
@@ -4233,8 +4228,8 @@ pub const File = struct {
             },
         };
 
-        if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(bun.fdcast(fd)))) {
-            if (comptime Environment.isPosix) {
+        if (comptime Environment.isPosix) {
+            if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
                 var termios = std.mem.zeroes(std.os.termios);
                 _ = std.c.tcgetattr(fd, &termios);
                 bun.C.cfmakeraw(&termios);
@@ -4244,27 +4239,27 @@ pub const File = struct {
 
         if (file.pathlike != .path and !(file.is_atty orelse false)) {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-            } else {
-                // ensure we have non-blocking IO set
-                switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                    .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
-                    .result => |flags| {
-                        // if we do not, clone the descriptor and set non-blocking
-                        // it is important for us to clone it so we don't cause Weird Things to happen
-                        if ((flags & std.os.O.NONBLOCK) == 0) {
-                            fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                                .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
-                                .err => |err| return .{ .err = err },
-                            };
+                @panic("TODO on Windows");
+            }
 
-                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                                .err => |err| return .{ .err = err },
-                                .result => |_| {},
-                            }
+            // ensure we have non-blocking IO set
+            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
+                .result => |flags| {
+                    // if we do not, clone the descriptor and set non-blocking
+                    // it is important for us to clone it so we don't cause Weird Things to happen
+                    if ((flags & std.os.O.NONBLOCK) == 0) {
+                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                            .err => |err| return .{ .err = err },
+                        };
+
+                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                            .err => |err| return .{ .err = err },
+                            .result => |_| {},
                         }
-                    },
-                }
+                    }
+                },
             }
         }
         var size: Blob.SizeType = 0;
@@ -4277,12 +4272,12 @@ pub const File = struct {
                 },
             };
 
-            if (std.os.S.ISDIR(stat.mode)) {
+            if (bun.S.ISDIR(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
             }
 
-            if (std.os.S.ISSOCK(stat.mode)) {
+            if (bun.S.ISSOCK(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
@@ -4302,6 +4297,8 @@ pub const File = struct {
                 break :outer;
             });
             this.seekable = true;
+        } else {
+            @compileError("Not Implemented");
         }
 
         if (this.seekable) {
@@ -4328,93 +4325,44 @@ pub const File = struct {
 
     const Concurrent = struct {
         read: Blob.SizeType = 0,
-        task: NetworkThread.Task = .{ .callback = Concurrent.taskCallback },
-        completion: AsyncIO.Completion = undefined,
+        task: bun.ThreadPool.Task = .{ .callback = Concurrent.taskCallback },
         chunk_size: Blob.SizeType = 0,
         main_thread_task: JSC.AnyTask = .{ .callback = onJSThread, .ctx = null },
         concurrent_task: JSC.ConcurrentTask = .{},
 
-        pub fn taskCallback(task: *NetworkThread.Task) void {
-            var this = @fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task));
-            runAsync(this);
-        }
-
-        pub fn onRead(this: *File, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-            this.concurrent.read = @as(Blob.SizeType, @truncate(result catch |err| {
-                if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
-                    this.pending.result = .{
-                        .err = .{
-                            .Error = Syscall.Error{
-                                .errno = @as(Syscall.Error.Int, @intCast(-completion.result)),
-                                .syscall = .read,
-                            },
-                        },
-                    };
-                } else {
-                    this.pending.result = .{
-                        .err = .{
-                            .Error = Syscall.Error{
-                                // this is too hacky
-                                .errno = @as(Syscall.Error.Int, @truncate(@as(u16, @intCast(@max(1, @intFromError(err)))))),
-                                .syscall = .read,
-                            },
-                        },
-                    };
-                }
-                this.concurrent.read = 0;
-                scheduleMainThreadTask(this);
-                return;
-            }));
-
-            scheduleMainThreadTask(this);
+        pub fn taskCallback(task: *bun.ThreadPool.Task) void {
+            runAsync(@fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task)));
         }
 
         pub fn scheduleRead(this: *File) void {
-            if (comptime Environment.isMac) {
-                var remaining = this.buf[this.concurrent.read..];
+            var remaining = this.buf[this.concurrent.read..];
 
-                while (remaining.len > 0) {
-                    const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
-                    switch (Syscall.read(this.fd, remaining[0..to_read])) {
-                        .err => |err| {
-                            const retry = E.AGAIN;
+            while (remaining.len > 0) {
+                const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
+                switch (Syscall.read(this.fd, remaining[0..to_read])) {
+                    .err => |err| {
+                        const retry = E.AGAIN;
 
-                            switch (err.getErrno()) {
-                                retry => break,
-                                else => {},
-                            }
+                        switch (err.getErrno()) {
+                            retry => break,
+                            else => {},
+                        }
 
-                            this.pending.result = .{ .err = .{ .Error = err } };
-                            scheduleMainThreadTask(this);
-                            return;
-                        },
-                        .result => |result| {
-                            this.concurrent.read += @as(Blob.SizeType, @intCast(result));
-                            remaining = remaining[result..];
+                        this.pending.result = .{ .err = .{ .Error = err } };
+                        scheduleMainThreadTask(this);
+                        return;
+                    },
+                    .result => |result| {
+                        this.concurrent.read += @as(Blob.SizeType, @intCast(result));
+                        remaining = remaining[result..];
 
-                            if (result == 0) {
-                                remaining.len = 0;
-                                break;
-                            }
-                        },
-                    }
-                }
-
-                if (remaining.len == 0) {
-                    scheduleMainThreadTask(this);
-                    return;
+                        if (result == 0) {
+                            remaining.len = 0;
+                            break;
+                        }
+                    },
                 }
             }
-
-            AsyncIO.global.read(
-                *File,
-                this,
-                onRead,
-                &this.concurrent.completion,
-                this.fd,
-                this.buf[this.concurrent.read..],
-                null,
-            );
 
             scheduleMainThreadTask(this);
         }
@@ -4467,10 +4415,8 @@ pub const File = struct {
     ) void {
         this.scheduled_count += 1;
         this.poll_ref.ref(globalThis.bunVM());
-        NetworkThread.init() catch {};
-
         this.concurrent.chunk_size = chunk_size;
-        NetworkThread.global.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
+        JSC.WorkPool.schedule(&this.concurrent.task);
     }
 
     pub fn read(this: *File, buf: []u8) ReadResult {
@@ -4731,11 +4677,7 @@ pub const FileReader = struct {
                         return result;
                     }
 
-                    const is_fifo = if (comptime Environment.isPosix)
-                        std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)
-                    else
-                        // TODO: windows
-                        bun.todo(@src(), false);
+                    const is_fifo = bun.S.ISFIFO(readable_file.mode) or bun.S.ISCHR(readable_file.mode);
 
                     // for our purposes, ISCHR and ISFIFO are the same
                     if (is_fifo) {
@@ -4883,11 +4825,7 @@ pub fn NewReadyWatcher(
             }
 
             if (comptime @hasField(Context, "mode")) {
-                if (comptime Environment.isWindows) {
-                    return bun.todo(@src(), false);
-                }
-
-                return std.os.S.ISFIFO(this.mode);
+                return bun.S.ISFIFO(this.mode);
             }
 
             return false;
@@ -4900,8 +4838,7 @@ pub fn NewReadyWatcher(
 
         pub fn unwatch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-                return;
+                @panic("TODO on Windows");
             }
 
             const fd = @as(c_int, @intCast(fd_));
@@ -4935,7 +4872,7 @@ pub fn NewReadyWatcher(
 
         pub fn watch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                return;
+                @panic("Do not call watch() on windows");
             }
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
@@ -4952,7 +4889,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(!this.isWatching());
             switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
                 .err => |err| {
-                    bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});
+                    std.debug.panic("FilePoll.register failed: {d}", .{err.errno});
                 },
                 .result => {},
             }

@@ -258,6 +258,12 @@ public:
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
+    Structure* NapiExternalStructure() { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
+    Structure* NapiPrototypeStructure() { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
+    Structure* NAPIFunctionStructure() { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
+
+    Structure* JSSQLStatementStructure() { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
+
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     JSC::JSObject* processObject() { return m_processObject.getInitializedOnMainThread(this); }
@@ -280,6 +286,8 @@ public:
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
     WebCore::EventTarget& eventTarget();
+
+    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Bun::GlobalScope& globalEventScope;
 
     enum class PromiseFunctions : uint8_t {
@@ -438,7 +446,6 @@ private:
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
     Lock m_gcLock;
-    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
     Bun::CommonStrings m_commonStrings;
 
@@ -515,6 +522,10 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
+    LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;

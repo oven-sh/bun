@@ -101,6 +101,8 @@ public:
     ~NapiRef()
     {
         strongRef.clear();
+        // The weak ref can lead to calling the destructor
+        // so we must first clear the weak ref before we call the finalizer
         weakValueRef.clear();
     }
 
@@ -192,17 +194,11 @@ public:
 
     DECLARE_INFO;
 
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    static NapiPrototype* create(VM& vm, Structure* structure)
     {
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
         return footprint;
-    }
-
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject)
-    {
-        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        return create(vm, globalObject, structure);
     }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -245,5 +241,7 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
+
+Structure* createNAPIFunctionStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
 }

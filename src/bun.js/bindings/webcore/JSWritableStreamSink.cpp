@@ -122,7 +122,9 @@ void JSWritableStreamSink::finishCreation(VM& vm)
 
 JSObject* JSWritableStreamSink::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSWritableStreamSinkPrototype::create(vm, &globalObject, JSWritableStreamSinkPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSWritableStreamSinkPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSWritableStreamSinkPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSWritableStreamSink::prototype(VM& vm, JSDOMGlobalObject& globalObject)

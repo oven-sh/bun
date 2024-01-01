@@ -92,6 +92,14 @@ class Response extends WebResponse {
     return await super.json();
   }
 
+  // This is a deprecated function in node-fetch
+  // but is still used by some libraries and frameworks (like Astro)
+  async buffer() {
+    // load the getter
+    this.body;
+    return new $Buffer(await super.arrayBuffer());
+  }
+
   async text() {
     // load the getter
     this.body;

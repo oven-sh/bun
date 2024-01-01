@@ -451,8 +451,8 @@ public:
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
         }
 
-        /* Terminating 0 chunk */
-        Super::write("\r\n0\r\n\r\n", 7);
+        /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
+        /* Super::write("\r\n0\r\n\r\n", 7); */
 
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }

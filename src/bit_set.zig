@@ -687,6 +687,63 @@ pub const DynamicBitSetUnmanaged = struct {
     var empty_masks_data = [_]MaskInt{ 0, undefined };
     const empty_masks_ptr = empty_masks_data[1..2];
 
+    /// Do not resize the bitsets!
+    ///
+    /// Single buffer for multiple bitsets of equal length. Does not
+    /// implement all methods of DynamicBitSetUnmanaged and should
+    /// be used carefully.
+    pub const List = struct {
+        buf: []MaskInt,
+        n: usize,
+        bit_length: usize,
+
+        pub fn initEmpty(allocator: Allocator, n: usize, bit_length: usize) !List {
+            const masks = numMasks(bit_length);
+            const single_bitset_buf_size = masks + 1;
+
+            const buf = try allocator.alloc(MaskInt, single_bitset_buf_size * n);
+
+            const fill_value = std.math.boolMask(MaskInt, false);
+            @memset(buf, fill_value);
+
+            for (0..n) |i| {
+                buf[i * single_bitset_buf_size] = single_bitset_buf_size;
+            }
+
+            return List{
+                .buf = buf,
+                .n = n,
+                .bit_length = bit_length,
+            };
+        }
+
+        pub fn deinit(this: List, allocator: Allocator) void {
+            allocator.free(this.buf);
+        }
+
+        pub fn at(this: List, i: usize) Self {
+            const num_masks = numMasks(this.bit_length);
+            const single_bitset_buf_size = num_masks + 1;
+
+            const offset = (single_bitset_buf_size * i);
+
+            return Self{
+                .bit_length = this.bit_length,
+                .masks = this.buf[offset..].ptr + 1,
+            };
+        }
+
+        pub fn set(this: List, i: usize, j: usize) void {
+            var bitset = this.at(i);
+            bitset.set(j);
+        }
+
+        pub fn setUnion(this: List, i: usize, other: Self) void {
+            var bitset = this.at(i);
+            bitset.setUnion(other);
+        }
+    };
+
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
     pub fn initEmpty(allocator: Allocator, bit_length: usize) !Self {

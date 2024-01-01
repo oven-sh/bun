@@ -274,7 +274,7 @@ pub const Editor = enum(u8) {
             },
             .textmate => {
                 try file_path_buf_writer.writeAll(file);
-                var file_path = file_path_buf_stream.getWritten();
+                const file_path = file_path_buf_stream.getWritten();
 
                 if (line) |line_| {
                     if (line_.len > 0) {
@@ -288,7 +288,7 @@ pub const Editor = enum(u8) {
                                 try file_path_buf_writer.print(":{s}", .{col});
                         }
 
-                        var line_column = file_path_buf_stream.getWritten()[file_path.len..];
+                        const line_column = file_path_buf_stream.getWritten()[file_path.len..];
                         if (line_column.len > 0) {
                             args_buf[i] = line_column;
                             i += 1;
@@ -304,7 +304,7 @@ pub const Editor = enum(u8) {
             else => {
                 if (file.len > 0) {
                     try file_path_buf_writer.writeAll(file);
-                    var file_path = file_path_buf_stream.getWritten();
+                    const file_path = file_path_buf_stream.getWritten();
                     args_buf[i] = file_path;
                     i += 1;
                 }

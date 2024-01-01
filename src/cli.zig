@@ -7,7 +7,6 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const constStrToU8 = bun.constStrToU8;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const root = @import("root");
@@ -79,11 +78,29 @@ pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver)
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     @setCold(true);
-    diag.name.long = "--target";
+    diag.name.long = "target";
     diag.arg = _target;
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
+
+pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
+pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
+pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const ShellCompletions = @import("./cli/shell_completions.zig");
+pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
+pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -251,7 +268,7 @@ pub const Arguments = struct {
         };
 
         defer config_file.close();
-        var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+        const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
                 @errorName(err),
@@ -266,7 +283,7 @@ pub const Arguments = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
         }
-        var original_level = ctx.log.level;
+        const original_level = ctx.log.level;
         defer {
             ctx.log.level = original_level;
         }
@@ -321,7 +338,7 @@ pub const Arguments = struct {
         } else {
             if (ctx.args.absolute_working_dir == null) {
                 var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = bun.getcwd(&secondbuf) catch return;
+                const cwd = bun.getcwd(&secondbuf) catch return;
 
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
@@ -358,7 +375,7 @@ pub const Arguments = struct {
             .allocator = allocator,
             .stop_after_positional_at = switch (cmd) {
                 .RunCommand => 2,
-                .AutoCommand => 1,
+                .AutoCommand, .RunAsNodeCommand => 1,
                 else => 0,
             },
         }) catch |err| {
@@ -464,7 +481,7 @@ pub const Arguments = struct {
 
         var opts: Api.TransformOptions = ctx.args;
 
-        var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
+        const defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
 
         if (defines_tuple.keys.len > 0) {
             opts.define = .{
@@ -473,7 +490,7 @@ pub const Arguments = struct {
             };
         }
 
-        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -497,7 +514,7 @@ pub const Arguments = struct {
         ctx.passthrough = args.remaining();
 
         // runtime commands
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
 
             if (args.flag("--hot")) {
@@ -593,11 +610,15 @@ pub const Arguments = struct {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
 
-        var output_dir: ?string = null;
-        var output_file: ?string = null;
+        const output_dir: ?string = null;
+        const output_file: ?string = null;
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
+
+            if (args.option("--public-path")) |public_path| {
+                ctx.bundler_options.public_path = public_path;
+            }
 
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
@@ -607,7 +628,7 @@ pub const Arguments = struct {
             if (args.options("--external").len > 0) {
                 var externals = try allocator.alloc([]u8, args.options("--external").len);
                 for (args.options("--external"), 0..) |external, i| {
-                    externals[i] = constStrToU8(external);
+                    externals[i] = @constCast(external);
                 }
                 opts.external = externals;
             }
@@ -736,10 +757,10 @@ pub const Arguments = struct {
             opts.entry_points = entry_points;
         }
 
-        var jsx_factory = args.option("--jsx-factory");
-        var jsx_fragment = args.option("--jsx-fragment");
-        var jsx_import_source = args.option("--jsx-import-source");
-        var jsx_runtime = args.option("--jsx-runtime");
+        const jsx_factory = args.option("--jsx-factory");
+        const jsx_fragment = args.option("--jsx-fragment");
+        const jsx_import_source = args.option("--jsx-import-source");
+        const jsx_runtime = args.option("--jsx-runtime");
         const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
@@ -765,18 +786,18 @@ pub const Arguments = struct {
             var default_import_source = "".*;
             if (opts.jsx == null) {
                 opts.jsx = Api.Jsx{
-                    .factory = constStrToU8(jsx_factory orelse &default_factory),
-                    .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
-                    .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
+                    .factory = (jsx_factory orelse &default_factory),
+                    .fragment = (jsx_fragment orelse &default_fragment),
+                    .import_source = (jsx_import_source orelse &default_import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };
             } else {
                 opts.jsx = Api.Jsx{
-                    .factory = constStrToU8(jsx_factory orelse opts.jsx.?.factory),
-                    .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
-                    .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
+                    .factory = (jsx_factory orelse opts.jsx.?.factory),
+                    .fragment = (jsx_fragment orelse opts.jsx.?.fragment),
+                    .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
@@ -986,6 +1007,14 @@ pub const ReservedCommand = struct {
 
 const AddCompletions = @import("./cli/add_completions.zig");
 
+/// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
+/// to pretend to be node.js by always choosing RunCommand with a relative filepath.
+///
+/// Examples of how this differs from bun alone:
+/// - `node build`               -> `bun run ./build`
+/// - `node scripts/postinstall` -> `bun run ./scripts/postinstall`
+pub var pretend_to_be_node = false;
+
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -1067,6 +1096,7 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
+            public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
@@ -1118,23 +1148,24 @@ pub const Command = struct {
         }
     };
 
+    pub fn isBunX(argv0: []const u8) bool {
+        const suffix = if (Environment.isWindows) ".exe" else "";
+
+        return strings.endsWithComptime(argv0, "bunx" ++ suffix) or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
+    }
+
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = bun.argv() };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
         // symlink is argv[0]
-        if (strings.endsWithComptime(argv0, "bunx"))
-            return .BunxCommand;
+        if (isBunX(argv0)) return .BunxCommand;
 
-        if (strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
-            std.debug.print("", .{});
+        if (strings.endsWithComptime(argv0, "node")) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
-        }
-
-        if (comptime Environment.isDebug) {
-            if (strings.endsWithComptime(argv0, "bunx-debug"))
-                return .BunxCommand;
+            pretend_to_be_node = true;
+            return .RunAsNodeCommand;
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
@@ -1244,45 +1275,6 @@ pub const Command = struct {
             }
         }
 
-        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-
-        const AddCommand = @import("./cli/add_command.zig").AddCommand;
-        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-        const CreateCommandExample = @import("./cli/create_command.zig").Example;
-        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-        const RunCommand = @import("./cli/run_command.zig").RunCommand;
-        const ShellCompletions = @import("./cli/shell_completions.zig");
-        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-
-        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-
-        if (comptime bun.fast_debug_build_mode) {
-            // _ = AddCommand;
-            // _ = BuildCommand;
-            // _ = CreateCommand;
-            _ = CreateListExamplesCommand;
-            // _ = InstallCommand;
-            // _ = LinkCommand;
-            // _ = UnlinkCommand;
-            // _ = InstallCompletionsCommand;
-            // _ = PackageManagerCommand;
-            // _ = RemoveCommand;
-            // _ = RunCommand;
-            // _ = ShellCompletions;
-            // _ = TestCommand;
-            // _ = UpdateCommand;
-            // _ = UpgradeCommand;
-            // _ = BunxCommand;
-        }
-
         // there's a bug with openSelfExe() on Windows
         if (comptime !bun.Environment.isWindows) {
             // bun build --compile entry point
@@ -1295,7 +1287,7 @@ pub const Command = struct {
                 };
 
                 ctx.args.target = Api.Target.bun;
-                var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
+                const argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
                 if (bun.argv().len > 1) {
                     for (argv, bun.argv()[1..]) |*dest, src| {
                         dest.* = bun.span(src);
@@ -1521,22 +1513,17 @@ pub const Command = struct {
                     }
                     break :brk false;
                 };
-                if (print_help) {
-                    Command.Tag.printHelp(.CreateCommand, true);
-                    Global.exit(0);
-                    return;
-                }
 
                 var template_name_start: usize = 0;
-                var positionals: [2]string = undefined;
+                var positionals: [2]string = .{ "", "" };
 
                 var positional_i: usize = 0;
 
                 if (args.len > 2) {
-                    var remainder = args[2..];
+                    const remainder = args[2..];
                     var remainder_i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        var slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
+                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
                         if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
                             if (positional_i == 0) {
                                 template_name_start = remainder_i + 2;
@@ -1545,6 +1532,16 @@ pub const Command = struct {
                             positional_i += 1;
                         }
                     }
+                }
+
+                if (print_help or
+                    // "bun create --"
+                    // "bun create -abc --"
+                    positional_i == 0)
+                {
+                    Command.Tag.printHelp(.CreateCommand, true);
+                    Global.exit(0);
+                    return;
                 }
 
                 const template_name = positionals[0];
@@ -1585,7 +1582,7 @@ pub const Command = struct {
 
                 const create_command_info = try CreateCommand.extractInfo(ctx);
                 const template = create_command_info.template;
-                var example_tag = create_command_info.example_tag;
+                const example_tag = create_command_info.example_tag;
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
@@ -1609,6 +1606,7 @@ pub const Command = struct {
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
+
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
                         return;
@@ -1616,6 +1614,12 @@ pub const Command = struct {
 
                     Global.exit(1);
                 }
+            },
+            .RunAsNodeCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .RunAsNodeCommand);
+                std.debug.assert(pretend_to_be_node);
+                try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
@@ -1721,7 +1725,7 @@ pub const Command = struct {
                         return;
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
 
@@ -1733,12 +1737,12 @@ pub const Command = struct {
                 }
 
                 if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> module not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Module not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> file not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
@@ -1747,7 +1751,7 @@ pub const Command = struct {
                 // if we get here, the command was not parsed
                 // or the user just ran `bun` with no arguments
                 if (ctx.positionals.len > 0) {
-                    Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                    Output.warn("failed to parse command\n", .{});
                 }
                 Output.flush();
                 try HelpCommand.exec(allocator);
@@ -1764,7 +1768,11 @@ pub const Command = struct {
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
+                var winResolver = resolve_path.PosixToWinNormalizer{};
+                break :brk bun.openFile(
+                    winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"),
+                    .{ .mode = .read_only },
+                );
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                 const file_pathZ = brk2: {
                     @memcpy(script_name_buf[0..file_path.len], file_path);
@@ -1786,7 +1794,7 @@ pub const Command = struct {
                 );
                 if (file_path.len == 0) return false;
                 script_name_buf[file_path.len] = 0;
-                var file_pathZ = script_name_buf[0..file_path.len :0];
+                const file_pathZ = script_name_buf[0..file_path.len :0];
                 break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
             }
         };
@@ -1796,7 +1804,7 @@ pub const Command = struct {
         Global.configureAllocator(.{ .long_running = true });
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+        const absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
@@ -1816,6 +1824,9 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
             Global.exit(1);
         };
         return true;
@@ -1837,6 +1848,7 @@ pub const Command = struct {
         PackageManagerCommand,
         RemoveCommand,
         RunCommand,
+        RunAsNodeCommand, // arg0 == 'node'
         TestCommand,
         UnlinkCommand,
         UpdateCommand,
@@ -1845,9 +1857,9 @@ pub const Command = struct {
         ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
-            return &comptime switch (cmd) {
+            return comptime &switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
-                .RunCommand => Arguments.run_params,
+                .RunCommand, .RunAsNodeCommand => Arguments.run_params,
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
@@ -1876,7 +1888,7 @@ pub const Command = struct {
                 Command.Tag.AutoCommand => {
                     HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
-                Command.Tag.RunCommand => {
+                .RunCommand, .RunAsNodeCommand => {
                     RunCommand_.printHelp(null);
                 },
 
@@ -1980,9 +1992,9 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
-                        \\<b>Environment variables:
+                        \\<b>Environment variables:<r>
                         \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
-                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default \"api.github.com\".<r>
+                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
                         \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
                     ;
 
@@ -2074,6 +2086,7 @@ pub const Command = struct {
             .BunxCommand = true,
             .AutoCommand = true,
             .RunCommand = true,
+            .RunAsNodeCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{

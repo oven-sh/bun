@@ -22,7 +22,7 @@ pub const Reader = struct {
             return error.EOF;
         }
 
-        var slice = this.remain[0..read_count];
+        const slice = this.remain[0..read_count];
 
         this.remain = this.remain[read_count..];
 
@@ -30,7 +30,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readAs(this: *Self, comptime T: type) !T {
-        if (!std.meta.trait.hasUniqueRepresentation(T)) {
+        if (!std.meta.hasUniqueRepresentation(T)) {
             @compileError(@typeName(T) ++ " must have unique representation.");
         }
 
@@ -85,7 +85,7 @@ pub const Reader = struct {
                         switch (Struct.layout) {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
-                                var slice = try this.read(sizeof * length);
+                                const slice = try this.read(sizeof * length);
                                 return std.mem.bytesAsSlice(T, slice);
                             },
                             else => {},
@@ -119,7 +119,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readInt(this: *Self, comptime T: type) !T {
-        var slice = try this.read(@sizeOf(T));
+        const slice = try this.read(@sizeOf(T));
 
         return std.mem.readIntSliceNative(T, slice);
     }
@@ -2895,6 +2895,9 @@ pub const Api = struct {
         /// exact
         exact: ?bool = null,
 
+        /// concurrent_scripts
+        concurrent_scripts: ?u32 = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2963,6 +2966,9 @@ pub const Api = struct {
                     },
                     20 => {
                         this.exact = try reader.readValue(bool);
+                    },
+                    21 => {
+                        this.concurrent_scripts = try reader.readValue(u32);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3052,6 +3058,10 @@ pub const Api = struct {
             if (this.exact) |exact| {
                 try writer.writeFieldID(20);
                 try writer.writeInt(@as(u8, @intFromBool(exact)));
+            }
+            if (this.concurrent_scripts) |concurrent_scripts| {
+                try writer.writeFieldID(21);
+                try writer.writeInt(concurrent_scripts);
             }
             try writer.endMessage();
         }

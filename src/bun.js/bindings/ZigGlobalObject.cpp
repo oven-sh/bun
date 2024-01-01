@@ -137,7 +137,7 @@
 #include "BunObject.h"
 #include "JSNextTickQueue.h"
 #include "NodeHTTP.h"
-
+#include "napi_external.h"
 using namespace Bun;
 
 extern "C" JSC__JSValue Bun__NodeUtil__jsParseArgs(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -1465,6 +1465,34 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength)
+{
+
+// Windows doesn't have mmap
+// This code should pretty much only be called on Linux.
+#if !OS(WINDOWS)
+    auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+
+    if (ptr == MAP_FAILED) {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto buffer = ArrayBuffer::createFromBytes(reinterpret_cast<char*>(ptr) + byteOffset, byteLength, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
+        munmap(ptr, totalLength);
+    }));
+
+    Structure* structure = globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default);
+
+    if (UNLIKELY(!structure)) {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTFMove(buffer)));
+#else
+    return JSC::JSValue::encode(JSC::JSValue {});
+#endif
+}
+
 extern "C" JSC__JSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1494,7 +1522,7 @@ extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* global
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    if (len > 0)
+    if (len > 0 && ptr != nullptr)
         memcpy(array->vector(), ptr, len);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
@@ -1618,6 +1646,8 @@ enum ReadableStreamTag : int32_t {
     // This is an ambiguous stream of bytes
     Bytes = 4,
 };
+
+extern "C" JSC_DECLARE_HOST_FUNCTION(BunString__getStringWidth);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1751,7 +1781,12 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "parseArgs"_s)),
                 JSC::JSFunction::create(vm, globalObject, 1, "parseArgs"_s, Bun__NodeUtil__jsParseArgs, ImplementationVisibility::Public), NoIntrinsic);
+
             return JSValue::encode(obj);
+        }
+
+        if (string == "getStringWidth"_s) {
+            return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 1, "getStringWidth"_s, BunString__getStringWidth, ImplementationVisibility::Public));
         }
 
         if (string == "pathToFileURL"_s) {
@@ -2920,6 +2955,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_JSSQLStatementStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::createJSSQLStatementStructure(init.owner));
+        });
+
     m_memoryFootprintStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3060,6 +3100,28 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     this->initGeneratedLazyClasses();
+
+    m_NapiExternalStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
+
+            init.set(
+                Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_NAPIFunctionStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(
+                Zig::createNAPIFunctionStructure(init.vm, init.owner));
+        });
+
+    m_NapiPrototypeStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
+
+            init.set(
+                Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
 
     m_cachedGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
@@ -3927,10 +3989,14 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_testMatcherUtilsObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
+    thisObject->m_NapiExternalStructure.visit(visitor);
+    thisObject->m_NapiPrototypeStructure.visit(visitor);
+    thisObject->m_NAPIFunctionStructure.visit(visitor);
 
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockResultStructure.visit(visitor);
@@ -4109,15 +4175,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     ErrorableString res;
     res.success = false;
 
-    if (key.isString()) {
-        if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
-            auto keyString = key.toWTFString(globalObject);
-            if (virtualModules->contains(keyString)) {
-                return JSC::Identifier::fromString(globalObject->vm(), keyString);
-            }
-        }
-    }
-
     BunString keyZ;
     if (key.isString()) {
         auto moduleName = jsCast<JSString*>(key)->value(globalObject);
@@ -4131,10 +4188,20 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         } else {
             keyZ = Bun::toStringRef(moduleName);
         }
+
     } else {
         keyZ = Bun::toStringRef(globalObject, key);
     }
     BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toStringRef(globalObject, referrer) : BunStringEmpty;
+
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyZ.toWTFString(), referrerZ.toWTFString())) {
+            return Identifier::fromString(globalObject->vm(), resolvedString.value());
+        }
+    } else {
+        ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
+    }
+
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();
@@ -4166,10 +4233,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
-    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
         auto keyString = moduleNameValue->value(globalObject);
-        if (virtualModules->contains(keyString)) {
-            auto resolvedIdentifier = JSC::Identifier::fromString(vm, keyString);
+        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(keyString, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
+            auto resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier,
                 JSC::jsUndefined(), parameters, JSC::jsUndefined());

@@ -150,6 +150,40 @@ describe("Readable", () => {
   });
 });
 
+describe("createReadStream", () => {
+  it("should allow the options argument to be omitted", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testNoOptions.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    let data = "";
+    stream.on("data", chunk => {
+      data += chunk.toString();
+    });
+    stream.on("end", () => {
+      expect(data).toBe(testData);
+      done();
+    });
+  });
+
+  it("should interpret the option argument as encoding if it's a string", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testEncodingArgument.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    let data = "";
+    stream.on("data", chunk => {
+      data += chunk.toString("base64");
+    });
+    stream.on("end", () => {
+      expect(data).toBe(btoa(testData));
+      done();
+    });
+  });
+});
+
 describe("Duplex", () => {
   it("should allow subclasses to be derived via .call() on class", () => {
     function Subclass(opts) {

@@ -516,6 +516,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -541,18 +542,58 @@ extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGloba
         return {};
     }
 
-    if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier == "."_s) {
+    auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         const URL& url = sourceOrigin.url();
-        if (url.protocolIsFile()) {
-            URL joinedURL = URL(url, specifier);
-            specifier = joinedURL.fileSystemPath();
-            specifierString = jsString(vm, specifier);
-        } else {
-            scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) cannot mock relative paths in non-files"_s));
-            return {};
+
+        if (specifier.startsWith("file:"_s)) {
+            URL fileURL = URL(url, specifier);
+            if (fileURL.isValid()) {
+                specifier = fileURL.fileSystemPath();
+                specifierString = jsString(vm, specifier);
+                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+                return;
+            } else {
+                scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
+                return;
+            }
         }
-    }
+
+        if (url.isValid() && url.protocolIsFile()) {
+            auto fromString = url.fileSystemPath();
+            BunString from = Bun::toString(fromString);
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true));
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+
+            if (result && result.isString()) {
+                auto* specifierStr = result.toString(globalObject);
+                if (specifierStr->length() > 0) {
+                    specifierString = specifierStr;
+                    specifier = specifierString->value(globalObject);
+                }
+            } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
+                // If module resolution fails, we try to resolve it relative to the current file
+                auto relativeURL = URL(url, specifier);
+
+                if (relativeURL.isValid()) {
+                    globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+
+                    if (relativeURL.protocolIsFile())
+                        specifier = relativeURL.fileSystemPath();
+                    else
+                        specifier = relativeURL.string();
+
+                    specifierString = jsString(vm, specifier);
+                }
+            }
+        }
+    };
+
+    resolveSpecifier();
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue callbackValue = callframe->argument(1);
     if (!callbackValue.isCell() || !callbackValue.isCallable()) {
@@ -738,6 +779,25 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
+std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path, const String& from)
+{
+    ASSERT(virtualModules);
+
+    if (this->mustDoExpensiveRelativeLookup) {
+        String joinedPath = path;
+
+        if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
+            auto url = WTF::URL::fileURLWithFileSystemPath(from);
+            ASSERT(url.isValid());
+            joinedPath = URL(url, path).fileSystemPath();
+        }
+
+        return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;
+    }
+
+    return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
+}
+
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
 {
     Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
@@ -848,7 +908,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
     };
 
-    if (!globalObject->onLoadPlugins.virtualModules) {
+    if (!globalObject->onLoadPlugins.hasVirtualModules()) {
         return fallback();
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
@@ -900,4 +960,4 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     return fallback();
 }
 
-}
+} // namespace Bun

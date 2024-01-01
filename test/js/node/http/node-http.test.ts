@@ -10,9 +10,11 @@ import {
   validateHeaderValue,
   ServerResponse,
   IncomingMessage,
+  OutgoingMessage,
 } from "node:http";
 
 import https from "node:https";
+import { EventEmitter } from "node:events";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -1109,6 +1111,62 @@ describe("server.address should be valid IP", () => {
       }
     });
   });
+  test("ServerResponse init", done => {
+    try {
+      const req = {};
+      const res = new ServerResponse(req);
+      expect(res.req).toBe(req);
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  test("ServerResponse reply", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    try {
+      const req = {};
+      const sendedText = "Bun\n";
+      const res = new ServerResponse(req, async (res: Response) => {
+        expect(await res.text()).toBe(sendedText);
+        doneRequest();
+      });
+      res.write(sendedText);
+      res.end();
+    } catch (err) {
+      doneRequest(err);
+    }
+  });
+  test("ServerResponse instanceof OutgoingMessage", () => {
+    expect(new ServerResponse({}) instanceof OutgoingMessage).toBe(true);
+  });
+  test("ServerResponse assign assignSocket", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    const waitSocket = createDone();
+    const doneSocket = createDone();
+    try {
+      const socket = new EventEmitter();
+      const res = new ServerResponse({});
+      res.once("socket", socket => {
+        expect(socket).toBe(socket);
+        waitSocket();
+      });
+      res.once("close", () => {
+        doneRequest();
+      });
+      res.assignSocket(socket);
+      setImmediate(() => {
+        expect(res.socket).toBe(socket);
+        expect(socket._httpMessage).toBe(res);
+        expect(() => res.assignSocket(socket)).toThrow("ServerResponse has an already assigned socket");
+        socket.emit("close");
+        doneSocket();
+      });
+    } catch (err) {
+      doneRequest(err);
+    }
+  });
 });
 
 it("should not accept untrusted certificates", async () => {
@@ -1555,4 +1613,48 @@ it("#6892", () => {
     expect(req.url).toBe(url);
     expect(req.method).toBeNull();
   }
+});
+
+it("#4415.1 ServerResponse es6", () => {
+  class Response extends ServerResponse {
+    constructor(req) {
+      super(req);
+    }
+  }
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.2 ServerResponse es5", () => {
+  function Response(req) {
+    ServerResponse.call(this, req);
+  }
+  Response.prototype = Object.create(ServerResponse.prototype);
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.3 Server es5", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`);
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+it("#4415.4 IncomingMessage es5", () => {
+  const im = Object.create(IncomingMessage.prototype);
+  IncomingMessage.call(im, { url: "/foo" });
+  expect(im.url).toBe("/foo");
 });

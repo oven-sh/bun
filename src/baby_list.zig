@@ -57,7 +57,7 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn clone(this: @This(), allocator: std.mem.Allocator) !@This() {
             var list_ = this.listManaged(allocator);
-            var copy = try list_.clone();
+            const copy = try list_.clone();
             return ListType{
                 .ptr = copy.items.ptr,
                 .len = @as(u32, @truncate(copy.items.len)),
@@ -74,14 +74,14 @@ pub fn BabyList(comptime Type: type) type {
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(cap);
-            var writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
+            const writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
             list_.items.len += cap;
             this.update(list_);
             return writable;
         }
 
         pub fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
-            var tail = this.ptr[this.len .. this.len + values.len];
+            const tail = this.ptr[this.len .. this.len + values.len];
             std.debug.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
             bun.copy(Type, tail, values);
             this.len += @as(u32, @truncate(values.len));
@@ -130,7 +130,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn fromSlice(allocator: std.mem.Allocator, items: []const Elem) !ListType {
-            var allocated = try allocator.alloc(Elem, items.len);
+            const allocated = try allocator.alloc(Elem, items.len);
             bun.copy(Elem, allocated, items);
 
             return ListType{
@@ -269,7 +269,7 @@ pub fn BabyList(comptime Type: type) type {
                 while (remain.len > 0) {
                     const orig_len = list_.items.len;
 
-                    var slice_ = list_.items.ptr[orig_len..list_.capacity];
+                    const slice_ = list_.items.ptr[orig_len..list_.capacity];
                     const result = strings.copyUTF16IntoUTF8WithBuffer(slice_, []const u16, remain, trimmed, out_len, true);
                     remain = remain[result.read..];
                     list_.items.len += @as(usize, result.written);

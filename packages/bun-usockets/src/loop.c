@@ -346,7 +346,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             }
 
             /* Such as epollerr epollhup */
-            if (error) {
+            if (error && s) {
                 /* Todo: decide what code we give here */
                 s = us_socket_close(0, s, 0, NULL);
                 return;

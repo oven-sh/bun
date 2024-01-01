@@ -380,7 +380,7 @@ const LazyStatus = enum {
     failed,
 };
 
-fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
+pub fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
     if (comptime Environment.isWindows) {
         return bun.windows.GetProcAddressA(handle, name);
     } else if (comptime Environment.isMac or Environment.isLinux) {

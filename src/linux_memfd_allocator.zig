@@ -27,7 +27,7 @@ pub const LinuxMemFdAllocator = struct {
     pub usingnamespace bun.New(LinuxMemFdAllocator);
 
     pub fn ref(this: *LinuxMemFdAllocator) void {
-        this.ref_count.fetchAdd(1, .Monotonic);
+        _ = this.ref_count.fetchAdd(1, .Monotonic);
     }
 
     pub fn deref(this: *LinuxMemFdAllocator) void {
@@ -44,7 +44,7 @@ pub const LinuxMemFdAllocator = struct {
         };
     }
 
-    pub fn asLinuxMemFdAllocator(allocator_: std.mem.Allocator) ?*LinuxMemFdAllocator {
+    pub fn from(allocator_: std.mem.Allocator) ?*LinuxMemFdAllocator {
         if (allocator_.vtable == AllocatorInterface.VTable) {
             return @alignCast(@ptrCast(allocator_.ptr));
         }
@@ -58,27 +58,20 @@ pub const LinuxMemFdAllocator = struct {
             return null;
         }
 
-        fn resize(
-            _: *anyopaque,
-            _: []u8,
-            _: u29,
-            _: usize,
-            _: u29,
-            _: usize,
-        ) ?usize {
-            return null;
+        fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
+            return false;
         }
 
         fn free(
             ptr: *anyopaque,
             buf: []u8,
-            _: u29,
+            _: u8,
             _: usize,
         ) void {
             var this: *LinuxMemFdAllocator = @alignCast(@ptrCast(ptr));
             defer this.deref();
-            bun.sys.munmap(@ptrCast(buf)).unwrap() catch |err| {
-                bun.Output.debugWarn("Failed to munmap memfd: {s}", .{@tagName(err.getErrno())});
+            bun.sys.munmap(@alignCast(@ptrCast(buf))).unwrap() catch |err| {
+                bun.Output.debugWarn("Failed to munmap memfd: {}", .{err});
             };
         }
 
@@ -95,7 +88,14 @@ pub const LinuxMemFdAllocator = struct {
         // size rounded up to nearest page
         size += (size + std.mem.page_size - 1) & std.mem.page_size;
 
-        switch (bun.sys.mmap(0, @min(size, this.size), std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.PRIVATE | 0, this.fd, offset)) {
+        switch (bun.sys.mmap(
+            null,
+            @min(size, this.size),
+            std.os.PROT.READ | std.os.PROT.WRITE,
+            std.os.MAP.PRIVATE | 0,
+            this.fd,
+            offset,
+        )) {
             .result => |slice| {
                 return .{
                     .result = bun.JSC.WebCore.Blob.ByteStore{
@@ -106,7 +106,7 @@ pub const LinuxMemFdAllocator = struct {
                     },
                 };
             },
-            else => |errno| {
+            .err => |errno| {
                 return .{ .err = errno };
             },
         }
@@ -117,7 +117,7 @@ pub const LinuxMemFdAllocator = struct {
             return false;
         }
 
-        return bytes.len > 1024 * 1024 * 2;
+        return bytes.len >= 1024 * 1024 * 2;
     }
 
     pub fn create(bytes: []const u8) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
@@ -127,7 +127,7 @@ pub const LinuxMemFdAllocator = struct {
 
         const rc = brk: {
             var label_buf: [128]u8 = undefined;
-            const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1)}) catch "";
+            const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .Monotonic)}) catch "";
             const code = std.os.linux.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
             bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
             break :brk code;
@@ -158,7 +158,7 @@ pub const LinuxMemFdAllocator = struct {
                         continue;
                     }
 
-                    bun.Output.debugWarn("Failed to write to memfd: {s}", .{@tagName(err.getErrno())});
+                    bun.Output.debugWarn("Failed to write to memfd: {}", .{err});
                     _ = bun.sys.close(fd);
                     return .{ .err = err };
                 },

@@ -4153,18 +4153,19 @@ pub const Blob = struct {
         };
     }
 
-    pub fn create(
+    pub fn tryCreate(
         bytes_: []const u8,
         allocator_: std.mem.Allocator,
         globalThis: *JSGlobalObject,
         was_string: bool,
-    ) Blob {
+    ) !Blob {
         if (comptime Environment.isLinux) {
             if (bun.linux.memfd_allocator.shouldUse(bytes_)) {
                 switch (bun.linux.memfd_allocator.create(bytes_)) {
                     .err => {},
                     .result => |result| {
                         const store = bun.new(
+                            Store,
                             Store{
                                 .data = .{
                                     .bytes = result,
@@ -4184,7 +4185,16 @@ pub const Blob = struct {
             }
         }
 
-        return createWithBytesAndAllocator(allocator_.dupe(u8, bytes_) catch bun.outOfMemory(), allocator_, globalThis, was_string);
+        return createWithBytesAndAllocator(try allocator_.dupe(u8, bytes_), allocator_, globalThis, was_string);
+    }
+
+    pub fn create(
+        bytes_: []const u8,
+        allocator_: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+        was_string: bool,
+    ) Blob {
+        return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
     }
 
     pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
@@ -4556,7 +4566,7 @@ pub const Blob = struct {
                         if (this.store) |store| {
                             const allocated_slice = store.data.bytes.allocatedSlice();
                             if (store.data == .bytes and bun.isSliceInBuffer(buf, allocated_slice)) {
-                                if (bun.linux.memfd_allocator.asLinuxMemFdAllocator(store.allocator)) |allocator| {
+                                if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
                                     allocator.ref();
                                     defer allocator.deref();
 
@@ -4741,7 +4751,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.BigUint64Array,
                 JSC.JSValue.JSType.DataView,
                 => {
-                    return Blob.create(top_value.asArrayBuffer(global).?.byteSlice(), bun.default_allocator, global, false);
+                    return try Blob.tryCreate(top_value.asArrayBuffer(global).?.byteSlice(), bun.default_allocator, global, false);
                 },
 
                 .DOMWrapper => {

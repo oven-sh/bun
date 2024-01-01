@@ -4562,10 +4562,10 @@ pub const Blob = struct {
             .clone => {
                 if (comptime Environment.isLinux) {
                     // If we can use a copy-on-write clone of the buffer, do so.
-                    if (bun.linux.memfd_allocator.shouldUse(buf)) {
-                        if (this.store) |store| {
+                    if (this.store) |store| {
+                        if (store.data == .bytes) {
                             const allocated_slice = store.data.bytes.allocatedSlice();
-                            if (store.data == .bytes and bun.isSliceInBuffer(buf, allocated_slice)) {
+                            if (bun.isSliceInBuffer(buf, allocated_slice)) {
                                 if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
                                     allocator.ref();
                                     defer allocator.deref();

@@ -442,7 +442,7 @@ pub fn shellParse(
 const ShellTask = struct {
     arena: std.heap.Arena,
     script: std.ArrayList(u8),
-    interpreter: Shell.Interpreter,
+    interpreter: Shell.InterpreterSync,
 
     pub const AsyncShellTask = JSC.ConcurrentPromiseTask(ShellTask);
 };

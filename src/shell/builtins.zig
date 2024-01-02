@@ -29,7 +29,6 @@ const shell = @import("./shell.zig");
 const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;
-const Cmd = shell.eval.Cmd;
 const Interpreter = shell.eval.Interpreter;
 const IO = shell.eval.IO;
 const closefd = shell.eval.closefd;
@@ -53,6 +52,11 @@ pub fn NewBuiltin(comptime EventLoopKind: JSC.EventLoopKind) type {
     const EventLoopTask = switch (EventLoopKind) {
         .js => JSC.ConcurrentTask,
         .mini => JSC.AnyTaskWithExtraContext,
+    };
+
+    const Cmd = switch (EventLoopKind) {
+        .js => bun.shell.interpret.Interpreter.Cmd,
+        .mini => bun.shell.interpret.InterpreterMini.Cmd,
     };
 
     return struct {

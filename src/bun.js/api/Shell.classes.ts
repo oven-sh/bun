@@ -11,7 +11,7 @@ export default [
     JSType: "0b11101110",
     proto: {
       run: {
-        fn: "run",
+        fn: "runFromJS",
         length: 0,
       },
       isRunning: {

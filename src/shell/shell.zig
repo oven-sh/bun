@@ -17,10 +17,13 @@ const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const Subprocess = bun.ShellSubprocess;
 
 pub const eval = @import("./interpreter.zig");
+pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
+
+pub const Subprocess = subproc.ShellSubprocess;
+pub const SubprocessMini = subproc.ShellSubprocessMini;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
@@ -195,7 +198,7 @@ pub const GlobalMini = struct {
 
 // FIXME avoid std.os if possible
 // FIXME error when command not found needs to be handled gracefully
-pub const Interpreter = struct {
+pub const InterpreterSync = struct {
     pub const ast = AST;
     arena: *bun.ArenaAllocator,
     allocator: Allocator,
@@ -516,7 +519,7 @@ pub const Interpreter = struct {
         }
     };
 
-    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject, jsobjs: []JSValue) !Interpreter {
+    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject, jsobjs: []JSValue) !InterpreterSync {
         const allocator = arena.allocator();
         const export_env = brk: {
             var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
@@ -547,7 +550,7 @@ pub const Interpreter = struct {
             },
         };
 
-        const interpreter: Interpreter = .{
+        const interpreter: InterpreterSync = .{
             .arena = arena,
             .allocator = allocator,
             .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
@@ -564,8 +567,8 @@ pub const Interpreter = struct {
         return interpreter;
     }
 
-    pub fn interpret(self: *Interpreter, script: ast.Script) anyerror!void {
-        var stdio = Interpreter.default_io();
+    pub fn interpret(self: *InterpreterSync, script: ast.Script) anyerror!void {
+        var stdio = InterpreterSync.default_io();
         for (script.stmts) |*stmt| {
             for (stmt.exprs) |*expr| {
                 _ = try self.interpret_expr(expr, &stdio);
@@ -578,7 +581,7 @@ pub const Interpreter = struct {
     }
 
     fn interpret_expr(
-        self: *Interpreter,
+        self: *InterpreterSync,
         expr: *const ast.Expr,
         io: *IO,
     ) anyerror!bool {
@@ -595,7 +598,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpret_assign(self: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) anyerror!void {
+    fn interpret_assign(self: *InterpreterSync, assign: *const ast.Assign, assign_ctx: AssignCtx) anyerror!void {
         const brace_expansion = assign.value.has_brace_expansion();
         const value = brk: {
             const value = try self.eval_atom(&assign.value);
@@ -612,7 +615,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpret_cond(self: *Interpreter, left: *const ast.Expr, right: *const ast.Expr, op: ast.Conditional.Op, io: *IO) anyerror!bool {
+    fn interpret_cond(self: *InterpreterSync, left: *const ast.Expr, right: *const ast.Expr, op: ast.Conditional.Op, io: *IO) anyerror!bool {
         const success = try self.interpret_expr(left, io);
         switch (op) {
             .And => {
@@ -625,7 +628,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) anyerror!bool {
+    fn interpret_pipeline(self: *InterpreterSync, pipeline: *const ast.Pipeline, io: *IO) anyerror!bool {
         const cmd_count = brk: {
             var count: usize = 0;
             for (pipeline.items) |*item| {
@@ -686,13 +689,13 @@ pub const Interpreter = struct {
                 // cmd1 | cmd2 | cmd3
                 // cmd1 -> cmd2 -> cmd3
                 // cmd1 -> cmd2 -> cmd3 -> cmd4
-                var file_to_write_to = Interpreter.pipeline_file_to_write(
+                var file_to_write_to = InterpreterSync.pipeline_file_to_write(
                     pipes,
                     i,
                     cmd_count,
                     io,
                 );
-                var file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
+                var file_to_read_from = InterpreterSync.pipeline_file_to_read(pipes, i, io);
 
                 var kind: ?Cmd.Kind = null;
                 defer {
@@ -754,7 +757,7 @@ pub const Interpreter = struct {
         return .{ .fd = pipes[proc_idx - 1][0] };
     }
 
-    pub fn wait(this: *Interpreter, jsc_vm: *JSC.VirtualMachine, cmd: *Cmd) !bool {
+    pub fn wait(this: *InterpreterSync, jsc_vm: *JSC.VirtualMachine, cmd: *Cmd) !bool {
         return switch (cmd.*) {
             .subproc => {
                 return try Cmd.waitSubproc(cmd.subproc, jsc_vm);
@@ -766,7 +769,7 @@ pub const Interpreter = struct {
         };
     }
 
-    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO, comptime in_cmd_subst: bool) !Cmd {
+    fn init_cmd(self: *InterpreterSync, cmd: *const ast.Cmd, io: *IO, comptime in_cmd_subst: bool) !Cmd {
         self.cmd_local_env.clearRetainingCapacity();
         for (cmd.assigns) |*assign| {
             try self.interpret_assign(assign, .cmd);
@@ -894,7 +897,7 @@ pub const Interpreter = struct {
     }
 
     fn init_builtin(
-        self: *Interpreter,
+        self: *InterpreterSync,
         kind: Builtin.Kind,
         args: std.ArrayList(?[*:0]const u8),
         io_: *IO,
@@ -982,27 +985,27 @@ pub const Interpreter = struct {
         };
     }
 
-    fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !bool {
+    fn interpret_cmd(self: *InterpreterSync, cmd: *const ast.Cmd, io: *IO) !bool {
         var subcmd = try self.init_cmd(cmd, io, false);
         defer subcmd.deinit(false);
         return try self.interpret_cmd_impl(&subcmd);
     }
 
-    fn interpret_cmd_impl(self: *Interpreter, cmd: *Cmd) !bool {
+    fn interpret_cmd_impl(self: *InterpreterSync, cmd: *Cmd) !bool {
         return switch (cmd.*) {
             .subproc => try self.interpret_subproc(cmd.subproc),
             .builtin => try self.interpret_builtin(&cmd.builtin),
         };
     }
 
-    fn interpret_subproc(self: *Interpreter, subprocess: *Subprocess) !bool {
+    fn interpret_subproc(self: *InterpreterSync, subprocess: *Subprocess) !bool {
         log("Interpret cmd", .{});
         const jsc_vm = self.globalThis.bunVM();
         return Cmd.waitSubproc(subprocess, jsc_vm);
     }
 
     fn interpret_builtin(
-        self: *Interpreter,
+        self: *InterpreterSync,
         bltn: *Builtin,
     ) !bool {
 
@@ -1013,7 +1016,7 @@ pub const Interpreter = struct {
         return exit_code == 0;
     }
 
-    fn interpret_builtin_impl(self: *Interpreter, bltn: *Builtin) !u8 {
+    fn interpret_builtin_impl(self: *InterpreterSync, bltn: *Builtin) !u8 {
         return switch (bltn.kind) {
             .@"export" => try self.interpret_builtin_export(bltn),
             .echo => try self.interpret_builtin_echo(bltn),
@@ -1024,7 +1027,7 @@ pub const Interpreter = struct {
         };
     }
 
-    fn interpret_builtin_rm(self: *Interpreter, bltn: *Builtin) !u8 {
+    fn interpret_builtin_rm(self: *InterpreterSync, bltn: *Builtin) !u8 {
         const args = bltn.argsSlice();
         if (args.len == 0) {
             try bltn.write_err(&bltn.stderr, .rm, "missing operand", .{});
@@ -1062,7 +1065,7 @@ pub const Interpreter = struct {
         return rm.exec();
     }
 
-    fn interpret_builtin_which(self: *Interpreter, bltn: *Builtin) !u8 {
+    fn interpret_builtin_which(self: *InterpreterSync, bltn: *Builtin) !u8 {
         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const args = bltn.argsSlice();
         if (args.len == 0) {
@@ -1082,7 +1085,7 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    fn interpret_builtin_pwd(self: *Interpreter, bltn: *Builtin) !u8 {
+    fn interpret_builtin_pwd(self: *InterpreterSync, bltn: *Builtin) !u8 {
         const args = bltn.argsSlice();
         if (args.len > 0) {
             try bltn.write_err(&bltn.stderr, .pwd, "too many arguments", .{});
@@ -1097,7 +1100,7 @@ pub const Interpreter = struct {
     /// - `cd` by itself or `cd ~` will always put the user in their home directory.
     /// - `cd ~username` will put the user in the home directory of the specified user
     /// - `cd -` will put the user in the previous directory
-    fn interpret_builtin_cd(self: *Interpreter, bltn: *Builtin) !u8 {
+    fn interpret_builtin_cd(self: *InterpreterSync, bltn: *Builtin) !u8 {
         const args = bltn.argsSlice();
         if (args.len > 1) {
             try bltn.write_err(&bltn.stderr, .cd, "too many arguments", .{});
@@ -1119,7 +1122,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpret_builtin_echo(self: *Interpreter, bltn: *Builtin) !u8 {
+    fn interpret_builtin_echo(self: *InterpreterSync, bltn: *Builtin) !u8 {
         const args = bltn.argsSlice();
         var output = std.ArrayList(u8).init(self.allocator);
         const args_len = args.len;
@@ -1136,7 +1139,7 @@ pub const Interpreter = struct {
     }
 
     fn interpret_builtin_export(
-        self: *Interpreter,
+        self: *InterpreterSync,
         bltn: *Builtin,
     ) !u8 {
         const args = bltn.argsSlice();
@@ -1216,7 +1219,7 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    fn get_homedir(self: *Interpreter) [:0]const u8 {
+    fn get_homedir(self: *InterpreterSync) [:0]const u8 {
         if (comptime bun.Environment.isWindows) {
             if (self.export_env.get("USERPROFILE")) |env|
                 return env;
@@ -1227,7 +1230,7 @@ pub const Interpreter = struct {
         return "unknown";
     }
 
-    fn change_cwd(self: *Interpreter, new_cwd_: [:0]const u8, bltn: *Builtin, comptime kind: Builtin.Kind) !u8 {
+    fn change_cwd(self: *InterpreterSync, new_cwd_: [:0]const u8, bltn: *Builtin, comptime kind: Builtin.Kind) !u8 {
         const new_cwd: [:0]const u8 = brk: {
             if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
 
@@ -1294,7 +1297,7 @@ pub const Interpreter = struct {
     /// 2. echo * hi
     /// 3. echo <expanded glob output> hi
     fn eval_atom(
-        self: *Interpreter,
+        self: *InterpreterSync,
         atom: *const ast.Atom,
     ) !MaybeManyStrings {
         if (atom.has_brace_expansion()) {
@@ -1308,7 +1311,7 @@ pub const Interpreter = struct {
     }
 
     fn eval_atom_with_out(
-        self: *Interpreter,
+        self: *InterpreterSync,
         comptime for_spawn: bool,
         atom: *const ast.Atom,
         out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
@@ -1331,7 +1334,7 @@ pub const Interpreter = struct {
     }
 
     fn eval_atom_with_glob_expansions(
-        self: *Interpreter,
+        self: *InterpreterSync,
         comptime for_spawn: bool,
         atom: *const ast.Atom,
         out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
@@ -1342,7 +1345,7 @@ pub const Interpreter = struct {
     }
 
     fn expand_glob_pattern(
-        self: *Interpreter,
+        self: *InterpreterSync,
         comptime for_spawn: bool,
         pattern: []const u8,
         out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
@@ -1395,7 +1398,7 @@ pub const Interpreter = struct {
     }
 
     fn eval_atom_with_brace_expansion(
-        self: *Interpreter,
+        self: *InterpreterSync,
         comptime for_spawn: bool,
         atom: *const ast.Atom,
         out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
@@ -1440,7 +1443,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn eval_atom_no_brace_expansion(self: *Interpreter, atom: *const ast.Atom) anyerror![:0]const u8 {
+    fn eval_atom_no_brace_expansion(self: *InterpreterSync, atom: *const ast.Atom) anyerror![:0]const u8 {
         var has_unknown = false;
         const string_size = self.eval_atom_size_hint(atom, &has_unknown);
         if (!has_unknown) {
@@ -1480,7 +1483,7 @@ pub const Interpreter = struct {
     }
 
     fn eval_atom_compound_no_brace_expansion(
-        self: *Interpreter,
+        self: *InterpreterSync,
         atom: *const ast.CompoundAtom,
         str_list: *std.ArrayList(u8),
         comptime known_size: bool,
@@ -1494,7 +1497,7 @@ pub const Interpreter = struct {
     }
 
     fn eval_atom_simpl(
-        self: *Interpreter,
+        self: *InterpreterSync,
         atom: *const ast.SimpleAtom,
         str_list: *std.ArrayList(u8),
         comptime known_size: bool,
@@ -1565,8 +1568,8 @@ pub const Interpreter = struct {
         };
     }
 
-    fn eval_atom_cmd_subst(self: *Interpreter, cmd: *const ast.Cmd, array_list: *std.ArrayList(u8)) !void {
-        var io = Interpreter.default_io();
+    fn eval_atom_cmd_subst(self: *InterpreterSync, cmd: *const ast.Cmd, array_list: *std.ArrayList(u8)) !void {
+        var io = InterpreterSync.default_io();
         io.stdout = .pipe;
         var subcmd = try self.init_cmd(cmd, &io, true);
         defer subcmd.deinit(false);
@@ -1589,7 +1592,7 @@ pub const Interpreter = struct {
         try array_list.appendSlice(trimmed);
     }
 
-    fn eval_var(self: *const Interpreter, label: []const u8) []const u8 {
+    fn eval_var(self: *const InterpreterSync, label: []const u8) []const u8 {
         const value = self.shell_env.get(label) orelse brk: {
             break :brk self.globalThis.bunVM().bundler.env.map.get(label) orelse return "";
         };
@@ -1598,7 +1601,7 @@ pub const Interpreter = struct {
 
     /// Returns the size of the atom when expanded.
     /// If the calculation cannot be computed trivially (cmd substitution, brace expansion), this value is not accurate and `has_unknown` is set to true
-    fn eval_atom_size_hint(self: *const Interpreter, atom: *const ast.Atom, has_unknown: *bool) usize {
+    fn eval_atom_size_hint(self: *const InterpreterSync, atom: *const ast.Atom, has_unknown: *bool) usize {
         return switch (@as(ast.Atom.Tag, atom.*)) {
             .simple => self.eval_atom_size_simple(&atom.simple, has_unknown),
             .compound => {
@@ -1615,7 +1618,7 @@ pub const Interpreter = struct {
         };
     }
 
-    fn eval_atom_size_simple(self: *const Interpreter, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
+    fn eval_atom_size_simple(self: *const InterpreterSync, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
         return switch (simple.*) {
             .Text => |txt| txt.len,
             .Var => |label| self.eval_var(label).len,
@@ -3390,7 +3393,7 @@ const CmdEnvIter = struct {
 };
 
 pub const Rm = struct {
-    const Builtin = Interpreter.Builtin;
+    const Builtin = InterpreterSync.Builtin;
     const IO = Builtin.BuiltinIO;
 
     allocator: Allocator,

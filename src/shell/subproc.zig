@@ -19,14 +19,17 @@ const uws = bun.uws;
 
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 
-const ShellCmd = @import("./interpreter.zig").Cmd;
-
 const util = @import("./util.zig");
 
-pub const ShellSubprocess = NewShellSubprocess(.js);
-pub const ShellSubprocessMini = NewShellSubprocess(.mini);
+pub const Stdio = util.Stdio;
 
-pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
+// pub const ShellSubprocess = NewShellSubprocess(.js);
+// pub const ShellSubprocessMini = NewShellSubprocess(.mini);
+
+pub const ShellSubprocess = NewShellSubprocess(.js, bun.shell.interpret.Interpreter.Cmd);
+pub const ShellSubprocessMini = NewShellSubprocess(.mini, bun.shell.interpret.InterpreterMini.Cmd);
+
+pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime ShellCmd: type) type {
     const EventLoopRef = switch (EventLoopKind) {
         .js => *JSC.EventLoop,
         .mini => *JSC.MiniEventLoop,
@@ -51,6 +54,12 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
         .js => bun.shell.GlobalJS,
         .mini => bun.shell.GlobalMini,
     };
+
+    // const ShellCmd = switch (EventLoopKind) {
+    //     .js => bun.shell.interpret.Interpreter.Cmd,
+    //     .mini => bun.shell.interpret.InterpreterMini.Cmd,
+    // };
+    // const ShellCmd = bun.shell.interpret.NewInterpreter(EventLoopKind);
 
     return struct {
         const Subprocess = @This();
@@ -99,7 +108,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
         // };
 
         pub const OutKind = util.OutKind;
-        pub const Stdio = util.Stdio;
+        // pub const Stdio = util.Stdio;
 
         pub const Flags = packed struct(u3) {
             is_sync: bool = false,

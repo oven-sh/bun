@@ -345,12 +345,11 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
-const shell_interpreter = @import("../shell/interpreter.zig");
-const ShellGlobTask = shell_interpreter.ShellGlobTask;
-const ShellRmTask = shell_interpreter.Builtin.Rm.ShellRmTask;
-const ShellLsTask = shell_interpreter.Builtin.Ls.ShellLsTask;
-const ShellMvCheckTargetTask = shell_interpreter.Builtin.Mv.ShellMvCheckTargetTask;
-const ShellMvBatchedTask = shell_interpreter.Builtin.Mv.ShellMvBatchedTask;
+const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
+const ShellRmTask = bun.shell.interpret.Builtin.Rm.ShellRmTask;
+const ShellLsTask = bun.shell.interpret.Builtin.Ls.ShellLsTask;
+const ShellMvCheckTargetTask = bun.shell.interpret.Builtin.Mv.ShellMvCheckTargetTask;
+const ShellMvBatchedTask = bun.shell.interpret.Builtin.Mv.ShellMvBatchedTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{

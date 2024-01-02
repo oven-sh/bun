@@ -974,7 +974,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     ResolvedSource source,
     bool isBuiltIn)
 {
-    JSCommonJSModule* moduleObject;
+    JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
     JSValue specifierValue = Bun::toJS(globalObject, source.specifier);

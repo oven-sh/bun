@@ -435,7 +435,7 @@ pub const SocketConfig = struct {
             return null;
         }
 
-        const handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
+        var handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
             hostname_or_unix.deinit();
             return null;
         };
@@ -443,6 +443,8 @@ pub const SocketConfig = struct {
         if (opts.getTruthy(globalObject, "data")) |default_data_value| {
             default_data = default_data_value;
         }
+
+        handlers.protect();
 
         return SocketConfig{
             .hostname_or_unix = hostname_or_unix,
@@ -547,7 +549,7 @@ pub const Listener = struct {
             return .zero;
         };
 
-        var prev_handlers = this.handlers;
+        var prev_handlers = &this.handlers;
         prev_handlers.unprotect();
         this.handlers = handlers; // TODO: this is a memory leak
         this.handlers.protect();
@@ -579,7 +581,7 @@ pub const Listener = struct {
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
         var ssl = socket_config.ssl;
-        var handlers = socket_config.handlers;
+        var handlers = &socket_config.handlers;
         var protos: ?[]const u8 = null;
         const exclusive = socket_config.exclusive;
         handlers.is_server = true;
@@ -714,7 +716,7 @@ pub const Listener = struct {
         };
 
         var socket = Listener{
-            .handlers = handlers,
+            .handlers = handlers.*,
             .connection = connection,
             .ssl = ssl_enabled,
             .socket_context = socket_context,
@@ -837,6 +839,7 @@ pub const Listener = struct {
         this.poll_ref.unref(this.handlers.vm);
         std.debug.assert(this.listener == null);
         std.debug.assert(this.handlers.active_connections == 0);
+        this.handlers.unprotect();
 
         if (this.socket_context) |ctx| {
             ctx.deinit(this.ssl);
@@ -925,8 +928,6 @@ pub const Listener = struct {
         const ssl_enabled = ssl != null;
         defer if (ssl != null) ssl.?.deinit();
 
-        handlers.protect();
-
         const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
 
         globalObject.bunVM().eventLoop().ensureWaker();
@@ -938,6 +939,7 @@ pub const Listener = struct {
                 .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
             };
             exception.* = err.toErrorInstance(globalObject).asObjectRef();
+            handlers.unprotect();
             return .zero;
         };
 

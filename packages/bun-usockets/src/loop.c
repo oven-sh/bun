@@ -207,8 +207,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
     #endif
             }
             cb->cb(cb->cb_expects_the_loop ? (struct us_internal_callback_t *) cb->loop : (struct us_internal_callback_t *) &cb->p);
+            break;
         }
-        break;
     case POLL_TYPE_SEMI_SOCKET: {
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
@@ -220,6 +220,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     /* Emit error, close without emitting on_close */
                     s->context->on_connect_error(s, 0);
                     us_socket_close_connecting(0, s);
+                    s = NULL;
                 } else {
                     /* All sockets poll for readable */
                     us_poll_change(p, s->context->loop, LIBUS_SOCKET_READABLE);
@@ -274,8 +275,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
                 }
             }
-        }
         break;
+    }
     case POLL_TYPE_SOCKET_SHUT_DOWN:
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
@@ -288,7 +289,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
 
                 s = s->context->on_writable(s);
 
-                if (us_socket_is_closed(0, s)) {
+                if (!s || us_socket_is_closed(0, s)) {
                     return;
                 }
 
@@ -346,13 +347,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             }
 
             /* Such as epollerr epollhup */
-            if (error) {
+            if (error && s) {
                 /* Todo: decide what code we give here */
                 s = us_socket_close(0, s, 0, NULL);
                 return;
             }
+            break;
         }
-        break;
     }
 }
 

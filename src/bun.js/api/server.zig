@@ -3651,6 +3651,7 @@ pub const ServerWebSocket = struct {
     opened: bool = false,
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
+    pub usingnamespace bun.New(ServerWebSocket);
 
     const log = Output.scoped(.WebSocketServer, false);
 
@@ -3958,7 +3959,7 @@ pub const ServerWebSocket = struct {
 
     pub fn finalize(this: *ServerWebSocket) callconv(.C) void {
         log("finalize", .{});
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 
     pub fn publish(
@@ -5077,11 +5078,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             resp.clearAborted();
 
-            const ws = this.vm.allocator.create(ServerWebSocket) catch return .zero;
-            ws.* = .{
+            data_value.ensureStillAlive();
+            const ws = ServerWebSocket.new(.{
                 .handler = &this.config.websocket.?.handler,
                 .this_value = data_value,
-            };
+            });
+            data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
             defer sec_websocket_protocol_str.deinit();

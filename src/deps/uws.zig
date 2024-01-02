@@ -764,6 +764,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             @field(holder, socket_field_name) = adopted;
             return holder;
         }
+
+        pub fn adoptPtr(
+            socket: *Socket,
+            socket_ctx: *SocketContext,
+            comptime Context: type,
+            comptime socket_field_name: []const u8,
+            ctx: *Context,
+        ) bool {
+            var adopted = ThisSocket{ .socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(*Context)) orelse return false };
+            const holder = adopted.ext(*anyopaque) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                _ = us_socket_close(comptime ssl_int, socket, 0, null);
+                return false;
+            };
+            holder.* = ctx;
+            @field(ctx, socket_field_name) = adopted;
+            return true;
+        }
     };
 }
 

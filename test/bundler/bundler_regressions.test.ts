@@ -4,6 +4,26 @@ import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
+  // https://x.com/jeroendotdot/status/1740651288239460384?s=46&t=0Uhw6mmGT650_9M2pXUsCw
+  itBundled("regression/PublicPathCLIFlagNotWorking", {
+    files: {
+      "/entry.js": `
+      import foo from './1.png';
+      if (!foo.startsWith("https://example.com/foo")) {
+        throw new Error("Unexpected public path: " + foo);
+      }
+      `,
+      "/1.png": "abcdefgh",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    publicPath: "https://example.com/foo",
+
+    run: {
+      file: "/out/entry.js",
+    },
+  });
+
   // https://github.com/oven-sh/bun/issues/2946
   itBundled("regression/InvalidIdentifierInFileName#2946", {
     files: {

@@ -312,6 +312,9 @@ pub const ArrayBuffer = extern struct {
         return buffer_value;
     }
 
+    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize) JSC.JSValue;
+    pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
+
     pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
@@ -1399,6 +1402,19 @@ pub fn wrapStaticMethod(
                             };
                         } else {
                             args[i] = null;
+                        }
+                    },
+                    JSC.Node.BlobOrStringOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
                         }
                     },
                     JSC.ArrayBuffer => {

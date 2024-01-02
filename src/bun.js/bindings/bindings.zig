@@ -4168,7 +4168,7 @@ pub const JSValue = enum(JSValueReprInt) {
         const type_of_value = this.jsType();
         // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
         // Map and Set are not considered as object in jest-extended
-        if (type_of_value.isMap() or type_of_value.isSet()) {
+        if (type_of_value.isMap() or type_of_value.isSet() or this.isRegExp() or this.isDate()) {
             return false;
         }
 

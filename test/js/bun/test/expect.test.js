@@ -3213,6 +3213,12 @@ describe("expect()", () => {
     // jest-extended return false for Symbol
     expect(Symbol("a")).not.toBeEmptyObject();
     expect(Symbol()).not.toBeEmptyObject();
+
+    // jest-extended return false for Date
+    expect(new Date()).not.toBeEmptyObject();
+
+    // jest-extended return false for RegExp
+    expect(/(foo|bar)/g).not.toBeEmptyObject();
   });
 
   test("toBeNil()", () => {

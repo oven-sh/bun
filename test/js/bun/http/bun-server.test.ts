@@ -284,6 +284,7 @@ describe("Server", () => {
 
   test("server.fetch should work with a string", async () => {
     const server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response("Hello World!");
       },
@@ -301,6 +302,7 @@ describe("Server", () => {
 
   test("server.fetch should work with a Request object", async () => {
     const server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response("Hello World!");
       },
@@ -371,13 +373,14 @@ describe("Server", () => {
   });
 
   test("should be able to parse source map and fetch small stream", async () => {
-    const proc = Bun.spawn({
+    const { stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
       cwd: import.meta.dir,
       env: bunEnv,
+      stderr: "pipe",
     });
-    await proc.exited;
-    expect(proc.exitCode).toBe(0);
+    expect(stderr).toBeEmpty();
+    expect(exitCode).toBe(0);
   });
 
   test("handshake failures should not impact future connections", async () => {

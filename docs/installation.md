@@ -17,7 +17,7 @@ $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 $ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
 ```
 
-```bash#NPM
+```bash#npm
 $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
@@ -39,17 +39,16 @@ $ proto install bun
 
 ### Windows
 
-Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
 
-- `bun <file>`
-- `bun run <file>`
+To install, paste this into your terminal (Powershell or `cmd.exe`):
 
-The test runner, package manager, and bundler are still under development. The following commands have been disabled.
+```powershell
+# WARNING: No stability is guaranteed on the experimental Windows builds
+powershell -c "iwr bun.sh/install.ps1|iex"
+```
 
-- `bun test`
-- `bun install/add/remove`
-- `bun link/unlink`
-- `bun build`
+For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
 
 ## Docker
 

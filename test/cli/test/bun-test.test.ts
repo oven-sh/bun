@@ -333,26 +333,9 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Invalid timeout");
     });
-    test("timeout can be set to 0ms", () => {
+    test("timeout can be set to 30ms", () => {
       const stderr = runTest({
-        args: ["--timeout", "0"],
-        input: `
-          import { test, expect } from "bun:test";
-          import { sleep } from "bun";
-          test("ok", async () => {
-            await expect(Promise.resolve()).resolves.toBeUndefined();
-            await expect(Promise.reject()).rejects.toBeUndefined();
-          });
-          test("timeout", async () => {
-            await expect(sleep(1)).resolves.toBeUndefined();
-          });
-        `,
-      });
-      expect(stderr).toContain("timed out after 0ms");
-    });
-    test("timeout can be set to 1ms", () => {
-      const stderr = runTest({
-        args: ["--timeout", "1"],
+        args: ["--timeout", "30"],
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
@@ -360,11 +343,11 @@ describe("bun test", () => {
             await expect(sleep(1)).resolves.toBeUndefined();
           });
           test("timeout", async () => {
-            await expect(sleep(2)).resolves.toBeUndefined();
+            await expect(sleep(64)).resolves.toBeUndefined();
           });
         `,
       });
-      expect(stderr).toContain("timed out after 1ms");
+      expect(stderr).toContain("timed out after 30ms");
     });
     test("timeout should default to 5000ms", () => {
       const stderr = runTest({

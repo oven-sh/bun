@@ -11,8 +11,8 @@ has_exec() {
   which "$1" >/dev/null 2>&1 || return 1
 }
 fail() {
+  has_failure=1
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
-  exit 1
 }
 
 LLVM_VERSION=16
@@ -42,10 +42,14 @@ $(
 ) || fail "Rust and Cargo version must be installed (minimum version 1.57)"
 has_exec "go" || fail "'go' is missing"
 
-has_exec "pkg-config" || fail "'pkg-config' is missing"
+has_exec "${PKG_CONFIG:-pkg-config}" || fail "'pkg-config' is missing"
 has_exec "automake" || fail "'automake' is missing"
 has_exec "perl" || fail "'perl' is missing"
 has_exec "ruby" || fail "'ruby' is missing"
+
+if [ -n "$has_failure" ]; then
+  exit 1
+fi
 
 rm -f .vscode/clang++
 ln -s "$CXX" .vscode/clang++

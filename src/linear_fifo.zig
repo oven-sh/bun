@@ -133,10 +133,10 @@ pub fn LinearFifo(
             if (self.buf.len >= size) return;
             if (buffer_type == .Dynamic) {
                 const new_size = if (powers_of_two) math.ceilPowerOfTwo(usize, size) catch return error.OutOfMemory else size;
-                var buf = try self.allocator.alloc(T, new_size);
+                const buf = try self.allocator.alloc(T, new_size);
                 if (self.count > 0) {
                     var new_bytes = std.mem.sliceAsBytes(buf);
-                    var old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
+                    const old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
                     @memcpy(new_bytes[0..old_bytes.len], old_bytes);
                     self.allocator.free(self.buf);
                 }

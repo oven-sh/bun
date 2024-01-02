@@ -166,7 +166,8 @@ test(function urlSearchParamsReuse() {
     url.host = "baz.qat";
     assert(sp === url.searchParams, "Search params should be reused.");
 });
-test.ignore(function urlBackSlashes() {
+// TODO: bug in webkit WTF::URLParser
+test.todo(function urlBackSlashes() {
     const url = new URL("https:\\\\foo:bar@baz.qat:8000\\qux\\quux?foo=bar&baz=12#qat");
     assertEquals(url.href, "https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
 });
@@ -186,11 +187,11 @@ test(function urlRequireHost() {
     assertThrows(()=>new URL("ws:///"), TypeError, "Invalid URL");
     assertThrows(()=>new URL("wss:///"), TypeError, "Invalid URL");
 });
-test.ignore(function urlDriveLetter() {
+test(function urlDriveLetter() {
     assertEquals(new URL("file:///C:").href, "file:///C:");
     assertEquals(new URL("file:///C:/").href, "file:///C:/");
     assertEquals(new URL("file:///C:/..").href, "file:///C:/");
-    assertEquals(new URL("file://foo/C:").href, "file:///C:");
+    // assertEquals(new URL("file://foo/C:").href, "file:///C:"); // this is against browser behavior
 });
 test(function urlHostnameUpperCase() {
     assertEquals(new URL("http://EXAMPLE.COM").href, "http://example.com/");
@@ -201,9 +202,10 @@ test(function urlEmptyPath() {
     assertEquals(new URL("file://foo").pathname, "/");
     assertEquals(new URL("abcd://foo").pathname, "");
 });
-test.ignore(function urlPathRepeatedSlashes() {
+test(function urlPathRepeatedSlashes() {
     assertEquals(new URL("http://foo//bar//").pathname, "//bar//");
-    assertEquals(new URL("file://foo///bar//").pathname, "/bar//");
+    // assertEquals(new URL("file://foo///bar//").pathname, "/bar//"); // deno's behavior is wrong
+    assertEquals(new URL("file://foo///bar//").pathname, "///bar//");
     assertEquals(new URL("abcd://foo//bar//").pathname, "//bar//");
 });
 test(function urlTrim() {
@@ -282,22 +284,6 @@ test(function sortingNonExistentParamRemovesQuestionMarkFromURL() {
     url.searchParams.sort();
     assertEquals(url.href, "http://example.com/");
     assertEquals(url.search, "");
-});
-test.ignore(function customInspectFunction() {
-    const url = new URL("http://example.com/?");
-    assertEquals(Deno.inspect(url), `URL {
-  href: "http://example.com/?",
-  origin: "http://example.com",
-  protocol: "http:",
-  username: "",
-  password: "",
-  host: "example.com",
-  hostname: "example.com",
-  port: "",
-  pathname: "/",
-  hash: "",
-  search: ""
-}`);
 });
 test(function protocolNotHttpOrFile() {
     const url = new URL("about:blank");

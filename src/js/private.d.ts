@@ -199,6 +199,7 @@ interface BunLazyModules {
     isatty: (fd: number) => boolean;
     getWindowSize: (fd: number, out: number[2]) => boolean;
   };
+  "getStringWidth": (str: string) => number;
 
   // ReadableStream related
   [1]: any;

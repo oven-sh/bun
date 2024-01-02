@@ -137,6 +137,7 @@ pub const FilePoll = struct {
     const Subprocess = JSC.Subprocess;
     const ShellSubprocess = bun.ShellSubprocess;
     const ShellBufferedWriter = bun.ShellBufferedWriter;
+    const ShellBufferedInput = bun.ShellSubprocess.BufferedInput;
     const ShellSubprocessCapturedBufferedWriter = bun.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
@@ -155,6 +156,7 @@ pub const FilePoll = struct {
         Subprocess,
         ShellSubprocess,
         ShellBufferedWriter,
+        ShellBufferedInput,
         ShellSubprocessCapturedBufferedWriter,
         BufferedInput,
         FIFO,
@@ -259,9 +261,13 @@ pub const FilePoll = struct {
 
         var ptr = poll.owner;
         switch (ptr.tag()) {
-            @field(Owner.Tag, "src.bun.js.webcore.streams.NewFIFO(.js)") => {
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FIFO", .{poll.fd});
                 ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
+            },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedInput))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedInput", .{poll.fd});
+                ptr.as(ShellBufferedInput).onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, "Subprocess") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
@@ -269,13 +275,13 @@ pub const FilePoll = struct {
 
                 loader.onExitNotificationTask();
             },
-            @field(Owner.Tag, "ShellSubprocess") => {
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocess", .{poll.fd});
                 var loader = ptr.as(ShellSubprocess);
 
                 loader.onExitNotificationTask();
             },
-            @field(Owner.Tag, "src.bun.js.webcore.streams.NewFileSink(.js)") => {
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(JSC.WebCore.FileSink))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.onPoll(size_or_offset, 0);

@@ -2279,7 +2279,13 @@ pub const Cmd = struct {
             .child = undefined,
             .buffered_closed = buffered_closed,
         } };
-        const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args, &this.exec.subproc.child)) orelse return ShellError.Spawn;
+        const subproc = switch (Subprocess.spawnAsync(this.base.interpreter.global, spawn_args, &this.exec.subproc.child)) {
+            .ok => this.exec.subproc.child,
+            .err => |e| {
+                _ = e; // autofix
+                @panic("FIXME handle this");
+            },
+        };
         subproc.ref();
 
         // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {

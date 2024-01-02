@@ -1225,6 +1225,7 @@ pub const Sink = struct {
 };
 
 pub const FileSink = NewFileSink(.js);
+pub const FileSinkMini = NewFileSink(.mini);
 pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
     return struct {
         buffer: bun.ByteList,

@@ -25,6 +25,54 @@ pub const subproc = @import("./subproc.zig");
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
+/// The strings in this type are allocated with event loop ctx allocator
+pub const ShellErr = union(enum) {
+    sys: Syscall.Error,
+    custom: []const u8,
+    invalid_arguments: struct { comptime val: []const u8 = "" },
+    todo: []const u8,
+
+    pub fn throwJS(this: *@This(), globalThis: *JSC.JSGlobalObject) void {
+        switch (this.*) {
+            .sys => {
+                const err = this.sys.toJSC(globalThis);
+                globalThis.throwValue(err);
+            },
+            .custom => {
+                var str = JSC.ZigString.init(this.custom);
+                str.markUTF8();
+                const err_value = str.toErrorInstance(this);
+                globalThis.vm().throwError(globalThis, err_value);
+                // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+            },
+            .invalid_arguments => {
+                globalThis.throwInvalidArguments(this.invalid_arguments.val, .{});
+            },
+            .todo => {
+                globalThis.throwTODO(this.todo);
+            },
+        }
+    }
+
+    pub fn deinit(this: *@This(), allocator: Allocator) void {
+        switch (this.*) {
+            .sys => allocator.free(this.sys.path),
+            .custom => allocator.free(this.custom),
+            .invalid_arguments => {},
+            .todo => allocator.free(this.todo),
+        }
+    }
+};
+
+pub fn Result(comptime T: anytype) type {
+    return union(enum) {
+        ok: T,
+        err: ShellErr,
+
+        pub const success: @This() = undefined;
+    };
+}
+
 pub const ShellError = error{ Init, Process, GlobalThisThrown, Spawn };
 pub const ParseError = error{
     Expected,

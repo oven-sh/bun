@@ -1476,6 +1476,7 @@ pub const MiniEventLoop = struct {
     loop: *uws.Loop,
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
+    env: ?*bun.DotEnv.Loader = null,
 
     pub threadlocal var global: *MiniEventLoop = undefined;
 

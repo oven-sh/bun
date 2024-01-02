@@ -47,6 +47,11 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
         .mini => JSC.WebCore.FileSinkMini,
     };
 
+    const GlobalHandle = switch (EventLoopKind) {
+        .js => bun.shell.GlobalJS,
+        .mini => bun.shell.GlobalMini,
+    };
+
     return struct {
         const Subprocess = @This();
         const log = Output.scoped(.SHELL_SUBPROC, false);
@@ -92,106 +97,6 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
         //     bun,
         //     // json,
         // };
-
-        const GlobalJS = struct {
-            globalThis: *JSC.JSGlobalObject,
-
-            pub inline fn init(g: *JSC.JSGlobalObject) GlobalJS {
-                return .{
-                    .globalThis = g,
-                };
-            }
-
-            pub inline fn allocator(this: @This()) Allocator {
-                return this.globalThis.bunVM().allocator;
-            }
-
-            pub inline fn eventLoopCtx(this: @This()) *JSC.VirtualMachine {
-                return this.globalThis.bunVM();
-            }
-
-            pub inline fn throwTODO(this: @This(), msg: []const u8) bun.shell.ShellErr {
-                return .{
-                    .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch bun.outOfMemory(),
-                };
-            }
-
-            pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) bun.shell.ShellErr {
-                const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
-                return .{
-                    .custom = str,
-                };
-            }
-
-            pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) bun.shell.ShellErr {
-                const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory();
-                return .{
-                    .custom = str,
-                };
-            }
-
-            pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
-                return this.globalThis.bunVM().bundler.env.map.createNullDelimitedEnvMap(alloc);
-            }
-
-            pub inline fn getAllocator(this: @This()) Allocator {
-                return this.globalThis.bunVM().allocator;
-            }
-
-            pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: *WaiterThread.WaitPidResultTask) void {
-                this.globalThis.bunVMConcurrently().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(task)));
-            }
-        };
-
-        const GlobalMini = struct {
-            mini: *JSC.MiniEventLoop,
-
-            pub inline fn init(g: *JSC.MiniEventLoop) GlobalJS {
-                return .{
-                    .mini = g,
-                };
-            }
-
-            pub inline fn allocator(this: @This()) Allocator {
-                return this.mini.allocator;
-            }
-
-            pub inline fn eventLoopCtx(this: @This()) *JSC.MiniEventLoop {
-                return this.mini;
-            }
-
-            pub inline fn throwTODO(this: @This(), msg: []const u8) bun.shell.ShellErr {
-                return .{
-                    .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch bun.outOfMemory(),
-                };
-            }
-
-            pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) bun.shell.ShellErr {
-                const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)});
-                return .{
-                    .custom = str,
-                };
-            }
-
-            pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
-                return this.mini.env.?.map.createNullDelimitedEnvMap(alloc);
-            }
-
-            pub inline fn getAllocator(this: @This()) Allocator {
-                return this.mini.allocator;
-            }
-
-            pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: *WaiterThread.WaitPidResultTask) void {
-                const anytask = bun.default_allocator.create(JSC.AnyTaskWithExtraContext) catch bun.outOfMemory();
-                anytask.* = .{
-                    .ctx = task,
-                    .callback = WaiterThread.WaitPidResultTask.runFromMainThreadMini,
-                };
-                this.mini.enqueueTaskConcurrent(anytask);
-            }
-        };
-
-        const GlobalHandle = if (EventLoopKind == .js) GlobalJS else GlobalMini;
 
         pub const OutKind = util.OutKind;
         pub const Stdio = util.Stdio;

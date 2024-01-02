@@ -64,416 +64,425 @@ pub fn assert(cond: bool, comptime msg: []const u8) void {
 
 const EnvMap = std.StringArrayHashMap([:0]const u8);
 
+pub const Interpreter = NewInterpreter(.js);
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
-pub const Interpreter = struct {
-    global: *JSGlobalObject,
-    /// This is the arena used to allocate the input shell script's AST nodes,
-    /// tokens, and a string pool used to store all strings.
-    arena: bun.ArenaAllocator,
-    /// This is the allocator used to allocate interpreter state
-    allocator: Allocator,
-
-    /// The return value
-    promise: JSPromise.Strong = .{},
-
-    /// Root ast node
-    script: *ast.Script,
-
-    io: IO = .{},
-
-    /// FIXME think about lifetimes
-    buffered_stdout: bun.ByteList = .{},
-    buffered_stderr: bun.ByteList = .{},
-
-    /// Shell env for expansion by the shell
-    shell_env: std.StringArrayHashMap([:0]const u8),
-    /// Local environment variables to be given to a subprocess
-    cmd_local_env: std.StringArrayHashMap([:0]const u8),
-    /// Exported environment variables available to all subprocesses. This excludes system ones,
-    /// just contains ones set by this shell script.
-    export_env: std.StringArrayHashMap([:0]const u8),
-
-    /// JS objects used as input for the shell script
-    /// This should be allocated using the arena
-    jsobjs: []JSValue,
-
-    /// The current working directory of the shell
-    __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
-    prev_cwd: [:0]const u8,
-    __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
-    cwd: [:0]const u8,
-    // FIXME TODO deinit
-    cwd_fd: bun.FileDescriptor,
-
-    resolve: JSValue = .undefined,
-    reject: JSValue = .undefined,
-    /// Align to 64 bytes to prevent false sharing
-    has_pending_activity: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
-    started: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
-
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
-
-    const ShellErrorKind = error{
-        OutOfMemory,
-        Syscall,
+pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
+    const Global = switch (EventLoopKind) {
+        .js => *JSGlobalObject,
+        .mini => *JSC.MiniEventLoop,
     };
 
-    const ShellErrorCtx = union(enum) {
-        syscall: Syscall.Error,
-        other: ShellErrorKind,
+    return struct {
+        global: Global,
+        /// This is the arena used to allocate the input shell script's AST nodes,
+        /// tokens, and a string pool used to store all strings.
+        arena: bun.ArenaAllocator,
+        /// This is the allocator used to allocate interpreter state
+        allocator: Allocator,
 
-        fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
-            return switch (this) {
-                .syscall => |err| err.toJSC(globalThis),
-                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
-            };
-        }
-    };
+        /// The return value
+        promise: JSPromise.Strong = .{},
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Interpreter {
-        const allocator = bun.default_allocator;
-        var arena = bun.ArenaAllocator.init(allocator);
+        /// Root ast node
+        script: *ast.Script,
 
-        const arguments_ = callframe.arguments(1);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-        const string_args = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return null;
+        io: IO = .{},
+
+        /// FIXME think about lifetimes
+        buffered_stdout: bun.ByteList = .{},
+        buffered_stderr: bun.ByteList = .{},
+
+        /// Shell env for expansion by the shell
+        shell_env: std.StringArrayHashMap([:0]const u8),
+        /// Local environment variables to be given to a subprocess
+        cmd_local_env: std.StringArrayHashMap([:0]const u8),
+        /// Exported environment variables available to all subprocesses. This excludes system ones,
+        /// just contains ones set by this shell script.
+        export_env: std.StringArrayHashMap([:0]const u8),
+
+        /// JS objects used as input for the shell script
+        /// This should be allocated using the arena
+        jsobjs: []JSValue,
+
+        /// The current working directory of the shell
+        __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
+        prev_cwd: [:0]const u8,
+        __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
+        cwd: [:0]const u8,
+        // FIXME TODO deinit
+        cwd_fd: bun.FileDescriptor,
+
+        resolve: JSValue = .undefined,
+        reject: JSValue = .undefined,
+        /// Align to 64 bytes to prevent false sharing
+        has_pending_activity: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
+        started: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
+
+        pub usingnamespace JSC.Codegen.JSShellInterpreter;
+
+        const ShellErrorKind = error{
+            OutOfMemory,
+            Syscall,
         };
 
-        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        })) {
-            return null;
-        }
+        const ShellErrorCtx = union(enum) {
+            syscall: Syscall.Error,
+            other: ShellErrorKind,
 
-        const lex_result = brk: {
-            if (bun.strings.isAllASCII(script.items[0..])) {
-                var lexer = bun.shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
+                return switch (this) {
+                    .syscall => |err| err.toJSC(globalThis),
+                    .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                };
+            }
+        };
+
+        pub fn constructor(
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) ?*Interpreter {
+            const allocator = bun.default_allocator;
+            var arena = bun.ArenaAllocator.init(allocator);
+
+            const arguments_ = callframe.arguments(1);
+            var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+            const string_args = arguments.nextEat() orelse {
+                globalThis.throw("shell: expected 2 arguments, got 0", .{});
+                return null;
+            };
+
+            const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+            var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+            var script = std.ArrayList(u8).init(arena.allocator());
+            if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            })) {
+                return null;
+            }
+
+            const lex_result = brk: {
+                if (bun.strings.isAllASCII(script.items[0..])) {
+                    var lexer = bun.shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+                    lexer.lex() catch |err| {
+                        globalThis.throwError(err, "failed to lex shell");
+                        return null;
+                    };
+                    break :brk lexer.get_result();
+                }
+                var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
                 lexer.lex() catch |err| {
                     globalThis.throwError(err, "failed to lex shell");
                     return null;
                 };
                 break :brk lexer.get_result();
-            }
-            var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
-            lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
+            };
+
+            var parser = bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
+                globalThis.throwError(err, "failed to create shell parser");
                 return null;
             };
-            break :brk lexer.get_result();
-        };
 
-        var parser = bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
-            globalThis.throwError(err, "failed to create shell parser");
-            return null;
-        };
+            const script_ast = parser.parse() catch |err| {
+                globalThis.throwError(err, "failed to parse shell");
+                return null;
+            };
 
-        const script_ast = parser.parse() catch |err| {
-            globalThis.throwError(err, "failed to parse shell");
-            return null;
-        };
+            const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            };
 
-        const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            script_heap.* = script_ast;
 
-        script_heap.* = script_ast;
+            const interpreter = Interpreter.init(
+                globalThis,
+                allocator,
+                &arena,
+                script_heap,
+                jsobjs.items[0..],
+            ) catch {
+                arena.deinit();
+                return null;
+            };
 
-        const interpreter = Interpreter.init(
-            globalThis,
-            allocator,
-            &arena,
-            script_heap,
-            jsobjs.items[0..],
-        ) catch {
-            arena.deinit();
-            return null;
-        };
-
-        return interpreter;
-    }
-
-    /// If all initialization allocations succeed, the arena will be copied
-    /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
-    pub fn init(
-        global: *JSGlobalObject,
-        allocator: Allocator,
-        arena: *bun.ArenaAllocator,
-        script: *ast.Script,
-        jsobjs: []JSValue,
-    ) !*Interpreter {
-        var interpreter = try allocator.create(Interpreter);
-        interpreter.global = global;
-        errdefer {
-            allocator.destroy(interpreter);
+            return interpreter;
         }
 
-        const export_env = brk: {
-            var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
+        /// If all initialization allocations succeed, the arena will be copied
+        /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
+        pub fn init(
+            global: *JSGlobalObject,
+            allocator: Allocator,
+            arena: *bun.ArenaAllocator,
+            script: *ast.Script,
+            jsobjs: []JSValue,
+        ) !*Interpreter {
+            var interpreter = try allocator.create(Interpreter);
+            interpreter.global = global;
             errdefer {
-                export_env.deinit();
+                allocator.destroy(interpreter);
             }
-            var iter = global.bunVM().bundler.env.map.iter();
-            while (iter.next()) |entry| {
-                const dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
-                try export_env.put(entry.key_ptr.*, dupedz);
+
+            const export_env = brk: {
+                var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
+                errdefer {
+                    export_env.deinit();
+                }
+                var iter = global.bunVM().bundler.env.map.iter();
+                while (iter.next()) |entry| {
+                    const dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
+                    try export_env.put(entry.key_ptr.*, dupedz);
+                }
+                break :brk export_env;
+            };
+
+            var pathbuf = try arena.allocator().alloc(u8, bun.MAX_PATH_BYTES);
+
+            const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
+                .result => |cwd| cwd.ptr[0..cwd.len :0],
+                .err => |err| {
+                    const errJs = err.toJSC(global);
+                    global.throwValue(errJs);
+                    return ShellError.Init;
+                },
+            };
+
+            const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                .result => |fd| fd,
+                .err => |err| {
+                    const errJs = err.toJSC(global);
+                    global.throwValue(errJs);
+                    return ShellError.Init;
+                },
+            };
+
+            interpreter.* = .{
+                .global = global,
+
+                .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+                .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+                .export_env = export_env,
+
+                .script = script,
+                .allocator = allocator,
+                .promise = .{},
+                .jsobjs = jsobjs,
+                .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
+                .cwd = pathbuf[0..cwd.len :0],
+                .prev_cwd = pathbuf[0..cwd.len :0],
+                .cwd_fd = cwd_fd,
+
+                .arena = arena.*,
+
+                .io = .{
+                    .stdout = .{ .std = .{ .captured = &interpreter.buffered_stdout } },
+                    // .stderr = .{ .std = .{ .captured = &interpreter.buffered_stderr } },
+                },
+            };
+
+            var promise = JSC.JSPromise.create(global);
+            interpreter.promise.strong.set(global, promise.asValue(global));
+            return interpreter;
+        }
+
+        pub fn run(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            _ = callframe; // autofix
+
+            _ = globalThis;
+            incrPendingActivityFlag(&this.has_pending_activity);
+            var root = Script.init(this, this.script, this.io) catch bun.outOfMemory();
+            const value = this.promise.value();
+            this.started.store(true, .SeqCst);
+            try root.start();
+            return value;
+        }
+
+        fn ioToJSValue(this: *Interpreter, buf: *bun.ByteList) JSValue {
+            var bytelist = buf.*;
+            buf.* = .{};
+            const arraybuf = JSC.ArrayBuffer.fromBytes(bytelist.slice(), .Uint8Array);
+            const value = arraybuf.toJSUnchecked(this.global, null);
+            return value;
+        }
+
+        fn finish(this: *Interpreter, exit_code: u8) void {
+            log("finish", .{});
+            // defer this.deinit();
+            // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
+            // this.buffered_stdout.
+            _ = this.resolve.call(this.global, &[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
+        }
+
+        fn errored(this: *Interpreter, the_error: ShellError) void {
+            _ = the_error; // autofix
+
+            // defer this.deinit();
+            // this.promise.reject(this.global, the_error.toJSC(this.global));
+            _ = this.resolve.call(this.resolve, &[_]JSValue{JSValue.jsNumberFromChar(1)});
+        }
+
+        fn deinit(this: *Interpreter) void {
+            log("deinit", .{});
+            for (this.jsobjs) |jsobj| {
+                jsobj.unprotect();
             }
-            break :brk export_env;
-        };
-
-        var pathbuf = try arena.allocator().alloc(u8, bun.MAX_PATH_BYTES);
-
-        const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
-            .result => |cwd| cwd.ptr[0..cwd.len :0],
-            .err => |err| {
-                const errJs = err.toJSC(global);
-                global.throwValue(errJs);
-                return ShellError.Init;
-            },
-        };
-
-        const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
-            .result => |fd| fd,
-            .err => |err| {
-                const errJs = err.toJSC(global);
-                global.throwValue(errJs);
-                return ShellError.Init;
-            },
-        };
-
-        interpreter.* = .{
-            .global = global,
-
-            .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
-            .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
-            .export_env = export_env,
-
-            .script = script,
-            .allocator = allocator,
-            .promise = .{},
-            .jsobjs = jsobjs,
-            .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
-            .cwd = pathbuf[0..cwd.len :0],
-            .prev_cwd = pathbuf[0..cwd.len :0],
-            .cwd_fd = cwd_fd,
-
-            .arena = arena.*,
-
-            .io = .{
-                .stdout = .{ .std = .{ .captured = &interpreter.buffered_stdout } },
-                // .stderr = .{ .std = .{ .captured = &interpreter.buffered_stderr } },
-            },
-        };
-
-        var promise = JSC.JSPromise.create(global);
-        interpreter.promise.strong.set(global, promise.asValue(global));
-        return interpreter;
-    }
-
-    pub fn run(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        _ = callframe; // autofix
-
-        _ = globalThis;
-        incrPendingActivityFlag(&this.has_pending_activity);
-        var root = Script.init(this, this.script, this.io) catch bun.outOfMemory();
-        const value = this.promise.value();
-        this.started.store(true, .SeqCst);
-        try root.start();
-        return value;
-    }
-
-    fn ioToJSValue(this: *Interpreter, buf: *bun.ByteList) JSValue {
-        var bytelist = buf.*;
-        buf.* = .{};
-        const arraybuf = JSC.ArrayBuffer.fromBytes(bytelist.slice(), .Uint8Array);
-        const value = arraybuf.toJSUnchecked(this.global, null);
-        return value;
-    }
-
-    fn finish(this: *Interpreter, exit_code: u8) void {
-        log("finish", .{});
-        // defer this.deinit();
-        // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
-        // this.buffered_stdout.
-        _ = this.resolve.call(this.global, &[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
-    }
-
-    fn errored(this: *Interpreter, the_error: ShellError) void {
-        _ = the_error; // autofix
-
-        // defer this.deinit();
-        // this.promise.reject(this.global, the_error.toJSC(this.global));
-        _ = this.resolve.call(this.resolve, &[_]JSValue{JSValue.jsNumberFromChar(1)});
-    }
-
-    fn deinit(this: *Interpreter) void {
-        log("deinit", .{});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
+            this.arena.deinit();
+            this.allocator.destroy(this);
         }
-        this.arena.deinit();
-        this.allocator.destroy(this);
-    }
 
-    pub fn setResolve(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = globalThis;
-        const value = callframe.argument(0);
-        this.resolve = value;
-        return .undefined;
-    }
-
-    pub fn setReject(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = globalThis;
-        const value = callframe.argument(0);
-        this.reject = value;
-        return .undefined;
-    }
-
-    pub fn isRunning(
-        this: *Interpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
-        return JSC.JSValue.jsBoolean(this.hasPendingActivity());
-    }
-
-    pub fn getStarted(
-        this: *Interpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
-        return JSC.JSValue.jsBoolean(this.started.load(.SeqCst));
-    }
-
-    pub fn getBufferedStdout(
-        this: *Interpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
-        const stdout = this.ioToJSValue(&this.buffered_stdout);
-        return stdout;
-    }
-
-    pub fn getBufferedStderr(
-        this: *Interpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
-        const stdout = this.ioToJSValue(&this.buffered_stderr);
-        return stdout;
-    }
-
-    pub fn finalize(
-        this: *Interpreter,
-    ) callconv(.C) void {
-        this.deinit();
-    }
-
-    pub fn assignVar(this: *Interpreter, label: []const u8, value_: [:0]const u8, assign_ctx: AssignCtx) void {
-        const value = this.arena.allocator().dupeZ(u8, value_) catch |e| OOM(e);
-        (switch (assign_ctx) {
-            .cmd => this.cmd_local_env.put(label, value),
-            .shell => this.shell_env.put(label, value),
-            .exported => this.export_env.put(label, value),
-        }) catch |e| OOM(e);
-    }
-
-    pub fn changePrevCwd(self: *Interpreter) Maybe(void) {
-        return self.changeCwd(self.prev_cwd);
-    }
-
-    pub fn changeCwd(self: *Interpreter, new_cwd_: [:0]const u8) Maybe(void) {
-        const new_cwd: [:0]const u8 = brk: {
-            if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
-
-            const existing_cwd = self.cwd;
-            const cwd_str = ResolvePath.joinZ(&[_][]const u8{
-                existing_cwd,
-                new_cwd_,
-            }, .auto);
-
-            break :brk cwd_str;
-        };
-
-        const new_cwd_fd = switch (Syscall.openat(
-            self.cwd_fd,
-            new_cwd,
-            std.os.O.DIRECTORY | std.os.O.RDONLY,
-            0,
-        )) {
-            .result => |fd| fd,
-            .err => |err| {
-                return Maybe(void).initErr(err);
-            },
-        };
-        _ = Syscall.close2(self.cwd_fd);
-
-        var prev_cwd_buf = brk: {
-            if (self.__prevcwd_pathbuf) |prev| break :brk prev;
-            break :brk self.allocator.alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
-        };
-
-        std.mem.copyForwards(u8, prev_cwd_buf[0..self.cwd.len], self.cwd[0..self.cwd.len]);
-        prev_cwd_buf[self.cwd.len] = 0;
-        self.prev_cwd = prev_cwd_buf[0..self.cwd.len :0];
-
-        std.mem.copyForwards(u8, self.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
-        self.__cwd_pathbuf[new_cwd.len] = 0;
-        self.cwd = new_cwd;
-
-        self.cwd_fd = new_cwd_fd;
-
-        return Maybe(void).success;
-    }
-
-    pub fn getHomedir(self: *Interpreter) [:0]const u8 {
-        if (comptime bun.Environment.isWindows) {
-            if (self.export_env.get("USERPROFILE")) |env|
-                return env;
-        } else {
-            if (self.export_env.get("HOME")) |env|
-                return env;
+        pub fn setResolve(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            _ = globalThis;
+            const value = callframe.argument(0);
+            this.resolve = value;
+            return .undefined;
         }
-        return "unknown";
-    }
 
-    pub fn hasPendingActivity(this: *Interpreter) callconv(.C) bool {
-        @fence(.SeqCst);
-        return this.has_pending_activity.load(.SeqCst) > 0;
-    }
+        pub fn setReject(this: *Interpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            _ = globalThis;
+            const value = callframe.argument(0);
+            this.reject = value;
+            return .undefined;
+        }
 
-    fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-        @fence(.SeqCst);
-        _ = has_pending_activity.fetchAdd(1, .SeqCst);
-    }
+        pub fn isRunning(
+            this: *Interpreter,
+            globalThis: *JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            _ = globalThis; // autofix
+            _ = callframe; // autofix
 
-    fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-        @fence(.SeqCst);
-        _ = has_pending_activity.fetchSub(1, .SeqCst);
-    }
-};
+            return JSC.JSValue.jsBoolean(this.hasPendingActivity());
+        }
+
+        pub fn getStarted(
+            this: *Interpreter,
+            globalThis: *JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            _ = globalThis; // autofix
+            _ = callframe; // autofix
+
+            return JSC.JSValue.jsBoolean(this.started.load(.SeqCst));
+        }
+
+        pub fn getBufferedStdout(
+            this: *Interpreter,
+            globalThis: *JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            _ = globalThis; // autofix
+            _ = callframe; // autofix
+
+            const stdout = this.ioToJSValue(&this.buffered_stdout);
+            return stdout;
+        }
+
+        pub fn getBufferedStderr(
+            this: *Interpreter,
+            globalThis: *JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            _ = globalThis; // autofix
+            _ = callframe; // autofix
+
+            const stdout = this.ioToJSValue(&this.buffered_stderr);
+            return stdout;
+        }
+
+        pub fn finalize(
+            this: *Interpreter,
+        ) callconv(.C) void {
+            this.deinit();
+        }
+
+        pub fn assignVar(this: *Interpreter, label: []const u8, value_: [:0]const u8, assign_ctx: AssignCtx) void {
+            const value = this.arena.allocator().dupeZ(u8, value_) catch |e| OOM(e);
+            (switch (assign_ctx) {
+                .cmd => this.cmd_local_env.put(label, value),
+                .shell => this.shell_env.put(label, value),
+                .exported => this.export_env.put(label, value),
+            }) catch |e| OOM(e);
+        }
+
+        pub fn changePrevCwd(self: *Interpreter) Maybe(void) {
+            return self.changeCwd(self.prev_cwd);
+        }
+
+        pub fn changeCwd(self: *Interpreter, new_cwd_: [:0]const u8) Maybe(void) {
+            const new_cwd: [:0]const u8 = brk: {
+                if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
+
+                const existing_cwd = self.cwd;
+                const cwd_str = ResolvePath.joinZ(&[_][]const u8{
+                    existing_cwd,
+                    new_cwd_,
+                }, .auto);
+
+                break :brk cwd_str;
+            };
+
+            const new_cwd_fd = switch (Syscall.openat(
+                self.cwd_fd,
+                new_cwd,
+                std.os.O.DIRECTORY | std.os.O.RDONLY,
+                0,
+            )) {
+                .result => |fd| fd,
+                .err => |err| {
+                    return Maybe(void).initErr(err);
+                },
+            };
+            _ = Syscall.close2(self.cwd_fd);
+
+            var prev_cwd_buf = brk: {
+                if (self.__prevcwd_pathbuf) |prev| break :brk prev;
+                break :brk self.allocator.alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
+            };
+
+            std.mem.copyForwards(u8, prev_cwd_buf[0..self.cwd.len], self.cwd[0..self.cwd.len]);
+            prev_cwd_buf[self.cwd.len] = 0;
+            self.prev_cwd = prev_cwd_buf[0..self.cwd.len :0];
+
+            std.mem.copyForwards(u8, self.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
+            self.__cwd_pathbuf[new_cwd.len] = 0;
+            self.cwd = new_cwd;
+
+            self.cwd_fd = new_cwd_fd;
+
+            return Maybe(void).success;
+        }
+
+        pub fn getHomedir(self: *Interpreter) [:0]const u8 {
+            if (comptime bun.Environment.isWindows) {
+                if (self.export_env.get("USERPROFILE")) |env|
+                    return env;
+            } else {
+                if (self.export_env.get("HOME")) |env|
+                    return env;
+            }
+            return "unknown";
+        }
+
+        pub fn hasPendingActivity(this: *Interpreter) callconv(.C) bool {
+            @fence(.SeqCst);
+            return this.has_pending_activity.load(.SeqCst) > 0;
+        }
+
+        fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
+            @fence(.SeqCst);
+            _ = has_pending_activity.fetchAdd(1, .SeqCst);
+        }
+
+        fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
+            @fence(.SeqCst);
+            _ = has_pending_activity.fetchSub(1, .SeqCst);
+        }
+    };
+}
 
 const AssignCtx = enum {
     cmd,

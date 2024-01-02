@@ -258,11 +258,10 @@ describe("WebSocket", () => {
     });
   });
 
-  it("should connect over http", done => {
+  it("should FAIL to connect over http when the status code is invalid", done => {
     const server = Bun.serve({
       port: 0,
       fetch(req, server) {
-        done();
         server.stop();
         return new Response();
       },
@@ -271,9 +270,45 @@ describe("WebSocket", () => {
         message(ws) {
           ws.close();
         },
+        close() {},
       },
     });
-    new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    ws.onopen = () => {
+      ws.send("Hello World!");
+    };
+
+    ws.onclose = e => {
+      expect(e.code).toBe(1002);
+      done();
+    };
+  });
+
+  it("should connect over http ", done => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        server.upgrade(req);
+        server.stop();
+
+        return new Response();
+      },
+      websocket: {
+        open(ws) {},
+        message(ws) {
+          ws.close();
+        },
+        close() {},
+      },
+    });
+    var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    ws.onopen = () => {
+      ws.send("Hello World!");
+    };
+
+    ws.onclose = () => {
+      done();
+    };
   });
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {

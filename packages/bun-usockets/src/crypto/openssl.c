@@ -499,7 +499,7 @@ restart:
     s = (struct us_internal_ssl_socket_t *)context->sc.on_writable(
         &s->s); // cast here!
     // if we are closed here, then exit
-    if (us_socket_is_closed(0, &s->s)) {
+    if (!s || us_socket_is_closed(0, &s->s)) {
       return s;
     }
   }
@@ -544,8 +544,13 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
                                                                0); // cast here!
   }
 
-  // should this one come before we have read? should it come always? spurious
-  // on_writable is okay
+
+  // Do not call on_writable if the socket is closed.
+  // on close means the socket data is no longer accessible
+  if (!s || us_socket_is_closed(0, &s->s)) {
+    return 0;
+  }
+
   s = context->on_writable(s);
 
   return s;

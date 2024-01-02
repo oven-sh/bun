@@ -1638,7 +1638,7 @@ pub const ModuleLoader = struct {
                         .source_code = switch (comptime flags) {
                             .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
                             .print_source => bun.String.static(parse_result.source.contents),
-                            else => unreachable,
+                            else => @compileError("unreachable"),
                         },
                         .specifier = input_specifier,
                         .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),

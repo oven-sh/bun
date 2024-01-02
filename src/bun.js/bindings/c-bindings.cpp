@@ -11,6 +11,7 @@
 #include <cstring>
 #else
 #include <uv.h>
+#include <windows.h>
 #endif // !OS(WINDOWS)
 
 #if CPU(X86_64) && !OS(WINDOWS)
@@ -96,3 +97,66 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
     return 0;
 #endif
 }
+
+#if OS(DARWIN) && BUN_DEBUG
+#include <malloc/malloc.h>
+
+extern "C" void dump_zone_malloc_stats()
+{
+    vm_address_t* zones;
+    unsigned count;
+
+    // Zero out the structures in case a zone is missing
+    malloc_statistics_t stats;
+    stats.blocks_in_use = 0;
+    stats.size_in_use = 0;
+    stats.max_size_in_use = 0;
+    stats.size_allocated = 0;
+
+    malloc_get_all_zones(mach_task_self(), 0, &zones, &count);
+    for (unsigned i = 0; i < count; i++) {
+        if (const char* name = malloc_get_zone_name(reinterpret_cast<malloc_zone_t*>(zones[i]))) {
+            printf("%s:\n", name);
+            malloc_zone_statistics(reinterpret_cast<malloc_zone_t*>(zones[i]), &stats);
+            printf("  blocks_in_use:   %u\n", stats.blocks_in_use);
+            printf("  size_in_use:     %zu\n", stats.size_in_use);
+            printf("  max_size_in_use: %zu\n", stats.max_size_in_use);
+            printf("  size_allocated:  %zu\n", stats.size_allocated);
+            printf("\n");
+        }
+    }
+}
+
+#endif
+
+#if OS(WINDOWS)
+#define MS_PER_SEC 1000ULL // MS = milliseconds
+#define US_PER_MS 1000ULL // US = microseconds
+#define HNS_PER_US 10ULL // HNS = hundred-nanoseconds (e.g., 1 hns = 100 ns)
+#define NS_PER_US 1000ULL
+
+#define HNS_PER_SEC (MS_PER_SEC * US_PER_MS * HNS_PER_US)
+#define NS_PER_HNS (100ULL) // NS = nanoseconds
+#define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
+
+extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
+{
+    static LARGE_INTEGER ticksPerSec;
+    LARGE_INTEGER ticks;
+
+    if (!ticksPerSec.QuadPart) {
+        QueryPerformanceFrequency(&ticksPerSec);
+        if (!ticksPerSec.QuadPart) {
+            errno = ENOTSUP;
+            return -1;
+        }
+    }
+
+    QueryPerformanceCounter(&ticks);
+
+    *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);
+    *tv_nsec = (int64_t)(((ticks.QuadPart % ticksPerSec.QuadPart) * NS_PER_SEC) / ticksPerSec.QuadPart);
+
+    return 0;
+}
+#endif

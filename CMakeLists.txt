@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.18")
+set(Bun_VERSION "1.0.21")
 set(WEBKIT_TAG b4de09f41b83e9e5c0e43ef414f1aee5968b6f7c)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -253,10 +253,23 @@ option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" 
 option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
+option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
+
 option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
+
+if(USE_VALGRIND)
+    # Disable SIMD
+    set(USE_BASELINE_BUILD ON)
+
+    if(ARCH STREQUAL "x86_64")
+        # This is for picohttpparser
+        # Valgrind cannot handle SSE4.2 instructions
+        add_compile_definitions("__SSE4_2__=0")
+    endif()
+endif()
 
 if(NOT CANARY)
     set(CANARY 0)

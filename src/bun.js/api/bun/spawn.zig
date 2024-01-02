@@ -304,4 +304,24 @@ pub const PosixSpawn = struct {
             }
         }
     }
+
+    /// Same as waitpid, but also returns resource usage information.
+    pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.os.rusage) Maybe(WaitPidResult) {
+        const Status = c_int;
+        var status: Status = 0;
+        while (true) {
+            const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), usage);
+            switch (errno(rc)) {
+                .SUCCESS => return Maybe(WaitPidResult){
+                    .result = .{
+                        .pid = @as(pid_t, @intCast(rc)),
+                        .status = @as(u32, @bitCast(status)),
+                    },
+                },
+                .INTR => continue,
+
+                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+            }
+        }
+    }
 };

@@ -42,13 +42,12 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
-            };
+            });
             var promise = JSC.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.asValue(globalThis));
             this.ref.ref(this.event_loop.virtual_machine);
@@ -80,7 +79,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.allocator.destroy(this);
+            bun.destroy(this);
         }
     };
 }
@@ -102,15 +101,14 @@ pub fn WorkTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
             var vm = globalThis.bunVM();
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
                 .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
-            };
+            });
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
@@ -146,10 +144,9 @@ pub fn WorkTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            var allocator = this.allocator;
             this.ref.unref(this.event_loop.virtual_machine);
 
-            allocator.destroy(this);
+            bun.destroyWithAlloc(this.allocator, this);
         }
     };
 }
@@ -626,13 +623,9 @@ pub const EventLoop = struct {
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
-    timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
+    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
 
     pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
-        if (comptime !Environment.isPosix) {
-            @compileError("This function is only available on POSIX platforms");
-        }
-
         return this.timer_reference_pool orelse brk: {
             const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
             _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);

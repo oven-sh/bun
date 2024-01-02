@@ -163,13 +163,13 @@ pub const LifecycleScriptSubprocess = struct {
         const env = manager.env;
 
         if (manager.scripts_node) |scripts_node| {
+            manager.setNodeName(
+                scripts_node,
+                original_script.package_name,
+                PackageManager.ProgressStrings.script_emoji,
+                true,
+            );
             if (manager.finished_installing.load(.Monotonic)) {
-                manager.setNodeName(
-                    scripts_node,
-                    original_script.package_name,
-                    PackageManager.ProgressStrings.script_emoji,
-                    true,
-                );
                 scripts_node.activate();
                 manager.progress.refresh();
             }

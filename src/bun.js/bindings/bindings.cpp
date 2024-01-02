@@ -2460,7 +2460,7 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSObject* object = JSC::JSValue::decode(objectValue).getObject();
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     RELEASE_AND_RETURN(scope,  JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));

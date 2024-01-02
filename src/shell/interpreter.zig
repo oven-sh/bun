@@ -3036,7 +3036,7 @@ const BuiltinParent = struct {
 /// This is modified version of BufferedInput for file descriptors only. This
 /// struct cleans itself up when it is done, so no need to call `.deinit()` on
 /// it.
-pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type) type {
+pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type, comptime EventLoopKind: JSC.EventLoopKind) type {
     const SrcHandler = struct {
         src: Src,
 
@@ -3067,7 +3067,7 @@ pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type) type {
             return SrcHandler.isDone(this.src, this.written) or this.err != null;
         }
 
-        pub const event_loop_kind = JSC.EventLoopKind.js;
+        pub const event_loop_kind = EventLoopKind;
         pub usingnamespace JSC.WebCore.NewReadyWatcher(@This(), .writable, onReady);
 
         pub fn onReady(this: *@This(), _: i64) void {

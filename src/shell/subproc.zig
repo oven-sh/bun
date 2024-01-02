@@ -24,6 +24,8 @@ const ShellCmd = @import("./interpreter.zig").Cmd;
 const util = @import("./util.zig");
 
 pub const ShellSubprocess = NewShellSubprocess(.js);
+pub const ShellSubprocessMini = NewShellSubprocess(.mini);
+
 pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
     const EventLoopRef = switch (EventLoopKind) {
         .js => *JSC.EventLoop,
@@ -34,6 +36,15 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
     const GlobalRef = switch (EventLoopKind) {
         .js => *JSC.JSGlobalObject,
         .mini => *JSC.MiniEventLoop,
+    };
+
+    const FIFO = switch (EventLoopKind) {
+        .js => JSC.WebCore.FIFO,
+        .mini => JSC.WebCore.FIFOMini,
+    };
+    const FileSink = switch (EventLoopKind) {
+        .js => JSC.WebCore.FileSink,
+        .mini => JSC.WebCore.FileSinkMini,
     };
 
     return struct {
@@ -203,9 +214,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
         };
 
         pub const Writable = union(enum) {
-            pipe: *JSC.WebCore.FileSink,
+            pipe: *FileSink,
             pipe_to_readable_stream: struct {
-                pipe: *JSC.WebCore.FileSink,
+                pipe: *FileSink,
                 readable_stream: JSC.WebCore.ReadableStream,
             },
             fd: bun.FileDescriptor,
@@ -249,7 +260,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
                 switch (stdio) {
                     .pipe => {
                         // var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
-                        var sink = try GlobalHandle.init(globalThis).allocator().create(JSC.WebCore.FileSink);
+                        var sink = try GlobalHandle.init(globalThis).allocator().create(FileSink);
                         sink.* = .{
                             .fd = fd,
                             .buffer = bun.ByteList{},
@@ -260,6 +271,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
                         sink.watch(fd);
                         if (stdio == .pipe) {
                             if (stdio.pipe) |readable| {
+                                if (comptime EventLoopKind == .mini) @panic("FIXME TODO error gracefully but wait can this even happen");
                                 return Writable{
                                     .pipe_to_readable_stream = .{
                                         .pipe = sink,
@@ -564,7 +576,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
         };
 
         pub const BufferedOutput = struct {
-            fifo: JSC.WebCore.FIFO = undefined,
+            fifo: FIFO = undefined,
             internal_buffer: bun.ByteList = .{},
             auto_sizer: ?JSC.WebCore.AutoSizer = null,
             subproc: *Subprocess,
@@ -604,6 +616,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
                         this.parent.onBufferedWriterDone(e);
                     }
                 },
+                EventLoopKind,
             );
 
             pub const Status = union(enum) {
@@ -617,7 +630,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .out_type = out_type,
                     .subproc = subproc,
                     .internal_buffer = .{},
-                    .fifo = JSC.WebCore.FIFO{
+                    .fifo = FIFO{
                         .fd = fd,
                     },
                 };
@@ -636,7 +649,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .internal_buffer = bun.ByteList.initWithBuffer(slice),
                     .auto_sizer = null,
                     .subproc = subproc,
-                    .fifo = JSC.WebCore.FIFO{
+                    .fifo = FIFO{
                         .fd = fd,
                     },
                     .out_type = out_type,
@@ -840,7 +853,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind) type {
                 array_buffer: JSC.ArrayBuffer.Strong,
             },
 
-            pub const event_loop_kind = JSC.EventLoopKind.js;
+            pub const event_loop_kind = EventLoopKind;
             pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
 
             pub fn onReady(this: *BufferedInput, _: i64) void {

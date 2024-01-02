@@ -966,6 +966,20 @@ declare module "bun:test" {
      */
     toContainKey(expected: unknown): void;
     /**
+     * Asserts that an `object` contains at least one of the provided keys.
+     *
+     * The value must be an object
+     *
+     * @example
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['a']);
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['b']);
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['b', 'c']);
+     * expect({ a: 'hello', b: 'world' }).not.toContainAnyKeys(['c']);
+     *
+     * @param expected the expected value
+     */
+    toContainAnyKeys(expected: unknown): void;
+    /**
      * Asserts that a value contains and equals what is expected.
      *
      * This matcher will perform a deep equality check for members

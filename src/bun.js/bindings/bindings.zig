@@ -3980,16 +3980,24 @@ pub const JSValue = enum(JSValueReprInt) {
         return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
     }
 
-    pub fn fromEntries(globalThis: *JSGlobalObject, keys: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
+    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("fromEntries", .{
             globalThis,
-            keys,
+            keys_array,
             values,
             strings_count,
             clone,
         });
     }
 
+
+    pub fn keys(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+        return cppFn("keys", .{
+            globalThis,
+            value,
+        });
+    }
+    
     pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
         return cppFn("hasOwnProperty", .{ this, globalThis, key });
     }
@@ -4196,6 +4204,16 @@ pub const JSValue = enum(JSValueReprInt) {
     }
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
+    }
+    pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
+        const type_of_value = this.jsType();
+        // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
+        // Map and Set are not considered as object in jest-extended
+        if (type_of_value.isMap() or type_of_value.isSet() or this.isRegExp() or this.isDate()) {
+            return false;
+        }
+
+        return this.jsType().isObject() and keys(globalObject, this).getLength(globalObject) == 0;
     }
 
     pub fn isClass(this: JSValue, global: *JSGlobalObject) bool {
@@ -5061,6 +5079,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "jsType",
         "jsUndefined",
         "jsonStringify",
+        "keys",
         "kind_",
         "makeWithNameAndPrototype",
         "parseJSON",

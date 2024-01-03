@@ -2415,6 +2415,34 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeEmptyObject", "") orelse return .zero;
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        var pass = value.isObjectEmpty(globalThis);
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeEmptyObject", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeEmptyObject", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
     pub fn toBeNil(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalThis);
 

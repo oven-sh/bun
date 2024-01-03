@@ -480,6 +480,10 @@ export default [
         fn: "toBeEmpty",
         length: 0,
       },
+      toBeEmptyObject: {
+        fn: "toBeEmptyObject",
+        length: 0,
+      },
       toBeEven: {
         fn: "toBeEven",
         length: 0,

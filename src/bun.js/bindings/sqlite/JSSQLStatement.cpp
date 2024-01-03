@@ -1797,7 +1797,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
         } else {
             array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, columnNames->size());
             unsigned int i = 0;
-            for (const auto column : *columnNames) {
+            for (const auto& column : *columnNames) {
                 array->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, column.string()));
             }
         }

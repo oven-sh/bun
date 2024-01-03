@@ -52,6 +52,25 @@ pub const CompressionFramework = struct {
         compression_stream_process = @alignCast(@ptrCast(std.c.dlsym(handle, "compression_stream_process") orelse return false));
         compression_stream_destroy = @alignCast(@ptrCast(std.c.dlsym(handle, "compression_stream_destroy") orelse return false));
 
+        {
+
+            // https://discord.com/channels/876711213126520882/1192197434827345930/1192197434827345930
+            // test brotli is supported
+            var stream = compression_stream{
+                .src_ptr = null,
+                .src_size = 0,
+                .dst_ptr = null,
+                .dst_size = 0,
+            };
+
+            switch (compression_stream_init(&stream, compression_stream_operation.DECODE, .BROTLI)) {
+                .OK => {},
+                else => return false,
+            }
+
+            _ = compression_stream_destroy(&stream);
+        }
+
         return true;
     }
 

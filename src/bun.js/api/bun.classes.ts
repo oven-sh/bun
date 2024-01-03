@@ -110,9 +110,9 @@ export default [
       exited: {
         getter: "getExited",
       },
-      pipe_fds: {
-        getter: "getPipeFds",
-      },
+      stdio: {
+        getter: "getStdio",
+      }
     },
   }),
 ];

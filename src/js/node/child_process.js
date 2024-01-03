@@ -1042,7 +1042,7 @@ class ChildProcess extends EventEmitter {
     this.#stdioOptions = ["destroyed", "destroyed", "destroyed"];
   }
 
-  #getBunSpawnIo(i, encoding, pipe) {
+  #getBunSpawnIo(i, encoding) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1085,7 +1085,8 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
-            const fd = this.#handle.pipe_fds[pipe];
+            const fd = this.#handle.stdio[i];
+            if (!fd) return null;
             const stream = StreamModule.Duplex.from({
               readable: FsModule.createReadStream(null, { fd }),
               writable: FsModule.createWriteStream(null, { fd }),
@@ -1108,7 +1109,6 @@ class ChildProcess extends EventEmitter {
 
   #createStdioObject() {
     let result = {};
-    let pipeIdx = 0;
     for (let i = 0; i < this.#stdioOptions.length; i++) {
       const element = this.#stdioOptions[i];
       if (element !== "pipe") {
@@ -1126,7 +1126,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding, pipeIdx++);
+          result[i] = this.#getBunSpawnIo(i, this.#encoding);
           continue;
       }
     }

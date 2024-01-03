@@ -701,13 +701,19 @@ pub const Subprocess = struct {
         return JSValue.jsBoolean(this.hasKilled());
     }
 
-    pub fn getPipeFds(
+    pub fn getStdio(
         this: *Subprocess,
         global: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        const array = JSValue.createEmptyArray(global, this.stdio_pipes.len);
-        for (this.stdio_pipes.slice(), 0..) |item, i| {
-            array.putIndex(global, @intCast(i), JSValue.jsNumber(item.fd));
+        const array = JSValue.createEmptyArray(global, 0);
+        array.push(global, .null); // TODO: align this with options
+        array.push(global, .null); // TODO: align this with options
+        array.push(global, .null); // TODO: align this with options
+
+        for (this.stdio_pipes.slice()) |item| {
+            const uno: u32 = @intCast(item.fileno);
+            for (0..array.getLength(global) - uno) |_| array.push(global, .null);
+            array.push(global, JSValue.jsNumber(item.fd));
         }
         return array;
     }

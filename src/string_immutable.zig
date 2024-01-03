@@ -25,6 +25,7 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 pub fn w(comptime str: []const u8) [:0]const u16 {
+    if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
     comptime var output: [str.len + 1]u16 = undefined;
 
     for (str, 0..) |c, i| {

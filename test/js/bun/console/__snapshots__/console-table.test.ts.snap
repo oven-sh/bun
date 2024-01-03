@@ -59,8 +59,8 @@ exports[`console.table expected output for: array - objects with diff props 1`] 
 "┌───┬─────┬────┐
 │   │ b   │ a  │
 ├───┼─────┼────┤
-│ 0 │ bun │     │
-│ 1 │      │ 42 │
+│ 0 │ bun │    │
+│ 1 │     │ 42 │
 └───┴─────┴────┘
 "
 `;
@@ -69,8 +69,8 @@ exports[`console.table expected output for: array - mixed 1`] = `
 "┌───┬────┬─────┬────────┐
 │   │ a  │ b   │ Values │
 ├───┼────┼─────┼────────┤
-│ 0 │ 42 │ bun │         │
-│ 1 │     │      │ 42     │
+│ 0 │ 42 │ bun │        │
+│ 1 │    │     │ 42     │
 └───┴────┴─────┴────────┘
 "
 `;
@@ -100,7 +100,7 @@ exports[`console.table expected output for: properties 1`] = `
 "┌───┬─────┬───┬────┐
 │   │ b   │ c │ a  │
 ├───┼─────┼───┼────┤
-│ 0 │ bun │    │ 42 │
+│ 0 │ bun │   │ 42 │
 └───┴─────┴───┴────┘
 "
 `;

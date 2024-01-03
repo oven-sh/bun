@@ -6,6 +6,7 @@ const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var ArrayIsArray = Array.isArray;
 
 var __commonJS = (cb, mod) =>
   function __require2() {
@@ -60,8 +61,6 @@ const validateObject = (value, name, options = null) => {
 function validateString(value, name) {
   if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
-
-var ArrayIsArray = Array.isArray;
 
 //------------------------------------------------------------------------------
 // Node error polyfills
@@ -4383,8 +4382,6 @@ var require_duplex = __commonJS({
     var { ObjectDefineProperties, ObjectGetOwnPropertyDescriptor, ObjectKeys, ObjectSetPrototypeOf } =
       require_primordials();
 
-    var Readable = require_readable();
-
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
       Readable.$call(this, options);
@@ -5471,6 +5468,7 @@ function getNativeReadableStream(Readable, stream, options) {
 }
 /** --- Bun native stream wrapper ---  */
 
+var Readable = require_readable();
 var Writable = require_writable();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");

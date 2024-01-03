@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
+const FsModule = require("node:fs");
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -187,6 +188,9 @@ function spawn(file, args, options) {
       abortChildProcess(child, killSignal, options.signal.reason);
     }
   }
+  process.nextTick(() => {
+    child.emit("spawn");
+  });
   return child;
 }
 
@@ -1037,7 +1041,7 @@ class ChildProcess extends EventEmitter {
     this.#stdioOptions = ["destroyed", "destroyed", "destroyed"];
   }
 
-  #getBunSpawnIo(i, encoding) {
+  #getBunSpawnIo(i, encoding, pipe) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1076,6 +1080,20 @@ class ChildProcess extends EventEmitter {
             return null;
         }
       }
+      default:
+        switch (io) {
+          case "pipe":
+            const fd = this.#handle.pipe_fds[pipe];
+            const stream = StreamModule.Duplex.from({
+              readable: FsModule.createReadStream(null, { fd }),
+              writable: FsModule.createWriteStream(null, { fd }),
+            });
+            process.nextTick(() => {
+              stream.emit("readable");
+            });
+            return stream;
+        }
+        return null;
     }
   }
 
@@ -1087,17 +1105,30 @@ class ChildProcess extends EventEmitter {
   #stdioOptions;
 
   #createStdioObject() {
-    return Object.create(null, {
-      0: {
-        get: () => this.stdin,
-      },
-      1: {
-        get: () => this.stdout,
-      },
-      2: {
-        get: () => this.stderr,
-      },
-    });
+    let result = {};
+    let pipeIdx = 0;
+    for (let i = 0; i < this.#stdioOptions.length; i++) {
+      const element = this.#stdioOptions[i];
+      if (element !== "pipe") {
+        result[i] = null;
+        continue;
+      }
+      switch (i) {
+        case 0:
+          result[i] = this.stdin;
+          continue;
+        case 1:
+          result[i] = this.stdout;
+          continue;
+        case 2:
+          result[i] = this.stderr;
+          continue;
+        default:
+          result[i] = this.#getBunSpawnIo(i, this.#encoding, pipeIdx++);
+          continue;
+      }
+    }
+    return ObjectCreate.$call(null, result);
   }
 
   get stdin() {
@@ -1166,9 +1197,7 @@ class ChildProcess extends EventEmitter {
     this.#stdioOptions = bunStdio;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
-      stdin: bunStdio[0],
-      stdout: bunStdio[1],
-      stderr: bunStdio[2],
+      stdio: bunStdio,
       cwd: options.cwd || undefined,
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
@@ -1366,9 +1395,9 @@ function normalizeStdio(stdio) {
     if (stdio.length === 0) processedStdio = ["pipe", "pipe", "pipe"];
     else if (stdio.length === 1) processedStdio = [stdio[0], "pipe", "pipe"];
     else if (stdio.length === 2) processedStdio = [stdio[0], stdio[1], "pipe"];
-    else if (stdio.length >= 3) processedStdio = [stdio[0], stdio[1], stdio[2]];
+    else if (stdio.length >= 3) processedStdio = stdio;
 
-    return processedStdio.map(item => (!item ? "pipe" : item));
+    return processedStdio;
   } else {
     throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
   }

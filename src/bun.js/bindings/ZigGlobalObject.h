@@ -44,6 +44,7 @@ class InternalModuleRegistry;
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
+#include <sys/socket.h>
 
 namespace WebCore {
 class GlobalScope;

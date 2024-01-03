@@ -154,7 +154,7 @@ pub const Subprocess = struct {
     stdout: Readable,
     stderr: Readable,
     poll: Poll = Poll{ .poll_ref = null },
-    stdio_pipes: std.BoundedArray(Stdio.PipeExtra, 8) = .{},
+    stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{},
 
     exit_promise: JSC.Strong = .{},
     on_exit_callback: JSC.Strong = .{},
@@ -710,7 +710,7 @@ pub const Subprocess = struct {
         array.push(global, .null); // TODO: align this with options
         array.push(global, .null); // TODO: align this with options
 
-        for (this.stdio_pipes.slice()) |item| {
+        for (this.stdio_pipes.items) |item| {
             const uno: u32 = @intCast(item.fileno);
             for (0..array.getLength(global) - uno) |_| array.push(global, .null);
             array.push(global, JSValue.jsNumber(item.fd));
@@ -1269,6 +1269,7 @@ pub const Subprocess = struct {
 
         this.exit_promise.deinit();
         this.on_exit_callback.deinit();
+        this.stdio_pipes.deinit(bun.default_allocator);
     }
 
     pub fn finalize(this: *Subprocess) callconv(.C) void {
@@ -1372,7 +1373,7 @@ pub const Subprocess = struct {
         var args = args_;
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
-        var stdio_pipes: std.BoundedArray(Stdio.PipeExtra, 8) = .{};
+        var stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{};
 
         var windows_hide: if (Environment.isWindows) u1 else u0 = 0;
 
@@ -1538,10 +1539,13 @@ pub const Subprocess = struct {
                                     return JSC.JSValue.jsUndefined();
                                 switch (new_item) {
                                     .pipe => {
-                                        stdio_pipes.append(.{
+                                        stdio_pipes.append(bun.default_allocator, .{
                                             .fd = 0,
                                             .fileno = @intCast(i),
-                                        }) catch @panic("requested more than 8 pipes");
+                                        }) catch {
+                                            globalThis.throwOutOfMemory();
+                                            return .zero;
+                                        };
                                     },
                                     else => {},
                                 }
@@ -1829,7 +1833,7 @@ pub const Subprocess = struct {
             bun.STDERR_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
 
-        for (stdio_pipes.slice()) |*item| {
+        for (stdio_pipes.items) |*item| {
             const maybe = blk: {
                 var fds: [2]c_int = undefined;
                 const rc = std.os.system.socketpair(os.AF.UNIX, os.SOCK.STREAM, 0, &fds);
@@ -1903,16 +1907,13 @@ pub const Subprocess = struct {
                 if (stdio[0].isPiped()) {
                     _ = bun.sys.close(stdin_pipe[0]);
                 }
-
                 if (stdio[1].isPiped()) {
                     _ = bun.sys.close(stdout_pipe[1]);
                 }
-
                 if (stdio[2].isPiped()) {
                     _ = bun.sys.close(stderr_pipe[1]);
                 }
-
-                for (stdio_pipes.buffer) |item| {
+                for (stdio_pipes.items) |item| {
                     _ = bun.sys.close(item.fd + 1);
                 }
             }

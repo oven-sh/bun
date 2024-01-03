@@ -78,7 +78,7 @@ var require_primordials = __commonJS({
   "node_modules/readable-stream/lib/ours/primordials.js"(exports, module) {
     "use strict";
     module.exports = {
-      $isJSArray(self) {
+      ArrayIsArray(self) {
         return Array.isArray(self);
       },
       ArrayPrototypeIncludes(self, el) {

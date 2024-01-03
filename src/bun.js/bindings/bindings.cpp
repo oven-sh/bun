@@ -843,9 +843,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             return (
-                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) &&
-                left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject)
-            );
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
         }
     }
     case Int8ArrayType:
@@ -1516,7 +1514,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
 
     for (const auto& header : req) {
         StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
-        size_t name_len = nameView.length();
 
         LChar* data = nullptr;
         auto value = String::createUninitialized(header.second.length(), data);
@@ -1558,7 +1555,7 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
     WebCore::propagateException(*arg0, throwScope,
         headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
-    pairs.releaseBuffer();
+
     JSValue value = WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
@@ -2473,8 +2470,8 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     return JSC::JSValue::encode(object);
 }
 
-
-JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue) {
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
+{
     JSC::VM& vm = globalObject->vm();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2482,16 +2479,15 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
     JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    RELEASE_AND_RETURN(scope,  JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
-bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key) {
+bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
+{
     JSC::VM& vm = globalObject->vm();
 
-    
     JSC::JSValue value = JSC::JSValue::decode(jsValue);
     return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
-
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -3413,7 +3409,7 @@ JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObje
     auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
     auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
     auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
-    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject,  big_1e6, big_sec);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
     ASSERT(sec_as_nsec.isHeapBigInt());
     auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
     ASSERT(big_sec_as_nsec);

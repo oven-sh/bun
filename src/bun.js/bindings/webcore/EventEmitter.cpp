@@ -24,7 +24,6 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
 
 bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-    bool listenerCreatedFromScript = is<JSEventListener>(listener) && !downcast<JSEventListener>(listener.get()).wasCreatedFromMarkup();
 
     if (prepend) {
         if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))

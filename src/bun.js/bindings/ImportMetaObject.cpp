@@ -102,7 +102,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
-        JSValue thisValue = callFrame->thisValue();
+
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
@@ -210,7 +210,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    JSC__JSValue from;
+    JSC__JSValue from = JSC::JSValue::encode(JSC::jsUndefined());
     bool isESM = true;
 
     if (callFrame->argumentCount() > 1) {
@@ -355,6 +355,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
+        JSC::JSValue from = {};
 
         if (moduleName.isUndefinedOrNull()) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -363,10 +364,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        JSC__JSValue from;
-
         if (callFrame->argumentCount() > 1 && callFrame->argument(1).isString()) {
-            from = JSC::JSValue::encode(callFrame->argument(1));
+            from = callFrame->argument(1);
         } else {
             JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
             if (UNLIKELY(!thisObject)) {
@@ -377,14 +376,14 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
             auto clientData = WebCore::clientData(vm);
 
-            from = JSC::JSValue::encode(thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName()));
+            from = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
         }
 
         if (globalObject->onLoadPlugins.hasVirtualModules()) {
             if (moduleName.isString()) {
                 auto moduleString = moduleName.toWTFString(globalObject);
-                if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, JSValue::decode(from).toWTFString(globalObject))) {
+                if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, from.toWTFString(globalObject))) {
                     if (moduleString == resolvedString.value())
                         return JSC::JSValue::encode(JSPromise::resolvedPromise(globalObject, moduleName));
                     return JSC::JSValue::encode(JSPromise::resolvedPromise(globalObject, jsString(vm, resolvedString.value())));
@@ -392,7 +391,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             }
         }
 
-        return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from, true);
+        return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), true);
     }
     }
 }
@@ -657,7 +656,6 @@ DEFINE_VISIT_CHILDREN(ImportMetaObject);
 
 void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<ImportMetaObject*>(cell);
     // if (void* wrapped = thisObject->wrapped()) {
     // if (thisObject->scriptExecutionContext())
     //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());

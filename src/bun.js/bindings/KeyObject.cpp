@@ -2900,7 +2900,6 @@ JSC::EncodedJSValue KeyObject__Equals(JSC::JSGlobalObject* lexicalGlobalObject, 
             auto& wrapped = key->wrapped();
             auto& wrapped2 = key2->wrapped();
             auto key_type = wrapped.type();
-            auto key_class = wrapped.keyClass();
             if (key_type != wrapped2.type()) {
                 return JSC::JSValue::encode(jsBoolean(false));
             }

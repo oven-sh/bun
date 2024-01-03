@@ -50,7 +50,6 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
 {
     auto& vm = lexicalGlobalObject->vm();
 
-    auto clientData = WebCore::clientData(vm);
     if (arrayValue.isUndefinedOrNull() || !arrayValue) {
         return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1)));
     }

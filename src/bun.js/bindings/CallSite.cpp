@@ -36,8 +36,6 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
         }
     }
 
-    JSC::JSObject* calleeObject = JSC::jsCast<JSC::JSObject*>(stackFrame.callee());
-
     // Initialize "this" and "function" (and set the "IsStrict" flag if needed)
     JSC::CallFrame* callFrame = stackFrame.callFrame();
     if (isStrictFrame) {
@@ -88,8 +86,6 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
-    JSString* myTypeName = jsTypeStringForValue(globalObject, thisValue());
-    JSString* myFunction = functionName().toString(globalObject);
     JSString* myFunctionName = functionName().toString(globalObject);
     JSString* mySourceURL = sourceURL().toString(globalObject);
 

@@ -102,7 +102,7 @@ jobs:
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            runner: macos-arm64
+            runner: macos-13-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules

@@ -1110,8 +1110,8 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{},
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1226,8 +1226,8 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{},
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1248,22 +1248,32 @@ const PackageInstall = struct {
                     if (entry.kind != .file) continue;
                     real_file_count += 1;
 
-                    var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                        if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                            destination_dir_.makePath(entry_dirname) catch {};
+                    const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
+
+                    var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                        if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                            bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                         }
-                        break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                        break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                            Output.prettyError("<r><red>{s}<r>: copying file ", .{@errorName(err)});
+                            if (comptime Environment.isWindows) {
+                                Output.prettyErrorln("{}", .{std.unicode.fmtUtf16le(entry.path)});
+                            } else {
+                                Output.prettyErrorln("{s}", .{entry.path});
+                            }
+
                             Global.crash();
                         };
                     };
                     defer outfile.close();
 
-                    var in_file = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                    const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
+
+                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                     defer in_file.close();
 
                     if (comptime Environment.isWindows) {
@@ -1280,7 +1290,12 @@ const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                            Output.prettyError("<r><red>{s}<r>: copying file ", .{@errorName(err)});
+                            if (comptime Environment.isWindows) {
+                                Output.prettyErrorln("{}", .{std.unicode.fmtUtf16le(entry.path)});
+                            } else {
+                                Output.prettyErrorln("{s}", .{entry.path});
+                            }
                             Global.crash();
                         };
                     } else {
@@ -1294,7 +1309,12 @@ const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                            Output.prettyError("<r><red>{s}<r>: copying file ", .{@errorName(err)});
+                            if (comptime Environment.isWindows) {
+                                Output.prettyErrorln("{}", .{std.unicode.fmtUtf16le(entry.path)});
+                            } else {
+                                Output.prettyErrorln("{s}", .{entry.path});
+                            }
                             Global.crash();
                         };
                     }
@@ -1329,8 +1349,8 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{"node_modules"},
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{bun.OSPathLiteral("node_modules")},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1388,33 +1408,24 @@ const PackageInstall = struct {
                 to_copy_into2: if (Environment.isWindows) []u16 else void,
                 head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
-                // std.debug.print("to_copy_into1.len = {d}\n", .{to_copy_into1.len});
-                // std.debug.print("to_copy_into2.len = {d}\n", .{to_copy_into2.len});
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            std.os.mkdirat(destination_dir.fd, entry.path, 0o755) catch {};
+                            const mkdirat = if (comptime Environment.isWindows) std.os.mkdiratW else std.os.mkdirat;
+                            mkdirat(destination_dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
                             if (comptime Environment.isWindows) {
-                                // std.debug.print("entry.path({d}): {s}\n", .{ entry.path.len, entry.path });
                                 if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
                                     return error.NameTooLong;
                                 }
 
-                                // TODO: this copy shouldn't be necessary in the first place.
-                                strings.copyU8IntoU16(
-                                    to_copy_into1,
-                                    entry.path,
-                                );
+                                @memcpy(to_copy_into1[0..entry.path.len], entry.path);
                                 head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
                                 const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
 
-                                strings.copyU8IntoU16(
-                                    to_copy_into2,
-                                    entry.path,
-                                );
+                                @memcpy(to_copy_into2[0..entry.path.len], entry.path);
                                 head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
                                 const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
@@ -1488,8 +1499,11 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{ "node_modules", ".git" },
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{
+                bun.OSPathLiteral("node_modules"),
+                bun.OSPathLiteral(".git"),
+            },
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };

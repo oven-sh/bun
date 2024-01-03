@@ -32,6 +32,7 @@ pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStrin
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
 pub const resolver = @import("./resolver//resolver.zig");
+pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = struct {
     pub usingnamespace std.fmt;
@@ -879,10 +880,11 @@ pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
-pub const OSPathSliceWithoutSentinel = if (Environment.isWindows) []const u16 else []const u8;
-pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 pub const WPathBuffer = [MAX_PATH_BYTES / 2]u16;
+pub const OSPathChar = if (Environment.isWindows) u16 else u8;
+pub const OSPathSliceZ = [:0]const OSPathChar;
+pub const OSPathSlice = []const OSPathChar;
+pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .Int) {
@@ -2802,6 +2804,172 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         return &buf;
     };
 }
+
+/// Same as `pathLiteral`, but the character type is chosen from platform.
+pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSPathChar {
+    if (!Environment.isWindows) return literal;
+    return comptime {
+        var buf: [literal.len:0]OSPathChar = undefined;
+        for (literal, 0..) |c, i| {
+            buf[i] = if (c == '/') '\\' else c;
+        }
+        buf[buf.len] = 0;
+        return &buf;
+    };
+}
+
+const builtin = @import("builtin");
+
+pub const MakePath = struct {
+    /// copy/paste of `std.fs.Dir.makePath` and related functions and modified to support u16 slices.
+    /// inside `MakePath` scope to make deleting later easier.
+    pub fn makePath(comptime T: type, self: std.fs.Dir, sub_path: []const T) !void {
+        var it = try componentIterator(T, sub_path);
+        var component = it.last() orelse return;
+        while (true) {
+            (if (T == u16) makeDirW else std.fs.Dir.makeDir)(self, component.path) catch |err| switch (err) {
+                error.PathAlreadyExists => {
+                    // TODO stat the file and return an error if it's not a directory
+                    // this is important because otherwise a dangling symlink
+                    // could cause an infinite loop
+                },
+                error.FileNotFound => |e| {
+                    component = it.previous() orelse return e;
+                    continue;
+                },
+                else => |e| return e,
+            };
+            component = it.next() orelse return;
+        }
+    }
+
+    fn makeDirW(self: std.fs.Dir, sub_path: []const u16) !void {
+        try std.os.mkdiratW(self.fd, sub_path, 0o755);
+    }
+
+    fn componentIterator(comptime T: type, path_: []const T) !std.fs.path.ComponentIterator(switch (builtin.target.os.tag) {
+        .windows => .windows,
+        .uefi => .uefi,
+        else => .posix,
+    }, T) {
+        return std.fs.path.ComponentIterator(switch (builtin.target.os.tag) {
+            .windows => .windows,
+            .uefi => .uefi,
+            else => .posix,
+        }, T).init(path_);
+    }
+};
+
+pub const Dirname = struct {
+    /// copy/paste of `std.fs.path.dirname` and related functions and modified to support u16 slices.
+    /// inside `Dirname` scope to make deleting later easier.
+    pub fn dirname(comptime T: type, path_: []const T) ?[]const T {
+        if (builtin.target.os.tag == .windows) {
+            return dirnameWindows(T, path_);
+        } else {
+            return std.fs.path.dirnamePosix(path_);
+        }
+    }
+
+    fn dirnameWindows(comptime T: type, path_: []const T) ?[]const T {
+        if (path_.len == 0)
+            return null;
+
+        const root_slice = diskDesignatorWindows(T, path_);
+        if (path_.len == root_slice.len)
+            return null;
+
+        const have_root_slash = path_.len > root_slice.len and (path_[root_slice.len] == '/' or path_[root_slice.len] == '\\');
+
+        var end_index: usize = path_.len - 1;
+
+        while (path_[end_index] == '/' or path_[end_index] == '\\') {
+            if (end_index == 0)
+                return null;
+            end_index -= 1;
+        }
+
+        while (path_[end_index] != '/' and path_[end_index] != '\\') {
+            if (end_index == 0)
+                return null;
+            end_index -= 1;
+        }
+
+        if (have_root_slash and end_index == root_slice.len) {
+            end_index += 1;
+        }
+
+        if (end_index == 0)
+            return null;
+
+        return path_[0..end_index];
+    }
+
+    fn diskDesignatorWindows(comptime T: type, path_: []const T) []const T {
+        return windowsParsePath(T, path_).disk_designator;
+    }
+
+    fn windowsParsePath(comptime T: type, path_: []const T) WindowsPath(T) {
+        const WindowsPath_ = WindowsPath(T);
+        if (path_.len >= 2 and path_[1] == ':') {
+            return WindowsPath_{
+                .is_abs = if (comptime T == u16) std.fs.path.isAbsoluteWindowsWTF16(path_) else std.fs.path.isAbsolute(path_),
+                .kind = WindowsPath_.Kind.Drive,
+                .disk_designator = path_[0..2],
+            };
+        }
+        if (path_.len >= 1 and (path_[0] == '/' or path_[0] == '\\') and
+            (path_.len == 1 or (path_[1] != '/' and path_[1] != '\\')))
+        {
+            return WindowsPath_{
+                .is_abs = true,
+                .kind = WindowsPath_.Kind.None,
+                .disk_designator = path_[0..0],
+            };
+        }
+        const relative_path = WindowsPath_{
+            .kind = WindowsPath_.Kind.None,
+            .disk_designator = &[_]T{},
+            .is_abs = false,
+        };
+        if (path_.len < "//a/b".len) {
+            return relative_path;
+        }
+
+        inline for ("/\\") |this_sep| {
+            const two_sep = [_]T{ this_sep, this_sep };
+            if (std.mem.startsWith(T, path_, &two_sep)) {
+                if (path_[2] == this_sep) {
+                    return relative_path;
+                }
+
+                var it = std.mem.tokenizeScalar(T, path_, this_sep);
+                _ = (it.next() orelse return relative_path);
+                _ = (it.next() orelse return relative_path);
+                return WindowsPath_{
+                    .is_abs = if (T == u16) std.fs.path.isAbsoluteWindowsWTF16(path_) else std.fs.path.isAbsolute(path_),
+                    .kind = WindowsPath_.Kind.NetworkShare,
+                    .disk_designator = path_[0..it.index],
+                };
+            }
+        }
+        return relative_path;
+    }
+
+    fn WindowsPath(comptime T: type) type {
+        return struct {
+            is_abs: bool,
+            kind: Kind,
+            disk_designator: []const T,
+
+            pub const Kind = enum {
+                None,
+                Drive,
+                NetworkShare,
+            };
+        };
+    }
+};
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);

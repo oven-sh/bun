@@ -165,7 +165,7 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     return Maybe(void).errnoSys(C.fchmod(fd, mode), .fchmod) orelse Maybe(void).success;
 }
 
-pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
+pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = sys.chdir(destination);
         return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
@@ -210,8 +210,8 @@ pub fn chdir(destination: anytype) Maybe(void) {
             return Maybe(void).success;
         }
 
-        if (comptime Type == bun.OSPathSlice or Type == [:0]u16) {
-            return chdirOSPath(@as(bun.OSPathSlice, destination));
+        if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
+            return chdirOSPath(@as(bun.OSPathSliceZ, destination));
         }
 
         var wbuf: bun.WPathBuffer = undefined;
@@ -308,7 +308,7 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     }
 }
 
-pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
+pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
@@ -584,7 +584,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
     }
 }
 
-pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = system.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
@@ -1498,7 +1498,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
-pub fn existsOSPath(path: bun.OSPathSlice) bool {
+pub fn existsOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
         return system.access(path, 0) == 0;
     }
@@ -1562,7 +1562,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
 
 pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 
-pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
+pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
         return is_executable_file(path);
     }

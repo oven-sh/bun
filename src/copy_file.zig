@@ -25,7 +25,7 @@ const CopyFileError = error{SystemResources} || CopyFileRangeError || os.SendFil
 // The copy starts at offset 0, the initial offsets are preserved.
 // No metadata is transferred over.
 
-const InputType = if (Environment.isWindows) bun.OSPathSlice else os.fd_t;
+const InputType = if (Environment.isWindows) bun.OSPathSliceZ else os.fd_t;
 pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
     if (comptime Environment.isMac) {
         const rc = os.system.fcopyfile(in, out, null, os.system.COPYFILE_DATA);

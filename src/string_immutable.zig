@@ -3482,7 +3482,7 @@ pub fn isAllASCII(slice: []const u8) bool {
     return true;
 }
 
-pub fn isAllASCIISimple(comptime slice: []const u8) bool {
+pub fn isAllASCIIComptime(comptime slice: []const u8) bool {
     for (slice) |char| {
         if (char > 127) {
             return false;
@@ -4474,7 +4474,7 @@ pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
 
 pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
 
-pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
+pub fn fmtOSPath(buf: bun.OSPathSlice) FormatOSPath {
     return FormatOSPath{ .buf = buf };
 }
 

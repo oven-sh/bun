@@ -366,7 +366,7 @@ pub const ZigString = extern struct {
             return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
         }
 
-        if (comptime strings.isAllASCIISimple(other)) {
+        if (comptime strings.isAllASCIIComptime(other)) {
             if (this.len != other.len)
                 return false;
 
@@ -2692,7 +2692,7 @@ pub const JSGlobalObject = extern struct {
             var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
             return str.toErrorInstance(this);
         } else {
-            if (comptime strings.isAllASCIISimple(fmt)) {
+            if (comptime strings.isAllASCIIComptime(fmt)) {
                 return ZigString.static(fmt).toErrorInstance(this);
             } else {
                 return ZigString.initUTF8(fmt).toErrorInstance(this);

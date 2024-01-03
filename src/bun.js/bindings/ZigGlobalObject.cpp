@@ -275,7 +275,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     {
         // NOLINTBEGIN
         JSC::Options::AllowUnfinalizedAccessScope scope;
-        // NOLINTEND
 
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
@@ -312,6 +311,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
         }
         JSC::Options::assertOptionsAreCoherent();
+        // NOLINTEND
     }
 }
 

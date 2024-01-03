@@ -1158,10 +1158,8 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                     throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                     return JSValue::encode(JSC::jsUndefined());
                 }
-                auto alg = CryptoAlgorithmIdentifier::ECDH;
-                auto result = CryptoKeyEC::platformImportSpki(alg, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                auto result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
                 if (UNLIKELY(result == nullptr)) {
-                    alg = CryptoAlgorithmIdentifier::ECDSA;
                     result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
                 }
                 if (UNLIKELY(result == nullptr)) {
@@ -1322,7 +1320,6 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     }
     auto vectorData = buffer.releaseReturnValue();
     auto& wrapped = key->wrapped();
-    auto key_type = wrapped.type();
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
@@ -1558,7 +1555,6 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     auto signatureData = signatureBuffer.releaseReturnValue();
 
     auto& wrapped = key->wrapped();
-    auto key_type = wrapped.type();
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
@@ -2672,7 +2668,8 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             }
         }
 
-        auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+        // TODO: is this needed?
+        // auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
 
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));

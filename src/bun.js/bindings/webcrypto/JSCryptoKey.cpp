@@ -328,7 +328,7 @@ bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
     CryptoKey* owner = &jsCryptoKey->wrapped();
     if (UNLIKELY(reason))
         *reason = "Reachable from CryptoKey";
-    return visitor.containsOpaqueRoot(context);
+    return visitor.containsOpaqueRoot(owner);
 }
 
 void JSCryptoKeyOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)

@@ -1840,7 +1840,7 @@ pub const Subprocess = struct {
                 switch (std.os.system.getErrno(rc)) {
                     .SUCCESS => {},
                     .AFNOSUPPORT => break :blk error.AddressFamilyNotSupported,
-                    .FAULT => unreachable,
+                    .FAULT => break :blk error.Fault,
                     .MFILE => break :blk error.ProcessFdQuotaExceeded,
                     .NFILE => break :blk error.SystemFdQuotaExceeded,
                     .OPNOTSUPP => break :blk error.OperationNotSupported,

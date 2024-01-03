@@ -15,7 +15,7 @@ const NodeFSFunction = fn (
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue;
 
-const NodeFSFunctionEnum = JSC.Node.DeclEnum(JSC.Node.NodeFS);
+const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
 fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));

@@ -237,6 +237,7 @@ test("navigator", () => {
 test("confirm (yes)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -254,6 +255,7 @@ test("confirm (yes)", async () => {
 test("confirm (no)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 

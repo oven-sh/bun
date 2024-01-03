@@ -1905,6 +1905,10 @@ pub const Subprocess = struct {
                 if (stdio[2].isPiped()) {
                     _ = bun.sys.close(stderr_pipe[1]);
                 }
+
+                for (stdio_pipes.buffer) |item| {
+                    _ = bun.sys.close(item.fd + 1);
+                }
             }
 
             break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {

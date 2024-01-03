@@ -264,6 +264,7 @@ public:
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
 {
+    // NOLINTBEGIN
     if (has_loaded_jsc)
         return;
     has_loaded_jsc = true;
@@ -273,7 +274,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     WTF::initializeMainThread();
     JSC::initialize();
     {
-        // NOLINTBEGIN
+
         JSC::Options::AllowUnfinalizedAccessScope scope;
 
         JSC::Options::useConcurrentJIT() = true;
@@ -311,8 +312,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
         }
         JSC::Options::assertOptionsAreCoherent();
-        // NOLINTEND
     }
+
+    // NOLINTEND
 }
 
 extern "C" void* Bun__getVM();

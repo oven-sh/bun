@@ -1322,6 +1322,7 @@ const nodeToBunLookup = {
   pipe: "pipe",
   overlapped: "pipe", // TODO: this may need to work differently for Windows
   inherit: "inherit",
+  ipc: "ipc",
 };
 
 function nodeToBun(item) {

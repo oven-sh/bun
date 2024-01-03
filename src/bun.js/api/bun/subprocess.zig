@@ -2627,6 +2627,8 @@ pub const Subprocess = struct {
                 out_stdio.* = Stdio{ .ignore = {} };
             } else if (str.eqlComptime("pipe")) {
                 out_stdio.* = Stdio{ .pipe = null };
+            } else if (str.eqlComptime("ipc")) {
+                out_stdio.* = Stdio{ .pipe = null }; // TODO:
             } else {
                 globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
                 return false;

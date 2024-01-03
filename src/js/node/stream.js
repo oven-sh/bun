@@ -6,7 +6,6 @@ const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var ArrayIsArray = Array.isArray;
 
 var __commonJS = (cb, mod) =>
   function __require2() {
@@ -43,7 +42,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray(value)) ||
+    (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
@@ -79,7 +78,7 @@ var require_primordials = __commonJS({
   "node_modules/readable-stream/lib/ours/primordials.js"(exports, module) {
     "use strict";
     module.exports = {
-      ArrayIsArray(self) {
+      $isJSArray(self) {
         return Array.isArray(self);
       },
       ArrayPrototypeIncludes(self, el) {
@@ -715,14 +714,14 @@ var require_validators = __commonJS({
       const nullable = useDefaultOptions ? false : options.nullable;
       if (
         (!nullable && value === null) ||
-        (!allowArray && ArrayIsArray(value)) ||
+        (!allowArray && $isJSArray(value)) ||
         (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
       ) {
         throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
       }
     });
     var validateArray = hideStackFrames((value, name, minLength = 0) => {
-      if (!ArrayIsArray(value)) {
+      if (!$isJSArray(value)) {
         throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
       }
       if (value.length < minLength) {
@@ -2063,7 +2062,7 @@ var require_legacy = __commonJS({
     function prependListener(emitter, event, fn) {
       if (typeof emitter.prependListener === "function") return emitter.prependListener(event, fn);
       if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);
-      else if (ArrayIsArray(emitter._events[event])) emitter._events[event].unshift(fn);
+      else if ($isJSArray(emitter._events[event])) emitter._events[event].unshift(fn);
       else emitter._events[event] = [fn, emitter._events[event]];
     }
     module.exports = {
@@ -4702,7 +4701,7 @@ var require_pipeline = __commonJS({
       return pipelineImpl(streams, once(popCallback(streams)));
     }
     function pipelineImpl(streams, callback, opts) {
-      if (streams.length === 1 && ArrayIsArray(streams[0])) {
+      if (streams.length === 1 && $isJSArray(streams[0])) {
         streams = streams[0];
       }
       if (streams.length < 2) {

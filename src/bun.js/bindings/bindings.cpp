@@ -1753,7 +1753,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     JSCell* cell = jsValue.asCell();
     JSC::JSType type = cell->type();
 
-    switch (type) {
+    switch (static_cast<uint8_t>(type)) {
     case JSC::JSType::StringType:
         return static_cast<double>(jsValue.toString(globalObject)->length());
     case JSC::JSType::ArrayType:
@@ -1790,7 +1790,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
+    case WebCore::JSDOMWrapperType: {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 

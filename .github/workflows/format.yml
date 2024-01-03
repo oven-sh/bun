@@ -43,3 +43,22 @@ jobs:
           bun fmt:zig
       - name: Commit # https://autofix.ci/
         uses: autofix-ci/action@d3e591514b99d0fca6779455ff8338516663f7cc
+
+  format-cpp:
+    name: format C++
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - name: Install Dependencies
+        run: |
+          bun install
+      - name: Format
+        run: |
+          bun build:fmt
+      - name: Commit # https://autofix.ci/
+        uses: autofix-ci/action@d3e591514b99d0fca6779455ff8338516663f7cc

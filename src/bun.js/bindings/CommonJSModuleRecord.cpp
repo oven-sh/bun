@@ -218,14 +218,18 @@ Structure* RequireFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* structure = Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    structure->setMayBePrototype(true);
+    return structure;
 }
 
 Structure* RequireResolveFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* structure = Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    structure->setMayBePrototype(true);
+    return structure;
 }
 
 RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)
@@ -518,7 +522,9 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
     }
 
     DECLARE_INFO;
@@ -968,7 +974,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     ResolvedSource source,
     bool isBuiltIn)
 {
-    JSCommonJSModule* moduleObject;
+    JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
     JSValue specifierValue = Bun::toJS(globalObject, source.specifier);
@@ -1050,6 +1056,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
 {
+    ASSERT(!pathString.startsWith("file://"_s));
+
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);

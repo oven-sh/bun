@@ -3,7 +3,8 @@ const { file } = import.meta;
 import { describe, it, expect, test } from "bun:test";
 import path from "node:path";
 import assert from "assert";
-import { hideFromStackTrace } from "harness";
+
+const sep = process.platform === "win32" ? "\\" : "/";
 
 const strictEqual = (...args) => {
   assert.strictEqual(...args);
@@ -13,7 +14,6 @@ const strictEqual = (...args) => {
 const expectStrictEqual = (actual, expected) => {
   expect(actual).toBe(expected);
 };
-hideFromStackTrace(expectStrictEqual);
 
 describe("dirname", () => {
   it("path.dirname", () => {
@@ -162,12 +162,16 @@ it("path.parse().name", () => {
   expectStrictEqual(path.parse("/aaa/bbb/").name, "bbb");
   expectStrictEqual(path.parse("/aaa/bbb//").name, "bbb");
   expectStrictEqual(path.parse("//aaa/bbb").name, "bbb");
-  expectStrictEqual(path.parse("//aaa/bbb/").name, "bbb");
-  expectStrictEqual(path.parse("//aaa/bbb//").name, "bbb");
   expectStrictEqual(path.parse("///aaa").name, "aaa");
   expectStrictEqual(path.parse("//aaa").name, "aaa");
   expectStrictEqual(path.parse("/aaa").name, "aaa");
   expectStrictEqual(path.parse("aaa.").name, "aaa");
+
+  // Windows parses these as UNC roots, so name is empty there.
+  expectStrictEqual(path.posix.parse("//aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.posix.parse("//aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.win32.parse("//aaa/bbb/").name, "");
+  expectStrictEqual(path.win32.parse("//aaa/bbb//").name, "");
 
   // On unix a backslash is just treated as any other character.
   expectStrictEqual(path.posix.parse("\\dir\\name.ext").name, "\\dir\\name");
@@ -189,7 +193,7 @@ it("path.parse() windows edition", () => {
   expectStrictEqual(path.win32.parse("file:stream").name, "file:stream");
 });
 
-it.todo("path.parse() windows edition - drive letter", () => {
+it("path.parse() windows edition - drive letter", () => {
   expectStrictEqual(path.win32.parse("C:").name, "");
   expectStrictEqual(path.win32.parse("C:.").name, ".");
   expectStrictEqual(path.win32.parse("C:\\").name, "");
@@ -201,6 +205,21 @@ it.todo("path.parse() windows edition - drive letter", () => {
   expectStrictEqual(path.win32.parse("C:name.ext\\\\").name, "name");
   expectStrictEqual(path.win32.parse("C:foo").name, "foo");
   expectStrictEqual(path.win32.parse("C:.foo").name, ".foo");
+});
+
+it("path.parse() windows edition - .root", () => {
+  expectStrictEqual(path.win32.parse("C:").root, "C:");
+  expectStrictEqual(path.win32.parse("C:.").root, "C:");
+  expectStrictEqual(path.win32.parse("C:\\").root, "C:\\");
+  expectStrictEqual(path.win32.parse("C:\\.").root, "C:\\");
+  expectStrictEqual(path.win32.parse("C:\\.ext").root, "C:\\");
+  expectStrictEqual(path.win32.parse("C:\\dir\\name.ext").root, "C:\\");
+  expectStrictEqual(path.win32.parse("C:name.ext").root, "C:");
+  expectStrictEqual(path.win32.parse("C:name.ext\\").root, "C:");
+  expectStrictEqual(path.win32.parse("C:name.ext\\\\").root, "C:");
+  expectStrictEqual(path.win32.parse("C:foo").root, "C:");
+  expectStrictEqual(path.win32.parse("C:.foo").root, "C:");
+  expectStrictEqual(path.win32.parse("/:.foo").root, "/");
 });
 
 it("path.basename", () => {
@@ -232,7 +251,7 @@ it("path.basename", () => {
   strictEqual(path.basename("//a"), "a");
   strictEqual(path.basename("a", "a"), "");
 
-  // // On Windows a backslash acts as a path separator.
+  // On Windows a backslash acts as a path separator.
   strictEqual(path.win32.basename("\\dir\\basename.ext"), "basename.ext");
   strictEqual(path.win32.basename("\\basename.ext"), "basename.ext");
   strictEqual(path.win32.basename("basename.ext"), "basename.ext");
@@ -279,7 +298,7 @@ describe("path.join #5769", () => {
     });
     it("length " + length + "joined", () => {
       const tooLengthyFolderName = Array.from({ length }).fill("b");
-      expect(path.join(...tooLengthyFolderName)).toEqual("b/".repeat(length).substring(0, 2 * length - 1));
+      expect(path.join(...tooLengthyFolderName)).toEqual(("b" + sep).repeat(length).substring(0, 2 * length - 1));
     });
   }
 });
@@ -294,7 +313,7 @@ it("path.join", () => {
       // Arguments                     result
       [
         [[".", "x/b", "..", "/b/c.js"], "x/b/c.js"],
-        // [[], '.'],
+        [[], "."],
         [["/.", "x/b", "..", "/b/c.js"], "/x/b/c.js"],
         [["/foo", "../../../bar"], "/bar"],
         [["foo", "../../../bar"], "../../bar"],
@@ -344,58 +363,59 @@ it("path.join", () => {
     ],
   ];
 
-  // // Windows-specific join tests
-  // joinTests.push([
-  //   path.win32.join,
-  //   joinTests[0][1].slice(0).concat([
-  //     // Arguments                     result
-  //     // UNC path expected
-  //     [["//foo/bar"], "\\\\foo\\bar\\"],
-  //     [["\\/foo/bar"], "\\\\foo\\bar\\"],
-  //     [["\\\\foo/bar"], "\\\\foo\\bar\\"],
-  //     // UNC path expected - server and share separate
-  //     [["//foo", "bar"], "\\\\foo\\bar\\"],
-  //     [["//foo/", "bar"], "\\\\foo\\bar\\"],
-  //     [["//foo", "/bar"], "\\\\foo\\bar\\"],
-  //     // UNC path expected - questionable
-  //     [["//foo", "", "bar"], "\\\\foo\\bar\\"],
-  //     [["//foo/", "", "bar"], "\\\\foo\\bar\\"],
-  //     [["//foo/", "", "/bar"], "\\\\foo\\bar\\"],
-  //     // UNC path expected - even more questionable
-  //     [["", "//foo", "bar"], "\\\\foo\\bar\\"],
-  //     [["", "//foo/", "bar"], "\\\\foo\\bar\\"],
-  //     [["", "//foo/", "/bar"], "\\\\foo\\bar\\"],
-  //     // No UNC path expected (no double slash in first component)
-  //     [["\\", "foo/bar"], "\\foo\\bar"],
-  //     [["\\", "/foo/bar"], "\\foo\\bar"],
-  //     [["", "/", "/foo/bar"], "\\foo\\bar"],
-  //     // No UNC path expected (no non-slashes in first component -
-  //     // questionable)
-  //     [["//", "foo/bar"], "\\foo\\bar"],
-  //     [["//", "/foo/bar"], "\\foo\\bar"],
-  //     [["\\\\", "/", "/foo/bar"], "\\foo\\bar"],
-  //     [["//"], "\\"],
-  //     // No UNC path expected (share name missing - questionable).
-  //     [["//foo"], "\\foo"],
-  //     [["//foo/"], "\\foo\\"],
-  //     [["//foo", "/"], "\\foo\\"],
-  //     [["//foo", "", "/"], "\\foo\\"],
-  //     // No UNC path expected (too many leading slashes - questionable)
-  //     [["///foo/bar"], "\\foo\\bar"],
-  //     [["////foo", "bar"], "\\foo\\bar"],
-  //     [["\\\\\\/foo/bar"], "\\foo\\bar"],
-  //     // Drive-relative vs drive-absolute paths. This merely describes the
-  //     // status quo, rather than being obviously right
-  //     [["c:"], "c:."],
-  //     [["c:."], "c:."],
-  //     [["c:", ""], "c:."],
-  //     [["", "c:"], "c:."],
-  //     [["c:.", "/"], "c:.\\"],
-  //     [["c:.", "file"], "c:file"],
-  //     [["c:", "/"], "c:\\"],
-  //     [["c:", "file"], "c:\\file"],
-  //   ]),
-  // ]);
+  // Windows-specific join tests
+  joinTests.push([
+    path.win32.join,
+    joinTests[0][1].slice(0).concat([
+      // Arguments                     result
+      // UNC path expected
+      [["//foo/bar"], "\\\\foo\\bar\\"],
+      [["\\/foo/bar"], "\\\\foo\\bar\\"],
+      [["\\\\foo/bar"], "\\\\foo\\bar\\"],
+      // UNC path expected - server and share separate
+      [["//foo", "bar"], "\\\\foo\\bar\\"],
+      // TODO: [["//foo/", "bar"], "\\\\foo\\bar\\"],
+      // TODO: [["//foo", "/bar"], "\\\\foo\\bar\\"],
+      // UNC path expected - questionable
+      [["//foo", "", "bar"], "\\\\foo\\bar\\"],
+      // TODO: // [["//foo/", "", "bar"], "\\\\foo\\bar\\"],
+      // TODO: [["//foo/", "", "/bar"], "\\\\foo\\bar\\"],
+      // UNC path expected - even more questionable
+      [["", "//foo", "bar"], "\\\\foo\\bar\\"],
+      // TODO: [["", "//foo/", "bar"], "\\\\foo\\bar\\"],
+      // TODO: [["", "//foo/", "/bar"], "\\\\foo\\bar\\"],
+      // No UNC path expected (no double slash in first component)
+      // TODO: [["\\", "foo/bar"], "\\foo\\bar"],
+      [["\\", "/foo/bar"], "\\foo\\bar"],
+      [["", "/", "/foo/bar"], "\\foo\\bar"],
+      // No UNC path expected (no non-slashes in first component -
+      // questionable)
+      [["//", "foo/bar"], "\\foo\\bar"],
+      [["//", "/foo/bar"], "\\foo\\bar"],
+      [["\\\\", "/", "/foo/bar"], "\\foo\\bar"],
+      [["//"], "\\"],
+      // No UNC path expected (share name missing - questionable).
+      [["//foo"], "\\foo"],
+      [["//foo/"], "\\foo\\"],
+      [["//foo", "/"], "\\foo\\"],
+      [["//foo", "", "/"], "\\foo\\"],
+      // No UNC path expected (too many leading slashes - questionable)
+      [["///foo/bar"], "\\foo\\bar"],
+      [["////foo", "bar"], "\\foo\\bar"],
+      [["\\\\\\/foo/bar"], "\\foo\\bar"],
+      // Drive-relative vs drive-absolute paths. This merely describes the
+      // status quo, rather than being obviously right
+      // TODO: fix these
+      // [["c:"], "c:."],
+      // [["c:."], "c:."],
+      // [["c:", ""], "c:."],
+      // [["", "c:"], "c:."],
+      // [["c:.", "/"], "c:.\\"],
+      // [["c:.", "file"], "c:file"],
+      // [["c:", "/"], "c:\\"],
+      // [["c:", "file"], "c:\\file"],
+    ]),
+  ]);
   joinTests.forEach(test => {
     if (!Array.isArray(test[0])) test[0] = [test[0]];
     test[0].forEach(join => {
@@ -407,8 +427,10 @@ it("path.join", () => {
         // use forward slashes
         let actualAlt;
         let os;
+        let displayExpected = expected;
         if (join === path.win32.join) {
           actualAlt = actual.replace(backslashRE, "/");
+          displayExpected = expected.replace(/\//g, "\\");
           os = "win32";
         } else {
           os = "posix";
@@ -416,7 +438,7 @@ it("path.join", () => {
         if (actual !== expected && actualAlt !== expected) {
           const delimiter = test[0].map(JSON.stringify).join(",");
           const message = `path.${os}.join(${delimiter})\n  expect=${JSON.stringify(
-            expected,
+            displayExpected,
           )}\n  actual=${JSON.stringify(actual)}`;
           failures.push(`\n${message}`);
         }
@@ -430,43 +452,40 @@ it("path.relative", () => {
   const failures = [];
   const cwd = process.cwd();
   const cwdParent = path.dirname(cwd);
-  const parentIsRoot = cwdParent == "/";
+  const parentIsRoot = process.platform === "win32" ? cwdParent.match(/^[A-Z]:\\$/) : cwdParent === "/";
 
   const relativeTests = [
-    // [
-    //   path.win32.relative,
-    //   // Arguments                     result
-    //   [
-    //     ["c:/blah\\blah", "d:/games", "d:\\games"],
-    //     ["c:/aaaa/bbbb", "c:/aaaa", ".."],
-    //     ["c:/aaaa/bbbb", "c:/cccc", "..\\..\\cccc"],
-    //     ["c:/aaaa/bbbb", "c:/aaaa/bbbb", ""],
-    //     ["c:/aaaa/bbbb", "c:/aaaa/cccc", "..\\cccc"],
-    //     ["c:/aaaa/", "c:/aaaa/cccc", "cccc"],
-    //     ["c:/", "c:\\aaaa\\bbbb", "aaaa\\bbbb"],
-    //     ["c:/aaaa/bbbb", "d:\\", "d:\\"],
-    //     ["c:/AaAa/bbbb", "c:/aaaa/bbbb", ""],
-    //     ["c:/aaaaa/", "c:/aaaa/cccc", "..\\aaaa\\cccc"],
-    //     ["C:\\foo\\bar\\baz\\quux", "C:\\", "..\\..\\..\\.."],
-    //     [
-    //       "C:\\foo\\test",
-    //       "C:\\foo\\test\\bar\\package.json",
-    //       "bar\\package.json",
-    //     ],
-    //     ["C:\\foo\\bar\\baz-quux", "C:\\foo\\bar\\baz", "..\\baz"],
-    //     ["C:\\foo\\bar\\baz", "C:\\foo\\bar\\baz-quux", "..\\baz-quux"],
-    //     ["\\\\foo\\bar", "\\\\foo\\bar\\baz", "baz"],
-    //     ["\\\\foo\\bar\\baz", "\\\\foo\\bar", ".."],
-    //     ["\\\\foo\\bar\\baz-quux", "\\\\foo\\bar\\baz", "..\\baz"],
-    //     ["\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz-quux", "..\\baz-quux"],
-    //     ["C:\\baz-quux", "C:\\baz", "..\\baz"],
-    //     ["C:\\baz", "C:\\baz-quux", "..\\baz-quux"],
-    //     ["\\\\foo\\baz-quux", "\\\\foo\\baz", "..\\baz"],
-    //     ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
-    //     ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
-    //     ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
-    //   ],
-    // ],
+    [
+      path.win32.relative,
+      // Arguments                     result
+      [
+        ["c:/blah\\blah", "d:/games", "d:\\games"],
+        ["c:/aaaa/bbbb", "c:/aaaa", ".."],
+        ["c:/aaaa/bbbb", "c:/cccc", "..\\..\\cccc"],
+        ["c:/aaaa/bbbb", "c:/aaaa/bbbb", ""],
+        ["c:/aaaa/bbbb", "c:/aaaa/cccc", "..\\cccc"],
+        ["c:/aaaa/", "c:/aaaa/cccc", "cccc"],
+        ["c:/", "c:\\aaaa\\bbbb", "aaaa\\bbbb"],
+        ["c:/aaaa/bbbb", "d:\\", "d:\\"],
+        ["c:/AaAa/bbbb", "c:/aaaa/bbbb", ""],
+        ["c:/aaaaa/", "c:/aaaa/cccc", "..\\aaaa\\cccc"],
+        ["C:\\foo\\bar\\baz\\quux", "C:\\", "..\\..\\..\\.."],
+        ["C:\\foo\\test", "C:\\foo\\test\\bar\\package.json", "bar\\package.json"],
+        ["C:\\foo\\bar\\baz-quux", "C:\\foo\\bar\\baz", "..\\baz"],
+        ["C:\\foo\\bar\\baz", "C:\\foo\\bar\\baz-quux", "..\\baz-quux"],
+        ["\\\\foo\\bar", "\\\\foo\\bar\\baz", "baz"],
+        ["\\\\foo\\bar\\baz", "\\\\foo\\bar", ".."],
+        ["\\\\foo\\bar\\baz-quux", "\\\\foo\\bar\\baz", "..\\baz"],
+        ["\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz-quux", "..\\baz-quux"],
+        ["C:\\baz-quux", "C:\\baz", "..\\baz"],
+        ["C:\\baz", "C:\\baz-quux", "..\\baz-quux"],
+        ["\\\\foo\\baz-quux", "\\\\foo\\baz", "..\\baz"],
+        ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
+        // ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
+        ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
+        ["C:\\dev\\test", "C:\\dev\\test\\hello.test.ts", "hello.test.ts"],
+      ],
+    ],
     [
       path.posix.relative,
       // Arguments          result
@@ -484,7 +503,7 @@ it("path.relative", () => {
         ["/baz-quux", "/baz", "../baz"],
         ["/baz", "/baz-quux", "../baz-quux"],
         ["/page1/page2/foo", "/", "../../.."],
-        [process.cwd(), "foo", "foo"],
+        [path.posix.resolve("."), "foo", "foo"],
         ["/webpack", "/webpack", ""],
         ["/webpack/", "/webpack", ""],
         ["/webpack", "/webpack/", ""],
@@ -493,12 +512,12 @@ it("path.relative", () => {
         ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
         ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
         ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
-        ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : cwdParent}/static`],
-        ["/app/node_modules/pkg", "../../static", `../../..${parentIsRoot ? "" : path.dirname(cwdParent)}/static`],
-        ["/app", "../static", `..${parentIsRoot ? "" : cwdParent}/static`],
+        ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : path.posix.resolve("../")}/static`],
+        ["/app/node_modules/pkg", "../../static", `../../..${parentIsRoot ? "" : path.posix.resolve("../../")}/static`],
+        ["/app", "../static", `..${parentIsRoot ? "" : path.posix.resolve("../")}/static`],
         ["/app", "../".repeat(64) + "static", "../static"],
         [".", "../static", cwd == "/" ? "static" : "../static"],
-        ["/", "../static", parentIsRoot ? "static" : `${cwdParent}/static`.slice(1)],
+        ["/", "../static", parentIsRoot ? "static" : `${path.posix.resolve("../")}/static`.slice(1)],
         ["../", "../", ""],
         ["../", "../../", parentIsRoot ? "" : ".."],
         ["../../", "../", parentIsRoot ? "" : path.basename(cwdParent)],
@@ -528,51 +547,30 @@ it("path.relative", () => {
 });
 
 it("path.normalize", () => {
-  // strictEqual(
-  //   path.win32.normalize("./fixtures///b/../b/c.js"),
-  //   "fixtures\\b\\c.js"
-  // );
-  // strictEqual(path.win32.normalize("/foo/../../../bar"), "\\bar");
-  // strictEqual(path.win32.normalize("a//b//../b"), "a\\b");
-  // strictEqual(path.win32.normalize("a//b//./c"), "a\\b\\c");
-  // strictEqual(path.win32.normalize("a//b//."), "a\\b");
-  // strictEqual(
-  //   path.win32.normalize("//server/share/dir/file.ext"),
-  //   "\\\\server\\share\\dir\\file.ext"
-  // );
-  // strictEqual(path.win32.normalize("/a/b/c/../../../x/y/z"), "\\x\\y\\z");
-  // strictEqual(path.win32.normalize("C:"), "C:.");
-  // strictEqual(path.win32.normalize("C:..\\abc"), "C:..\\abc");
-  // strictEqual(path.win32.normalize("C:..\\..\\abc\\..\\def"), "C:..\\..\\def");
-  // strictEqual(path.win32.normalize("C:\\."), "C:\\");
-  // strictEqual(path.win32.normalize("file:stream"), "file:stream");
-  // strictEqual(path.win32.normalize("bar\\foo..\\..\\"), "bar\\");
-  // strictEqual(path.win32.normalize("bar\\foo..\\.."), "bar");
-  // strictEqual(path.win32.normalize("bar\\foo..\\..\\baz"), "bar\\baz");
-  // strictEqual(path.win32.normalize("bar\\foo..\\"), "bar\\foo..\\");
-  // strictEqual(path.win32.normalize("bar\\foo.."), "bar\\foo..");
-  // strictEqual(path.win32.normalize("..\\foo..\\..\\..\\bar"), "..\\..\\bar");
-  // strictEqual(
-  //   path.win32.normalize("..\\...\\..\\.\\...\\..\\..\\bar"),
-  //   "..\\..\\bar"
-  // );
-  // strictEqual(
-  //   path.win32.normalize("../../../foo/../../../bar"),
-  //   "..\\..\\..\\..\\..\\bar"
-  // );
-  // strictEqual(
-  //   path.win32.normalize("../../../foo/../../../bar/../../"),
-  //   "..\\..\\..\\..\\..\\..\\"
-  // );
-  // strictEqual(
-  //   path.win32.normalize("../foobar/barfoo/foo/../../../bar/../../"),
-  //   "..\\..\\"
-  // );
-  // strictEqual(
-  //   path.win32.normalize("../.../../foobar/../../../bar/../../baz"),
-  //   "..\\..\\..\\..\\baz"
-  // );
-  // strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
+  strictEqual(path.win32.normalize("./fixtures///b/../b/c.js"), "fixtures\\b\\c.js");
+  strictEqual(path.win32.normalize("/foo/../../../bar"), "\\bar");
+  strictEqual(path.win32.normalize("a//b//../b"), "a\\b");
+  strictEqual(path.win32.normalize("a//b//./c"), "a\\b\\c");
+  strictEqual(path.win32.normalize("a//b//."), "a\\b");
+  strictEqual(path.win32.normalize("//server/share/dir/file.ext"), "\\\\server\\share\\dir\\file.ext");
+  strictEqual(path.win32.normalize("/a/b/c/../../../x/y/z"), "\\x\\y\\z");
+  strictEqual(path.win32.normalize("C:"), "C:.");
+  strictEqual(path.win32.normalize("C:..\\abc"), "C:..\\abc");
+  strictEqual(path.win32.normalize("C:..\\..\\abc\\..\\def"), "C:..\\..\\def");
+  strictEqual(path.win32.normalize("C:\\."), "C:\\");
+  strictEqual(path.win32.normalize("file:stream"), "file:stream");
+  strictEqual(path.win32.normalize("bar\\foo..\\..\\"), "bar\\");
+  strictEqual(path.win32.normalize("bar\\foo..\\.."), "bar");
+  strictEqual(path.win32.normalize("bar\\foo..\\..\\baz"), "bar\\baz");
+  strictEqual(path.win32.normalize("bar\\foo..\\"), "bar\\foo..\\");
+  strictEqual(path.win32.normalize("bar\\foo.."), "bar\\foo..");
+  strictEqual(path.win32.normalize("..\\foo..\\..\\..\\bar"), "..\\..\\bar");
+  strictEqual(path.win32.normalize("..\\...\\..\\.\\...\\..\\..\\bar"), "..\\..\\bar");
+  strictEqual(path.win32.normalize("../../../foo/../../../bar"), "..\\..\\..\\..\\..\\bar");
+  strictEqual(path.win32.normalize("../../../foo/../../../bar/../../"), "..\\..\\..\\..\\..\\..\\");
+  strictEqual(path.win32.normalize("../foobar/barfoo/foo/../../../bar/../../"), "..\\..\\");
+  strictEqual(path.win32.normalize("../.../../foobar/../../../bar/../../baz"), "..\\..\\..\\..\\baz");
+  strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
   strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
   strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
   strictEqual(path.posix.normalize("a//b//../b"), "a/b");
@@ -601,35 +599,36 @@ it("path.resolve", () => {
   const backslashRE = /\\/g;
 
   const resolveTests = [
-    // [
-    //   path.win32.resolve,
-    //   // Arguments                               result
-    //   [
-    //     [["c:/blah\\blah", "d:/games", "c:../a"], "c:\\blah\\a"],
-    //     [["c:/ignore", "d:\\a/b\\c/d", "\\e.exe"], "d:\\e.exe"],
-    //     [["c:/ignore", "c:/some/file"], "c:\\some\\file"],
-    //     [["d:/ignore", "d:some/dir//"], "d:\\ignore\\some\\dir"],
-    //     [["."], process.cwd()],
-    //     [["//server/share", "..", "relative\\"], "\\\\server\\share\\relative"],
-    //     [["c:/", "//"], "c:\\"],
-    //     [["c:/", "//dir"], "c:\\dir"],
-    //     [["c:/", "//server/share"], "\\\\server\\share\\"],
-    //     [["c:/", "//server//share"], "\\\\server\\share\\"],
-    //     [["c:/", "///some//dir"], "c:\\some\\dir"],
-    //     [
-    //       ["C:\\foo\\tmp.3\\", "..\\tmp.3\\cycles\\root.js"],
-    //       "C:\\foo\\tmp.3\\cycles\\root.js",
-    //     ],
-    //   ],
-    // ],
+    [
+      path.win32.resolve,
+      // Arguments                               result
+      [
+        [["c:/blah\\blah", "d:/games", "c:../a"], "c:\\blah\\a"],
+        [["c:/ignore", "d:\\a/b\\c/d", "\\e.exe"], "d:\\e.exe"],
+        [["c:/ignore", "c:/some/file"], "c:\\some\\file"],
+        [["d:/ignore", "d:some/dir//"], "d:\\ignore\\some\\dir"],
+        [["."], process.cwd()],
+        [["//server/share", "..", "relative\\"], "\\\\server\\share\\relative"],
+        [["c:/", "//"], "c:\\"],
+        [["c:/", "//dir"], "c:\\dir"],
+        // TODO:
+        // [["c:/", "//server/share"], "\\\\server\\share\\"],
+        // [["c:/", "//server//share"], "\\\\server\\share\\"],
+        [["c:/", "///some//dir"], "c:\\some\\dir"],
+        [["C:\\foo\\tmp.3\\", "..\\tmp.3\\cycles\\root.js"], "C:\\foo\\tmp.3\\cycles\\root.js"],
+      ],
+    ],
     [
       path.posix.resolve,
       // Arguments                    result
       [
         [["/var/lib", "../", "file/"], "/var/file"],
         [["/var/lib", "/../", "file/"], "/file"],
-        [["a/b/c/", "../../.."], process.cwd()],
-        [["."], process.cwd()],
+        [
+          ["a/b/c/", "../../.."],
+          process.platform === "win32" ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd(),
+        ],
+        [["."], process.platform === "win32" ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd()],
         [["/some/dir", ".", "/absolute/"], "/absolute"],
         [["/foo/tmp.3/", "../tmp.3/cycles/root.js"], "/foo/tmp.3/cycles/root.js"],
       ],
@@ -653,7 +652,7 @@ it("path.resolve", () => {
   strictEqual(failures.length, 0, failures.join("\n"));
 });
 
-describe("path.parse and path.format", () => {
+describe("path.posix.parse and path.posix.format", () => {
   const testCases = [
     {
       input: "/tmp/test.txt",
@@ -839,16 +838,16 @@ describe("path.parse and path.format", () => {
   ];
   testCases.forEach(({ input, expected }) => {
     it(`case ${input}`, () => {
-      const parsed = path.parse(input);
+      const parsed = path.posix.parse(input);
       expect(parsed).toStrictEqual(expected);
 
-      const formatted = path.format(parsed);
+      const formatted = path.posix.format(parsed);
       expect(formatted).toStrictEqual(input.slice(-1) === "/" ? input.slice(0, -1) : input);
     });
   });
   it("empty string arguments, issue #4005", () => {
     expect(
-      path.format({
+      path.posix.format({
         root: "",
         dir: "",
         base: "",
@@ -857,7 +856,7 @@ describe("path.parse and path.format", () => {
       }),
     ).toStrictEqual("foo.ts");
     expect(
-      path.format({
+      path.posix.format({
         name: "foo",
         ext: ".ts",
       }),
@@ -866,10 +865,27 @@ describe("path.parse and path.format", () => {
 });
 
 test("path.format works for vite's example", () => {
-  expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
+  expect(
+    path.format({
+      root: "",
+      dir: "",
+      name: "index",
+      base: undefined,
+      ext: ".css",
+    }),
+  ).toBe("index.css");
 });
 
 it("path.extname", () => {
   expect(path.extname("index.js")).toBe(".js");
   expect(path.extname("make_plot.🔥")).toBe(".🔥");
+});
+
+describe("isAbsolute", () => {
+  it("win32 /foo/bar", () => expect(path.win32.isAbsolute("/foo/bar")).toBe(true));
+  it("posix /foo/bar", () => expect(path.posix.isAbsolute("/foo/bar")).toBe(true));
+  it("win32 \\hello\\world", () => expect(path.win32.isAbsolute("\\hello\\world")).toBe(true));
+  it("posix \\hello\\world", () => expect(path.posix.isAbsolute("\\hello\\world")).toBe(false));
+  it("win32 C:\\hello\\world", () => expect(path.win32.isAbsolute("C:\\hello\\world")).toBe(true));
+  it("posix C:\\hello\\world", () => expect(path.posix.isAbsolute("C:\\hello\\world")).toBe(false));
 });

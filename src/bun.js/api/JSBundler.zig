@@ -303,9 +303,9 @@ pub const JSBundler = struct {
 
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
-            //     this.dir.appendSliceExact(slice.slice()) catch unreachable;
+            //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
-            //     this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
@@ -638,7 +638,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
                 completion.deref();
                 this.deinit();
                 return;
@@ -794,7 +794,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
+            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
                 completion.deref();
                 this.deinit();
                 return;
@@ -827,14 +827,9 @@ pub const JSBundler = struct {
                     return;
                 }
             } else {
-                var buffer_or_string: JSC.Node.SliceOrBuffer = JSC.Node.SliceOrBuffer.fromJS(completion.globalThis, bun.default_allocator, source_code_value) orelse
-                    @panic("expected buffer or string");
-
-                const source_code = switch (buffer_or_string) {
-                    .buffer => |arraybuffer| bun.default_allocator.dupe(u8, arraybuffer.slice()) catch @panic("Out of memory in onLoad callback"),
-                    .string => |slice| (slice.cloneIfNeeded(bun.default_allocator) catch @panic("Out of memory in onLoad callback")).slice(),
-                };
-
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(completion.globalThis, source_code_value, bun.default_allocator) catch
+                // TODO:
+                    @panic("Unexpected: source_code is not a string");
                 this.value = .{
                     .success = .{
                         .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),
@@ -855,7 +850,7 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());
-            var plugin = JSBundlerPlugin__create(globalObject, target);
+            const plugin = JSBundlerPlugin__create(globalObject, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
         }

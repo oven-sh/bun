@@ -23,7 +23,8 @@
 #include <unistd.h>
 #endif
 
-#if defined(_WIN32)
+#if OS(WINDOWS)
+
 #include <io.h> // _S_IREAD _S_IWRITE
 #ifndef S_IRUSR
 #define S_IRUSR _S_IREAD
@@ -31,7 +32,10 @@
 #ifndef S_IWUSR
 #define S_IWUSR _S_IWRITE
 #endif // S_IWUSR
-#else
+
+#include <uv.h>
+
+#else // OS(WINDOWS)
 #include <dlfcn.h>
 #endif
 
@@ -671,8 +675,11 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 #ifdef O_EXCL
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_EXCL"_s)), jsNumber(O_EXCL));
 #endif
+#if OS(WINDOWS)
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s)), jsNumber(536870912));
+#else
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s)), jsNumber(0));
-
+#endif
 #ifdef O_NOCTTY
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOCTTY"_s)), jsNumber(O_NOCTTY));
 #endif

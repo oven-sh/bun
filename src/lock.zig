@@ -1,5 +1,5 @@
 const std = @import("std");
-const Atomic = std.atomic.Atomic;
+const Atomic = std.atomic.Value;
 const Futex = @import("./futex.zig");
 
 // Credit: this is copypasta from @kprotty. Thank you @kprotty!
@@ -28,8 +28,8 @@ pub const Mutex = struct {
         }
 
         const cas_fn = comptime switch (strong) {
-            true => Atomic(u32).compareAndSwap,
-            else => Atomic(u32).tryCompareAndSwap,
+            true => Atomic(u32).cmpxchgStrong,
+            else => Atomic(u32).cmpxchgWeak,
         };
 
         return cas_fn(
@@ -52,7 +52,7 @@ pub const Mutex = struct {
             std.atomic.spinLoopHint();
 
             switch (self.state.load(.Monotonic)) {
-                UNLOCKED => _ = self.state.tryCompareAndSwap(
+                UNLOCKED => _ = self.state.cmpxchgWeak(
                     UNLOCKED,
                     LOCKED,
                     .Acquire,
@@ -83,8 +83,8 @@ pub const Mutex = struct {
             var state = self.state.load(.Monotonic);
             while (state != CONTENDED) {
                 state = switch (state) {
-                    UNLOCKED => self.state.tryCompareAndSwap(state, CONTENDED, .Acquire, .Monotonic) orelse return,
-                    LOCKED => self.state.tryCompareAndSwap(state, CONTENDED, .Monotonic, .Monotonic) orelse break,
+                    UNLOCKED => self.state.cmpxchgWeak(state, CONTENDED, .Acquire, .Monotonic) orelse return,
+                    LOCKED => self.state.cmpxchgWeak(state, CONTENDED, .Monotonic, .Monotonic) orelse break,
                     CONTENDED => unreachable, // checked above
                     else => unreachable, // invalid Mutex state
                 };

@@ -520,7 +520,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     }
 
                     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
-                    var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
+                    const buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
                     const result_size = BoringSSL.EC_POINT_point2oct(group, point, form, buffer_ptr, size, null);
                     std.debug.assert(result_size == size);

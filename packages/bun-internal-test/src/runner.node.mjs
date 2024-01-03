@@ -1,6 +1,6 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { rmSync, writeFileSync } from "fs";
+import { rmSync, writeFileSync, readFileSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { totalmem } from "os";
@@ -18,10 +18,25 @@ process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
 
+let testList = [];
+if (process.platform == "win32") {
+  testList = readFileSync("test/windows-test-allowlist.txt", "utf8")
+    .replaceAll("\r", "")
+    .split("\n")
+    .map(x => x.trim().replaceAll("/", "\\"))
+    .filter(x => !!x && !x.startsWith("#"));
+}
+
 const extensions = [".js", ".ts", ".jsx", ".tsx"];
 
 function isTest(path) {
-  return basename(path).includes(".test.") && extensions.some(ext => path.endsWith(ext));
+  if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
+    return false;
+  }
+  if (testList.length > 0) {
+    return testList.some(testPattern => path.includes(testPattern));
+  }
+  return true;
 }
 
 function* findTests(dir, query) {
@@ -37,6 +52,32 @@ function* findTests(dir, query) {
 
 var failingTests = [];
 
+let bunExe = process.argv[2] ?? "bun";
+try {
+  const { error } = spawnSync(bunExe, ["--revision"]);
+  if (error) throw error;
+} catch {
+  console.error(bunExe + " is not installed");
+}
+
+const ntStatusPath = 'C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h';
+let ntStatusHCached = null;
+function lookupWindowsError(code) {
+  if (ntStatusHCached === null) {
+    try {
+      ntStatusHCached = readFileSync(ntStatusPath, 'utf-8');
+    } catch {
+      console.error(`could not find ntstatus.h to lookup error code: ${ntStatusPath}`);
+      ntStatusHCached = '';
+    }
+  }
+  const match = ntStatusHCached.match(new RegExp(`(STATUS_\\w+).*0x${code.toString(16)}`, 'i'));
+  if (match) {
+    return match[1];
+  }
+  return `unknown`;
+}
+
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
   try {
@@ -44,8 +85,9 @@ async function runTest(path) {
       stdout,
       stderr,
       status: exitCode,
+      signal,
       error: timedOut,
-    } = spawnSync("bun", ["test", path], {
+    } = spawnSync(bunExe, ["test", resolve(path)], {
       stdio: "inherit",
       timeout: 1000 * 60 * 3,
       env: {
@@ -54,10 +96,21 @@ async function runTest(path) {
         BUN_GARBAGE_COLLECTOR_LEVEL: "1",
         BUN_JSC_forceRAMSize,
         BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+        // reproduce CI results locally
+        GITHUB_ACTION: process.env.GITHUB_ACTION ?? "true",
+        BUN_DEBUG_QUIET_LOGS: "1",
       },
     });
   } catch (e) {
     console.error(e);
+  }
+
+  if(signal) {
+    console.error(`Test ${name} was killed by signal ${signal}`);
+  }
+
+  if(process.platform === 'win32' && exitCode > 256) {
+    console.error(`Test ${name} crashed with exit code ${exitCode.toString(16)} (${lookupWindowsError(exitCode)})`);
   }
 
   const passed = exitCode === 0 && !timedOut;
@@ -87,7 +140,13 @@ if (isAction) {
   action.summary.addHeading(`${tests.length} files with tests ran`).addList(testFileNames);
   await action.summary.write();
 } else {
+  if (failingTests.length > 0) {
+    console.log(`${failingTests.length} files with failing tests:`);
+    for (const test of failingTests) {
+      console.log(`- ${resolve(test)}`);
+    }
+  }
   writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
 
-process.exit(failingTests.length);
+process.exit(Math.min(failingTests.length, 127));

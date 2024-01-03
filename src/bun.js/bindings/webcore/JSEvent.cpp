@@ -255,7 +255,9 @@ void JSEvent::finishCreation(VM& vm)
 
 JSObject* JSEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSEventPrototype::create(vm, &globalObject, JSEventPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSEventPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSEventPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)

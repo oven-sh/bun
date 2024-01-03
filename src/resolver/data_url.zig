@@ -93,8 +93,7 @@ pub const DataURL = struct {
             return null;
         }
 
-        var result = try parseWithoutCheck(url);
-        return result;
+        return try parseWithoutCheck(url);
     }
 
     pub fn parseWithoutCheck(url: string) !DataURL {
@@ -121,7 +120,7 @@ pub const DataURL = struct {
         const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
         if (url.is_base64) {
             const len = bun.base64.decodeLen(percent_decoded);
-            var buf = try allocator.alloc(u8, len);
+            const buf = try allocator.alloc(u8, len);
             const result = bun.base64.decode(buf, percent_decoded);
             if (result.fail or result.written != len) {
                 return error.Base64DecodeError;

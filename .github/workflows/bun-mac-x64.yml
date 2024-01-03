@@ -15,6 +15,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
@@ -25,6 +26,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
@@ -257,7 +259,6 @@ jobs:
             package: bun-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-macos-amd64-lto.tar.gz"
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules

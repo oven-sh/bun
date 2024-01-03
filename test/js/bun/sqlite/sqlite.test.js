@@ -401,7 +401,10 @@ it("db.transaction()", () => {
     ]);
     throw new Error("Should have thrown");
   } catch (exception) {
-    expect(exception.message).toBe("constraint failed");
+    expect(exception.message).toEqual("UNIQUE constraint failed: cats.name");
+    expect(exception.code).toEqual("SQLITE_CONSTRAINT_UNIQUE");
+    expect(exception.errno).toEqual(2067);
+    expect(exception.byteOffset).toEqual(-1);
   }
 
   expect(db.inTransaction).toBe(false);
@@ -606,4 +609,58 @@ it("#5872", () => {
   const query = db.query("INSERT INTO foo (greeting) VALUES ($greeting);");
   const result = query.all({ $greeting: "sup" });
   expect(result).toEqual([]);
+});
+
+it("latin1 sqlite3 column name", () => {
+  const db = new Database(":memory:");
+
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, copyright© TEXT)");
+
+  db.run("INSERT INTO foo (id, copyright©) VALUES (?, ?)", [1, "© 2021 The Authors. All rights reserved."]);
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      "copyright©": "© 2021 The Authors. All rights reserved.",
+    },
+  ]);
+});
+
+it("syntax error sets the byteOffset", () => {
+  const db = new Database(":memory:");
+  try {
+    db.query("SELECT * FROM foo!!").all();
+    throw new Error("Expected error");
+  } catch (error) {
+    if (process.platform === "darwin" && process.arch === "x64") {
+      if (error.byteOffset === -1) {
+        // older versions of macOS don't have the function which returns the byteOffset
+        // we internally use a polyfill, so we need to allow that.
+        return;
+      }
+    }
+
+    expect(error.byteOffset).toBe(17);
+  }
+});
+
+it("Missing DB throws SQLITE_CANTOPEN", () => {
+  try {
+    new Database("/definitely/not/found");
+    expect.unreachable();
+  } catch (error) {
+    expect(error.code).toBe("SQLITE_CANTOPEN");
+  }
+});
+
+it("empty blob", () => {
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB)");
+  db.run("INSERT INTO foo (blob) VALUES (?)", [new Uint8Array()]);
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      blob: new Uint8Array(),
+    },
+  ]);
 });

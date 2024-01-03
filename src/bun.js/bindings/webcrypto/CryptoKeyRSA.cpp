@@ -30,7 +30,6 @@
 #include "JsonWebKey.h"
 #include "../wtf-bindings.h"
 #include <wtf/text/Base64.h>
-#include "Bun_base64URLEncodeToString.h"
 
 #if ENABLE(WEB_CRYPTO)
 

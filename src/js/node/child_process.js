@@ -2,7 +2,8 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
-const FsModule = require("node:fs");
+
+var FsModule;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -1052,6 +1053,7 @@ class ChildProcess extends EventEmitter {
 
     NativeWritable ||= StreamModule.NativeWritable;
     ReadableFromWeb ||= StreamModule.Readable.fromWeb;
+    if (!FsModule) FsModule = require("node:fs");
 
     const io = this.#stdioOptions[i];
     switch (i) {

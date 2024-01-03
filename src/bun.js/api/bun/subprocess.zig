@@ -1837,7 +1837,6 @@ pub const Subprocess = struct {
                     .PROTONOSUPPORT => break :blk error.ProtocolNotSupported,
                     else => |err| break :blk std.os.unexpectedErrno(err),
                 }
-                std.log.info("socketpair[{d}] = {{ {d}, {d} }}", .{ item.fileno, fds[0], fds[1] });
                 actions.dup2(fds[1], item.fileno) catch |err| break :blk err;
                 actions.close(fds[0]) catch |err| break :blk err;
                 item.fd = fds[0];

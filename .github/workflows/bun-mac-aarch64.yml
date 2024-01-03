@@ -102,7 +102,7 @@ jobs:
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            runner: macos-arm64
+            runner: macos-13-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules
@@ -114,12 +114,19 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          brew install go sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
+
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-aarch64.zip"
+          unzip bun-darwin-aarch64.zip
+          mkdir -p ${{ runner.temp }}/.bun/bin
+          mv bun-darwin-aarch64/bun ${{ runner.temp }}/.bun/bin/bun
+          chmod +x ${{ runner.temp }}/.bun/bin/bun
+          echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
 
       - name: Hash submodule versions
         run: |
@@ -176,7 +183,7 @@ jobs:
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            runner: macos-arm64
+            runner: macos-13-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules
@@ -188,12 +195,19 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          brew install go sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
+
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-aarch64.zip"
+          unzip bun-darwin-aarch64.zip
+          mkdir -p ${{ runner.temp }}/.bun/bin
+          mv bun-darwin-aarch64/bun ${{ runner.temp }}/.bun/bin/bun
+          chmod +x ${{ runner.temp }}/.bun/bin/bun
+          echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
 
       # TODO: replace with sccache
       - name: ccache
@@ -241,7 +255,7 @@ jobs:
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            runner: macos-arm64
+            runner: macos-13-xlarge
     steps:
       - uses: actions/checkout@v4
         with:
@@ -376,7 +390,7 @@ jobs:
       matrix:
         include:
           - tag: bun-darwin-aarch64
-            runner: macos-arm64
+            runner: macos-13-xlarge
     steps:
       - id: checkout
         name: Checkout

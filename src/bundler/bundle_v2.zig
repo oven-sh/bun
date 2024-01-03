@@ -11280,7 +11280,6 @@ const ContentHasher = struct {
     }
 
     pub fn writeInts(self: *ContentHasher, i: []const u32) void {
-        // TODO: BigEndian
         self.hasher.update(std.mem.sliceAsBytes(i));
     }
 

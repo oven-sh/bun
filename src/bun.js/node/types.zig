@@ -25,25 +25,6 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
 
 const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
-pub fn DeclEnum(comptime T: type) type {
-    const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
-    var decls = [_]std.builtin.Type.Declaration{};
-    inline for (fieldInfos, 0..) |field, i| {
-        enumFields[i] = .{
-            .name = field.name,
-            .value = i,
-        };
-    }
-    return @Type(.{
-        .Enum = .{
-            .tag_type = std.math.IntFittingRange(0, fieldInfos.len - 1),
-            .fields = &enumFields,
-            .decls = &decls,
-            .is_exhaustive = true,
-        },
-    });
-}
 
 pub const Flavor = enum {
     sync,

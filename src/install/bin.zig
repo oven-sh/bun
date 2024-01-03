@@ -368,7 +368,7 @@ pub const Bin = extern struct {
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
                     if (realpath_err == error.FileNotFound) {
                         if (comptime Environment.isWindows) {
-                            std.os.mkdiratW(root_dir.fd, bun.strings.w(".bin"), 0) catch |err| {
+                            std.os.mkdiratW(root_dir.fd, comptime bun.OSPathLiteral(".bin"), 0) catch |err| {
                                 this.err = err;
                                 return;
                             };

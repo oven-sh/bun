@@ -5517,6 +5517,10 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
         // Combining Half Marks
         return true;
 
+    if (cp == 0xfeff)
+        // Zero Width No-Break Space (BOM, ZWNBSP)
+        return true;
+
     if (cp >= 0xe0100 and cp <= 0xe01ef)
         // Variation Selectors
         return true;
@@ -5524,47 +5528,316 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
     return false;
 }
 
+/// Official unicode reference: https://www.unicode.org/Public/UCD/latest/ucd/EastAsianWidth.txt
+/// Tag legend:
+///  - `W` (wide) -> true
+///  - `F` (full-width) -> true
+///  - `H` (half-width) -> false
+///  - `N` (neutral) -> false
+///  - `Na` (narrow) -> false
+///  - `A` (ambiguous) -> false?
+///
+/// To regenerate the switch body list, run:
+/// ```js
+///    [...(await (await fetch("https://www.unicode.org/Public/UCD/latest/ucd/EastAsianWidth.txt")).text()).matchAll(/^([\dA-F]{4,})(?:\.\.([\dA-F]{4,}))?\s+;\s+(\w+)\s+#\s+(.*?)\s*$/gm)].flatMap(([,start, end, type, comment]) => (
+///        (['W', 'F'].includes(type)) ? [`        ${(end ? `0x${start}...0x${end}` : `0x${start}`)}, // ${''.padStart(17 - start.length - (end ? end.length + 5 : 0))}[${type}] ${comment}`] : []
+///    )).join('\n')
+/// ```
 pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
     if (!(cp >= 0x1100)) {
         return false;
     }
 
-    if (cp <= 0x115f) {
-        return true;
-    }
-
-    if (cp == 0x2329 or // LEFT-POINTING ANGLE BRACKET
-        cp == 0x232a) // RIGHT-POINTING ANGLE BRACKET
-        return true;
-
-    // CJK Radicals Supplement .. Enclosed CJK Letters and Months
-    return (cp >= 0x2e80 and cp <= 0x3247 and cp != 0x303f) or
-        // Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
-        (cp >= 0x3250 and cp <= 0x4dbf) or
-        // CJK Unified Ideographs .. Yi Radicals
-        (cp >= 0x4e00 and cp <= 0xa4c6) or
-        // Hangul Jamo Extended-A
-        (cp >= 0xa960 and cp <= 0xa97c) or
-        // Hangul Syllables
-        (cp >= 0xac00 and cp <= 0xd7a3) or
-        // CJK Compatibility Ideographs
-        (cp >= 0xf900 and cp <= 0xfaff) or
-        // Vertical Forms
-        (cp >= 0xfe10 and cp <= 0xfe19) or
-        // CJK Compatibility Forms .. Small Form Variants
-        (cp >= 0xfe30 and cp <= 0xfe6b) or
-        // Halfwidth and Fullwidth Forms
-        (cp >= 0xff01 and cp <= 0xff60) or
-        (cp >= 0xffe0 and cp <= 0xffe6) or
-        // Kana Supplement
-        (cp >= 0x1b000 and cp <= 0x1b001) or
-        // Enclosed Ideographic Supplement
-        (cp >= 0x1f200 and cp <= 0x1f251) or
-        // Miscellaneous Symbols and Pictographs 0x1f300 - 0x1f5ff
-        // Emoticons 0x1f600 - 0x1f64f
-        (cp >= 0x1f300 and cp <= 0x1f64f) or
-        // CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
-        (cp >= 0x20000 and cp <= 0x3fffd);
+    return switch (cp) {
+        0x1100...0x115F, //     [W] Lo    [96] HANGUL CHOSEONG KIYEOK..HANGUL CHOSEONG FILLER
+        0x231A...0x231B, //     [W] So     [2] WATCH..HOURGLASS
+        0x2329, //              [W] Ps         LEFT-POINTING ANGLE BRACKET
+        0x232A, //              [W] Pe         RIGHT-POINTING ANGLE BRACKET
+        0x23E9...0x23EC, //     [W] So     [4] BLACK RIGHT-POINTING DOUBLE TRIANGLE..BLACK DOWN-POINTING DOUBLE TRIANGLE
+        0x23F0, //              [W] So         ALARM CLOCK
+        0x23F3, //              [W] So         HOURGLASS WITH FLOWING SAND
+        0x25FD...0x25FE, //     [W] Sm     [2] WHITE MEDIUM SMALL SQUARE..BLACK MEDIUM SMALL SQUARE
+        0x2614...0x2615, //     [W] So     [2] UMBRELLA WITH RAIN DROPS..HOT BEVERAGE
+        0x2648...0x2653, //     [W] So    [12] ARIES..PISCES
+        0x267F, //              [W] So         WHEELCHAIR SYMBOL
+        0x2693, //              [W] So         ANCHOR
+        0x26A1, //              [W] So         HIGH VOLTAGE SIGN
+        0x26AA...0x26AB, //     [W] So     [2] MEDIUM WHITE CIRCLE..MEDIUM BLACK CIRCLE
+        0x26BD...0x26BE, //     [W] So     [2] SOCCER BALL..BASEBALL
+        0x26C4...0x26C5, //     [W] So     [2] SNOWMAN WITHOUT SNOW..SUN BEHIND CLOUD
+        0x26CE, //              [W] So         OPHIUCHUS
+        0x26D4, //              [W] So         NO ENTRY
+        0x26EA, //              [W] So         CHURCH
+        0x26F2...0x26F3, //     [W] So     [2] FOUNTAIN..FLAG IN HOLE
+        0x26F5, //              [W] So         SAILBOAT
+        0x26FA, //              [W] So         TENT
+        0x26FD, //              [W] So         FUEL PUMP
+        0x2705, //              [W] So         WHITE HEAVY CHECK MARK
+        0x270A...0x270B, //     [W] So     [2] RAISED FIST..RAISED HAND
+        0x2728, //              [W] So         SPARKLES
+        0x274C, //              [W] So         CROSS MARK
+        0x274E, //              [W] So         NEGATIVE SQUARED CROSS MARK
+        0x2753...0x2755, //     [W] So     [3] BLACK QUESTION MARK ORNAMENT..WHITE EXCLAMATION MARK ORNAMENT
+        0x2757, //              [W] So         HEAVY EXCLAMATION MARK SYMBOL
+        0x2795...0x2797, //     [W] So     [3] HEAVY PLUS SIGN..HEAVY DIVISION SIGN
+        0x27B0, //              [W] So         CURLY LOOP
+        0x27BF, //              [W] So         DOUBLE CURLY LOOP
+        0x2B1B...0x2B1C, //     [W] So     [2] BLACK LARGE SQUARE..WHITE LARGE SQUARE
+        0x2B50, //              [W] So         WHITE MEDIUM STAR
+        0x2B55, //              [W] So         HEAVY LARGE CIRCLE
+        0x2E80...0x2E99, //     [W] So    [26] CJK RADICAL REPEAT..CJK RADICAL RAP
+        0x2E9B...0x2EF3, //     [W] So    [89] CJK RADICAL CHOKE..CJK RADICAL C-SIMPLIFIED TURTLE
+        0x2F00...0x2FD5, //     [W] So   [214] KANGXI RADICAL ONE..KANGXI RADICAL FLUTE
+        0x2FF0...0x2FFF, //     [W] So    [16] IDEOGRAPHIC DESCRIPTION CHARACTER LEFT TO RIGHT..IDEOGRAPHIC DESCRIPTION CHARACTER ROTATION
+        0x3000, //              [F] Zs         IDEOGRAPHIC SPACE
+        0x3001...0x3003, //     [W] Po     [3] IDEOGRAPHIC COMMA..DITTO MARK
+        0x3004, //              [W] So         JAPANESE INDUSTRIAL STANDARD SYMBOL
+        0x3005, //              [W] Lm         IDEOGRAPHIC ITERATION MARK
+        0x3006, //              [W] Lo         IDEOGRAPHIC CLOSING MARK
+        0x3007, //              [W] Nl         IDEOGRAPHIC NUMBER ZERO
+        0x3008, //              [W] Ps         LEFT ANGLE BRACKET
+        0x3009, //              [W] Pe         RIGHT ANGLE BRACKET
+        0x300A, //              [W] Ps         LEFT DOUBLE ANGLE BRACKET
+        0x300B, //              [W] Pe         RIGHT DOUBLE ANGLE BRACKET
+        0x300C, //              [W] Ps         LEFT CORNER BRACKET
+        0x300D, //              [W] Pe         RIGHT CORNER BRACKET
+        0x300E, //              [W] Ps         LEFT WHITE CORNER BRACKET
+        0x300F, //              [W] Pe         RIGHT WHITE CORNER BRACKET
+        0x3010, //              [W] Ps         LEFT BLACK LENTICULAR BRACKET
+        0x3011, //              [W] Pe         RIGHT BLACK LENTICULAR BRACKET
+        0x3012...0x3013, //     [W] So     [2] POSTAL MARK..GETA MARK
+        0x3014, //              [W] Ps         LEFT TORTOISE SHELL BRACKET
+        0x3015, //              [W] Pe         RIGHT TORTOISE SHELL BRACKET
+        0x3016, //              [W] Ps         LEFT WHITE LENTICULAR BRACKET
+        0x3017, //              [W] Pe         RIGHT WHITE LENTICULAR BRACKET
+        0x3018, //              [W] Ps         LEFT WHITE TORTOISE SHELL BRACKET
+        0x3019, //              [W] Pe         RIGHT WHITE TORTOISE SHELL BRACKET
+        0x301A, //              [W] Ps         LEFT WHITE SQUARE BRACKET
+        0x301B, //              [W] Pe         RIGHT WHITE SQUARE BRACKET
+        0x301C, //              [W] Pd         WAVE DASH
+        0x301D, //              [W] Ps         REVERSED DOUBLE PRIME QUOTATION MARK
+        0x301E...0x301F, //     [W] Pe     [2] DOUBLE PRIME QUOTATION MARK..LOW DOUBLE PRIME QUOTATION MARK
+        0x3020, //              [W] So         POSTAL MARK FACE
+        0x3021...0x3029, //     [W] Nl     [9] HANGZHOU NUMERAL ONE..HANGZHOU NUMERAL NINE
+        0x302A...0x302D, //     [W] Mn     [4] IDEOGRAPHIC LEVEL TONE MARK..IDEOGRAPHIC ENTERING TONE MARK
+        0x302E...0x302F, //     [W] Mc     [2] HANGUL SINGLE DOT TONE MARK..HANGUL DOUBLE DOT TONE MARK
+        0x3030, //              [W] Pd         WAVY DASH
+        0x3031...0x3035, //     [W] Lm     [5] VERTICAL KANA REPEAT MARK..VERTICAL KANA REPEAT MARK LOWER HALF
+        0x3036...0x3037, //     [W] So     [2] CIRCLED POSTAL MARK..IDEOGRAPHIC TELEGRAPH LINE FEED SEPARATOR SYMBOL
+        0x3038...0x303A, //     [W] Nl     [3] HANGZHOU NUMERAL TEN..HANGZHOU NUMERAL THIRTY
+        0x303B, //              [W] Lm         VERTICAL IDEOGRAPHIC ITERATION MARK
+        0x303C, //              [W] Lo         MASU MARK
+        0x303D, //              [W] Po         PART ALTERNATION MARK
+        0x303E, //              [W] So         IDEOGRAPHIC VARIATION INDICATOR
+        0x3041...0x3096, //     [W] Lo    [86] HIRAGANA LETTER SMALL A..HIRAGANA LETTER SMALL KE
+        0x3099...0x309A, //     [W] Mn     [2] COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK..COMBINING KATAKANA-HIRAGANA SEMI-VOICED SOUND MARK
+        0x309B...0x309C, //     [W] Sk     [2] KATAKANA-HIRAGANA VOICED SOUND MARK..KATAKANA-HIRAGANA SEMI-VOICED SOUND MARK
+        0x309D...0x309E, //     [W] Lm     [2] HIRAGANA ITERATION MARK..HIRAGANA VOICED ITERATION MARK
+        0x309F, //              [W] Lo         HIRAGANA DIGRAPH YORI
+        0x30A0, //              [W] Pd         KATAKANA-HIRAGANA DOUBLE HYPHEN
+        0x30A1...0x30FA, //     [W] Lo    [90] KATAKANA LETTER SMALL A..KATAKANA LETTER VO
+        0x30FB, //              [W] Po         KATAKANA MIDDLE DOT
+        0x30FC...0x30FE, //     [W] Lm     [3] KATAKANA-HIRAGANA PROLONGED SOUND MARK..KATAKANA VOICED ITERATION MARK
+        0x30FF, //              [W] Lo         KATAKANA DIGRAPH KOTO
+        0x3105...0x312F, //     [W] Lo    [43] BOPOMOFO LETTER B..BOPOMOFO LETTER NN
+        0x3131...0x318E, //     [W] Lo    [94] HANGUL LETTER KIYEOK..HANGUL LETTER ARAEAE
+        0x3190...0x3191, //     [W] So     [2] IDEOGRAPHIC ANNOTATION LINKING MARK..IDEOGRAPHIC ANNOTATION REVERSE MARK
+        0x3192...0x3195, //     [W] No     [4] IDEOGRAPHIC ANNOTATION ONE MARK..IDEOGRAPHIC ANNOTATION FOUR MARK
+        0x3196...0x319F, //     [W] So    [10] IDEOGRAPHIC ANNOTATION TOP MARK..IDEOGRAPHIC ANNOTATION MAN MARK
+        0x31A0...0x31BF, //     [W] Lo    [32] BOPOMOFO LETTER BU..BOPOMOFO LETTER AH
+        0x31C0...0x31E3, //     [W] So    [36] CJK STROKE T..CJK STROKE Q
+        0x31EF, //              [W] So         IDEOGRAPHIC DESCRIPTION CHARACTER SUBTRACTION
+        0x31F0...0x31FF, //     [W] Lo    [16] KATAKANA LETTER SMALL KU..KATAKANA LETTER SMALL RO
+        0x3200...0x321E, //     [W] So    [31] PARENTHESIZED HANGUL KIYEOK..PARENTHESIZED KOREAN CHARACTER O HU
+        0x3220...0x3229, //     [W] No    [10] PARENTHESIZED IDEOGRAPH ONE..PARENTHESIZED IDEOGRAPH TEN
+        0x322A...0x3247, //     [W] So    [30] PARENTHESIZED IDEOGRAPH MOON..CIRCLED IDEOGRAPH KOTO
+        0x3250, //              [W] So         PARTNERSHIP SIGN
+        0x3251...0x325F, //     [W] No    [15] CIRCLED NUMBER TWENTY ONE..CIRCLED NUMBER THIRTY FIVE
+        0x3260...0x327F, //     [W] So    [32] CIRCLED HANGUL KIYEOK..KOREAN STANDARD SYMBOL
+        0x3280...0x3289, //     [W] No    [10] CIRCLED IDEOGRAPH ONE..CIRCLED IDEOGRAPH TEN
+        0x328A...0x32B0, //     [W] So    [39] CIRCLED IDEOGRAPH MOON..CIRCLED IDEOGRAPH NIGHT
+        0x32B1...0x32BF, //     [W] No    [15] CIRCLED NUMBER THIRTY SIX..CIRCLED NUMBER FIFTY
+        0x32C0...0x32FF, //     [W] So    [64] IDEOGRAPHIC TELEGRAPH SYMBOL FOR JANUARY..SQUARE ERA NAME REIWA
+        0x3300...0x33FF, //     [W] So   [256] SQUARE APAATO..SQUARE GAL
+        0x3400...0x4DBF, //     [W] Lo  [6592] CJK UNIFIED IDEOGRAPH-3400..CJK UNIFIED IDEOGRAPH-4DBF
+        0x4E00...0x9FFF, //     [W] Lo [20992] CJK UNIFIED IDEOGRAPH-4E00..CJK UNIFIED IDEOGRAPH-9FFF
+        0xA000...0xA014, //     [W] Lo    [21] YI SYLLABLE IT..YI SYLLABLE E
+        0xA015, //              [W] Lm         YI SYLLABLE WU
+        0xA016...0xA48C, //     [W] Lo  [1143] YI SYLLABLE BIT..YI SYLLABLE YYR
+        0xA490...0xA4C6, //     [W] So    [55] YI RADICAL QOT..YI RADICAL KE
+        0xA960...0xA97C, //     [W] Lo    [29] HANGUL CHOSEONG TIKEUT-MIEUM..HANGUL CHOSEONG SSANGYEORINHIEUH
+        0xAC00...0xD7A3, //     [W] Lo [11172] HANGUL SYLLABLE GA..HANGUL SYLLABLE HIH
+        0xF900...0xFA6D, //     [W] Lo   [366] CJK COMPATIBILITY IDEOGRAPH-F900..CJK COMPATIBILITY IDEOGRAPH-FA6D
+        0xFA6E...0xFA6F, //     [W] Cn     [2] <reserved-FA6E>..<reserved-FA6F>
+        0xFA70...0xFAD9, //     [W] Lo   [106] CJK COMPATIBILITY IDEOGRAPH-FA70..CJK COMPATIBILITY IDEOGRAPH-FAD9
+        0xFADA...0xFAFF, //     [W] Cn    [38] <reserved-FADA>..<reserved-FAFF>
+        0xFE10...0xFE16, //     [W] Po     [7] PRESENTATION FORM FOR VERTICAL COMMA..PRESENTATION FORM FOR VERTICAL QUESTION MARK
+        0xFE17, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT WHITE LENTICULAR BRACKET
+        0xFE18, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT WHITE LENTICULAR BRAKCET
+        0xFE19, //              [W] Po         PRESENTATION FORM FOR VERTICAL HORIZONTAL ELLIPSIS
+        0xFE30, //              [W] Po         PRESENTATION FORM FOR VERTICAL TWO DOT LEADER
+        0xFE31...0xFE32, //     [W] Pd     [2] PRESENTATION FORM FOR VERTICAL EM DASH..PRESENTATION FORM FOR VERTICAL EN DASH
+        0xFE33...0xFE34, //     [W] Pc     [2] PRESENTATION FORM FOR VERTICAL LOW LINE..PRESENTATION FORM FOR VERTICAL WAVY LOW LINE
+        0xFE35, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT PARENTHESIS
+        0xFE36, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT PARENTHESIS
+        0xFE37, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT CURLY BRACKET
+        0xFE38, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT CURLY BRACKET
+        0xFE39, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT TORTOISE SHELL BRACKET
+        0xFE3A, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT TORTOISE SHELL BRACKET
+        0xFE3B, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT BLACK LENTICULAR BRACKET
+        0xFE3C, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT BLACK LENTICULAR BRACKET
+        0xFE3D, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT DOUBLE ANGLE BRACKET
+        0xFE3E, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT DOUBLE ANGLE BRACKET
+        0xFE3F, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT ANGLE BRACKET
+        0xFE40, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT ANGLE BRACKET
+        0xFE41, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT CORNER BRACKET
+        0xFE42, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT CORNER BRACKET
+        0xFE43, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT WHITE CORNER BRACKET
+        0xFE44, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT WHITE CORNER BRACKET
+        0xFE45...0xFE46, //     [W] Po     [2] SESAME DOT..WHITE SESAME DOT
+        0xFE47, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT SQUARE BRACKET
+        0xFE48, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT SQUARE BRACKET
+        0xFE49...0xFE4C, //     [W] Po     [4] DASHED OVERLINE..DOUBLE WAVY OVERLINE
+        0xFE4D...0xFE4F, //     [W] Pc     [3] DASHED LOW LINE..WAVY LOW LINE
+        0xFE50...0xFE52, //     [W] Po     [3] SMALL COMMA..SMALL FULL STOP
+        0xFE54...0xFE57, //     [W] Po     [4] SMALL SEMICOLON..SMALL EXCLAMATION MARK
+        0xFE58, //              [W] Pd         SMALL EM DASH
+        0xFE59, //              [W] Ps         SMALL LEFT PARENTHESIS
+        0xFE5A, //              [W] Pe         SMALL RIGHT PARENTHESIS
+        0xFE5B, //              [W] Ps         SMALL LEFT CURLY BRACKET
+        0xFE5C, //              [W] Pe         SMALL RIGHT CURLY BRACKET
+        0xFE5D, //              [W] Ps         SMALL LEFT TORTOISE SHELL BRACKET
+        0xFE5E, //              [W] Pe         SMALL RIGHT TORTOISE SHELL BRACKET
+        0xFE5F...0xFE61, //     [W] Po     [3] SMALL NUMBER SIGN..SMALL ASTERISK
+        0xFE62, //              [W] Sm         SMALL PLUS SIGN
+        0xFE63, //              [W] Pd         SMALL HYPHEN-MINUS
+        0xFE64...0xFE66, //     [W] Sm     [3] SMALL LESS-THAN SIGN..SMALL EQUALS SIGN
+        0xFE68, //              [W] Po         SMALL REVERSE SOLIDUS
+        0xFE69, //              [W] Sc         SMALL DOLLAR SIGN
+        0xFE6A...0xFE6B, //     [W] Po     [2] SMALL PERCENT SIGN..SMALL COMMERCIAL AT
+        0xFF01...0xFF03, //     [F] Po     [3] FULLWIDTH EXCLAMATION MARK..FULLWIDTH NUMBER SIGN
+        0xFF04, //              [F] Sc         FULLWIDTH DOLLAR SIGN
+        0xFF05...0xFF07, //     [F] Po     [3] FULLWIDTH PERCENT SIGN..FULLWIDTH APOSTROPHE
+        0xFF08, //              [F] Ps         FULLWIDTH LEFT PARENTHESIS
+        0xFF09, //              [F] Pe         FULLWIDTH RIGHT PARENTHESIS
+        0xFF0A, //              [F] Po         FULLWIDTH ASTERISK
+        0xFF0B, //              [F] Sm         FULLWIDTH PLUS SIGN
+        0xFF0C, //              [F] Po         FULLWIDTH COMMA
+        0xFF0D, //              [F] Pd         FULLWIDTH HYPHEN-MINUS
+        0xFF0E...0xFF0F, //     [F] Po     [2] FULLWIDTH FULL STOP..FULLWIDTH SOLIDUS
+        0xFF10...0xFF19, //     [F] Nd    [10] FULLWIDTH DIGIT ZERO..FULLWIDTH DIGIT NINE
+        0xFF1A...0xFF1B, //     [F] Po     [2] FULLWIDTH COLON..FULLWIDTH SEMICOLON
+        0xFF1C...0xFF1E, //     [F] Sm     [3] FULLWIDTH LESS-THAN SIGN..FULLWIDTH GREATER-THAN SIGN
+        0xFF1F...0xFF20, //     [F] Po     [2] FULLWIDTH QUESTION MARK..FULLWIDTH COMMERCIAL AT
+        0xFF21...0xFF3A, //     [F] Lu    [26] FULLWIDTH LATIN CAPITAL LETTER A..FULLWIDTH LATIN CAPITAL LETTER Z
+        0xFF3B, //              [F] Ps         FULLWIDTH LEFT SQUARE BRACKET
+        0xFF3C, //              [F] Po         FULLWIDTH REVERSE SOLIDUS
+        0xFF3D, //              [F] Pe         FULLWIDTH RIGHT SQUARE BRACKET
+        0xFF3E, //              [F] Sk         FULLWIDTH CIRCUMFLEX ACCENT
+        0xFF3F, //              [F] Pc         FULLWIDTH LOW LINE
+        0xFF40, //              [F] Sk         FULLWIDTH GRAVE ACCENT
+        0xFF41...0xFF5A, //     [F] Ll    [26] FULLWIDTH LATIN SMALL LETTER A..FULLWIDTH LATIN SMALL LETTER Z
+        0xFF5B, //              [F] Ps         FULLWIDTH LEFT CURLY BRACKET
+        0xFF5C, //              [F] Sm         FULLWIDTH VERTICAL LINE
+        0xFF5D, //              [F] Pe         FULLWIDTH RIGHT CURLY BRACKET
+        0xFF5E, //              [F] Sm         FULLWIDTH TILDE
+        0xFF5F, //              [F] Ps         FULLWIDTH LEFT WHITE PARENTHESIS
+        0xFF60, //              [F] Pe         FULLWIDTH RIGHT WHITE PARENTHESIS
+        0xFFE0...0xFFE1, //     [F] Sc     [2] FULLWIDTH CENT SIGN..FULLWIDTH POUND SIGN
+        0xFFE2, //              [F] Sm         FULLWIDTH NOT SIGN
+        0xFFE3, //              [F] Sk         FULLWIDTH MACRON
+        0xFFE4, //              [F] So         FULLWIDTH BROKEN BAR
+        0xFFE5...0xFFE6, //     [F] Sc     [2] FULLWIDTH YEN SIGN..FULLWIDTH WON SIGN
+        0x16FE0...0x16FE1, //   [W] Lm     [2] TANGUT ITERATION MARK..NUSHU ITERATION MARK
+        0x16FE2, //             [W] Po         OLD CHINESE HOOK MARK
+        0x16FE3, //             [W] Lm         OLD CHINESE ITERATION MARK
+        0x16FE4, //             [W] Mn         KHITAN SMALL SCRIPT FILLER
+        0x16FF0...0x16FF1, //   [W] Mc     [2] VIETNAMESE ALTERNATE READING MARK CA..VIETNAMESE ALTERNATE READING MARK NHAY
+        0x17000...0x187F7, //   [W] Lo  [6136] TANGUT IDEOGRAPH-17000..TANGUT IDEOGRAPH-187F7
+        0x18800...0x18AFF, //   [W] Lo   [768] TANGUT COMPONENT-001..TANGUT COMPONENT-768
+        0x18B00...0x18CD5, //   [W] Lo   [470] KHITAN SMALL SCRIPT CHARACTER-18B00..KHITAN SMALL SCRIPT CHARACTER-18CD5
+        0x18D00...0x18D08, //   [W] Lo     [9] TANGUT IDEOGRAPH-18D00..TANGUT IDEOGRAPH-18D08
+        0x1AFF0...0x1AFF3, //   [W] Lm     [4] KATAKANA LETTER MINNAN TONE-2..KATAKANA LETTER MINNAN TONE-5
+        0x1AFF5...0x1AFFB, //   [W] Lm     [7] KATAKANA LETTER MINNAN TONE-7..KATAKANA LETTER MINNAN NASALIZED TONE-5
+        0x1AFFD...0x1AFFE, //   [W] Lm     [2] KATAKANA LETTER MINNAN NASALIZED TONE-7..KATAKANA LETTER MINNAN NASALIZED TONE-8
+        0x1B000...0x1B0FF, //   [W] Lo   [256] KATAKANA LETTER ARCHAIC E..HENTAIGANA LETTER RE-2
+        0x1B100...0x1B122, //   [W] Lo    [35] HENTAIGANA LETTER RE-3..KATAKANA LETTER ARCHAIC WU
+        0x1B132, //             [W] Lo         HIRAGANA LETTER SMALL KO
+        0x1B150...0x1B152, //   [W] Lo     [3] HIRAGANA LETTER SMALL WI..HIRAGANA LETTER SMALL WO
+        0x1B155, //             [W] Lo         KATAKANA LETTER SMALL KO
+        0x1B164...0x1B167, //   [W] Lo     [4] KATAKANA LETTER SMALL WI..KATAKANA LETTER SMALL N
+        0x1B170...0x1B2FB, //   [W] Lo   [396] NUSHU CHARACTER-1B170..NUSHU CHARACTER-1B2FB
+        0x1F004, //             [W] So         MAHJONG TILE RED DRAGON
+        0x1F0CF, //             [W] So         PLAYING CARD BLACK JOKER
+        0x1F18E, //             [W] So         NEGATIVE SQUARED AB
+        0x1F191...0x1F19A, //   [W] So    [10] SQUARED CL..SQUARED VS
+        0x1F200...0x1F202, //   [W] So     [3] SQUARE HIRAGANA HOKA..SQUARED KATAKANA SA
+        0x1F210...0x1F23B, //   [W] So    [44] SQUARED CJK UNIFIED IDEOGRAPH-624B..SQUARED CJK UNIFIED IDEOGRAPH-914D
+        0x1F240...0x1F248, //   [W] So     [9] TORTOISE SHELL BRACKETED CJK UNIFIED IDEOGRAPH-672C..TORTOISE SHELL BRACKETED CJK UNIFIED IDEOGRAPH-6557
+        0x1F250...0x1F251, //   [W] So     [2] CIRCLED IDEOGRAPH ADVANTAGE..CIRCLED IDEOGRAPH ACCEPT
+        0x1F260...0x1F265, //   [W] So     [6] ROUNDED SYMBOL FOR FU..ROUNDED SYMBOL FOR CAI
+        0x1F300...0x1F320, //   [W] So    [33] CYCLONE..SHOOTING STAR
+        0x1F32D...0x1F335, //   [W] So     [9] HOT DOG..CACTUS
+        0x1F337...0x1F37C, //   [W] So    [70] TULIP..BABY BOTTLE
+        0x1F37E...0x1F393, //   [W] So    [22] BOTTLE WITH POPPING CORK..GRADUATION CAP
+        0x1F3A0...0x1F3CA, //   [W] So    [43] CAROUSEL HORSE..SWIMMER
+        0x1F3CF...0x1F3D3, //   [W] So     [5] CRICKET BAT AND BALL..TABLE TENNIS PADDLE AND BALL
+        0x1F3E0...0x1F3F0, //   [W] So    [17] HOUSE BUILDING..EUROPEAN CASTLE
+        0x1F3F4, //             [W] So         WAVING BLACK FLAG
+        0x1F3F8...0x1F3FA, //   [W] So     [3] BADMINTON RACQUET AND SHUTTLECOCK..AMPHORA
+        0x1F3FB...0x1F3FF, //   [W] Sk     [5] EMOJI MODIFIER FITZPATRICK TYPE-1-2..EMOJI MODIFIER FITZPATRICK TYPE-6
+        0x1F400...0x1F43E, //   [W] So    [63] RAT..PAW PRINTS
+        0x1F440, //             [W] So         EYES
+        0x1F442...0x1F4FC, //   [W] So   [187] EAR..VIDEOCASSETTE
+        0x1F4FF...0x1F53D, //   [W] So    [63] PRAYER BEADS..DOWN-POINTING SMALL RED TRIANGLE
+        0x1F54B...0x1F54E, //   [W] So     [4] KAABA..MENORAH WITH NINE BRANCHES
+        0x1F550...0x1F567, //   [W] So    [24] CLOCK FACE ONE OCLOCK..CLOCK FACE TWELVE-THIRTY
+        0x1F57A, //             [W] So         MAN DANCING
+        0x1F595...0x1F596, //   [W] So     [2] REVERSED HAND WITH MIDDLE FINGER EXTENDED..RAISED HAND WITH PART BETWEEN MIDDLE AND RING FINGERS
+        0x1F5A4, //             [W] So         BLACK HEART
+        0x1F5FB...0x1F5FF, //   [W] So     [5] MOUNT FUJI..MOYAI
+        0x1F600...0x1F64F, //   [W] So    [80] GRINNING FACE..PERSON WITH FOLDED HANDS
+        0x1F680...0x1F6C5, //   [W] So    [70] ROCKET..LEFT LUGGAGE
+        0x1F6CC, //             [W] So         SLEEPING ACCOMMODATION
+        0x1F6D0...0x1F6D2, //   [W] So     [3] PLACE OF WORSHIP..SHOPPING TROLLEY
+        0x1F6D5...0x1F6D7, //   [W] So     [3] HINDU TEMPLE..ELEVATOR
+        0x1F6DC...0x1F6DF, //   [W] So     [4] WIRELESS..RING BUOY
+        0x1F6EB...0x1F6EC, //   [W] So     [2] AIRPLANE DEPARTURE..AIRPLANE ARRIVING
+        0x1F6F4...0x1F6FC, //   [W] So     [9] SCOOTER..ROLLER SKATE
+        0x1F7E0...0x1F7EB, //   [W] So    [12] LARGE ORANGE CIRCLE..LARGE BROWN SQUARE
+        0x1F7F0, //             [W] So         HEAVY EQUALS SIGN
+        0x1F90C...0x1F93A, //   [W] So    [47] PINCHED FINGERS..FENCER
+        0x1F93C...0x1F945, //   [W] So    [10] WRESTLERS..GOAL NET
+        0x1F947...0x1F9FF, //   [W] So   [185] FIRST PLACE MEDAL..NAZAR AMULET
+        0x1FA70...0x1FA7C, //   [W] So    [13] BALLET SHOES..CRUTCH
+        0x1FA80...0x1FA88, //   [W] So     [9] YO-YO..FLUTE
+        0x1FA90...0x1FABD, //   [W] So    [46] RINGED PLANET..WING
+        0x1FABF...0x1FAC5, //   [W] So     [7] GOOSE..PERSON WITH CROWN
+        0x1FACE...0x1FADB, //   [W] So    [14] MOOSE..PEA POD
+        0x1FAE0...0x1FAE8, //   [W] So     [9] MELTING FACE..SHAKING FACE
+        0x1FAF0...0x1FAF8, //   [W] So     [9] HAND WITH INDEX FINGER AND THUMB CROSSED..RIGHTWARDS PUSHING HAND
+        0x20000...0x2A6DF, //   [W] Lo [42720] CJK UNIFIED IDEOGRAPH-20000..CJK UNIFIED IDEOGRAPH-2A6DF
+        0x2A6E0...0x2A6FF, //   [W] Cn    [32] <reserved-2A6E0>..<reserved-2A6FF>
+        0x2A700...0x2B739, //   [W] Lo  [4154] CJK UNIFIED IDEOGRAPH-2A700..CJK UNIFIED IDEOGRAPH-2B739
+        0x2B73A...0x2B73F, //   [W] Cn     [6] <reserved-2B73A>..<reserved-2B73F>
+        0x2B740...0x2B81D, //   [W] Lo   [222] CJK UNIFIED IDEOGRAPH-2B740..CJK UNIFIED IDEOGRAPH-2B81D
+        0x2B81E...0x2B81F, //   [W] Cn     [2] <reserved-2B81E>..<reserved-2B81F>
+        0x2B820...0x2CEA1, //   [W] Lo  [5762] CJK UNIFIED IDEOGRAPH-2B820..CJK UNIFIED IDEOGRAPH-2CEA1
+        0x2CEA2...0x2CEAF, //   [W] Cn    [14] <reserved-2CEA2>..<reserved-2CEAF>
+        0x2CEB0...0x2EBE0, //   [W] Lo  [7473] CJK UNIFIED IDEOGRAPH-2CEB0..CJK UNIFIED IDEOGRAPH-2EBE0
+        0x2EBE1...0x2EBEF, //   [W] Cn    [15] <reserved-2EBE1>..<reserved-2EBEF>
+        0x2EBF0...0x2EE5D, //   [W] Lo   [622] CJK UNIFIED IDEOGRAPH-2EBF0..CJK UNIFIED IDEOGRAPH-2EE5D
+        0x2EE5E...0x2F7FF, //   [W] Cn  [2466] <reserved-2EE5E>..<reserved-2F7FF>
+        0x2F800...0x2FA1D, //   [W] Lo   [542] CJK COMPATIBILITY IDEOGRAPH-2F800..CJK COMPATIBILITY IDEOGRAPH-2FA1D
+        0x2FA1E...0x2FA1F, //   [W] Cn     [2] <reserved-2FA1E>..<reserved-2FA1F>
+        0x2FA20...0x2FFFD, //   [W] Cn  [1502] <reserved-2FA20>..<reserved-2FFFD>
+        0x30000...0x3134A, //   [W] Lo  [4939] CJK UNIFIED IDEOGRAPH-30000..CJK UNIFIED IDEOGRAPH-3134A
+        0x3134B...0x3134F, //   [W] Cn     [5] <reserved-3134B>..<reserved-3134F>
+        0x31350...0x323AF, //   [W] Lo  [4192] CJK UNIFIED IDEOGRAPH-31350..CJK UNIFIED IDEOGRAPH-323AF
+        0x323B0...0x3FFFD, //   [W] Cn [56398] <reserved-323B0>..<reserved-3FFFD>
+        => true,
+        else => false,
+    };
 }
 
 pub fn visibleCodepointWidth(cp: anytype) u3 {

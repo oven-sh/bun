@@ -56,7 +56,14 @@ class FSWatcher extends EventEmitter {
   }
 
   #onEvent(eventType, filenameOrError) {
-    if (eventType === "error" || eventType === "close") {
+    if (eventType === "close") {
+      // close on next microtask tick to avoid long-running function calls when
+      // we're trying to detach the watcher
+      queueMicrotask(() => {
+        this.emit("close", filenameOrError);
+      });
+      return;
+    } else if (eventType === "error") {
       this.emit(eventType, filenameOrError);
     } else {
       this.emit("change", eventType, filenameOrError);

@@ -1267,7 +1267,7 @@ pub const ZigConsoleClient = struct {
                 }
 
                 if (value.isEmpty()) {
-                    try writer.writeByteNTimes(' ', col.width + 2 + PADDING);
+                    try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
                 } else {
                     const len: u32 = this.getWidthForValue(value);
                     const needed = col.width -| len;

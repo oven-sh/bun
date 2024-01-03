@@ -226,6 +226,34 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
             options.bun.env = std::make_unique<HashMap<String, String>>(WTFMove(env));
         }
+
+        JSValue argvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "argv"_s));
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+        if (argvValue && argvValue.isCell() && argvValue.asCell()->type() == JSC::JSType::ArrayType) {
+            Vector<String> argv;
+            forEachInIterable(lexicalGlobalObject, argvValue, [&argv](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                String str = nextValue.toWTFString(lexicalGlobalObject).isolatedCopy();
+                if (UNLIKELY(scope.exception()))
+                    return;
+                argv.append(str);
+            });
+            options.bun.argv = std::make_unique<Vector<String>>(WTFMove(argv));
+        }
+
+        JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+        if (execArgvValue && execArgvValue.isCell() && execArgvValue.asCell()->type() == JSC::JSType::ArrayType) {
+            Vector<String> execArgv;
+            forEachInIterable(lexicalGlobalObject, execArgvValue, [&execArgv](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                String str = nextValue.toWTFString(lexicalGlobalObject).isolatedCopy();
+                if (UNLIKELY(scope.exception()))
+                    return;
+                execArgv.append(str);
+            });
+            options.bun.execArgv = std::make_unique<Vector<String>>(WTFMove(execArgv));
+        }
     }
 
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

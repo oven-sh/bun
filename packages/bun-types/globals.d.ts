@@ -478,7 +478,7 @@ declare namespace Bun {
      * but the values will be available on the global `Bun.argv` as if they
      * were passed as CLI options to the script.
      */
-    // argv?: any[] | undefined;
+    argv?: any[] | undefined;
 
     /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
     // eval?: boolean | undefined;

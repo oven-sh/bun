@@ -2421,6 +2421,18 @@ pub const Process = struct {
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         const allocator = globalObject.allocator();
         const vm = globalObject.bunVM();
+
+        if (vm.worker) |worker| {
+            // was explicitly overriden for the worker?
+            if (worker.execArgv) |execArgv| {
+                const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
+                for (0..execArgv.len) |i| {
+                    array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
+                }
+                return array;
+            }
+        }
+
         var args = allocator.alloc(
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
@@ -2460,42 +2472,53 @@ pub const Process = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
+        var args_count: usize = vm.argv.len;
+        if (vm.worker) |worker| {
+            args_count = if (worker.argv) |argv| argv.len else 0;
+        }
+
         const args = allocator.alloc(
-            JSC.ZigString,
+            bun.String,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            vm.argv.len + 2,
+            args_count + 2,
         ) catch unreachable;
-        var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
+        var args_list = std.ArrayListUnmanaged(bun.String){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
 
         if (vm.standalone_module_graph != null) {
             // Don't break user's code because they did process.argv.slice(2)
-            // Even if they didn't type "bun", we still want to add it
+            // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.appendAssumeCapacity(
-                JSC.ZigString.init("bun"),
+                bun.String.static("bun"),
             );
         } else {
+            const exe_path = std.fs.selfExePathAlloc(allocator) catch null;
             args_list.appendAssumeCapacity(
-                JSC.ZigString.init(
-                    std.fs.selfExePathAlloc(allocator) catch "bun",
-                ).withEncoding(),
+                if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
             );
         }
 
         if (vm.main.len > 0)
-            args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());
+            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
 
         defer allocator.free(args);
-        {
-            for (vm.argv) |arg0| {
-                const argv0 = JSC.ZigString.init(arg0).withEncoding();
+
+        if (vm.worker) |worker| {
+            if (worker.argv) |argv| {
+                for (argv) |arg| {
+                    args_list.appendAssumeCapacity(bun.String.init(arg));
+                }
+            }
+        } else {
+            for (vm.argv) |arg| {
+                const str = bun.String.fromUTF8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-                args_list.appendAssumeCapacity(argv0);
+                args_list.appendAssumeCapacity(str);
             }
         }
 
-        return JSC.JSValue.createStringArray(globalObject, args_list.items.ptr, args_list.items.len, true);
+        return bun.String.toJSArray(globalObject, args_list.items);
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

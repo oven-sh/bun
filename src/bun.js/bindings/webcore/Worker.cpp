@@ -115,7 +115,11 @@ extern "C" void* WebWorker__create(
     uint32_t parentContextId,
     uint32_t contextId,
     bool miniMode,
-    bool unrefByDefault);
+    bool unrefByDefault,
+    StringImpl* argvPtr,
+    uint32_t argvLen,
+    StringImpl* execArgvPtr,
+    uint32_t execArgvLen);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -152,6 +156,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     bool miniMode = worker->m_options.bun.mini;
     bool unrefByDefault = worker->m_options.bun.unref;
 
+    Vector<String>* argv = worker->m_options.bun.argv.get();
+    Vector<String>* execArgv = worker->m_options.bun.execArgv.get();
+
     void* impl = WebWorker__create(
         worker.ptr(),
         jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(),
@@ -159,7 +166,14 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         urlStr,
         &errorMessage,
         static_cast<uint32_t>(context.identifier()),
-        static_cast<uint32_t>(worker->m_clientIdentifier), miniMode, unrefByDefault);
+        static_cast<uint32_t>(worker->m_clientIdentifier),
+        miniMode,
+        unrefByDefault,
+        argv ? reinterpret_cast<StringImpl*>(argv->data()) : nullptr,
+        argv ? static_cast<uint32_t>(argv->size()) : 0,
+        execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
+        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0
+    );
 
     if (!impl) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };

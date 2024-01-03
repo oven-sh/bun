@@ -652,3 +652,15 @@ it("Missing DB throws SQLITE_CANTOPEN", () => {
     expect(error.code).toBe("SQLITE_CANTOPEN");
   }
 });
+
+it("empty blob", () => {
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB)");
+  db.run("INSERT INTO foo (blob) VALUES (?)", [new Uint8Array()]);
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      blob: new Uint8Array(),
+    },
+  ]);
+});

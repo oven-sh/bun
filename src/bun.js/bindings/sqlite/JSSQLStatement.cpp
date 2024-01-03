@@ -1449,9 +1449,13 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
         case SQLITE_BLOB: {
             size_t len = sqlite3_column_bytes(stmt, i);
             const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
-            JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-            memcpy(array->vector(), blob, len);
-            result->putDirectIndex(lexicalGlobalObject, i, array);
+            if (LIKELY(len > 0 && blob != nullptr)) {
+                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
+                memcpy(array->vector(), blob, len);
+                result->putDirectIndex(lexicalGlobalObject, i, array);
+            } else {
+                result->putDirectIndex(lexicalGlobalObject, i, JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0));
+            }
             break;
         }
         default: {

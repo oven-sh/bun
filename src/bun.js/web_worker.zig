@@ -5,6 +5,7 @@ const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
 const Async = bun.Async;
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
@@ -30,6 +31,9 @@ pub const WebWorker = struct {
     user_keep_alive: bool = false,
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
+
+    argv: ?[]const WTFStringImpl,
+    execArgv: ?[]const WTFStringImpl,
 
     pub const Status = enum(u8) {
         start,
@@ -72,6 +76,10 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
+        argv_ptr: ?[*]WTFStringImpl,
+        argv_len: u32,
+        execArgv_ptr: ?[*]WTFStringImpl,
+        execArgv_len: u32,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
@@ -112,6 +120,8 @@ pub const WebWorker = struct {
             },
             .user_keep_alive = !default_unref,
             .worker_event_loop_running = true,
+            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
+            .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
         };
 
         worker.parent_poll_ref.refConcurrently(parent);

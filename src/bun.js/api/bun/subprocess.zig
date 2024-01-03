@@ -1838,7 +1838,6 @@ pub const Subprocess = struct {
                     else => |err| break :blk std.os.unexpectedErrno(err),
                 }
                 actions.dup2(fds[1], item.fileno) catch |err| break :blk err;
-                actions.close(fds[0]) catch |err| break :blk err;
                 item.fd = fds[0];
             };
             _ = maybe catch |err| return globalThis.handleError(err, "in configuring child stderr");

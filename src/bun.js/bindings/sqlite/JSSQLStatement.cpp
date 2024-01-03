@@ -1104,11 +1104,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     if (
         // fast path: ascii latin1 string is utf8
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
-        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
+        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), flags, &statement, nullptr);
     } else {
         // slow path: utf16 or latin1 string with supplemental characters
         CString utf8 = sqlString.utf8();
-        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), 0, &statement, nullptr);
+        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), flags, &statement, nullptr);
     }
 
     if (rc != SQLITE_OK) {

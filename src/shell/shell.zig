@@ -869,6 +869,7 @@ pub const TokenTag = enum {
     Eq,
     Semicolon,
     Newline,
+    // Comment,
     BraceBegin,
     Comma,
     BraceEnd,
@@ -1069,6 +1070,18 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // 3. word breakers (spaces, etc.)
                 if (!escaped) escaped: {
                     switch (char) {
+                        '#' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            const whitespace_preceding =
+                                if (self.chars.prev) |prev|
+                                Chars.isWhitespace(prev)
+                            else
+                                true;
+                            if (!whitespace_preceding) break :escaped;
+                            try self.break_word(true);
+                            self.eatComment();
+                            continue;
+                        },
                         ';' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
@@ -1543,6 +1556,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return self.chars.eat();
         }
 
+        fn eatComment(self: *@This()) void {
+            while (self.eat()) |peeked| {
+                if (peeked.escaped) {
+                    continue;
+                }
+                if (peeked.char == '\n') break;
+            }
+        }
+
         fn eat_slice(self: *@This(), comptime CodepointType: type, comptime N: usize) ?[N]CodepointType {
             var slice = [_]CodepointType{0} ** N;
             var i: usize = 0;
@@ -1677,6 +1699,8 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
     return struct {
         src: Src,
         state: State = .Normal,
+        prev: ?InputChar = null,
+        current: ?InputChar = null,
 
         pub const Src = switch (encoding) {
             .ascii => SrcAscii,
@@ -1689,6 +1713,13 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             char: u32,
             escaped: bool = false,
         };
+
+        pub fn isWhitespace(char: InputChar) bool {
+            return switch (char.char) {
+                '\t', '\r', '\n', ' ' => true,
+                else => false,
+            };
+        }
 
         pub const State = enum {
             Normal,
@@ -1729,6 +1760,8 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
 
         pub fn eat(self: *@This()) ?InputChar {
             if (self.read_char()) |result| {
+                self.prev = self.current;
+                self.current = result;
                 self.src.eat(result.escaped);
                 return result;
             }
@@ -1758,7 +1791,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                     const peeked = self.src.indexNext() orelse return null;
                     switch (peeked.char) {
                         // Backslash only applies to these characters
-                        '$', '`', '"', '\\', '\n' => {
+                        '$', '`', '"', '\\', '\n', '#' => {
                             char = peeked.char;
                         },
                         else => return .{ .char = char, .escaped = false },

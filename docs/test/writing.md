@@ -253,7 +253,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.arrayContaining()`](https://jestjs.io/docs/expect#expectarraycontainingarray)
 
 ---
@@ -263,7 +263,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.closeTo()`](https://jestjs.io/docs/expect#expectclosetonumber-numdigits)
 
 ---
@@ -273,7 +273,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.objectContaining()`](https://jestjs.io/docs/expect#expectobjectcontainingobject)
 
 ---

@@ -1465,6 +1465,34 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength)
+{
+
+// Windows doesn't have mmap
+// This code should pretty much only be called on Linux.
+#if !OS(WINDOWS)
+    auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+
+    if (ptr == MAP_FAILED) {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto buffer = ArrayBuffer::createFromBytes(reinterpret_cast<char*>(ptr) + byteOffset, byteLength, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
+        munmap(ptr, totalLength);
+    }));
+
+    Structure* structure = globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default);
+
+    if (UNLIKELY(!structure)) {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTFMove(buffer)));
+#else
+    return JSC::JSValue::encode(JSC::JSValue {});
+#endif
+}
+
 extern "C" JSC__JSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1619,6 +1647,8 @@ enum ReadableStreamTag : int32_t {
     Bytes = 4,
 };
 
+extern "C" JSC_DECLARE_HOST_FUNCTION(BunString__getStringWidth);
+
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -1751,7 +1781,12 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "parseArgs"_s)),
                 JSC::JSFunction::create(vm, globalObject, 1, "parseArgs"_s, Bun__NodeUtil__jsParseArgs, ImplementationVisibility::Public), NoIntrinsic);
+
             return JSValue::encode(obj);
+        }
+
+        if (string == "getStringWidth"_s) {
+            return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 1, "getStringWidth"_s, BunString__getStringWidth, ImplementationVisibility::Public));
         }
 
         if (string == "pathToFileURL"_s) {
@@ -2922,6 +2957,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_JSSQLStatementStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::createJSSQLStatementStructure(init.owner));
+        });
+
     m_memoryFootprintStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3953,6 +3993,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_testMatcherUtilsObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);

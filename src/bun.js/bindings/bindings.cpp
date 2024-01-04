@@ -830,6 +830,24 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         return false;
     }
+    case ErrorInstanceType: {
+        if (c2Type != ErrorInstanceType) {
+            return false;
+        }
+
+        if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*>(v1)) {
+            JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*>(v2);
+
+            if (UNLIKELY(!right)) {
+                return false;
+            }
+
+            return (
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) &&
+                left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject)
+            );
+        }
+    }
     case Int8ArrayType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -2453,6 +2471,27 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     }
 
     return JSC::JSValue::encode(object);
+}
+
+
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue) {
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    RELEASE_AND_RETURN(scope,  JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
+}
+
+bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key) {
+    JSC::VM& vm = globalObject->vm();
+
+    
+    JSC::JSValue value = JSC::JSValue::decode(jsValue);
+    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
+
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,

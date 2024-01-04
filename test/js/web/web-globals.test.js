@@ -269,3 +269,19 @@ test("confirm (no)", async () => {
 
   expect(await new Response(proc.stderr).text()).toBe("No\n");
 });
+
+test("globalThis.self = 123 works", () => {
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
+    configurable: true,
+    enumerable: true,
+    get: expect.any(Function),
+    set: expect.any(Function),
+  });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "self");
+  try {
+    globalThis.self = 123;
+    expect(globalThis.self).toBe(123);
+  } finally {
+    Object.defineProperty(globalThis, "self", original);
+  }
+});

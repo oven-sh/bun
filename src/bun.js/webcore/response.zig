@@ -1687,7 +1687,7 @@ pub const Fetch = struct {
         var method = Method.GET;
         var script_ctx = globalThis.bunVM();
 
-        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
+        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
 
         var url = ZigURL{};
         var first_arg = args.nextEat().?;

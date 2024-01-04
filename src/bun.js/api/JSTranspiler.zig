@@ -739,7 +739,7 @@ pub fn constructor(
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),
-        arguments.ptr[0..arguments.len],
+        arguments.slice(),
     );
 
     defer temp.deinit();
@@ -901,7 +901,7 @@ pub fn scan(
 ) callconv(.C) JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("scan", "code", "string or Uint8Array");
@@ -1001,7 +1001,7 @@ pub fn transform(
     var exception_ref = [_]JSC.C.JSValueRef{null};
     const exception: JSC.C.ExceptionRef = &exception_ref;
     const arguments = callframe.arguments(3);
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
@@ -1052,7 +1052,7 @@ pub fn transformSync(
     const exception: JSC.C.ExceptionRef = &exception_value;
     const arguments = callframe.arguments(3);
 
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
@@ -1235,7 +1235,7 @@ pub fn scanImports(
     const arguments = callframe.arguments(2);
     var exception_val = [_]JSC.C.JSValueRef{null};
     const exception: JSC.C.ExceptionRef = &exception_val;
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
 
     const code_arg = args.next() orelse {

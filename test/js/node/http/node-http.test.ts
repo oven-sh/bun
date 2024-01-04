@@ -136,6 +136,23 @@ describe("node:http", () => {
       expect(listenResponse).toBe(server);
       listenResponse.close();
     });
+
+    it("option method should be uppercase (#7250)", async () => {
+      try {
+        var server = createServer((req, res) => {
+          expect(req.method).toBe("OPTIONS");
+          res.writeHead(204, {});
+          res.end();
+        });
+        const url = await listen(server);
+        const res = await fetch(url, {
+          method: "OPTIONS",
+        });
+        expect(res.status).toBe(204);
+      } finally {
+        server.close();
+      }
+    });
   });
 
   describe("response", () => {

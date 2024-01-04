@@ -154,7 +154,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
                 methodString = "FETCH"_s;
                 break;
             }
-            if (methodView == std::string_view("purge", 6)) {
+            if (methodView == std::string_view("purge", 5)) {
                 methodString = "PURGE"_s;
                 break;
             }

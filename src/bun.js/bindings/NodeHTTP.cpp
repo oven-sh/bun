@@ -154,6 +154,10 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
                 methodString = "FETCH"_s;
                 break;
             }
+            if (methodView == std::string_view("purge", 5)) {
+                methodString = "PURGE"_s;
+                break;
+            }
 
             break;
         }
@@ -161,10 +165,6 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         case 6: {
             if (methodView == std::string_view("delete", 6)) {
                 methodString = "DELETE"_s;
-                break;
-            }
-            if (methodView == std::string_view("purge", 6)) {
-                methodString = "PURGE"_s;
                 break;
             }
 
@@ -176,12 +176,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
                 methodString = "CONNECT"_s;
                 break;
             }
-
-            break;
-        }
-
-        case 8: {
-            if (methodView == std::string_view("options", 8)) {
+            if (methodView == std::string_view("options", 7)) {
                 methodString = "OPTIONS"_s;
                 break;
             }

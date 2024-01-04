@@ -1251,15 +1251,17 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         reachable_from_js: bool = true,
         poll_ref: ?*Async.FilePoll = null,
 
+        const ThisFileSink = @This();
+
         pub const event_loop_kind = EventLoop;
         pub usingnamespace NewReadyWatcher(@This(), .writable, ready);
         const log = Output.scoped(.FileSink, false);
 
-        pub fn isReachable(this: *const FileSink) bool {
+        pub fn isReachable(this: *const ThisFileSink) bool {
             return this.reachable_from_js or !this.signal.isDead();
         }
 
-        pub fn updateRef(this: *FileSink, value: bool) void {
+        pub fn updateRef(this: *ThisFileSink, value: bool) void {
             if (this.poll_ref) |poll| {
                 if (value)
                     poll.ref(JSC.VirtualMachine.get())
@@ -1269,7 +1271,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         }
 
         const max_fifo_size = 64 * 1024;
-        pub fn prepare(this: *FileSink, input_path: PathOrFileDescriptor, mode: bun.Mode) JSC.Node.Maybe(void) {
+        pub fn prepare(this: *ThisFileSink, input_path: PathOrFileDescriptor, mode: bun.Mode) JSC.Node.Maybe(void) {
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             const auto_close = this.auto_close;
             const fd = if (!auto_close)
@@ -1302,12 +1304,12 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .result = {} };
         }
 
-        pub fn connect(this: *FileSink, signal: Signal) void {
+        pub fn connect(this: *ThisFileSink, signal: Signal) void {
             std.debug.assert(this.reader == null);
             this.signal = signal;
         }
 
-        pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
+        pub fn start(this: *ThisFileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
             this.done = false;
             this.written = 0;
             this.auto_close = false;
@@ -1336,11 +1338,11 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .result = {} };
         }
 
-        pub fn flush(this: *FileSink, buf: []const u8) StreamResult.Writable {
+        pub fn flush(this: *ThisFileSink, buf: []const u8) StreamResult.Writable {
             return this.flushMaybePollWithSizeAndBuffer(buf, std.math.maxInt(usize));
         }
 
-        fn adjustPipeLengthOnLinux(this: *FileSink, fd: bun.FileDescriptor, remain_len: usize) void {
+        fn adjustPipeLengthOnLinux(this: *ThisFileSink, fd: bun.FileDescriptor, remain_len: usize) void {
             // On Linux, we can adjust the pipe size to avoid blocking.
             this.has_adjusted_pipe_size_on_linux = true;
 
@@ -1354,7 +1356,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             }
         }
 
-        pub fn flushMaybePollWithSizeAndBuffer(this: *FileSink, buffer: []const u8, writable_size: usize) StreamResult.Writable {
+        pub fn flushMaybePollWithSizeAndBuffer(this: *ThisFileSink, buffer: []const u8, writable_size: usize) StreamResult.Writable {
             std.debug.assert(this.fd != bun.invalid_fd);
 
             var total: usize = this.written;
@@ -1557,7 +1559,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .owned = @as(Blob.SizeType, @truncate(total - initial)) };
         }
 
-        pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
+        pub fn flushFromJS(this: *ThisFileSink, globalThis: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
             if (this.isPending() or this.done) {
                 return .{ .result = JSC.JSValue.jsUndefined() };
             }
@@ -1572,7 +1574,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             };
         }
 
-        fn cleanup(this: *FileSink) void {
+        fn cleanup(this: *ThisFileSink) void {
             this.done = true;
 
             if (this.poll_ref) |poll| {
@@ -1601,7 +1603,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             this.pending.run();
         }
 
-        pub fn finalize(this: *FileSink) void {
+        pub fn finalize(this: *ThisFileSink) void {
             this.cleanup();
             this.signal.close(null);
 
@@ -1611,9 +1613,9 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                 this.allocator.destroy(this);
         }
 
-        pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*FileSink {
-            const this = try allocator.create(FileSink);
-            this.* = FileSink{
+        pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ThisFileSink {
+            const this = try allocator.create(ThisFileSink);
+            this.* = ThisFileSink{
                 .buffer = bun.ByteList{},
                 .allocator = allocator,
                 .next = next,
@@ -1622,21 +1624,21 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         }
 
         pub fn construct(
-            this: *FileSink,
+            this: *ThisFileSink,
             allocator: std.mem.Allocator,
         ) void {
-            this.* = FileSink{
+            this.* = ThisFileSink{
                 .buffer = bun.ByteList{},
                 .allocator = allocator,
                 .next = null,
             };
         }
 
-        pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
+        pub fn toJS(this: *ThisFileSink, globalThis: *JSGlobalObject) JSValue {
             return JSSink.createObject(globalThis, this);
         }
 
-        pub fn ready(this: *FileSink, writable: i64) void {
+        pub fn ready(this: *ThisFileSink, writable: i64) void {
             var remain = this.buffer.slice();
             const pending = remain[@min(this.head, remain.len)..].len;
             if (pending == 0) {
@@ -1732,12 +1734,12 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .owned = len };
         }
 
-        fn isPending(this: *const FileSink) bool {
+        fn isPending(this: *const ThisFileSink) bool {
             if (this.done) return false;
             return this.pending.state == .pending;
         }
 
-        pub fn close(this: *FileSink) void {
+        pub fn close(this: *ThisFileSink) void {
             if (this.done)
                 return;
 
@@ -1760,7 +1762,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             this.pending.run();
         }
 
-        pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        pub fn end(this: *ThisFileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
             if (this.done) {
                 return .{ .result = {} };
             }
@@ -1788,7 +1790,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .result = {} };
         }
 
-        pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        pub fn endFromJS(this: *ThisFileSink, globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
             if (this.done) {
                 return .{ .result = JSValue.jsNumber(this.written) };
             }
@@ -1816,7 +1818,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .result = flushed.toJS(globalThis) };
         }
 
-        pub fn sink(this: *FileSink) Sink {
+        pub fn sink(this: *ThisFileSink) Sink {
             return Sink.init(this);
         }
 
@@ -4885,7 +4887,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
             std.debug.assert(
                 // this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
-                this.poll_ref.?.unregister(JSC.EventLoopCtx(event_loop_ptr.get()).platformEventLoop(), false) == .result,
+                this.poll_ref.?.unregister(JSC.AbstractVM(event_loop_ptr.get()).platformEventLoop(), false) == .result,
             );
             // this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
             this.poll_ref.?.disableKeepingProcessAlive(event_loop_ptr.get());
@@ -4932,7 +4934,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(poll_ref.fd == fd);
             std.debug.assert(!this.isWatching());
             // switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
-            switch (poll_ref.register(JSC.EventLoopCtx(event_loop_ptr.get()).platformEventLoop(), flag, true)) {
+            switch (poll_ref.register(JSC.AbstractVM(event_loop_ptr.get()).platformEventLoop(), flag, true)) {
                 .err => |err| {
                     std.debug.panic("FilePoll.register failed: {d}", .{err.errno});
                 },

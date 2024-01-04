@@ -222,11 +222,14 @@ pub const AnyTaskWithExtraContext = struct {
     next: ?*AnyTaskWithExtraContext = null,
 
     pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
-        this.* = .{
-            .ctx = of,
-            .callback = &@field(of, @tagName(field)),
-            .next = null,
-        };
+        // this.* = .{
+        //     .ctx = of,
+        //     .callback = @field(std.meta.Child(@TypeOf(of)), field),
+        //     .next = null,
+        // };
+        // return this;
+        const TheTask = New(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), field));
+        this.* = TheTask.init(of);
         return this;
     }
 
@@ -346,10 +349,10 @@ const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
-const ShellRmTask = bun.shell.interpret.Builtin.Rm.ShellRmTask;
-const ShellLsTask = bun.shell.interpret.Builtin.Ls.ShellLsTask;
-const ShellMvCheckTargetTask = bun.shell.interpret.Builtin.Mv.ShellMvCheckTargetTask;
-const ShellMvBatchedTask = bun.shell.interpret.Builtin.Mv.ShellMvBatchedTask;
+const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
+const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
+const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
+const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -647,7 +650,7 @@ pub const EventLoop = struct {
 
     timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
 
-    pub inline fn getEventLoopCtx(this: *EventLoop) *JSC.VirtualMachine {
+    pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
         return this.virtual_machine;
     }
 
@@ -1384,10 +1387,10 @@ pub const EventLoop = struct {
     }
 };
 
-pub const EventLoopCtxJs = struct {
+pub const JsVM = struct {
     vm: *JSC.VirtualMachine,
 
-    pub inline fn init(inner: *JSC.VirtualMachine) EventLoopCtxJs {
+    pub inline fn init(inner: *JSC.VirtualMachine) JsVM {
         return .{
             .vm = inner,
         };
@@ -1408,12 +1411,16 @@ pub const EventLoopCtxJs = struct {
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {
         this.vm.pending_unref_counter +|= 1;
     }
+
+    pub inline fn filePolls(this: @This()) *Async.FilePoll.Store {
+        return this.vm.rareData().filePolls(this.vm);
+    }
 };
 
-pub const EventLoopCtxMini = struct {
+pub const MiniVM = struct {
     mini: *JSC.MiniEventLoop,
 
-    pub fn init(inner: *JSC.MiniEventLoop) EventLoopCtxMini {
+    pub fn init(inner: *JSC.MiniEventLoop) MiniVM {
         return .{
             .mini = inner,
         };
@@ -1436,6 +1443,10 @@ pub const EventLoopCtxMini = struct {
 
         @panic("FIXME TODO");
     }
+
+    pub inline fn filePolls(this: @This()) *Async.FilePoll.Store {
+        return this.mini.filePolls();
+    }
 };
 
 pub const EventLoopKind = enum {
@@ -1450,16 +1461,16 @@ pub const EventLoopKind = enum {
     }
 };
 
-pub fn EventLoopCtx(inner: anytype) brk: {
+pub fn AbstractVM(inner: anytype) brk: {
     if (@TypeOf(inner) == *JSC.VirtualMachine) {
-        break :brk EventLoopCtxJs;
+        break :brk JsVM;
     } else if (@TypeOf(inner) == *JSC.MiniEventLoop) {
-        break :brk EventLoopCtxMini;
+        break :brk MiniVM;
     }
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 } {
-    if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return EventLoopCtxJs.init(inner);
-    if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return EventLoopCtxMini.init(inner);
+    if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return JsVM.init(inner);
+    if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return MiniVM.init(inner);
     @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
 }
 
@@ -1476,21 +1487,42 @@ pub const MiniEventLoop = struct {
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
     env: ?*bun.DotEnv.Loader = null,
+    top_level_dir: []const u8 = "",
+    after_event_loop_callback_ctx: ?*anyopaque = null,
+    after_event_loop_callback: ?JSC.OpaqueCallback = null,
 
     pub threadlocal var global: *MiniEventLoop = undefined;
 
-    pub fn initGlobal() void {
+    pub fn initGlobal() *MiniEventLoop {
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
+        global.env = bun.DotEnv.instance orelse env_loader: {
+            const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
+            map.* = bun.DotEnv.Map.init(bun.default_allocator);
+
+            const loader = bun.default_allocator.create(bun.DotEnv.Loader) catch bun.outOfMemory();
+            loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
+            break :env_loader loader;
+        };
+        return global;
     }
 
     const Queue = std.fifo.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
 
     pub const Task = AnyTaskWithExtraContext;
 
-    pub inline fn getEventLoopCtx(this: *MiniEventLoop) *MiniEventLoop {
+    pub inline fn getVmImpl(this: *MiniEventLoop) *MiniEventLoop {
         return this;
+    }
+
+    pub fn onAfterEventLoop(this: *MiniEventLoop) void {
+        if (this.after_event_loop_callback) |cb| {
+            const ctx = this.after_event_loop_callback_ctx;
+            this.after_event_loop_callback = null;
+            this.after_event_loop_callback_ctx = null;
+            cb(ctx);
+        }
     }
 
     pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
@@ -1547,6 +1579,7 @@ pub const MiniEventLoop = struct {
     ) void {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
+                defer this.onAfterEventLoop();
                 this.loop.inc();
                 this.loop.tick();
                 this.loop.dec();

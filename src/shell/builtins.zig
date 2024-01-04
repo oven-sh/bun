@@ -59,6 +59,11 @@ pub fn NewBuiltin(comptime EventLoopKind: JSC.EventLoopKind) type {
         .mini => bun.shell.interpret.InterpreterMini.Cmd,
     };
 
+    // const Builtin = switch (EventLoopKind) {
+    //     .js => bun.shell.Builtin,
+    //     .mini => bun.shell.BuiltinMini,
+    // };
+
     return struct {
         kind: Kind,
         stdin: BuiltinIO,

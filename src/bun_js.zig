@@ -140,6 +140,13 @@ pub const Run = struct {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
+        if (std.mem.eql(u8, std.fs.path.extension(entry_path), "bunsh")) {
+            const mini = JSC.MiniEventLoop.initGlobal();
+            mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
+            try bun.shell.InterpreterMini.initAndRunFromFile(mini, entry_path);
+            return;
+        }
+
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();

@@ -912,15 +912,15 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         pub fn ref(this: *Subprocess) void {
-            const vm = this.globalThis.bunVM();
+            // const vm = this.globalThis.bunVM();
 
             switch (this.poll) {
                 .poll_ref => if (this.poll.poll_ref) |poll| {
                     // if (poll.flags.contains(.enable)
-                    poll.ref(vm);
+                    poll.ref(GlobalHandle.init(this.globalThis).eventLoopCtx());
                 },
                 .wait_thread => |*wait_thread| {
-                    wait_thread.poll_ref.ref(vm);
+                    wait_thread.poll_ref.ref(GlobalHandle.init(this.globalThis).eventLoopCtx());
                 },
             }
 
@@ -938,19 +938,19 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-        pub fn unref(this: *ShellSubprocess, comptime deactivate_poll_ref: bool) void {
-            const vm = this.globalThis.bunVM();
+        pub fn unref(this: *@This(), comptime deactivate_poll_ref: bool) void {
+            // const vm = this.globalThis.bunVM();
 
             switch (this.poll) {
                 .poll_ref => if (this.poll.poll_ref) |poll| {
                     if (deactivate_poll_ref) {
-                        poll.onEnded(vm);
+                        poll.onEnded(GlobalHandle.init(this.globalThis).eventLoopCtx());
                     } else {
-                        poll.unref(vm);
+                        poll.unref(GlobalHandle.init(this.globalThis).eventLoopCtx());
                     }
                 },
                 .wait_thread => |*wait_thread| {
-                    wait_thread.poll_ref.unref(vm);
+                    wait_thread.poll_ref.unref(GlobalHandle.init(this.globalThis).eventLoopCtx());
                 },
             }
             // if (!this.hasCalledGetter(.stdin)) {
@@ -966,11 +966,11 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             // }
         }
 
-        pub fn hasKilled(this: *const ShellSubprocess) bool {
+        pub fn hasKilled(this: *const @This()) bool {
             return this.exit_code != null or this.signal_code != null;
         }
 
-        pub fn tryKill(this: *ShellSubprocess, sig: i32) JSC.Node.Maybe(void) {
+        pub fn tryKill(this: *@This(), sig: i32) JSC.Node.Maybe(void) {
             if (this.hasExited()) {
                 return .{ .result = {} };
             }
@@ -1017,7 +1017,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         //     return this.observable_getters.contains(getter);
         // }
 
-        fn closeProcess(this: *ShellSubprocess) void {
+        fn closeProcess(this: *@This()) void {
             if (comptime !Environment.isLinux) {
                 return;
             }
@@ -1031,14 +1031,14 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
         }
 
-        pub fn disconnect(this: *ShellSubprocess) void {
+        pub fn disconnect(this: *@This()) void {
             _ = this;
             // if (this.ipc_mode == .none) return;
             // this.ipc.socket.close(0, null);
             // this.ipc_mode = .none;
         }
 
-        pub fn closeIO(this: *ShellSubprocess, comptime io: @Type(.EnumLiteral)) void {
+        pub fn closeIO(this: *@This(), comptime io: @Type(.EnumLiteral)) void {
             if (this.closed.contains(io)) return;
             log("close IO {s}", .{@tagName(io)});
             this.closed.insert(io);
@@ -1057,7 +1057,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         // This must only be run once per Subprocess
-        pub fn finalizeSync(this: *ShellSubprocess) void {
+        pub fn finalizeSync(this: *@This()) void {
             this.closeProcess();
 
             this.closeIO(.stdin);
@@ -1069,7 +1069,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             // this.on_exit_callback.deinit();
         }
 
-        pub fn deinit(this: *ShellSubprocess) void {
+        pub fn deinit(this: *@This()) void {
             //     std.debug.assert(!this.hasPendingActivity());
             this.finalizeSync();
             log("Deinit", .{});
@@ -1159,7 +1159,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 }
             };
 
-            pub fn default(arena: *bun.ArenaAllocator, jsc_vm: *JSC.VirtualMachine, comptime is_sync: bool) SpawnArgs {
+            pub fn default(arena: *bun.ArenaAllocator, jsc_vm: GlobalRef, comptime is_sync: bool) SpawnArgs {
                 var out: SpawnArgs = .{
                     .arena = arena,
 
@@ -1168,14 +1168,14 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         .items = &.{},
                         .capacity = 0,
                     },
-                    .cwd = jsc_vm.bundler.fs.top_level_dir,
+                    .cwd = GlobalHandle.init(jsc_vm).topLevelDir(),
                     .stdio = .{
                         .{ .ignore = {} },
                         .{ .pipe = null },
                         .{ .inherit = .{} },
                     },
                     .lazy = false,
-                    .PATH = jsc_vm.bundler.env.get("PATH") orelse "",
+                    .PATH = GlobalHandle.init(jsc_vm).env().get("PATH") orelse "",
                     .argv = undefined,
                     .detached = false,
                     // .ipc_mode = IPCMode.none,
@@ -1232,7 +1232,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         pub fn spawnAsync(
             globalThis_: GlobalRef,
             spawn_args_: SpawnArgs,
-            out: **ShellSubprocess,
+            out: **@This(),
         ) bun.shell.Result(void) {
             const globalThis = GlobalHandle.init(globalThis_);
             if (comptime Environment.isWindows) {
@@ -1266,7 +1266,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         pub fn spawnSync(
             globalThis: *JSC.JSGlobalObject,
             spawn_args_: SpawnArgs,
-        ) !?*ShellSubprocess {
+        ) !?*@This() {
             if (comptime Environment.isWindows) {
                 globalThis.throwTODO("spawn() is not yet implemented on Windows");
                 return null;
@@ -1283,7 +1283,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             var subprocess = util.spawnMaybeSyncImpl(
                 .{
                     .SpawnArgs = SpawnArgs,
-                    .Subprocess = ShellSubprocess,
+                    .Subprocess = @This(),
                     .WaiterThread = WaiterThread,
                     .is_sync = true,
                     .is_js = false,
@@ -1320,7 +1320,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             };
 
             if (!WaiterThread.shouldUseWaiterThread()) {
-                const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, ShellSubprocess, subprocess);
+                const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, @This(), subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
                 switch (subprocess.poll.poll_ref.?.register(
                     jsc_vm.event_loop_handle.?,
@@ -1368,8 +1368,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             allocator: Allocator,
             out_watchfd: *?WatchFd,
             spawn_args: *SpawnArgs,
-            out_subproc: **ShellSubprocess,
-        ) bun.shell.Result(*ShellSubprocess) {
+            out_subproc: **@This(),
+        ) bun.shell.Result(*@This()) {
             const globalThis = GlobalHandle.init(globalThis_);
             const is_sync = config.is_sync;
 
@@ -1625,7 +1625,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     subprocess.poll = .{ .poll_ref = poll };
                     switch (subprocess.poll.poll_ref.?.register(
                         // jsc_vm.event_loop_handle.?,
-                        JSC.EventLoopCtx(globalThis.eventLoopCtx()).platformEventLoop(),
+                        JSC.AbstractVM(globalThis.eventLoopCtx()).platformEventLoop(),
                         .process,
                         true,
                     )) {
@@ -1681,30 +1681,33 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             return .{ .ok = subprocess };
         }
 
-        pub fn onExitNotificationTask(this: *ShellSubprocess) void {
-            var vm = this.globalThis.bunVM();
+        pub fn onExitNotificationTask(this: *@This()) void {
+            // var vm = this.globalThis.bunVM();
             const is_sync = this.flags.is_sync;
 
             defer {
-                if (!is_sync)
-                    vm.drainMicrotasks();
+                // if (!is_sync)
+                //     vm.drainMicrotasks();
+                if (!is_sync) {
+                    if (comptime EventLoopKind == .js) this.globalThis.bunVM().drainMicrotasks();
+                }
             }
             this.wait(false);
         }
 
         pub fn onExitNotification(
-            this: *ShellSubprocess,
+            this: *@This(),
         ) void {
             std.debug.assert(this.flags.is_sync);
 
             this.wait(this.flags.is_sync);
         }
 
-        pub fn wait(this: *ShellSubprocess, sync: bool) void {
+        pub fn wait(this: *@This(), sync: bool) void {
             return this.onWaitPid(sync, PosixSpawn.waitpid(this.pid, if (sync) 0 else std.os.W.NOHANG));
         }
 
-        pub fn watch(this: *ShellSubprocess) JSC.Maybe(void) {
+        pub fn watch(this: *@This()) JSC.Maybe(void) {
             if (WaiterThread.shouldUseWaiterThread()) {
                 WaiterThread.append(this);
                 return JSC.Maybe(void){ .result = {} };
@@ -1712,7 +1715,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
             if (this.poll.poll_ref) |poll| {
                 var global_handle = GlobalHandle.init(this.globalThis);
-                var event_loop_ctx = JSC.EventLoopCtx(global_handle.eventLoopCtx());
+                var event_loop_ctx = JSC.AbstractVM(global_handle.eventLoopCtx());
                 const registration = poll.register(
                     // this.globalThis.bunVM().event_loop_handle.?,
                     event_loop_ctx.platformEventLoop(),
@@ -1726,7 +1729,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
         }
 
-        pub fn onWaitPid(this: *ShellSubprocess, sync: bool, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+        pub fn onWaitPid(this: *@This(), sync: bool, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
             if (Environment.isWindows) {
                 @panic("windows doesnt support subprocess yet. haha");
             }
@@ -1780,18 +1783,21 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
 
             if (!sync and this.hasExited()) {
-                const vm = this.globalThis.bunVM();
+                // const vm = this.globalThis.bunVM();
 
                 // prevent duplicate notifications
                 switch (this.poll) {
                     .poll_ref => |poll_| {
                         if (poll_) |poll| {
                             this.poll.poll_ref = null;
-                            poll.deinitWithVM(vm);
+                            // poll.deinitWithVM(vm);
+
+                            poll.deinitWithVM(GlobalHandle.init(this.globalThis).eventLoopCtx());
                         }
                     },
                     .wait_thread => {
-                        this.poll.wait_thread.poll_ref.deactivate(vm.event_loop_handle.?);
+                        // this.poll.wait_thread.poll_ref.deactivate(vm.event_loop_handle.?);
+                        this.poll.wait_thread.poll_ref.deactivate(GlobalHandle.init(this.globalThis).platformEventLoop());
                     },
                 }
 
@@ -1799,7 +1805,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
         }
 
-        fn runOnExit(this: *ShellSubprocess, globalThis: *JSC.JSGlobalObject) void {
+        fn runOnExit(this: *@This(), globalThis: GlobalRef) void {
             log("run on exit {d}", .{this.pid});
             _ = globalThis;
             const waitpid_error = this.waitpid_err;
@@ -1845,8 +1851,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         fn onExit(
-            this: *ShellSubprocess,
-            globalThis: *JSC.JSGlobalObject,
+            this: *@This(),
+            globalThis: GlobalRef,
         ) void {
             log("onExit({d}) = {d}, \"{s}\"", .{ this.pid, if (this.exit_code) |e| @as(i32, @intCast(e)) else -1, if (this.signal_code) |code| @tagName(code) else "" });
             // defer this.updateHasPendingActivity();
@@ -1856,7 +1862,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     // this.flags.waiting_for_onexit = true;
 
                     // const Holder = struct {
-                    //     process: *ShellSubprocess,
+                    //     process: *@This(),
                     //     task: JSC.AnyTask,
 
                     //     pub fn unref(self: *@This()) void {
@@ -1952,7 +1958,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     var subprocess = self.subprocess;
                     _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                     bun.default_allocator.destroy(self);
-                    subprocess.onWaitPid(false, subprocess.this_jsvalue, result);
+                    subprocess.onWaitPid(false, result);
                 }
 
                 pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
@@ -1962,7 +1968,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
             pub fn append(process: *Subprocess) void {
                 if (process.poll == .wait_thread) {
-                    process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+                    // process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+                    process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
                     _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
                 } else {
                     process.poll = .{
@@ -1971,7 +1978,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                             .ref_count = std.atomic.Value(u32).init(1),
                         },
                     };
-                    process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+                    // process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+                    process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
                 }
 
                 const task = bun.default_allocator.create(WaitTask) catch unreachable;
@@ -2073,7 +2081,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
     };
 }
 
-// pub const ShellSubprocess = struct {
+// pub const @This() = struct {
 //     const log = Output.scoped(.SHELL_SUBPROC, false);
 //     pub const default_max_buffer_size = 1024 * 1024 * 4;
 

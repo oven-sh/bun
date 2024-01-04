@@ -3386,7 +3386,7 @@ pub fn handleResponseMetadata(
                     } else if (strings.eqlComptime(header.value, "deflate")) {
                         this.state.encoding = Encoding.deflate;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                    } else if (strings.eqlComptime(header.value, "br")) {
+                    } else if (strings.eqlComptime(header.value, "br") and canUseBrotli()) {
                         this.state.encoding = Encoding.brotli;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
                     }
@@ -3402,8 +3402,8 @@ pub fn handleResponseMetadata(
                         this.state.transfer_encoding = Encoding.deflate;
                     }
                 } else if (strings.eqlComptime(header.value, "br")) {
-                    if (!this.disable_decompression) {
-                        this.state.transfer_encoding = Encoding.brotli;
+                    if (!this.disable_decompression and canUseBrotli()) {
+                        this.state.transfer_encoding = .brotli;
                     }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;

@@ -14,7 +14,7 @@ afterEach(async () => {
 
 test("webpack works", () => {
   const { exitCode } = Bun.spawnSync({
-    cmd: ["bun", "webpack", "--mode=production", "--entry", "./test.js", "-o", "./dist/test1"],
+    cmd: [bunExe(), "-b", "webpack", "--mode=production", "--entry", "./test.js", "-o", "./dist/test1"],
     cwd: import.meta.dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],

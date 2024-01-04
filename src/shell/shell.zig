@@ -490,7 +490,7 @@ pub const Parser = struct {
     pub fn parse_stmt(self: *Parser) !AST.Stmt {
         var exprs = std.ArrayList(AST.Expr).init(self.alloc);
 
-        while (!self.match_any(&.{ .Semicolon, .Eof })) {
+        while (!self.match_any(&.{ .Semicolon, .Newline, .Eof })) {
             const expr = try self.parse_expr();
             try exprs.append(expr);
         }
@@ -542,7 +542,7 @@ pub const Parser = struct {
 
     fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
         var assigns = std.ArrayList(AST.Assign).init(self.alloc);
-        while (!self.check_any(&.{ .Semicolon, .Eof })) {
+        while (!self.check_any(&.{ .Semicolon, .Newline, .Eof })) {
             if (try self.parse_assign()) |assign| {
                 try assigns.append(assign);
             } else {
@@ -550,7 +550,7 @@ pub const Parser = struct {
             }
         }
 
-        if (self.match_any(&.{ .Semicolon, .Eof })) {
+        if (self.match_any(&.{ .Semicolon, .Newline, .Eof })) {
             if (assigns.items.len == 0) {
                 try self.add_error("expected a command or assignment", .{});
                 return ParseError.Expected;
@@ -868,6 +868,7 @@ pub const TokenTag = enum {
     DoubleAsterisk,
     Eq,
     Semicolon,
+    Newline,
     BraceBegin,
     Comma,
     BraceEnd,
@@ -881,27 +882,29 @@ pub const TokenTag = enum {
 };
 
 pub const Token = union(TokenTag) {
-    // |
+    /// |
     Pipe,
-    // ||
+    /// ||
     DoublePipe,
-    // &
+    /// &
     Ampersand,
-    // &&
+    /// &&
     DoubleAmpersand,
 
     Redirect: AST.Cmd.RedirectFlags,
 
-    // $
+    /// $
     Dollar,
-    // *
+    // `*`
     Asterisk,
     DoubleAsterisk,
 
-    // =
+    /// =
     Eq,
-    // ;
+    /// ;
     Semicolon,
+    /// \n (unescaped newline)
+    Newline,
 
     BraceBegin,
     Comma,
@@ -1070,6 +1073,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
                             try self.tokens.append(.Semicolon);
+                            continue;
+                        },
+                        '\n' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+                            try self.tokens.append(.Newline);
                             continue;
                         },
 
@@ -2009,6 +2018,7 @@ pub const Test = struct {
         // =
         Eq,
         Semicolon,
+        Newline,
 
         BraceBegin,
         Comma,
@@ -2038,6 +2048,7 @@ pub const Test = struct {
                 .DoubleAsterisk => return .DoubleAsterisk,
                 .Eq => return .Eq,
                 .Semicolon => return .Semicolon,
+                .Newline => return .Newline,
                 .BraceBegin => return .BraceBegin,
                 .Comma => return .Comma,
                 .BraceEnd => return .BraceEnd,

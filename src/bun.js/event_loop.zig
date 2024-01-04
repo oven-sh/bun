@@ -1493,11 +1493,11 @@ pub const MiniEventLoop = struct {
 
     pub threadlocal var global: *MiniEventLoop = undefined;
 
-    pub fn initGlobal() *MiniEventLoop {
+    pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
-        global.env = bun.DotEnv.instance orelse env_loader: {
+        global.env = env orelse bun.DotEnv.instance orelse env_loader: {
             const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
             map.* = bun.DotEnv.Map.init(bun.default_allocator);
 

@@ -55,6 +55,20 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         .mini => bun.shell.GlobalMini,
     };
 
+    const Vm = switch (EventLoopKind) {
+        .js => *JSC.VirtualMachine,
+        .mini => *JSC.MiniEventLoop,
+    };
+
+    const get_vm = struct {
+        fn get() Vm {
+            return switch (EventLoopKind) {
+                .js => JSC.VirtualMachine.get(),
+                .mini => bun.JSC.MiniEventLoop.global,
+            };
+        }
+    };
+
     // const ShellCmd = switch (EventLoopKind) {
     //     .js => bun.shell.interpret.Interpreter.Cmd,
     //     .mini => bun.shell.interpret.InterpreterMini.Cmd,
@@ -142,7 +156,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 switch (this.*) {
                     .pipe => {
                         if (this.pipe.poll_ref) |poll| {
-                            poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
+                            poll.enableKeepingProcessAlive(get_vm.get());
                         }
                     },
                     else => {},
@@ -153,7 +167,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 switch (this.*) {
                     .pipe => {
                         if (this.pipe.poll_ref) |poll| {
-                            poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                            poll.enableKeepingProcessAlive(get_vm.get());
                         }
                     },
                     else => {},
@@ -286,7 +300,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     .pipe => {
                         if (this.pipe == .buffer) {
                             if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                                poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
+                                poll.enableKeepingProcessAlive(get_vm.get());
                             }
                         }
                     },
@@ -299,7 +313,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     .pipe => {
                         if (this.pipe == .buffer) {
                             if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                                poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                                poll.enableKeepingProcessAlive(get_vm.get());
                             }
                         }
                     },

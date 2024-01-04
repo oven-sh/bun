@@ -78,7 +78,7 @@ pub const IO = struct {
 
     pub const Kind = union(enum) {
         /// Use stdin/stdout/stderr of this process
-        /// if `captured` is true, it will write to std{out,err} and also buffer it
+        /// if `captured` is non-null, it will write to std{out,err} and also buffer it
         std: struct { captured: ?*bun.ByteList = null },
         /// Write/Read to/from file descriptor
         fd: bun.FileDescriptor,
@@ -354,6 +354,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 },
             };
 
+            const shellio: IO = if (comptime EventLoopKind == .js)
+                .{
+                    .stdout = .{ .std = .{ .captured = &interpreter.buffered_stdout } },
+                    .stderr = .{ .std = .{ .captured = &interpreter.buffered_stderr } },
+                }
+            else
+                .{};
+
             interpreter.* = .{
                 .global = global,
 
@@ -371,10 +379,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 .arena = arena.*,
 
-                .io = .{
-                    .stdout = .{ .std = .{ .captured = &interpreter.buffered_stdout } },
-                    // .stderr = .{ .std = .{ .captured = &interpreter.buffered_stderr } },
-                },
+                .io = shellio,
             };
 
             return interpreter;
@@ -2143,6 +2148,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 this.io.to_subproc_stdio(&spawn_args.stdio);
+
+                log("captured {any}", .{spawn_args.stdio[bun.STDOUT_FD].inherit.captured == null});
 
                 if (this.node.redirect_file) |redirect| {
                     const fd: u32 = if (this.node.redirect.stdout) bun.STDOUT_FD else (if (this.node.redirect.stdin) bun.STDIN_FD else bun.STDERR_FD);

@@ -140,8 +140,17 @@ pub const Run = struct {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
-        if (std.mem.eql(u8, std.fs.path.extension(entry_path), "bunsh")) {
-            const mini = JSC.MiniEventLoop.initGlobal();
+        const ext = std.fs.path.extension(entry_path);
+        if (std.mem.eql(u8, ext, ".bunsh")) {
+            // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
+            var bundle = try bun.Bundler.init(
+                ctx.allocator,
+                ctx.log,
+                try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+                null,
+            );
+            try bundle.runEnvLoader();
+            const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
             mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
             try bun.shell.InterpreterMini.initAndRunFromFile(mini, entry_path);
             return;

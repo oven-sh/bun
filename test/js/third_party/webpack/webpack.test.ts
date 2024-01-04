@@ -3,18 +3,11 @@ import { existsSync, promises } from "fs";
 import { join } from "path";
 import { test, expect, beforeEach, afterEach } from "bun:test";
 
-beforeEach(async () => {
+test("webpack works", async () => {
   await promises.rm(join(import.meta.dir, "dist"), { recursive: true, force: true });
-  await promises.mkdir(join(import.meta.dir, "dist"), { recursive: true });
-});
 
-afterEach(async () => {
-  await promises.rm(join(import.meta.dir, "dist"), { recursive: true, force: true });
-});
-
-test("webpack works", () => {
   const { exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "-b", "webpack", "--mode=production", "--entry", "./test.js", "-o", "./dist/test1"],
+    cmd: [bunExe(), "--bun", "webpack", "--mode=production", "--entry", "./test.js", "-o", "./dist/test1"],
     cwd: import.meta.dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
@@ -25,8 +18,10 @@ test("webpack works", () => {
 });
 
 test("webpack --watch works", async () => {
+  await promises.rm(join(import.meta.dir, "dist"), { recursive: true, force: true });
+
   const { exited, pid } = Bun.spawn({
-    cmd: [bunExe(), "-b", "webpack", "--mode=development", "--entry", "./test.js", "-o", "./dist/test2", "--watch"],
+    cmd: [bunExe(), "--bun", "webpack", "--mode=development", "--entry", "./test.js", "-o", "./dist/test2", "--watch"],
     cwd: import.meta.dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],

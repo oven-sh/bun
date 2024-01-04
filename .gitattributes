@@ -42,3 +42,6 @@ docs/**/* linguist-documentation
 test/**/* linguist-documentation
 bench/**/* linguist-documentation
 examples/**/* linguist-documentation
+
+src/deps/*.c linguist-vendored
+src/deps/brotli/** linguist-vendored

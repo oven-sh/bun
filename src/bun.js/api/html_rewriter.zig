@@ -16,30 +16,35 @@ pub const LOLHTMLContext = struct {
     selectors: SelectorMap = .{},
     element_handlers: std.ArrayListUnmanaged(*ElementHandler) = .{},
     document_handlers: std.ArrayListUnmanaged(*DocumentHandler) = .{},
+    ref_count: u32 = 1,
 
-    pub fn deinit(this: *LOLHTMLContext, allocator: std.mem.Allocator) void {
+    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
+    fn deinit(this: *LOLHTMLContext) void {
         for (this.selectors.items) |selector| {
             selector.deinit();
         }
-        this.selectors.deinit(allocator);
+        this.selectors.deinit(bun.default_allocator);
         this.selectors = .{};
 
         for (this.element_handlers.items) |handler| {
             handler.deinit();
         }
-        this.element_handlers.deinit(allocator);
+        this.element_handlers.deinit(bun.default_allocator);
         this.element_handlers = .{};
 
         for (this.document_handlers.items) |handler| {
             handler.deinit();
         }
-        this.document_handlers.deinit(allocator);
+        this.document_handlers.deinit(bun.default_allocator);
         this.document_handlers = .{};
+
+        this.destroy();
     }
 };
 pub const HTMLRewriter = struct {
     builder: *LOLHTML.HTMLRewriter.Builder,
-    context: LOLHTMLContext,
+    context: *LOLHTMLContext,
 
     pub usingnamespace JSC.Codegen.JSHTMLRewriter;
 
@@ -47,7 +52,7 @@ pub const HTMLRewriter = struct {
         const rewriter = bun.default_allocator.create(HTMLRewriter) catch unreachable;
         rewriter.* = HTMLRewriter{
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
-            .context = .{},
+            .context = LOLHTMLContext.new(.{}),
         };
         return rewriter;
     }
@@ -152,13 +157,13 @@ pub const HTMLRewriter = struct {
     }
 
     pub fn finalizeWithoutDestroy(this: *HTMLRewriter) void {
-        this.context.deinit(bun.default_allocator);
+        this.context.deref();
         this.builder.deinit();
     }
 
     pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
         const new_context = this.context;
-        this.context = .{};
+        new_context.ref();
         return BufferOutputSink.init(new_context, global, response, this.builder);
     }
 
@@ -298,17 +303,10 @@ pub const HTMLRewriter = struct {
         pub fn setup(
             this: *HTMLRewriterLoader,
             builder: *LOLHTML.HTMLRewriter.Builder,
-            context: LOLHTMLContext,
+            context: *LOLHTMLContext,
             size_hint: ?usize,
             output: JSC.WebCore.Sink,
         ) ?[]const u8 {
-            for (context.document_handlers.items) |doc| {
-                doc.ctx = this;
-            }
-            for (context.element_handlers.items) |doc| {
-                doc.ctx = this;
-            }
-
             const chunk_size = @max(size_hint orelse 16384, 1024);
             this.rewriter = builder.build(
                 .UTF8,
@@ -392,13 +390,13 @@ pub const HTMLRewriter = struct {
         global: *JSGlobalObject,
         bytes: bun.MutableString,
         rewriter: ?*LOLHTML.HTMLRewriter = null,
-        context: LOLHTMLContext,
+        context: *LOLHTMLContext,
         response: *Response,
         response_value: JSC.Strong = .{},
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?*JSC.JSValue = null,
         // const log = bun.Output.scoped(.BufferOutputSink, false);
-        pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
+        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
             var sink = bun.new(BufferOutputSink, BufferOutputSink{
                 .global = global,
                 .bytes = bun.MutableString.initEmpty(bun.default_allocator),
@@ -421,13 +419,6 @@ pub const HTMLRewriter = struct {
             });
 
             sink.response = result;
-
-            for (sink.context.document_handlers.items) |doc| {
-                doc.ctx = sink;
-            }
-            for (sink.context.element_handlers.items) |doc| {
-                doc.ctx = sink;
-            }
 
             const input_size = original.body.len();
             sink.rewriter = builder.build(
@@ -616,7 +607,7 @@ pub const HTMLRewriter = struct {
                 bufferer.deinit();
             }
 
-            this.context.deinit(bun.default_allocator);
+            this.context.deref();
             this.response_value.deinit();
             if (this.rewriter) |rewriter| {
                 rewriter.deinit();
@@ -752,7 +743,6 @@ const DocumentHandler = struct {
     onEndCallback: ?JSValue = null,
     thisObject: JSValue,
     global: *JSGlobalObject,
-    ctx: ?*HTMLRewriter.BufferOutputSink = null,
 
     pub const onDocType = HandlerCallback(
         DocumentHandler,
@@ -928,7 +918,6 @@ const ElementHandler = struct {
     onTextCallback: ?JSValue = null,
     thisObject: JSValue,
     global: *JSGlobalObject,
-    ctx: ?*HTMLRewriter.BufferOutputSink = null,
 
     pub fn init(global: *JSGlobalObject, thisObject: JSValue) !ElementHandler {
         var handler = ElementHandler{

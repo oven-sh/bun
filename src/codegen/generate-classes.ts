@@ -1431,9 +1431,9 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    return ${prototypeName(typeName)}::create(vm, globalObject, ${prototypeName(
-    typeName,
-  )}::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, globalObject->objectPrototype());
+    structure->setMayBePrototype(true);
+    return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
 
 extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {

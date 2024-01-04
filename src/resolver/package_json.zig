@@ -494,7 +494,7 @@ pub const PackageJSON = struct {
                     }
                 }
             },
-            else => unreachable,
+            else => @compileError("unreachable"),
         }
 
         if (loadFrameworkExpression(pair.framework, framework_object.expr, allocator, read_defines)) {

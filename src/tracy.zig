@@ -14,8 +14,7 @@ pub const enable_allocation = false;
 pub const enable_callstack = false;
 pub var enable = false;
 
-// TODO: make this configurable
-const callstack_depth = 10;
+const callstack_depth = build_options.tracy_callstack_depth;
 
 const ___tracy_c_zone_context = extern struct {
     id: u32 = 0,

@@ -618,16 +618,22 @@ pub const String = extern struct {
     pub inline fn utf16(self: String) []const u16 {
         if (self.tag == .Empty)
             return &[_]u16{};
-        std.debug.assert(self.tag == .WTFStringImpl);
-        return self.value.WTFStringImpl.utf16Slice();
+        if (self.tag == .WTFStringImpl) {
+            return self.value.WTFStringImpl.utf16Slice();
+        }
+
+        return self.toZigString().utf16SliceAligned();
     }
 
     pub inline fn latin1(self: String) []const u8 {
         if (self.tag == .Empty)
             return &[_]u8{};
 
-        std.debug.assert(self.tag == .WTFStringImpl);
-        return self.value.WTFStringImpl.latin1Slice();
+        if (self.tag == .WTFStringImpl) {
+            return self.value.WTFStringImpl.latin1Slice();
+        }
+
+        return self.toZigString().slice();
     }
 
     pub fn isUTF8(self: String) bool {
@@ -635,6 +641,30 @@ pub const String = extern struct {
             return false;
 
         return self.value.ZigString.isUTF8();
+    }
+
+    pub inline fn asUTF8(self: String) ?[]const u8 {
+        if (self.tag == .WTFStringImpl) {
+            if (self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice())) {
+                return self.value.WTFStringImpl.latin1Slice();
+            }
+
+            return null;
+        }
+
+        if (self.tag == .ZigString or self.tag == .StaticZigString) {
+            if (self.value.ZigString.isUTF8()) {
+                return self.value.ZigString.slice();
+            }
+
+            if (bun.strings.isAllASCII(self.toZigString().slice())) {
+                return self.value.ZigString.slice();
+            }
+
+            return null;
+        }
+
+        return "";
     }
 
     pub fn encoding(self: String) bun.strings.Encoding {
@@ -707,8 +737,13 @@ pub const String = extern struct {
         if (self.tag == .WTFStringImpl)
             return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString)
-            return self.value.ZigString.isUTF8();
+        if (self.tag == .ZigString or self.tag == .StaticZigString) {
+            if (self.value.ZigString.isUTF8()) {
+                return true;
+            }
+
+            return bun.strings.isAllASCII(self.toZigString().slice());
+        }
 
         return self.tag == .Empty;
     }
@@ -896,6 +931,16 @@ pub const String = extern struct {
             true => std.mem.indexOfScalar(u16, this.utf16(), @intCast(chr)),
             false => bun.strings.indexOfCharUsize(this.byteSlice(), chr),
         };
+    }
+
+    pub fn visibleWidth(this: *const String) usize {
+        if (this.isUTF8()) {
+            return bun.strings.visibleUTF8Width(this.utf8());
+        } else if (this.isUTF16()) {
+            return bun.strings.visibleUTF16Width(this.utf16());
+        } else {
+            return bun.strings.visibleLatin1Width(this.latin1());
+        }
     }
 
     pub fn indexOfComptimeWithCheckLen(this: String, comptime values: []const []const u8, comptime check_len: usize) ?usize {
@@ -1090,6 +1135,25 @@ pub const String = extern struct {
     /// Note: the callee owns the resulting string and must call `.deref()` on it once done
     pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) !String {
         return try concat(strings.len, allocator, strings);
+    }
+
+    pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var str: String = String.dead;
+
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or !args.ptr[0].isString()) {
+            return JSC.jsNumber(@as(i32, 0));
+        }
+
+        str = args[0].toBunString(globalObject);
+
+        if (str.isEmpty()) {
+            return JSC.jsNumber(@as(i32, 0));
+        }
+
+        const width = str.visibleWidth();
+        return JSC.jsNumber(width);
     }
 };
 

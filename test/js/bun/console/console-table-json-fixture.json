@@ -1,0 +1,167 @@
+[
+  {
+    "title": "Respond handling issue for Most of Google Cloud API (vision, document, etc.)",
+    "state": "open",
+    "created_at": "2023-12-30T04:43:36Z",
+    "id": 2060630898
+  },
+  {
+    "title": "@elastic/elasticsearch@8.11.0 not working due to missing undici.Pool.request",
+    "state": "open",
+    "created_at": "2023-12-29T20:26:07Z",
+    "id": 2060382675
+  },
+  { "title": "fs.watch skips save events", "state": "open", "created_at": "2023-12-29T14:00:48Z", "id": 2060059045 },
+  {
+    "title": "Remix running with node, not bun",
+    "state": "open",
+    "created_at": "2023-12-29T13:52:26Z",
+    "id": 2060043035
+  },
+  {
+    "title": "`fetch` upload with formdata is different than node",
+    "state": "open",
+    "created_at": "2023-12-29T13:04:03Z",
+    "id": 2059869225
+  },
+  {
+    "title": "Error throw with an object causes an empty error log line",
+    "state": "open",
+    "created_at": "2023-12-29T12:35:33Z",
+    "id": 2059655921
+  },
+  {
+    "title": "setTimeout is 4x slower than node",
+    "state": "open",
+    "created_at": "2023-12-29T12:28:59Z",
+    "id": 2059611949
+  },
+  {
+    "title": "Failing when adding new \"workspace:*\" dependencies",
+    "state": "open",
+    "created_at": "2023-12-29T12:04:12Z",
+    "id": 2059483332
+  },
+  {
+    "title": "feat(build): adjust arch linux auto detect to include manjaro",
+    "state": "open",
+    "created_at": "2023-12-29T11:18:32Z",
+    "id": 2059335554
+  },
+  {
+    "title": "Make next-build test less flaky",
+    "state": "open",
+    "created_at": "2023-12-29T10:06:08Z",
+    "id": 2059272416
+  },
+  {
+    "title": "Try to make fs.watch tests less flaky",
+    "state": "open",
+    "created_at": "2023-12-29T08:14:46Z",
+    "id": 2059184911
+  },
+  {
+    "title": "Compile code that relies on Workers",
+    "state": "open",
+    "created_at": "2023-12-29T00:33:49Z",
+    "id": 2058961498
+  },
+  {
+    "title": "Add --ignore-scripts option on bun install command shown in the benchmark",
+    "state": "open",
+    "created_at": "2023-12-28T23:09:55Z",
+    "id": 2058931278
+  },
+  {
+    "title": "fix: add ws properties to BunWebSocketMocked prototype",
+    "state": "open",
+    "created_at": "2023-12-28T21:24:26Z",
+    "id": 2058831269
+  },
+  {
+    "title": "WebSocket \"close\" event not firing",
+    "state": "open",
+    "created_at": "2023-12-28T19:25:01Z",
+    "id": 2058755917
+  },
+  {
+    "title": "Bun's `ws` mock is missing readonly instance members",
+    "state": "open",
+    "created_at": "2023-12-28T17:48:58Z",
+    "id": 2058684399
+  },
+  {
+    "title": "Bun.Glob onlyDirectories Support",
+    "state": "open",
+    "created_at": "2023-12-28T15:13:38Z",
+    "id": 2058550162
+  },
+  {
+    "title": "React@canary ssr with suspense got 'Welcome to Bun! To get started, return a Response object.' in middle of response",
+    "state": "open",
+    "created_at": "2023-12-28T12:19:38Z",
+    "id": 2058371954
+  },
+  {
+    "title": "Bun.build with sourcemap: 'inline' changes assets imports URLs",
+    "state": "open",
+    "created_at": "2023-12-28T11:10:37Z",
+    "id": 2058308543
+  },
+  { "title": "Can't build with knex module", "state": "open", "created_at": "2023-12-28T10:24:59Z", "id": 2058264026 },
+  {
+    "title": "OutgoingResponse.writeHead should work",
+    "state": "open",
+    "created_at": "2023-12-28T08:00:59Z",
+    "id": 2058121229
+  },
+  {
+    "title": "Add Scoop installation reference for Windows",
+    "state": "open",
+    "created_at": "2023-12-28T07:21:55Z",
+    "id": 2058087851
+  },
+  {
+    "title": "Multer-s3 breaks on bun but works fine with node when contentType: multerS3.AUTO_CONTENT_TYPE",
+    "state": "open",
+    "created_at": "2023-12-28T03:32:57Z",
+    "id": 2057948132
+  },
+  { "title": "HuggingFace failure", "state": "open", "created_at": "2023-12-28T02:08:48Z", "id": 2057908659 },
+  {
+    "title": "Unable to handle test generation helper correctly",
+    "state": "open",
+    "created_at": "2023-12-28T01:06:19Z",
+    "id": 2057880878
+  },
+  {
+    "title": "peerDependencies not honored over dependencies when both are specified",
+    "state": "open",
+    "created_at": "2023-12-27T20:09:48Z",
+    "id": 2057739037
+  },
+  {
+    "title": "Cannot find module 'backend/node_modules/prisma/build/index.js'",
+    "state": "open",
+    "created_at": "2023-12-27T14:31:15Z",
+    "id": 2057441216
+  },
+  {
+    "title": "Segmentation Fault Crash when using Prisma",
+    "state": "open",
+    "created_at": "2023-12-27T10:28:07Z",
+    "id": 2057197057
+  },
+  {
+    "title": "Ensure duplicated `devDependencies` are chosen before `dependencies`",
+    "state": "open",
+    "created_at": "2023-12-27T09:32:40Z",
+    "id": 2057137439
+  },
+  {
+    "title": "Enhancing trusted dependency list with checksums and blacklists",
+    "state": "open",
+    "created_at": "2023-12-27T09:17:21Z",
+    "id": 2057121878
+  }
+]

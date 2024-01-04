@@ -1105,13 +1105,23 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
 JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(callFrame->thisValue());
+    return JSValue::encode(globalObject->globalThis());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(jsUndefined());
+    auto& vm = globalObject->vm();
+    JSC::JSValue value = callFrame->argument(0);
+    // Chrome DevTools:
+    //   > Object.getOwnPropertyDescriptor(globalThis, "self")
+    //   < {enumerable: true, configurable: true, get: ƒ, set: ƒ}
+    //   > globalThis.self = 123
+    //   < 123
+    //   > Object.getOwnPropertyDescriptor(globalThis, "self")
+    //   < {value: 123, writable: true, enumerable: true, configurable: true}
+    globalObject->putDirect(vm, WebCore::builtinNames(vm).selfPublicName(), value, 0);
+    return JSValue::encode(value);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,

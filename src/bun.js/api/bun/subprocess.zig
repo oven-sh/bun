@@ -383,6 +383,7 @@ pub const Subprocess = struct {
         pub const Pipe = union(enum) {
             stream: JSC.WebCore.ReadableStream,
             buffer: BufferedOutput,
+            detached: void,
 
             pub fn finish(this: *@This()) void {
                 if (this.* == .stream and this.stream.ptr == .File) {
@@ -391,6 +392,9 @@ pub const Subprocess = struct {
             }
 
             pub fn done(this: *@This()) void {
+                if (this.* == .detached)
+                    return;
+
                 if (this.* == .stream) {
                     if (this.stream.ptr == .File) this.stream.ptr.File.setSignal(JSC.WebCore.Signal{});
                     this.stream.done();
@@ -401,6 +405,9 @@ pub const Subprocess = struct {
             }
 
             pub fn toJS(this: *@This(), readable: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+                if (comptime Environment.allow_assert)
+                    std.debug.assert(this.* != .detached); // this should be cached by the getter
+
                 if (this.* != .stream) {
                     const stream = this.buffer.toReadableStream(globalThis, exited);
                     this.* = .{ .stream = stream };
@@ -410,7 +417,9 @@ pub const Subprocess = struct {
                     this.stream.ptr.File.setSignal(JSC.WebCore.Signal.init(readable));
                 }
 
-                return this.stream.toJS();
+                const result = this.stream.toJS();
+                this.* = .detached;
+                return result;
             }
         };
 
@@ -461,13 +470,17 @@ pub const Subprocess = struct {
                 inline .memfd, .fd => |fd| {
                     _ = bun.sys.close(fd);
                 },
-                .pipe => {
-                    if (this.pipe == .stream and this.pipe.stream.ptr == .File) {
+                .pipe => |*pipe| {
+                    if (pipe.* == .detached) {
+                        return;
+                    }
+
+                    if (pipe.* == .stream and pipe.stream.ptr == .File) {
                         this.close();
                         return;
                     }
 
-                    this.pipe.buffer.close();
+                    pipe.buffer.close();
                 },
                 else => {},
             }

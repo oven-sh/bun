@@ -201,6 +201,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         has_pending_activity: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
         started: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
 
+        done: ?*bool = null,
+
         pub usingnamespace JSC.Codegen.JSShellInterpreter;
 
         const ThisInterpreter = @This();
@@ -398,8 +400,18 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const script_heap = try arena.allocator().create(ast.Script);
             script_heap.* = script;
             var interp = try ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs);
-            defer interp.deinit();
+            const IsDone = struct {
+                done: bool = false,
+
+                fn isDone(this: *anyopaque) bool {
+                    const asdlfk = bun.cast(*const @This(), this);
+                    return asdlfk.done;
+                }
+            };
+            var is_done: IsDone = .{};
+            interp.done = &is_done.done;
             try interp.run();
+            mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         }
 
         pub fn run(this: *ThisInterpreter) !void {
@@ -434,6 +446,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
                 // this.buffered_stdout.
                 _ = this.resolve.call(this.global, &[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
+            } else {
+                this.done.?.* = true;
             }
         }
 
@@ -5719,6 +5733,215 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 };
             };
         };
+
+        /// This is modified version of BufferedInput for file descriptors only. This
+        /// struct cleans itself up when it is done, so no need to call `.deinit()` on
+        /// it.
+        pub const BufferedWriter =
+            struct {
+            remain: []const u8 = "",
+            fd: bun.FileDescriptor,
+            poll_ref: ?*bun.Async.FilePoll = null,
+            written: usize = 0,
+            parent: ParentPtr,
+            err: ?Syscall.Error = null,
+            /// optional bytelist for capturing the data
+            bytelist: ?*bun.ByteList = null,
+
+            const print = bun.Output.scoped(.BufferedWriter, false);
+            const BuiltinJs = bun.shell.Interpreter.Builtin;
+            const BuiltinMini = bun.shell.InterpreterMini.Builtin;
+
+            pub const ParentPtr = struct {
+                const Types = .{
+                    BuiltinJs.Export,
+                    BuiltinJs.Echo,
+                    BuiltinJs.Cd,
+                    BuiltinJs.Which,
+                    BuiltinJs.Rm,
+                    BuiltinJs.Pwd,
+                    BuiltinJs.Mv,
+                    BuiltinJs.Ls,
+                    BuiltinMini.Export,
+                    BuiltinMini.Echo,
+                    BuiltinMini.Cd,
+                    BuiltinMini.Which,
+                    BuiltinMini.Rm,
+                    BuiltinMini.Pwd,
+                    BuiltinMini.Mv,
+                    BuiltinMini.Ls,
+                };
+                ptr: Repr,
+                pub const Repr = TaggedPointerUnion(Types);
+
+                pub fn underlying(this: ParentPtr) type {
+                    inline for (Types) |Ty| {
+                        if (this.ptr.is(Ty)) return Ty;
+                    }
+                    @panic("Uh oh");
+                }
+
+                pub fn init(p: anytype) ParentPtr {
+                    return .{
+                        .ptr = Repr.init(p),
+                    };
+                }
+
+                pub fn onDone(this: ParentPtr, e: ?Syscall.Error) void {
+                    if (this.ptr.is(BuiltinJs.Export)) return this.ptr.as(BuiltinJs.Export).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Echo)) return this.ptr.as(BuiltinJs.Echo).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Cd)) return this.ptr.as(BuiltinJs.Cd).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Which)) return this.ptr.as(BuiltinJs.Which).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Rm)) return this.ptr.as(BuiltinJs.Rm).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Pwd)) return this.ptr.as(BuiltinJs.Pwd).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Mv)) return this.ptr.as(BuiltinJs.Mv).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinJs.Ls)) return this.ptr.as(BuiltinJs.Ls).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Export)) return this.ptr.as(BuiltinMini.Export).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Echo)) return this.ptr.as(BuiltinMini.Echo).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Cd)) return this.ptr.as(BuiltinMini.Cd).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Which)) return this.ptr.as(BuiltinMini.Which).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Rm)) return this.ptr.as(BuiltinMini.Rm).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Pwd)) return this.ptr.as(BuiltinMini.Pwd).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Mv)) return this.ptr.as(BuiltinMini.Mv).onBufferedWriterDone(e);
+                    if (this.ptr.is(BuiltinMini.Ls)) return this.ptr.as(BuiltinMini.Ls).onBufferedWriterDone(e);
+                    @panic("Invalid ptr tag");
+                }
+            };
+
+            pub fn isDone(this: *BufferedWriter) bool {
+                return this.remain.len == 0 or this.err != null;
+            }
+
+            pub const event_loop_kind = EventLoopKind;
+            pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
+
+            pub fn onReady(this: *BufferedWriter, _: i64) void {
+                if (this.fd == bun.invalid_fd) {
+                    return;
+                }
+
+                this.__write();
+            }
+
+            pub fn writeIfPossible(this: *BufferedWriter, comptime is_sync: bool) void {
+                if (comptime !is_sync) {
+                    // we ask, "Is it possible to write right now?"
+                    // we do this rather than epoll or kqueue()
+                    // because we don't want to block the thread waiting for the write
+                    switch (bun.isWritable(this.fd)) {
+                        .ready => {
+                            if (this.poll_ref) |poll| {
+                                poll.flags.insert(.writable);
+                                poll.flags.insert(.fifo);
+                                std.debug.assert(poll.flags.contains(.poll_writable));
+                            }
+                        },
+                        .hup => {
+                            this.deinit();
+                            return;
+                        },
+                        .not_ready => {
+                            if (!this.isWatching()) this.watch(this.fd);
+                            return;
+                        },
+                    }
+                }
+
+                this.writeAllowBlocking(is_sync);
+            }
+
+            /// Calling this directly will block if the fd is not opened with non
+            /// blocking option. If the fd is blocking, you should call
+            /// `writeIfPossible()` first, which will check if the fd is writable. If so
+            /// it will then call this function, if not, then it will poll for the fd to
+            /// be writable
+            pub fn __write(this: *BufferedWriter) void {
+                this.writeAllowBlocking(false);
+            }
+
+            pub fn writeAllowBlocking(this: *BufferedWriter, allow_blocking: bool) void {
+                var to_write = this.remain;
+
+                if (to_write.len == 0) {
+                    // we are done!
+                    this.closeFDIfOpen();
+                    return;
+                }
+
+                if (comptime bun.Environment.allow_assert) {
+                    // bun.assertNonBlocking(this.fd);
+                }
+
+                while (to_write.len > 0) {
+                    switch (bun.sys.write(this.fd, to_write)) {
+                        .err => |e| {
+                            if (e.isRetry()) {
+                                log("write({d}) retry", .{
+                                    to_write.len,
+                                });
+
+                                this.watch(this.fd);
+                                this.poll_ref.?.flags.insert(.fifo);
+                                return;
+                            }
+
+                            if (e.getErrno() == .PIPE) {
+                                this.deinit();
+                                return;
+                            }
+
+                            // fail
+                            log("write({d}) fail: {d}", .{ to_write.len, e.errno });
+                            this.err = e;
+                            this.deinit();
+                            return;
+                        },
+
+                        .result => |bytes_written| {
+                            if (this.bytelist) |blist| {
+                                blist.append(bun.default_allocator, to_write[0..bytes_written]) catch bun.outOfMemory();
+                            }
+
+                            this.written += bytes_written;
+
+                            log(
+                                "write({d}) {d}",
+                                .{
+                                    to_write.len,
+                                    bytes_written,
+                                },
+                            );
+
+                            this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                            to_write = to_write[bytes_written..];
+
+                            // we are done or it accepts no more input
+                            if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
+                                this.deinit();
+                                return;
+                            }
+                        },
+                    }
+                }
+            }
+
+            fn closeFDIfOpen(this: *BufferedWriter) void {
+                if (this.poll_ref) |poll| {
+                    this.poll_ref = null;
+                    poll.deinit();
+                }
+
+                if (this.fd != bun.invalid_fd) {
+                    _ = bun.sys.close(this.fd);
+                    this.fd = bun.invalid_fd;
+                }
+            }
+
+            pub fn deinit(this: *BufferedWriter) void {
+                this.closeFDIfOpen();
+                this.parent.onDone(this.err);
+            }
+        };
     };
 }
 
@@ -5943,219 +6166,6 @@ pub fn ShellTask(
         }
     };
 }
-
-/// This writes to the output and also
-pub const CapturedWriter = struct {
-    bufw: BufferedWriter,
-};
-
-/// This is modified version of BufferedInput for file descriptors only. This
-/// struct cleans itself up when it is done, so no need to call `.deinit()` on
-/// it.
-pub const BufferedWriter = struct {
-    remain: []const u8 = "",
-    fd: bun.FileDescriptor,
-    poll_ref: ?*bun.Async.FilePoll = null,
-    written: usize = 0,
-    parent: ParentPtr,
-    err: ?Syscall.Error = null,
-    /// optional bytelist for capturing the data
-    bytelist: ?*bun.ByteList = null,
-
-    const print = bun.Output.scoped(.BufferedWriter, false);
-    const BuiltinJs = bun.shell.Interpreter.Builtin;
-    const BuiltinMini = bun.shell.InterpreterMini.Builtin;
-
-    pub const ParentPtr = struct {
-        const Types = .{
-            BuiltinJs.Export,
-            BuiltinJs.Echo,
-            BuiltinJs.Cd,
-            BuiltinJs.Which,
-            BuiltinJs.Rm,
-            BuiltinJs.Pwd,
-            BuiltinJs.Mv,
-            BuiltinJs.Ls,
-            BuiltinMini.Export,
-            BuiltinMini.Echo,
-            BuiltinMini.Cd,
-            BuiltinMini.Which,
-            BuiltinMini.Rm,
-            BuiltinMini.Pwd,
-            BuiltinMini.Mv,
-            BuiltinMini.Ls,
-        };
-        ptr: Repr,
-        pub const Repr = TaggedPointerUnion(Types);
-
-        pub fn underlying(this: ParentPtr) type {
-            inline for (Types) |Ty| {
-                if (this.ptr.is(Ty)) return Ty;
-            }
-            @panic("Uh oh");
-        }
-
-        pub fn init(p: anytype) ParentPtr {
-            return .{
-                .ptr = Repr.init(p),
-            };
-        }
-
-        pub fn onDone(this: ParentPtr, e: ?Syscall.Error) void {
-            if (this.ptr.is(BuiltinJs.Export)) return this.ptr.as(BuiltinJs.Export).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Echo)) return this.ptr.as(BuiltinJs.Echo).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Cd)) return this.ptr.as(BuiltinJs.Cd).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Which)) return this.ptr.as(BuiltinJs.Which).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Rm)) return this.ptr.as(BuiltinJs.Rm).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Pwd)) return this.ptr.as(BuiltinJs.Pwd).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Mv)) return this.ptr.as(BuiltinJs.Mv).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinJs.Ls)) return this.ptr.as(BuiltinJs.Ls).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Export)) return this.ptr.as(BuiltinMini.Export).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Echo)) return this.ptr.as(BuiltinMini.Echo).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Cd)) return this.ptr.as(BuiltinMini.Cd).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Which)) return this.ptr.as(BuiltinMini.Which).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Rm)) return this.ptr.as(BuiltinMini.Rm).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Pwd)) return this.ptr.as(BuiltinMini.Pwd).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Mv)) return this.ptr.as(BuiltinMini.Mv).onBufferedWriterDone(e);
-            if (this.ptr.is(BuiltinMini.Ls)) return this.ptr.as(BuiltinMini.Ls).onBufferedWriterDone(e);
-            @panic("Invalid ptr tag");
-        }
-    };
-
-    pub fn isDone(this: *BufferedWriter) bool {
-        return this.remain.len == 0 or this.err != null;
-    }
-
-    pub const event_loop_kind = JSC.EventLoopKind.js;
-    pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
-
-    pub fn onReady(this: *BufferedWriter, _: i64) void {
-        if (this.fd == bun.invalid_fd) {
-            return;
-        }
-
-        this.__write();
-    }
-
-    pub fn writeIfPossible(this: *BufferedWriter, comptime is_sync: bool) void {
-        if (comptime !is_sync) {
-            // we ask, "Is it possible to write right now?"
-            // we do this rather than epoll or kqueue()
-            // because we don't want to block the thread waiting for the write
-            switch (bun.isWritable(this.fd)) {
-                .ready => {
-                    if (this.poll_ref) |poll| {
-                        poll.flags.insert(.writable);
-                        poll.flags.insert(.fifo);
-                        std.debug.assert(poll.flags.contains(.poll_writable));
-                    }
-                },
-                .hup => {
-                    this.deinit();
-                    return;
-                },
-                .not_ready => {
-                    if (!this.isWatching()) this.watch(this.fd);
-                    return;
-                },
-            }
-        }
-
-        this.writeAllowBlocking(is_sync);
-    }
-
-    /// Calling this directly will block if the fd is not opened with non
-    /// blocking option. If the fd is blocking, you should call
-    /// `writeIfPossible()` first, which will check if the fd is writable. If so
-    /// it will then call this function, if not, then it will poll for the fd to
-    /// be writable
-    pub fn __write(this: *BufferedWriter) void {
-        this.writeAllowBlocking(false);
-    }
-
-    pub fn writeAllowBlocking(this: *BufferedWriter, allow_blocking: bool) void {
-        var to_write = this.remain;
-
-        if (to_write.len == 0) {
-            // we are done!
-            this.closeFDIfOpen();
-            return;
-        }
-
-        if (comptime bun.Environment.allow_assert) {
-            // bun.assertNonBlocking(this.fd);
-        }
-
-        while (to_write.len > 0) {
-            switch (bun.sys.write(this.fd, to_write)) {
-                .err => |e| {
-                    if (e.isRetry()) {
-                        log("write({d}) retry", .{
-                            to_write.len,
-                        });
-
-                        this.watch(this.fd);
-                        this.poll_ref.?.flags.insert(.fifo);
-                        return;
-                    }
-
-                    if (e.getErrno() == .PIPE) {
-                        this.deinit();
-                        return;
-                    }
-
-                    // fail
-                    log("write({d}) fail: {d}", .{ to_write.len, e.errno });
-                    this.err = e;
-                    this.deinit();
-                    return;
-                },
-
-                .result => |bytes_written| {
-                    if (this.bytelist) |blist| {
-                        blist.append(bun.default_allocator, to_write[0..bytes_written]) catch bun.outOfMemory();
-                    }
-
-                    this.written += bytes_written;
-
-                    log(
-                        "write({d}) {d}",
-                        .{
-                            to_write.len,
-                            bytes_written,
-                        },
-                    );
-
-                    this.remain = this.remain[@min(bytes_written, this.remain.len)..];
-                    to_write = to_write[bytes_written..];
-
-                    // we are done or it accepts no more input
-                    if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
-                        this.deinit();
-                        return;
-                    }
-                },
-            }
-        }
-    }
-
-    fn closeFDIfOpen(this: *BufferedWriter) void {
-        if (this.poll_ref) |poll| {
-            this.poll_ref = null;
-            poll.deinit();
-        }
-
-        if (this.fd != bun.invalid_fd) {
-            _ = bun.sys.close(this.fd);
-            this.fd = bun.invalid_fd;
-        }
-    }
-
-    pub fn deinit(this: *BufferedWriter) void {
-        this.closeFDIfOpen();
-        this.parent.onDone(this.err);
-    }
-};
 
 const SliceBufferSrc = struct {
     remain: []const u8 = "",

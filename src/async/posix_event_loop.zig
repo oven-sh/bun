@@ -140,7 +140,8 @@ pub const FilePoll = struct {
     const FIFOMini = JSC.WebCore.FIFOMini;
     const ShellSubprocess = bun.ShellSubprocess;
     const ShellSubprocessMini = bun.shell.SubprocessMini;
-    const ShellBufferedWriter = bun.ShellBufferedWriter;
+    const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter;
+    const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
     const ShellBufferedInput = bun.ShellSubprocess.BufferedInput;
     const ShellBufferedInputMini = bun.shell.SubprocessMini.BufferedInput;
     const ShellSubprocessCapturedBufferedWriter = bun.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
@@ -169,6 +170,7 @@ pub const FilePoll = struct {
         ShellSubprocess,
         ShellSubprocessMini,
         ShellBufferedWriter,
+        ShellBufferedWriterMini,
         ShellBufferedInput,
         ShellBufferedInputMini,
         ShellSubprocessCapturedBufferedWriter,
@@ -241,9 +243,24 @@ pub const FilePoll = struct {
     }
 
     pub fn deinit(this: *FilePoll) void {
-        var vm = JSC.VirtualMachine.get();
-        const loop = vm.event_loop_handle.?;
-        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), false);
+        switch (this.event_loop_kind) {
+            .js => {
+                const vm = JSC.VirtualMachine.get();
+                const handle = JSC.AbstractVM(vm);
+                // const loop = vm.event_loop_handle.?;
+                const loop = handle.platformEventLoop();
+                const file_polls = handle.filePolls();
+                this.deinitPossiblyDefer(vm, loop, file_polls, false);
+            },
+            .mini => {
+                const vm = JSC.MiniEventLoop.global;
+                const handle = JSC.AbstractVM(vm);
+                // const loop = vm.event_loop_handle.?;
+                const loop = handle.platformEventLoop();
+                const file_polls = handle.filePolls();
+                this.deinitPossiblyDefer(vm, loop, file_polls, false);
+            },
+        }
     }
 
     pub fn deinitForceUnregister(this: *FilePoll) void {
@@ -295,6 +312,16 @@ pub const FilePoll = struct {
                 var loader = ptr.as(JSC.Subprocess);
 
                 loader.onExitNotificationTask();
+            },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriter", .{poll.fd});
+                var loader = ptr.as(ShellBufferedWriter);
+                loader.onPoll(size_or_offset, 0);
+            },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriterMini))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriterMini", .{poll.fd});
+                var loader = ptr.as(ShellBufferedWriterMini);
+                loader.onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocess", .{poll.fd});

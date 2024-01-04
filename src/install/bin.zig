@@ -422,10 +422,18 @@ pub const Bin = extern struct {
 
             const contents = cmd_contents_buf[0 .. cmd_contents_begin.len + target_path.len + cmd_contents_end.len];
 
-            cmd_file.writeAll(contents) catch |err| {
-                this.err = err;
-                return;
-            };
+            var index: usize = 0;
+            while (index < contents.len) {
+                switch (bun.sys.write(bun.toFD(cmd_file.handle), contents[index..])) {
+                    .result => |written| {
+                        index += written;
+                    },
+                    .err => |err| {
+                        this.err = err;
+                        return;
+                    },
+                }
+            }
         }
 
         const ps1_contents_fmt =
@@ -474,9 +482,18 @@ pub const Bin = extern struct {
             const contents = std.fmt.allocPrint(bun.default_allocator, ps1_contents_fmt, .{ target_path, target_path, target_path, target_path }) catch bun.outOfMemory();
             defer bun.default_allocator.free(contents);
 
-            ps1_file.writeAll(contents) catch |err| {
-                this.err = err;
-            };
+            var index: usize = 0;
+            while (index < contents.len) {
+                switch (bun.sys.write(bun.toFD(ps1_file.handle), contents[index..])) {
+                    .result => |written| {
+                        index += written;
+                    },
+                    .err => |err| {
+                        this.err = err;
+                        return;
+                    },
+                }
+            }
         }
 
         const sh_contents_fmt =
@@ -508,9 +525,18 @@ pub const Bin = extern struct {
             const contents = std.fmt.allocPrint(bun.default_allocator, sh_contents_fmt, .{ target_path, target_path }) catch bun.outOfMemory();
             defer bun.default_allocator.free(contents);
 
-            sh_file.writeAll(contents) catch |err| {
-                this.err = err;
-            };
+            var index: usize = 0;
+            while (index < contents.len) {
+                switch (bun.sys.write(bun.toFD(sh_file.handle), contents[index..])) {
+                    .result => |written| {
+                        index += written;
+                    },
+                    .err => |err| {
+                        this.err = err;
+                        return;
+                    },
+                }
+            }
         }
 
         const dot_bin = ".bin" ++ std.fs.path.sep_str;

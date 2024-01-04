@@ -13,6 +13,7 @@ const Fs = @import("../fs.zig");
 const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
+const string = bun.string;
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -303,6 +304,8 @@ pub const Bin = extern struct {
 
         err: ?anyerror = null,
 
+        cmd_ext: ?string = null,
+
         pub var umask: std.os.mode_t = 0;
 
         var has_set_umask = false;
@@ -350,6 +353,164 @@ pub const Bin = extern struct {
                 this.err = err;
             };
             setPermissions(this.package_installed_node_modules, dest_path);
+        }
+
+        const cmd_contents_begin =
+            \\@ECHO off
+            \\GOTO start
+            \\:find_dp0
+            \\SET dp0=%~dp0
+            \\EXIT /b
+            \\:start
+            \\SETLOCAL
+            \\CALL :find_dp0
+            \\
+            \\IF EXIST "%dp0%\node.exe" (
+            \\  SET "_prog=%dp0%\node.exe"
+            \\) ELSE (
+            \\  SET "_prog=node"
+            \\  SET PATHEXT=%PATHEXT:;.JS;=;%
+            \\)
+            \\
+            \\endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\
+        ;
+
+        const cmd_contents_end =
+            \\" %*
+        ;
+
+        var cmd_contents_buf = brk: {
+            // path to file is only used once. copy into a stack allocated buffer
+            var buf: [cmd_contents_begin.len + cmd_contents_end.len + bun.MAX_PATH_BYTES]u8 = undefined;
+            @memcpy(buf[0..cmd_contents_begin.len], cmd_contents_begin);
+            break :brk buf;
+        };
+
+        var cmd_contents_copy_start = cmd_contents_buf[cmd_contents_begin.len..];
+
+        fn createCmdFile(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            const ext = this.cmd_ext orelse brk: {
+                if (bun.getenvZ("PATHEXT")) |pathext| {
+                    var iter = std.mem.splitScalar(u8, pathext, std.fs.path.delimiter);
+                    while (iter.next()) |ext| {
+                        // https://github.com/pnpm/pnpm/issues/3800
+                        // https://github.com/zkochan/packages/blob/0397b5df8b4233a644ea45639ddb1c06f93b24c1/cmd-extension/index.js#L9
+                        if (strings.eqlCaseInsensitiveASCII(ext, ".cmd", true)) {
+                            this.cmd_ext = ext;
+                            break :brk this.cmd_ext.?;
+                        }
+                    }
+                }
+
+                this.cmd_ext = ".cmd";
+                break :brk this.cmd_ext.?;
+            };
+
+            var dest_buf: bun.PathBuffer = undefined;
+            @memcpy(dest_buf[0..dest_path.len], dest_path);
+            @memcpy(dest_buf[dest_path.len..][0..ext.len], ext);
+            const dest = dest_buf[0 .. dest_path.len + ext.len];
+
+            const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+            const cmd_file = root_dir.createFile(dest, .{}) catch |err| {
+                this.err = err;
+                return;
+            };
+
+            @memcpy(cmd_contents_buf[cmd_contents_begin.len..][0..target_path.len], target_path);
+            @memcpy(cmd_contents_buf[cmd_contents_begin.len + target_path.len ..][0..cmd_contents_end.len], cmd_contents_end);
+
+            const contents = cmd_contents_buf[0 .. cmd_contents_begin.len + target_path.len + cmd_contents_end.len];
+
+            cmd_file.writeAll(contents) catch |err| {
+                this.err = err;
+                return;
+            };
+        }
+
+        const ps1_contents_fmt =
+            \\#!/usr/bin/env pwsh
+            \\$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent
+            \\
+            \\$exe=""
+            \\if ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) {{
+            \\  # Fix case when both the Windows and Linux builds of Node
+            \\  # are installed in the same directory
+            \\  $exe=".exe"
+            \\}}
+            \\$ret=0
+            \\if (Test-Path "$basedir/node$exe") {{
+            \\  # Support pipeline input
+            \\  if ($MyInvocation.ExpectingInput) {{
+            \\    $input | & "$basedir/node$exe"  "$basedir/{s}" $args
+            \\  }} else {{
+            \\    & "$basedir/node$exe"  "$basedir/{s}" $args
+            \\  }}
+            \\  $ret=$LASTEXITCODE
+            \\}} else {{
+            \\  # Support pipeline input
+            \\  if ($MyInvocation.ExpectingInput) {{
+            \\    $input | & "node$exe"  "$basedir/{s}" $args
+            \\  }} else {{
+            \\    & "node$exe"  "$basedir/{s}" $args
+            \\  }}
+            \\  $ret=$LASTEXITCODE
+            \\}}
+            \\exit $ret
+        ;
+
+        fn createPs1File(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            var dest_buf: bun.PathBuffer = undefined;
+            @memcpy(dest_buf[0..dest_path.len], dest_path);
+            @memcpy(dest_buf[dest_path.len..][0..".ps1".len], ".ps1");
+            const dest = dest_buf[0 .. dest_path.len + ".ps1".len];
+
+            const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+            const ps1_file = root_dir.createFile(dest, .{}) catch |err| {
+                this.err = err;
+                return;
+            };
+
+            const contents = std.fmt.allocPrint(bun.default_allocator, ps1_contents_fmt, .{ target_path, target_path, target_path, target_path }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(contents);
+
+            ps1_file.writeAll(contents) catch |err| {
+                this.err = err;
+            };
+        }
+
+        const sh_contents_fmt =
+            \\#!/bin/sh
+            \\basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
+            \\
+            \\case `uname` in
+            \\    *CYGWIN*|*MINGW*|*MSYS*)
+            \\        if command -v cygpath > /dev/null 2>&1; then
+            \\            basedir=`cygpath -w "$basedir"`
+            \\        fi
+            \\    ;;
+            \\esac
+            \\
+            \\if [ -x "$basedir/node" ]; then
+            \\  exec "$basedir/node"  "$basedir/{s}" "$@"
+            \\else 
+            \\  exec node  "$basedir/{s}" "$@"
+            \\fi
+        ;
+
+        fn createShFile(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+            const sh_file = root_dir.createFile(dest_path, .{}) catch |err| {
+                this.err = err;
+                return;
+            };
+
+            const contents = std.fmt.allocPrint(bun.default_allocator, sh_contents_fmt, .{ target_path, target_path }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(contents);
+
+            sh_file.writeAll(contents) catch |err| {
+                this.err = err;
+            };
         }
 
         const dot_bin = ".bin" ++ std.fs.path.sep_str;
@@ -426,11 +587,6 @@ pub const Bin = extern struct {
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
 
-            if (comptime Environment.isWindows) {
-                // TODO: Bin.Linker.link() needs to be updated to generate .cmd files on Windows
-                @panic("TODO on Windows");
-            }
-
             switch (this.bin.tag) {
                 .none => {
                     if (comptime Environment.isDebug) {
@@ -458,7 +614,13 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSimlinkAndPermissions(target_path, dest_path);
+                    if (comptime Environment.isWindows) {
+                        this.createCmdFile(target_path, dest_path);
+                        this.createPs1File(target_path, dest_path);
+                        this.createShFile(target_path, dest_path);
+                    } else {
+                        this.setSimlinkAndPermissions(target_path, dest_path);
+                    }
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
@@ -478,7 +640,13 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSimlinkAndPermissions(target_path, dest_path);
+                    if (comptime Environment.isWindows) {
+                        this.createCmdFile(target_path, dest_path);
+                        this.createPs1File(target_path, dest_path);
+                        this.createShFile(target_path, dest_path);
+                    } else {
+                        this.setSimlinkAndPermissions(target_path, dest_path);
+                    }
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -508,7 +676,13 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        this.setSimlinkAndPermissions(target_path, dest_path);
+                        if (comptime Environment.isWindows) {
+                            this.createCmdFile(target_path, dest_path);
+                            this.createPs1File(target_path, dest_path);
+                            this.createShFile(target_path, dest_path);
+                        } else {
+                            this.setSimlinkAndPermissions(target_path, dest_path);
+                        }
                     }
                 },
                 .dir => {
@@ -557,7 +731,13 @@ pub const Bin = extern struct {
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
-                                this.setSimlinkAndPermissions(from_path, to_path);
+                                if (comptime Environment.isWindows) {
+                                    this.createCmdFile(from_path, to_path);
+                                    this.createPs1File(from_path, to_path);
+                                    this.createShFile(from_path, to_path);
+                                } else {
+                                    this.setSimlinkAndPermissions(from_path, to_path);
+                                }
                             },
                             else => {},
                         }

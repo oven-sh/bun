@@ -3,7 +3,7 @@ const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 
-var FsModule;
+var NetModule;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -1053,7 +1053,7 @@ class ChildProcess extends EventEmitter {
 
     NativeWritable ||= StreamModule.NativeWritable;
     ReadableFromWeb ||= StreamModule.Readable.fromWeb;
-    if (!FsModule) FsModule = require("node:fs");
+    if (!NetModule) NetModule = require("node:net");
 
     const io = this.#stdioOptions[i];
     switch (i) {
@@ -1087,14 +1087,7 @@ class ChildProcess extends EventEmitter {
           case "pipe":
             const fd = this.#handle.stdio[i];
             if (!fd) return null;
-            const stream = StreamModule.Duplex.from({
-              readable: FsModule.createReadStream(null, { fd }),
-              writable: FsModule.createWriteStream(null, { fd }),
-            });
-            process.nextTick(() => {
-              stream.emit("readable");
-            });
-            return stream;
+            return new NetModule.connect({ fd });
         }
         return null;
     }

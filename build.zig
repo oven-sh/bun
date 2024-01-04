@@ -73,6 +73,7 @@ const BunBuildOptions = struct {
     bindgen: bool = false,
     sizegen: bool = false,
     base_path: [:0]const u8 = "",
+    tracy_callstack_depth: u16,
 
     runtime_js_version: u64 = 0,
     fallback_html_version: u64 = 0,
@@ -312,6 +313,7 @@ pub fn build_(b: *Build) !void {
             .baseline = is_baseline,
             .bindgen = false,
             .base_path = try b.allocator.dupeZ(u8, b.pathFromRoot(".")),
+            .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         };
     };
 

@@ -115,16 +115,6 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
-pub fn canUseBrotli() bool {
-    if (Environment.isMac) {
-        if (bun.CompressionFramework.isAvailable()) {
-            return true;
-        }
-    }
-
-    return bun.brotli.hasBrotli();
-}
-
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -1208,12 +1198,11 @@ pub const CertificateInfo = struct {
 const Decompressor = union(enum) {
     zlib: *Zlib.ZlibReaderArrayList,
     brotli: *Brotli.BrotliReaderArrayList,
-    CompressionFramework: *bun.CompressionFramework.DecompressionArrayList,
     none: void,
 
     pub fn deinit(this: *Decompressor) void {
         switch (this.*) {
-            inline .brotli, .CompressionFramework, .zlib => |that| {
+            inline .brotli, .zlib => |that| {
                 that.deinit();
                 this.* = .{ .none = {} };
             },
@@ -1247,25 +1236,14 @@ const Decompressor = union(enum) {
                     return;
                 },
                 .brotli => {
-                    if (bun.CompressionFramework.isAvailable()) {
-                        this.* = .{
-                            .CompressionFramework = try bun.CompressionFramework.DecompressionArrayList.initWithOptions(
-                                buffer,
-                                &body_out_str.list,
-                                body_out_str.allocator,
-                                .BROTLI,
-                            ),
-                        };
-                    } else {
-                        this.* = .{
-                            .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
-                                buffer,
-                                &body_out_str.list,
-                                body_out_str.allocator,
-                                .{},
-                            ),
-                        };
-                    }
+                    this.* = .{
+                        .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
+                            buffer,
+                            &body_out_str.list,
+                            body_out_str.allocator,
+                            .{},
+                        ),
+                    };
 
                     return;
                 },
@@ -1299,19 +1277,6 @@ const Decompressor = union(enum) {
                 reader.list = body_out_str.list;
                 reader.total_out = @truncate(initial);
             },
-            .CompressionFramework => |reader| {
-                if (comptime !Environment.isMac) {
-                    @panic("CompressionFramework is not supported on this platform. This code should not be reachable");
-                }
-
-                reader.input = buffer;
-                reader.total_in = @as(u32, @truncate(buffer.len));
-
-                const initial = body_out_str.list.items.len;
-
-                reader.list = body_out_str.list;
-                reader.total_out = @truncate(initial);
-            },
             else => @panic("Invalid encoding. This code should not be reachable"),
         }
     }
@@ -1320,10 +1285,6 @@ const Decompressor = union(enum) {
         switch (this.*) {
             .zlib => |zlib| try zlib.readAll(),
             .brotli => |brotli| try brotli.readAll(is_done),
-            .CompressionFramework => |framework| if (!bun.Environment.isMac)
-                unreachable
-            else
-                try framework.readAll(is_done),
             .none => {},
         }
     }
@@ -2147,11 +2108,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_accept_encoding and !this.disable_decompression) {
-        if (canUseBrotli()) {
-            request_headers_buf[header_count] = accept_encoding_header;
-        } else {
-            request_headers_buf[header_count] = accept_encoding_header_compression_no_brotli;
-        }
+        request_headers_buf[header_count] = accept_encoding_header;
 
         header_count += 1;
     }
@@ -3403,7 +3360,7 @@ pub fn handleResponseMetadata(
                     }
                 } else if (strings.eqlComptime(header.value, "br")) {
                     if (!this.disable_decompression) {
-                        this.state.transfer_encoding = Encoding.brotli;
+                        this.state.transfer_encoding = .brotli;
                     }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;

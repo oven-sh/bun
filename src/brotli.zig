@@ -5,10 +5,6 @@ const BrotliDecoder = c.BrotliDecoder;
 
 const mimalloc = bun.Mimalloc;
 
-pub fn hasBrotli() bool {
-    return BrotliDecoder.initializeBrotli();
-}
-
 const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
         if (comptime bun.is_heap_breakdown_enabled) {

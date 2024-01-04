@@ -13,119 +13,45 @@ pub const BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 // pub extern fn BrotliSharedDictionaryDestroyInstance(dict: ?*BrotliSharedDictionary) void;
 // pub extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) c_int;
 pub const BrotliDecoder = opaque {
-    const BrotliDecoderSetParameterFnType = fn (state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int;
-    const BrotliDecoderAttachDictionaryFnType = fn (state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) callconv(.C) c_int;
-    const BrotliDecoderCreateInstanceFnType = fn (alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) callconv(.C) ?*BrotliDecoder;
-    const BrotliDecoderDestroyInstanceFnType = fn (state: *BrotliDecoder) callconv(.C) void;
-    const BrotliDecoderDecompressFnType = fn (encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) callconv(.C) BrotliDecoderResult;
-    const BrotliDecoderDecompressStreamFnType = fn (state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult;
-    const BrotliDecoderHasMoreOutputFnType = fn (state: *const BrotliDecoder) callconv(.C) c_int;
-    const BrotliDecoderTakeOutputFnType = fn (state: *BrotliDecoder, size: *usize) callconv(.C) ?[*]const u8;
-    const BrotliDecoderIsUsedFnType = fn (state: *const BrotliDecoder) callconv(.C) c_int;
-    const BrotliDecoderIsFinishedFnType = fn (state: *const BrotliDecoder) callconv(.C) c_int;
-    const BrotliDecoderGetErrorCodeFnType = fn (state: *const BrotliDecoder) callconv(.C) BrotliDecoderErrorCode;
-    const BrotliDecoderErrorStringFnType = fn (c: BrotliDecoderErrorCode) callconv(.C) ?[*:0]const u8;
-    const BrotliDecoderVersionFnType = fn () callconv(.C) u32;
+    extern "C" fn BrotliDecoderSetParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int;
+    extern "C" fn BrotliDecoderAttachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) callconv(.C) c_int;
+    extern "C" fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) callconv(.C) ?*BrotliDecoder;
+    extern "C" fn BrotliDecoderDestroyInstance(state: *BrotliDecoder) callconv(.C) void;
+    extern "C" fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) callconv(.C) BrotliDecoderResult;
+    extern "C" fn BrotliDecoderDecompressStream(state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult;
+    extern "C" fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoder) callconv(.C) c_int;
+    extern "C" fn BrotliDecoderTakeOutput(state: *BrotliDecoder, size: *usize) callconv(.C) ?[*]const u8;
+    extern "C" fn BrotliDecoderIsUsed(state: *const BrotliDecoder) callconv(.C) c_int;
+    extern "C" fn BrotliDecoderIsFinished(state: *const BrotliDecoder) callconv(.C) c_int;
+    extern "C" fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) callconv(.C) BrotliDecoderErrorCode;
+    extern "C" fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) callconv(.C) ?[*:0]const u8;
+    extern "C" fn BrotliDecoderVersion() callconv(.C) u32;
     const BrotliDecoderSetMetadataCallbacks = fn (state: *BrotliDecoder, start_func: brotli_decoder_metadata_start_func, chunk_func: brotli_decoder_metadata_chunk_func, @"opaque": ?*anyopaque) callconv(.C) void;
     const brotli_decoder_metadata_start_func = ?*const fn (?*anyopaque, usize) callconv(.C) void;
     const brotli_decoder_metadata_chunk_func = ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.C) void;
 
-    var brotli_handle: ?*anyopaque = null;
-
-    fn loadBrotli() ?*anyopaque {
-        if (brotli_handle != null) {
-            return brotli_handle;
-        }
-
-        brotli_handle = bun.C.dlopen("brotlidec", 1) orelse brk: {
-            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            const output = std.ChildProcess.run(.{
-                .allocator = arena.allocator(),
-                .argv = &.{
-                    "pkg-config",
-                    "--libs",
-                    "libbrotlidec",
-                },
-                .max_output_bytes = 8192,
-            }) catch break :brk null;
-            if (!(output.term == .Exited and output.term.Exited == 0)) {
-                break :brk null;
-            }
-
-            if (!bun.strings.hasPrefixComptime(output.stdout, "-L")) {
-                break :brk null;
-            }
-
-            var lib_path = output.stdout[2..];
-            if (lib_path.len == 0) {
-                break :brk null;
-            }
-
-            if (bun.strings.indexOfChar(lib_path, ' ')) |i| {
-                lib_path = lib_path[0..i];
-            }
-
-            const absolute = std.fmt.allocPrintZ(
-                arena.allocator(),
-                "{s}" ++ std.fs.path.sep_str ++ "libbrotlidec." ++
-                    if (bun.Environment.isWindows)
-                    "dll"
-                else if (bun.Environment.isLinux)
-                    "so"
-                else
-                    "dylib",
-                .{
-                    bun.strings.withoutTrailingSlash(lib_path),
-                },
-            ) catch break :brk null;
-
-            break :brk bun.C.dlopen(absolute, 1);
-        };
-        return brotli_handle;
-    }
-
-    pub fn hasLoaded() bool {
-        return did_load_brotli orelse false;
-    }
-
-    var BrotliDecoderSetParameter: ?*const BrotliDecoderSetParameterFnType = null;
-    var BrotliDecoderAttachDictionary: ?*const BrotliDecoderAttachDictionaryFnType = null;
-    var BrotliDecoderCreateInstance: ?*const BrotliDecoderCreateInstanceFnType = null;
-    var BrotliDecoderDestroyInstance: ?*const BrotliDecoderDestroyInstanceFnType = null;
-    var BrotliDecoderDecompress: ?*const BrotliDecoderDecompressFnType = null;
-    var BrotliDecoderDecompressStream: ?*const BrotliDecoderDecompressStreamFnType = null;
-    var BrotliDecoderHasMoreOutput: ?*const BrotliDecoderHasMoreOutputFnType = null;
-    var BrotliDecoderTakeOutput: ?*const BrotliDecoderTakeOutputFnType = null;
-    var BrotliDecoderIsUsed: ?*const BrotliDecoderIsUsedFnType = null;
-    var BrotliDecoderIsFinished: ?*const BrotliDecoderIsFinishedFnType = null;
-    var BrotliDecoderGetErrorCode: ?*const BrotliDecoderGetErrorCodeFnType = null;
-    var BrotliDecoderErrorString: ?*const BrotliDecoderErrorStringFnType = null;
-    var BrotliDecoderVersion: ?*const BrotliDecoderVersionFnType = null;
-    var did_load_brotli: ?bool = null;
-
     pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int {
-        return BrotliDecoderSetParameter.?(state, param, value);
+        return BrotliDecoderSetParameter(state, param, value);
     }
 
     pub fn attachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data: []const u8) callconv(.C) c_int {
-        return BrotliDecoderAttachDictionary.?(state, @"type", data.len, data.ptr);
+        return BrotliDecoderAttachDictionary(state, @"type", data.len, data.ptr);
     }
 
     pub fn createInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) callconv(.C) ?*BrotliDecoder {
-        return BrotliDecoderCreateInstance.?(alloc_func, free_func, @"opaque");
+        return BrotliDecoderCreateInstance(alloc_func, free_func, @"opaque");
     }
 
     pub fn destroyInstance(state: *BrotliDecoder) callconv(.C) void {
-        return BrotliDecoderDestroyInstance.?(state);
+        return BrotliDecoderDestroyInstance(state);
     }
 
     pub fn decompress(encoded: []const u8, decoded: *[]u8) callconv(.C) BrotliDecoderResult {
-        return BrotliDecoderDecompress.?(encoded.len, encoded.ptr, &decoded.len, decoded.ptr);
+        return BrotliDecoderDecompress(encoded.len, encoded.ptr, &decoded.len, decoded.ptr);
     }
 
     pub fn decompressStream(state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult {
-        return BrotliDecoderDecompressStream.?(
+        return BrotliDecoderDecompressStream(
             state,
             available_in,
             next_in,
@@ -136,108 +62,36 @@ pub const BrotliDecoder = opaque {
     }
 
     pub fn hasMoreOutput(state: *const BrotliDecoder) callconv(.C) bool {
-        return BrotliDecoderHasMoreOutput.?(state) != 0;
+        return BrotliDecoderHasMoreOutput(state) != 0;
     }
 
     pub fn takeOutput(state: *BrotliDecoder) callconv(.C) []const u8 {
         var max_size: usize = std.math.maxInt(usize);
-        const ptr = BrotliDecoderTakeOutput.?(state, &max_size) orelse return "";
+        const ptr = BrotliDecoderTakeOutput(state, &max_size) orelse return "";
         return ptr[0..max_size];
     }
 
     pub fn isUsed(state: *const BrotliDecoder) callconv(.C) bool {
-        return BrotliDecoderIsUsed.?(state) != 0;
+        return BrotliDecoderIsUsed(state) != 0;
     }
 
     pub fn isFinished(state: *const BrotliDecoder) callconv(.C) bool {
-        return BrotliDecoderIsFinished.?(state) != 0;
+        return BrotliDecoderIsFinished(state) != 0;
     }
 
     pub fn getErrorCode(state: *const BrotliDecoder) callconv(.C) BrotliDecoderErrorCode {
-        return BrotliDecoderGetErrorCode.?(state);
+        return BrotliDecoderGetErrorCode(state);
     }
 
     pub fn errorString(c: BrotliDecoderErrorCode) callconv(.C) [:0]const u8 {
-        return bun.sliceTo(BrotliDecoderErrorString.?(c) orelse "", 0);
+        return bun.sliceTo(BrotliDecoderErrorString(c) orelse "", 0);
     }
 
     pub fn version() callconv(.C) u32 {
-        return BrotliDecoderVersion.?();
+        return BrotliDecoderVersion();
     }
 
     pub fn initializeBrotli() bool {
-        if (did_load_brotli) |did| {
-            return did;
-        }
-
-        defer {
-            if (comptime bun.Environment.isDebug) {
-                if (did_load_brotli) |did| {
-                    if (!did) {
-                        bun.Output.debugWarn("failed to load Brotli", .{});
-                    }
-                }
-            }
-        }
-
-        const handle = loadBrotli() orelse {
-            did_load_brotli = false;
-            return false;
-        };
-
-        BrotliDecoderSetParameter = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderSetParameter") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderAttachDictionary = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderAttachDictionary") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderCreateInstance = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderCreateInstance") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderDestroyInstance = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderDestroyInstance") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderDecompress = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderDecompress") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderDecompressStream = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderDecompressStream") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderHasMoreOutput = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderHasMoreOutput") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderTakeOutput = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderTakeOutput") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderIsUsed = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderIsUsed") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderIsFinished = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderIsFinished") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderGetErrorCode = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderGetErrorCode") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderErrorString = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderErrorString") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-        BrotliDecoderVersion = @alignCast(@ptrCast(bun.C._dlsym(handle, "BrotliDecoderVersion") orelse {
-            did_load_brotli = false;
-            return false;
-        }));
-
         return true;
     }
 };

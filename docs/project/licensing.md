@@ -30,6 +30,13 @@ Bun statically links these libraries:
 
 ---
 
+---
+
+- [`brotli`](https://github.com/google/brotli)
+- MIT
+
+---
+
 - [`libarchive`](https://github.com/libarchive/libarchive)
 - [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
 

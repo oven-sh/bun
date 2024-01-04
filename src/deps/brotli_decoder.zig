@@ -30,67 +30,6 @@ pub const BrotliDecoder = opaque {
     const brotli_decoder_metadata_start_func = ?*const fn (?*anyopaque, usize) callconv(.C) void;
     const brotli_decoder_metadata_chunk_func = ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.C) void;
 
-    var brotli_handle: ?*anyopaque = null;
-
-    fn loadBrotli() ?*anyopaque {
-        if (brotli_handle != null) {
-            return brotli_handle;
-        }
-
-        brotli_handle = bun.C.dlopen("brotlidec", 1) orelse brk: {
-            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            const output = std.ChildProcess.run(.{
-                .allocator = arena.allocator(),
-                .argv = &.{
-                    "pkg-config",
-                    "--libs",
-                    "libbrotlidec",
-                },
-                .max_output_bytes = 8192,
-            }) catch break :brk null;
-            if (!(output.term == .Exited and output.term.Exited == 0)) {
-                break :brk null;
-            }
-
-            if (!bun.strings.hasPrefixComptime(output.stdout, "-L")) {
-                break :brk null;
-            }
-
-            var lib_path = output.stdout[2..];
-            if (lib_path.len == 0) {
-                break :brk null;
-            }
-
-            if (bun.strings.indexOfChar(lib_path, ' ')) |i| {
-                lib_path = lib_path[0..i];
-            }
-
-            const absolute = std.fmt.allocPrintZ(
-                arena.allocator(),
-                "{s}" ++ std.fs.path.sep_str ++ "libbrotlidec." ++
-                    if (bun.Environment.isWindows)
-                    "dll"
-                else if (bun.Environment.isLinux)
-                    "so"
-                else
-                    "dylib",
-                .{
-                    bun.strings.withoutTrailingSlash(lib_path),
-                },
-            ) catch break :brk null;
-
-            break :brk bun.C.dlopen(absolute, 1);
-        };
-        return brotli_handle;
-    }
-
-    pub fn hasLoaded() bool {
-        return did_load_brotli orelse false;
-    }
-
-    var did_load_brotli: ?bool = null;
-
     pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int {
         return BrotliDecoderSetParameter(state, param, value);
     }

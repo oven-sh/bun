@@ -1262,11 +1262,23 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         }
 
         pub fn updateRef(this: *ThisFileSink, value: bool) void {
+            // if (this.poll_ref) |poll| {
+            //     if (value)
+            //         poll.ref(JSC.VirtualMachine.get())
+            //     else
+            //         poll.unref(JSC.VirtualMachine.get());
+            // }
             if (this.poll_ref) |poll| {
                 if (value)
-                    poll.ref(JSC.VirtualMachine.get())
+                    poll.ref(switch (comptime EventLoop) {
+                        .js => JSC.VirtualMachine.get(),
+                        .mini => JSC.MiniEventLoop.global,
+                    })
                 else
-                    poll.unref(JSC.VirtualMachine.get());
+                    poll.unref(switch (comptime EventLoop) {
+                        .js => JSC.VirtualMachine.get(),
+                        .mini => JSC.MiniEventLoop.global,
+                    });
             }
         }
 
@@ -3827,7 +3839,7 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
             this.close_on_empty_read = true;
             if (this.poll_ref) |poll| {
                 poll.flags.insert(.hup);
-                poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                poll.disableKeepingProcessAlive(EventLoop.getVm());
             }
 
             this.pending.result = .{ .done = {} };
@@ -3988,7 +4000,9 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
                 return;
             }
 
-            defer JSC.VirtualMachine.get().drainMicrotasks();
+            defer {
+                if (comptime EventLoop == .js) JSC.VirtualMachine.get().drainMicrotasks();
+            }
 
             if (comptime Environment.isMac) {
                 if (sizeOrOffset == 0 and is_hup and this.drained) {
@@ -4874,7 +4888,9 @@ pub fn NewReadyWatcher(
         }
 
         pub fn onPoll(this: *Context, sizeOrOffset: i64, _: u16) void {
-            defer JSC.VirtualMachine.get().drainMicrotasks();
+            defer {
+                if (comptime event_loop_kind == .js) JSC.VirtualMachine.get().drainMicrotasks();
+            }
             ready(this, sizeOrOffset);
         }
 

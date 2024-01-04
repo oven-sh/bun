@@ -1459,6 +1459,13 @@ pub const EventLoopKind = enum {
             .mini => *JSC.MiniEventLoop,
         };
     }
+
+    pub fn getVm(comptime this: EventLoopKind) EventLoopKind.refType(this) {
+        return switch (this) {
+            .js => JSC.VirtualMachine.get(),
+            .mini => JSC.MiniEventLoop.global,
+        };
+    }
 };
 
 pub fn AbstractVM(inner: anytype) brk: {

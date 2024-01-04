@@ -264,9 +264,18 @@ pub const FilePoll = struct {
     }
 
     pub fn deinitForceUnregister(this: *FilePoll) void {
-        var vm = JSC.VirtualMachine.get();
-        const loop = vm.event_loop_handle.?;
-        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), true);
+        switch (this.event_loop_kind) {
+            .js => {
+                var vm = JSC.VirtualMachine.get();
+                const loop = vm.event_loop_handle.?;
+                this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), true);
+            },
+            .mini => {
+                var vm = JSC.MiniEventLoop.global;
+                const loop = vm.loop;
+                this.deinitPossiblyDefer(vm, loop, vm.filePolls(), true);
+            },
+        }
     }
 
     fn deinitPossiblyDefer(this: *FilePoll, vm: anytype, loop: *Loop, polls: *FilePoll.Store, force_unregister: bool) void {

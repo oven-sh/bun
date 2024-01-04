@@ -1210,6 +1210,14 @@ declare module "bun:test" {
      */
     toBeEmpty(): void;
     /**
+     * Asserts that a value is an empty `object`.
+     *
+     * @example
+     * expect({}).toBeEmptyObject();
+     * expect({ a: 'hello' }).not.toBeEmptyObject();
+     */
+    toBeEmptyObject(): void;
+    /**
      * Asserts that a value is `null` or `undefined`.
      *
      * @example

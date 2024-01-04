@@ -341,11 +341,12 @@ function(validate_zig validator_result_var item)
     endif()
 endfunction()
 
-if (ZIG_COMPILER)
+if(ZIG_COMPILER)
     if(ZIG_COMPILER STREQUAL "system")
         message(STATUS "Using system Zig compiler")
         unset(ZIG_COMPILER_)
     endif()
+
     find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
     set(ZIG_COMPILER "${ZIG_COMPILER_}")
     message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
@@ -355,13 +356,16 @@ elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
     )
     set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+
     if(WIN32)
         set(ZIG_COMPILER "${ZIG_COMPILER}.exe")
     endif()
+
     if(NOT EXISTS "${ZIG_COMPILER}")
         unset(ZIG_COMPILER)
         message(FATAL_ERROR "Auto-installation of Zig failed. Please pass -DZIG_COMPILER=system or a path to the Zig")
     endif()
+
     message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 endif()
@@ -537,6 +541,17 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
 
+# -- Brotli --
+set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
+file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
+    "${BROTLI_SRC}/common/*.c"
+    "${BROTLI_SRC}/enc/*.c"
+    "${BROTLI_SRC}/dec/*.c"
+)
+list(APPEND BUN_RAW_SOURCES ${BROTLI_FILES})
+include_directories("${BUN_DEPS_DIR}/brotli/include")
+
+# -- uSockets --
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
 file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/*.c"
@@ -1278,7 +1293,6 @@ else()
     target_link_libraries(${bun} PRIVATE lshpack)
 endif()
 
-
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
@@ -1301,7 +1315,7 @@ else()
 endif()
 
 if(WIN32)
-# delayimp -delayload:shell32.dll -delayload:ole32.dll
+    # delayimp -delayload:shell32.dll -delayload:ole32.dll
 endif()
 
 if(BUN_LINK_ONLY)

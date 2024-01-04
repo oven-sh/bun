@@ -1836,7 +1836,10 @@ pub const Subprocess = struct {
         for (stdio_pipes.items) |*item| {
             const maybe = blk: {
                 var fds: [2]c_int = undefined;
-                const rc = std.os.system.socketpair(os.AF.UNIX, os.SOCK.STREAM, 0, &fds);
+                const socket_type = os.SOCK.STREAM;
+                const have_sock_flags = !Environment.isMac;
+                const filtered_sock_type = if (!have_sock_flags) socket_type & ~@as(u32, os.SOCK.NONBLOCK | os.SOCK.CLOEXEC) else socket_type;
+                const rc = std.os.system.socketpair(os.AF.UNIX, filtered_sock_type, 0, &fds);
                 switch (std.os.system.getErrno(rc)) {
                     .SUCCESS => {},
                     .AFNOSUPPORT => break :blk error.AddressFamilyNotSupported,

@@ -695,7 +695,7 @@ var isNextIncomingMessageHTTPS = false;
 var typeSymbol = Symbol("type");
 var reqSymbol = Symbol("req");
 var pendingChunksSymbol = Symbol("pendingChunks");
-var bodyReaderSymbol = Symbol("bodyReader");
+var bodyStreamSymbol = Symbol("bodyStream");
 var noBodySymbol = Symbol("noBody");
 var abortedSymbol = Symbol("aborted");
 function IncomingMessage(req, defaultIncomingOpts) {
@@ -733,7 +733,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
       : false;
 
   this[pendingChunksSymbol] = [];
-  this[bodyReaderSymbol] = undefined;
+  this[bodyStreamSymbol] = undefined;
   this.complete = !!this[noBodySymbol];
 }
 
@@ -779,12 +779,12 @@ function drainPending(self) {
   return false;
 }
 
-async function consumeStream(self, reader: ReadableStreamDefaultReader) {
+async function consumeStream(self, reader) {
   while (true) {
     if (self[abortedSymbol] || self.complete) return;
 
     let done, value;
-    const result = await self[bodyReaderSymbol].readMany();
+    const result = await reader.readMany();
 
     if ($isPromise(result)) {
       ({ done, value } = await result);
@@ -823,14 +823,14 @@ IncomingMessage.prototype._read = function (size) {
     return;
   }
 
-  let reader = this[bodyReaderSymbol];
+  let reader = this[bodyStreamSymbol];
   if (reader == null) {
     reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
     if (!reader) {
       this.push(null);
       return;
     }
-    this[bodyReaderSymbol] = reader;
+    this[bodyStreamSymbol] = reader;
   } else if (drainPending(this)) {
     return;
   }
@@ -845,9 +845,9 @@ Object.defineProperty(IncomingMessage.prototype, "aborted", {
 });
 
 function handleDone(self) {
-  if (self[bodyReaderSymbol]) {
-    self[bodyReaderSymbol].releaseLock();
-    self[bodyReaderSymbol] = undefined;
+  if (self[bodyStreamSymbol]) {
+    self[bodyStreamSymbol].releaseLock();
+    process.nextTick(destroyBodyStreamNT, self);
   }
 
   self.complete = true;
@@ -857,11 +857,11 @@ function handleDone(self) {
 function abort(self) {
   if (self[abortedSymbol]) return;
   self[abortedSymbol] = true;
-  var bodyReader = self[bodyReaderSymbol];
-  if (!bodyReader) return;
-  bodyReader.cancel();
+  var bodyStream = self[bodyStreamSymbol];
+  if (!bodyStream) return;
+  bodyStream.cancel();
   self.complete = true;
-  self[bodyReaderSymbol] = undefined;
+  self[bodyStreamSymbol] = undefined;
   self.push(null);
 }
 

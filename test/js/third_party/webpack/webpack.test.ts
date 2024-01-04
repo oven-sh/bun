@@ -6,15 +6,19 @@ import { test, expect, beforeEach, afterEach } from "bun:test";
 test("webpack works", async () => {
   await promises.rm(join(import.meta.dir, "dist"), { recursive: true, force: true });
 
-  const { exitCode } = Bun.spawnSync({
+  const { exited } = Bun.spawn({
     cmd: [bunExe(), "--bun", "webpack", "--mode=production", "--entry", "./test.js", "-o", "./dist/test1"],
     cwd: import.meta.dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
   });
 
+  const exitCode = await exited;
+  await Bun.sleep(1000);
+
   expect(existsSync(join(import.meta.dir, "dist", "test1/main.js"))).toBe(true);
   expect(exitCode).toBe(0);
+  await promises.rm(join(import.meta.dir, "dist"), { recursive: true, force: true });
 });
 
 test("webpack --watch works", async () => {
@@ -38,4 +42,5 @@ test("webpack --watch works", async () => {
   await exited;
 
   expect(existsSync(join(import.meta.dir, "dist", "test2/main.js"))).toBe(true);
+  await promises.rm(join(import.meta.dir, "dist"), { recursive: true, force: true });
 }, 8000);

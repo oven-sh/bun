@@ -420,7 +420,7 @@ export default [
         length: 1,
       },
       toContainKeys: {
-        fn : "toContainKeys",
+        fn: "toContainKeys",
         length: 1,
       },
       toContainEqual: {

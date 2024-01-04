@@ -2340,6 +2340,7 @@ pub const Blob = struct {
                     .on_complete_data = @ptrCast(handler),
                     .on_complete_fn = @ptrCast(&Handler.run),
                 });
+                store.ref();
                 this.getFd(onFileOpen);
             }
 

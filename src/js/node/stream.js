@@ -2802,6 +2802,7 @@ var require_readable = __commonJS({
         }
       }
 
+      $debug("length", state.length, state.ended, nOrig, n);
       if (state.length === 0) {
         // If we have nothing in the buffer, then we want to know
         // as soon as we *do* get something into the buffer.
@@ -4045,7 +4046,6 @@ var require_duplexify = __commonJS({
     } = require_errors();
     var { destroyer } = require_destroy();
     var Duplex = require_duplex();
-    var Readable = require_readable();
     var { createDeferredPromise } = require_util();
     var from = require_from();
     var isBlob =
@@ -4466,7 +4466,6 @@ var require_transform = __commonJS({
     "use strict";
     var { ObjectSetPrototypeOf, Symbol: Symbol2 } = require_primordials();
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
-    var Duplex = require_duplex();
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
       Duplex.$call(this, options);
@@ -4589,7 +4588,6 @@ var require_pipeline = __commonJS({
     var eos = require_end_of_stream();
     var { once } = require_util();
     var destroyImpl = require_destroy();
-    var Duplex = require_duplex();
     var {
       aggregateTwoErrors,
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE, ERR_MISSING_ARGS, ERR_STREAM_DESTROYED },
@@ -4598,7 +4596,6 @@ var require_pipeline = __commonJS({
     var { validateFunction, validateAbortSignal } = require_validators();
     var { isIterable, isReadable, isReadableNodeStream, isNodeStream } = require_utils();
     var PassThrough;
-    var Readable;
     function destroyer(stream, reading, writing) {
       let finished = false;
       stream.on("close", () => {
@@ -4636,9 +4633,6 @@ var require_pipeline = __commonJS({
       throw new ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
     }
     async function* fromReadable(val) {
-      if (!Readable) {
-        Readable = require_readable();
-      }
       yield* Readable.prototype[SymbolAsyncIterator].$call(val);
     }
     async function pump(iterable, writable, finish, { end }) {
@@ -5469,6 +5463,7 @@ function getNativeReadableStream(Readable, stream, options) {
 
 var Readable = require_readable();
 var Writable = require_writable();
+var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
 const _fileSink = Symbol("fileSink");

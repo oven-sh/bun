@@ -3990,14 +3990,13 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
-
     pub fn keys(globalThis: *JSGlobalObject, value: JSValue) JSValue {
         return cppFn("keys", .{
             globalThis,
             value,
         });
     }
-    
+
     pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
         return cppFn("hasOwnProperty", .{ this, globalThis, key });
     }
@@ -5498,7 +5497,7 @@ pub const CallFrame = opaque {
                 };
             }
 
-            pub inline fn slice(self: @This()) []const JSValue {
+            pub inline fn slice(self: *const @This()) []const JSValue {
                 return self.ptr[0..self.len];
             }
         };

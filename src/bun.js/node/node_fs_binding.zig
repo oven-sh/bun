@@ -38,7 +38,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             var arguments = callframe.arguments(8);
 
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             defer slice.deinit();
 
             const args = if (comptime Arguments != void)
@@ -95,7 +95,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
         ) callconv(.C) JSC.JSValue {
             var arguments = callframe.arguments(8);
 
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             slice.will_be_async = true;
             var exceptionref: JSC.C.JSValueRef = null;
             const args = if (comptime Arguments != void)

@@ -233,6 +233,8 @@ pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSC__JSValue, arg1:
 pub extern fn JSC__JSValue__fromEntries(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: *bindings.JSGlobalObject, arg1: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: *bindings.JSGlobalObject, arg1: u64) JSC__JSValue;
+pub extern fn JSC__JSValue__fromTimevalNoTruncate(arg0: *bindings.JSGlobalObject, arg1: i64, arg2: i64) JSC__JSValue;
+pub extern fn JSC__JSValue__bigIntSum(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue, arg2: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsFromPath(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
@@ -242,6 +244,7 @@ pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindi
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getSymbolDescription(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getUnixTimestamp(JSValue0: JSC__JSValue) f64;
+pub extern fn JSC__JSValue__hasOwnProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ZigString) bool;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
@@ -262,6 +265,7 @@ pub extern fn JSC__JSValue__isInt32AsAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isIterable(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isNumber(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isObject(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__isObjectEmpty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isPrimitive(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isSameValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isSymbol(JSValue0: JSC__JSValue) bool;
@@ -281,6 +285,7 @@ pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: *binding
 pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
+pub extern fn JSC__JSValue__keys(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__makeWithNameAndPrototype(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, arg2: ?*anyopaque, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__push(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;

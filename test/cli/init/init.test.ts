@@ -23,7 +23,7 @@ test("bun init works", () => {
     "module": "index.ts",
     "type": "module",
     "devDependencies": {
-      "bun-types": "latest",
+      "@types/bun": "latest",
     },
     "peerDependencies": {
       "typescript": "^5.0.0",
@@ -59,7 +59,7 @@ test("bun init with piped cli", () => {
     "module": "index.ts",
     "type": "module",
     "devDependencies": {
-      "bun-types": "latest",
+      "@types/bun": "latest",
     },
     "peerDependencies": {
       "typescript": "^5.0.0",

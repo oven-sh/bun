@@ -45,6 +45,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
+    std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
+
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

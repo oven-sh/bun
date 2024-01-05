@@ -37,7 +37,13 @@ bun --env-file=.env.abc --env-file=.env.def run build
 
 ### Quotation marks
 
-Bun supports double quotes, single quotes, and
+Bun supports double quotes, single quotes, and template literal backticks:
+
+```txt#.env
+FOO='hello'
+FOO="hello"
+FOO=`hello`
+```
 
 ### Expansion
 

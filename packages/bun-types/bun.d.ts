@@ -16,6 +16,7 @@
 declare module "bun" {
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
+  type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
   type PathLike = Bun.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
   interface Env {
@@ -2757,7 +2758,7 @@ declare module "bun" {
      *
      * @param data
      */
-    update(data: StringOrBuffer): T;
+    update(data: BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
@@ -2781,7 +2782,7 @@ declare module "bun" {
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
     static hash(
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2792,7 +2793,7 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
+    static hash(input: BlobOrStringOrBuffer, encoding: DigestEncoding): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -2834,7 +2835,10 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
+    update(
+      input: BlobOrStringOrBuffer,
+      inputEncoding?: CryptoEncoding,
+    ): CryptoHasher;
 
     /**
      * Perform a deep copy of the hasher
@@ -2864,7 +2868,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2877,7 +2881,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       encoding: DigestEncoding,
     ): string;
 
@@ -3965,6 +3969,83 @@ declare module "bun" {
       : undefined;
   }
 
+  interface ResourceUsage {
+    /**
+     * The number of voluntary and involuntary context switches that the process made.
+     */
+    contextSwitches: {
+      /**
+       * Voluntary context switches (context switches that the process initiated).
+       */
+      voluntary: number;
+      /**
+       * Involuntary context switches (context switches initiated by the system scheduler).
+       */
+      involuntary: number;
+    };
+
+    /**
+     * The amount of CPU time used by the process, in nanoseconds.
+     */
+    cpuTime: {
+      /**
+       * User CPU time used by the process, in nanoseconds.
+       */
+      user: number;
+      /**
+       * System CPU time used by the process, in nanoseconds.
+       */
+      system: number;
+      /**
+       * Total CPU time used by the process, in nanoseconds.
+       */
+      total: number;
+    };
+    /**
+     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     */
+    maxRSS: number;
+
+    /**
+     * IPC messages sent and received by the process.
+     */
+    messages: {
+      /**
+       * The number of IPC messages sent.
+       */
+      sent: number;
+      /**
+       * The number of IPC messages received.
+       */
+      received: number;
+    };
+    /**
+     * The number of IO operations done by the process.
+     */
+    ops: {
+      /**
+       * The number of input operations via the file system.
+       */
+      in: number;
+      /**
+       * The number of output operations via the file system.
+       */
+      out: number;
+    };
+    /**
+     * The amount of shared memory that the process used.
+     */
+    shmSize: number;
+    /**
+     * The number of signals delivered to the process.
+     */
+    signalCount: number;
+    /**
+     *  The number of times the process was swapped out of main memory.
+     */
+    swapCount: number;
+  }
+
   /**
    * A process created by {@link Bun.spawn}.
    *
@@ -4064,6 +4145,15 @@ declare module "bun" {
      * was created with the `ipc` option.
      */
     disconnect(): void;
+
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     *
+     * Only available after the process has exited
+     *
+     * If the process hasn't exited yet, this will return `undefined`
+     */
+    resourceUsage(): ResourceUsage | undefined;
   }
 
   /**
@@ -4081,6 +4171,10 @@ declare module "bun" {
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;
     success: boolean;
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     */
+    resourceUsage: ResourceUsage;
   }
 
   /**
@@ -4437,7 +4531,9 @@ declare module "bun" {
     constructor(pattern: string);
 
     /**
-     * Scan for files that match this glob pattern. Returns an async iterator.
+     * Scan a root directory recursively for files that match this glob pattern. Returns an async iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js
@@ -4458,7 +4554,9 @@ declare module "bun" {
     ): AsyncIterableIterator<string>;
 
     /**
-     * Scan for files that match this glob pattern. Returns an iterator.
+     * Synchronously scan a root directory recursively for files that match this glob pattern. Returns an iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js

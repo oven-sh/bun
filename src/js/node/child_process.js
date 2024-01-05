@@ -1,10 +1,9 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const {
-  constants: { signals },
-} = require("node:os");
-const { promisify } = require("node:util");
+const OsModule = require("node:os");
+
+var NetModule;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -13,6 +12,7 @@ var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
 var kEmptyObject = ObjectCreate(null);
+var signals = OsModule.constants.signals;
 
 var ArrayPrototypePush = Array.prototype.push;
 var ArrayPrototypeJoin = Array.prototype.join;
@@ -186,6 +186,9 @@ function spawn(file, args, options) {
       abortChildProcess(child, killSignal, options.signal.reason);
     }
   }
+  process.nextTick(() => {
+    child.emit("spawn");
+  });
   return child;
 }
 
@@ -496,7 +499,8 @@ const customPromiseExecFunction = orig => {
   };
 };
 
-ObjectDefineProperty(exec, promisify.custom, {
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+ObjectDefineProperty(exec, kCustomPromisifiedSymbol, {
   __proto__: null,
   enumerable: false,
   value: customPromiseExecFunction(exec),
@@ -1048,6 +1052,7 @@ class ChildProcess extends EventEmitter {
 
     NativeWritable ||= StreamModule.NativeWritable;
     ReadableFromWeb ||= StreamModule.Readable.fromWeb;
+    if (!NetModule) NetModule = require("node:net");
 
     const io = this.#stdioOptions[i];
     switch (i) {
@@ -1076,6 +1081,14 @@ class ChildProcess extends EventEmitter {
             return null;
         }
       }
+      default:
+        switch (io) {
+          case "pipe":
+            const fd = this.#handle.stdio[i];
+            if (!fd) return null;
+            return new NetModule.connect({ fd });
+        }
+        return null;
     }
   }
 
@@ -1087,17 +1100,29 @@ class ChildProcess extends EventEmitter {
   #stdioOptions;
 
   #createStdioObject() {
-    return Object.create(null, {
-      0: {
-        get: () => this.stdin,
-      },
-      1: {
-        get: () => this.stdout,
-      },
-      2: {
-        get: () => this.stderr,
-      },
-    });
+    let result = {};
+    for (let i = 0; i < this.#stdioOptions.length; i++) {
+      const element = this.#stdioOptions[i];
+      if (element !== "pipe") {
+        result[i] = null;
+        continue;
+      }
+      switch (i) {
+        case 0:
+          result[i] = this.stdin;
+          continue;
+        case 1:
+          result[i] = this.stdout;
+          continue;
+        case 2:
+          result[i] = this.stderr;
+          continue;
+        default:
+          result[i] = this.#getBunSpawnIo(i, this.#encoding);
+          continue;
+      }
+    }
+    return ObjectCreate.$call(null, result);
   }
 
   get stdin() {
@@ -1164,15 +1189,18 @@ class ChildProcess extends EventEmitter {
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
+    const stdioCount = stdio.length;
+    const hasSocketsToEagerlyLoad = stdioCount >= 3;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
-      stdin: bunStdio[0],
-      stdout: bunStdio[1],
-      stderr: bunStdio[2],
+      stdio: bunStdio,
       cwd: options.cwd || undefined,
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
+        if (hasSocketsToEagerlyLoad) {
+          this.stdio;
+        }
         $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
@@ -1196,6 +1224,10 @@ class ChildProcess extends EventEmitter {
     if (ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
+    }
+
+    if (hasSocketsToEagerlyLoad) {
+      this.stdio;
     }
   }
 
@@ -1291,6 +1323,7 @@ const nodeToBunLookup = {
   pipe: "pipe",
   overlapped: "pipe", // TODO: this may need to work differently for Windows
   inherit: "inherit",
+  ipc: "ipc",
 };
 
 function nodeToBun(item) {
@@ -1366,9 +1399,9 @@ function normalizeStdio(stdio) {
     if (stdio.length === 0) processedStdio = ["pipe", "pipe", "pipe"];
     else if (stdio.length === 1) processedStdio = [stdio[0], "pipe", "pipe"];
     else if (stdio.length === 2) processedStdio = [stdio[0], stdio[1], "pipe"];
-    else if (stdio.length >= 3) processedStdio = [stdio[0], stdio[1], stdio[2]];
+    else if (stdio.length >= 3) processedStdio = stdio;
 
-    return processedStdio.map(item => (!item ? "pipe" : item));
+    return processedStdio;
   } else {
     throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
   }

@@ -443,6 +443,28 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return ctx;
         }
 
+        pub fn fromFd(
+            ctx: *SocketContext,
+            handle: bun.FileDescriptor,
+            comptime This: type,
+            this: *This,
+            comptime socket_field_name: ?[]const u8,
+        ) ?ThisSocket {
+            const socket_ = ThisSocket{ .socket = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle) orelse return null };
+
+            const holder = socket_.ext(*anyopaque) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                return null;
+            };
+            holder.* = this;
+
+            if (comptime socket_field_name) |field| {
+                @field(this, field) = socket_;
+            }
+
+            return socket_;
+        }
+
         pub fn connectUnixPtr(
             path: []const u8,
             socket_ctx: *SocketContext,
@@ -763,6 +785,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             holder.* = ctx;
             @field(holder, socket_field_name) = adopted;
             return holder;
+        }
+
+        pub fn adoptPtr(
+            socket: *Socket,
+            socket_ctx: *SocketContext,
+            comptime Context: type,
+            comptime socket_field_name: []const u8,
+            ctx: *Context,
+        ) bool {
+            var adopted = ThisSocket{ .socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(*Context)) orelse return false };
+            const holder = adopted.ext(*anyopaque) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                _ = us_socket_close(comptime ssl_int, socket, 0, null);
+                return false;
+            };
+            holder.* = ctx;
+            @field(ctx, socket_field_name) = adopted;
+            return true;
         }
     };
 }
@@ -2546,18 +2586,12 @@ extern fn us_socket_pair(
 extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
-    fds: LIBUS_SOCKET_DESCRIPTOR,
+    fd: LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
 pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
     return SocketTCP{
         .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
-    };
-}
-
-pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
-    return SocketTCP{
-        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
     };
 }
 

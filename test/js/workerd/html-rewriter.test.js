@@ -32,6 +32,11 @@ describe("HTMLRewriter", () => {
     await gcTick();
   });
 
+  it("HTMLRewriter handles Symbol invalid type error", async () => {
+    expect(() => new HTMLRewriter().transform(new Response(Symbol("ok")))).toThrow();
+    expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
+  });
+
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {
     await gcTick();
     let content;
@@ -60,17 +65,18 @@ describe("HTMLRewriter", () => {
     }
   });
 
-  it("supports element handlers", async () => {
-    var rewriter = new HTMLRewriter();
-    rewriter.on("div", {
-      element(element) {
-        element.setInnerContent("<blink>it worked!</blink>", { html: true });
-      },
+  for (let input of [new Response("<div>hello</div>"), "<div>hello</div>"]) {
+    it("supports element handlers with input " + input.constructor.name, async () => {
+      var rewriter = new HTMLRewriter();
+      rewriter.on("div", {
+        element(element) {
+          element.setInnerContent("<blink>it worked!</blink>", { html: true });
+        },
+      });
+      var output = rewriter.transform(input);
+      expect(typeof input === "string" ? output : await output.text()).toBe("<div><blink>it worked!</blink></div>");
     });
-    var input = new Response("<div>hello</div>");
-    var output = rewriter.transform(input);
-    expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
-  });
+  }
 
   it("(from file) supports element handlers", async () => {
     var rewriter = new HTMLRewriter();
@@ -80,8 +86,7 @@ describe("HTMLRewriter", () => {
       },
     });
     await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
-    var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
-    var output = rewriter.transform(input);
+    var output = rewriter.transform(new Response(Bun.file("/tmp/html-rewriter.txt.js")));
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
@@ -540,11 +545,9 @@ afterAll(() => {
 const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/file/gzip"];
 ["http", "https"].forEach(protocol => {
   request_types.forEach(url => {
-    //TODO: change this when Bun.file supports https
-    const test = url.indexOf("file") !== -1 && protocol === "https" ? it.todo : it;
-    test(`works with ${protocol} fetch using ${url}`, async () => {
+    it(`works with ${protocol} fetch using ${url}`, async () => {
       const server = protocol === "http" ? http_server : https_server;
-      const server_url = `${protocol}://${server?.hostname}:${server?.port}`;
+      const server_url = server.url;
       const res = await fetch(`${server_url}${url}`, { tls: { rejectUnauthorized: false } });
       let calls = 0;
       const rw = new HTMLRewriter();

@@ -830,6 +830,24 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         return false;
     }
+    case ErrorInstanceType: {
+        if (c2Type != ErrorInstanceType) {
+            return false;
+        }
+
+        if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*>(v1)) {
+            JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*>(v2);
+
+            if (UNLIKELY(!right)) {
+                return false;
+            }
+
+            return (
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) &&
+                left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject)
+            );
+        }
+    }
     case Int8ArrayType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -2455,6 +2473,27 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     return JSC::JSValue::encode(object);
 }
 
+
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue) {
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    RELEASE_AND_RETURN(scope,  JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
+}
+
+bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key) {
+    JSC::VM& vm = globalObject->vm();
+
+    
+    JSC::JSValue value = JSC::JSValue::decode(jsValue);
+    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
+
+}
+
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
     Bun__ArrayBuffer* arg2)
 {
@@ -3367,6 +3406,33 @@ uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject
 JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* globalObject, int64_t val)
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
+}
+
+JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
+{
+    auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
+    auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
+    auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject,  big_1e6, big_sec);
+    ASSERT(sec_as_nsec.isHeapBigInt());
+    auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
+    ASSERT(big_sec_as_nsec);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec));
+}
+
+JSC__JSValue JSC__JSValue__bigIntSum(JSC__JSGlobalObject* globalObject, JSC__JSValue a, JSC__JSValue b)
+{
+    JSC::JSValue a_value = JSC::JSValue::decode(a);
+    JSC::JSValue b_value = JSC::JSValue::decode(b);
+
+    ASSERT(a_value.isHeapBigInt());
+    auto* big_a = a_value.asHeapBigInt();
+    ASSERT(big_a);
+
+    ASSERT(b_value.isHeapBigInt());
+    auto* big_b = b_value.asHeapBigInt();
+    ASSERT(big_b);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_a, big_b));
 }
 
 JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObject, uint64_t val)

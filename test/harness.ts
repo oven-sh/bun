@@ -1,5 +1,5 @@
-import { gc as bunGC, unsafe, which } from "bun";
-
+import { gc as bunGC, stdout, unsafe, which } from "bun";
+import { expect } from "bun:test";
 export const bunEnv: any = {
   ...process.env,
   GITHUB_ACTIONS: "false",
@@ -173,3 +173,25 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
     stderr: result.stderr.toString("utf8").trim(),
   };
 }
+
+expect.extend({
+  toRun(cmds: string[]) {
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), ...cmds],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "inherit"],
+    });
+
+    if (result.exitCode !== 0) {
+      return {
+        pass: false,
+        message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+      };
+    }
+
+    return {
+      pass: true,
+      message: () => `Expected ${cmds.join(" ")} to fail`,
+    };
+  },
+});

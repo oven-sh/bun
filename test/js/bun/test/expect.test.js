@@ -2243,6 +2243,23 @@ describe("expect()", () => {
     expect(value).not.toContainEqual(expected);
   });
 
+  test("toContainKey", () => {
+    const o = { a: "foo", b: "bar", c: "baz" };
+    expect(o).toContainKey("a");
+    expect(o).toContainKey("b");
+    expect(o).toContainKey("c");
+    expect(o).not.toContainKey("z");
+    expect(o).not.toContainKey({ a: "foo" });
+  });
+
+  test("toContainKeys", () => {
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);
+    expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+  });
+
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
     expect(true).toBeTruthy();
@@ -3187,6 +3204,41 @@ describe("expect()", () => {
     }
   });
 
+  test("toBeEmptyObject()", () => {
+    // Map and Set are not considered as object in jest-extended
+    // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
+    expect(new Map().set("a", 1)).not.toBeEmptyObject();
+    expect(new Map()).not.toBeEmptyObject();
+    expect(new Set()).not.toBeEmptyObject();
+    expect(new Set().add("1")).not.toBeEmptyObject();
+    expect([]).toBeEmptyObject();
+    expect({}).toBeEmptyObject();
+    expect([1, 2]).not.toBeEmptyObject();
+    expect({ a: "hello" }).not.toBeEmptyObject();
+    expect(true).not.toBeEmptyObject();
+    expect("notAnObject").not.toBeEmptyObject();
+
+    const object1 = {};
+
+    Object.defineProperty(object1, "property1", {
+      value: 42,
+    });
+
+    // Object.keys for non-enumerable properties returns an empty array
+    // jest-extended returns true for non enumerable object
+    expect(object1).toBeEmptyObject();
+
+    // jest-extended return false for Symbol
+    expect(Symbol("a")).not.toBeEmptyObject();
+    expect(Symbol()).not.toBeEmptyObject();
+
+    // jest-extended return false for Date
+    expect(new Date()).not.toBeEmptyObject();
+
+    // jest-extended return false for RegExp
+    expect(/(foo|bar)/g).not.toBeEmptyObject();
+  });
+
   test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();
@@ -3282,6 +3334,20 @@ describe("expect()", () => {
     expect(NaN).not.toBeInteger();
     expect("").not.toBeInteger();
     expect({}).not.toBeInteger();
+  });
+
+  test("toBeObject()", () => {
+    expect({}).toBeObject();
+    expect(class A {}).toBeObject();
+    expect([]).toBeObject();
+    expect(new Set()).toBeObject();
+    expect(new Map()).toBeObject();
+    expect(new Array(0)).toBeObject();
+    expect({ e: 1, e2: 2 }).toBeObject();
+    expect("notAnObject").not.toBeObject();
+    expect(1).not.toBeObject();
+    expect(NaN).not.toBeObject();
+    expect(undefined).not.toBeObject();
   });
 
   test("toBeFinite()", () => {

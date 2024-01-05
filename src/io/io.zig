@@ -136,12 +136,14 @@ pub const Loop = struct {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
                                         this.timers.insert(timer);
+                                        this.active += 1;
                                     },
                                     .ACTIVE => {
                                         @panic("timer is already active");
                                     },
                                     .CANCELLED => {
                                         timer.deinit();
+                                        this.active -= 1;
                                         break;
                                     },
                                     .FIRED => {
@@ -289,12 +291,14 @@ pub const Loop = struct {
                                     .PENDING => {
                                         timer.state = .ACTIVE;
                                         this.timers.insert(timer);
+                                        this.active += 1;
                                     },
                                     .ACTIVE => {
                                         @panic("timer is already active");
                                     },
                                     .CANCELLED => {
                                         timer.deinit();
+                                        this.active -= 1;
                                         break;
                                     },
                                     .FIRED => {
@@ -399,6 +403,7 @@ pub const Loop = struct {
         updateTimespec(&this.cached_now);
     }
 
+    extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
     pub fn updateTimespec(timespec: *os.timespec) void {
         return switch (Environment.os) {
             .linux => {
@@ -458,7 +463,7 @@ const Pollable = struct {
             return switch (T) {
                 .ReadFile => ReadFile,
                 .WriteFile => WriteFile,
-                .empty => unreachable,
+                .empty => @compileError("unreachable"),
             };
         }
     };
@@ -745,7 +750,7 @@ pub const Poll = struct {
                             unreachable;
                         }
                     },
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 }
 
                 if (comptime Environment.allow_assert and action != .cancel) {
@@ -878,7 +883,7 @@ pub const Poll = struct {
                 .poll_readable,
                 => linux.EPOLL.IN | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
                 .poll_writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
-                else => unreachable,
+                else => @compileError("unreachable"),
             };
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(tag, this).ptr()) } };
@@ -904,7 +909,7 @@ pub const Poll = struct {
             .poll_readable => .poll_readable,
             .poll_process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
             .poll_writable => .poll_writable,
-            else => unreachable,
+            else => @compileError("unreachable"),
         });
         this.flags.remove(.needs_rearm);
 

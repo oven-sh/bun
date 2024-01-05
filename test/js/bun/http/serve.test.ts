@@ -8,16 +8,12 @@ import { bunExe, bunEnv } from "harness";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
-import { constants } from "bun:sqlite";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
 
-console.log("started");
-
 type Handler = (req: Request) => Response;
 afterEach(() => {
-  console.log("afterEach");
   gc(true);
 });
 
@@ -25,8 +21,6 @@ const count = 200;
 let server: Server | undefined;
 
 async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
-  console.trace("runTest");
-  console.log("server:", server);
   if (server) {
     server.reload({ ...serverOptions, port: 0 });
   } else {

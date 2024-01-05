@@ -238,9 +238,7 @@ test("navigator", () => {
 test("confirm (yes)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -258,9 +256,7 @@ test("confirm (yes)", async () => {
 test("confirm (no)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -269,4 +265,20 @@ test("confirm (no)", async () => {
   await proc.exited;
 
   expect(await new Response(proc.stderr).text()).toBe("No\n");
+});
+
+test("globalThis.self = 123 works", () => {
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
+    configurable: true,
+    enumerable: true,
+    get: expect.any(Function),
+    set: expect.any(Function),
+  });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "self");
+  try {
+    globalThis.self = 123;
+    expect(globalThis.self).toBe(123);
+  } finally {
+    Object.defineProperty(globalThis, "self", original);
+  }
 });

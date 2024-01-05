@@ -97,7 +97,7 @@ it.only("should create template from local folder", async () => {
 
   await exited;
 
-  const dirStat = await stat(`${x_dir}/${testTemplate}`);
+  const dirStat = await stat(`${bunCreateDir}/${testTemplate}`);
   expect(dirStat.isDirectory()).toBe(true);
 });
 

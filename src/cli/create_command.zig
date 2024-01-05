@@ -1436,7 +1436,7 @@ pub const CreateCommand = struct {
                 \\<d>A local git repository was created for you.<r>
                 \\
             , .{});
-        } else if (!ctx.create_options.skip_install) {
+        } else if (!skip_install) {
             Output.pretty(
                 \\
                 \\<d>Dependencies were installed automatically.<r>

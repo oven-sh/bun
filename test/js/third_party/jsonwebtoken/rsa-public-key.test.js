@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: STATUS_SEVERITY_ERROR
+// @bun-known-failing-on-windows: 1 failing
 const PS_SUPPORTED = true;
 import jwt from "jsonwebtoken";
 import { expect, describe, it } from "bun:test";

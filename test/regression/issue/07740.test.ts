@@ -1,3 +1,4 @@
+// @bun-known-failing-on-windows: panic "TODO on Windows"
 import { bunEnv } from "harness";
 import { bunExe } from "harness";
 import { tempDirWithFiles } from "harness";

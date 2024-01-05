@@ -450,7 +450,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             this: *This,
             comptime socket_field_name: ?[]const u8,
         ) ?ThisSocket {
-            const socket_ = ThisSocket{ .socket = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle) orelse return null };
+            const socket_ = ThisSocket{ .socket = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.uvfdcast(handle)) orelse return null };
 
             const holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;

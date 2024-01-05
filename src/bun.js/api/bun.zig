@@ -3463,7 +3463,9 @@ pub const Timer = struct {
                     arguments.ensureStillAlive();
                     timeout.arguments = JSC.Strong.create(arguments, globalThis);
                 }
-                timeout.timer.?.interval = this.interval;
+                if (!Environment.isWindows) {
+                    timeout.timer.?.interval = this.interval;
+                }
 
                 timeout.poll_ref.ref(vm);
 
@@ -3946,7 +3948,9 @@ pub const Timer = struct {
                 ),
         };
 
-        timeout.timer.?.interval = interval;
+        if (!Environment.isWindows) {
+            timeout.timer.?.interval = interval;
+        }
 
         if (arguments_array_or_zero != .zero) {
             timeout.arguments = JSC.Strong.create(arguments_array_or_zero, globalThis);

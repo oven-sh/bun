@@ -959,8 +959,7 @@ pub const Listener = struct {
         const connection: Listener.UnixOrHost = blk: {
             if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
-                    const fd: bun.FileDescriptor = fd_.asInt32();
-                    break :blk .{ .fd = fd };
+                    break :blk .{ .fd = fd_.asFileDescriptor() };
                 }
             }
             if (port) |_| {

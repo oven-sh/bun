@@ -3295,6 +3295,15 @@ pub fn isValidUTF8(slice: []const u8) bool {
 }
 
 pub fn isAllASCII(slice: []const u8) bool {
+    if (@inComptime()) {
+        for (slice) |char| {
+            if (char > 127) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);
 
@@ -3332,15 +3341,6 @@ pub fn isAllASCII(slice: []const u8) bool {
         }
     }
 
-    return true;
-}
-
-pub fn isAllASCIIComptime(comptime slice: []const u8) bool {
-    for (slice) |char| {
-        if (char > 127) {
-            return false;
-        }
-    }
     return true;
 }
 

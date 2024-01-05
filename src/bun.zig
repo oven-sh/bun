@@ -2032,6 +2032,7 @@ const builtin = @import("builtin");
 pub const MakePath = struct {
     /// copy/paste of `std.fs.Dir.makePath` and related functions and modified to support u16 slices.
     /// inside `MakePath` scope to make deleting later easier.
+    /// TODO(dylan-conway) delete `MakePath`
     pub fn makePath(comptime T: type, self: std.fs.Dir, sub_path: []const T) !void {
         var it = try componentIterator(T, sub_path);
         var component = it.last() orelse return;
@@ -2072,6 +2073,7 @@ pub const MakePath = struct {
 pub const Dirname = struct {
     /// copy/paste of `std.fs.path.dirname` and related functions and modified to support u16 slices.
     /// inside `Dirname` scope to make deleting later easier.
+    /// TODO(dylan-conway) delete `Dirname`
     pub fn dirname(comptime T: type, path_: []const T) ?[]const T {
         if (builtin.target.os.tag == .windows) {
             return dirnameWindows(T, path_);

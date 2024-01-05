@@ -386,9 +386,7 @@ pub const Bin = extern struct {
             break :brk buf;
         };
 
-        var cmd_contents_copy_start = cmd_contents_buf[cmd_contents_begin.len..];
-
-        fn createCmdFile(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+        fn createCmdFile(this: *Linker, target_path: [:0]const u8, dest_path_buf: *bun.PathBuffer, dest_path: [:0]const u8) void {
             const ext = this.cmd_ext orelse brk: {
                 if (bun.getenvZ("PATHEXT")) |pathext| {
                     var iter = std.mem.splitScalar(u8, pathext, std.fs.path.delimiter);
@@ -406,10 +404,8 @@ pub const Bin = extern struct {
                 break :brk this.cmd_ext.?;
             };
 
-            var dest_buf: bun.PathBuffer = undefined;
-            @memcpy(dest_buf[0..dest_path.len], dest_path);
-            @memcpy(dest_buf[dest_path.len..][0..ext.len], ext);
-            const dest = dest_buf[0 .. dest_path.len + ext.len];
+            @memcpy(dest_path_buf[dest_path.len..][0..ext.len], ext);
+            const dest = dest_path_buf[0 .. dest_path.len + ext.len];
 
             const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
             const cmd_file = root_dir.createFile(dest, .{}) catch |err| {
@@ -467,11 +463,9 @@ pub const Bin = extern struct {
             \\exit $ret
         ;
 
-        fn createPs1File(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
-            var dest_buf: bun.PathBuffer = undefined;
-            @memcpy(dest_buf[0..dest_path.len], dest_path);
-            @memcpy(dest_buf[dest_path.len..][0..".ps1".len], ".ps1");
-            const dest = dest_buf[0 .. dest_path.len + ".ps1".len];
+        fn createPs1File(this: *Linker, target_path: [:0]const u8, dest_path_buf: *bun.PathBuffer, dest_path: [:0]const u8) void {
+            @memcpy(dest_path_buf[dest_path.len..][0..".ps1".len], ".ps1");
+            const dest = dest_path_buf[0 .. dest_path.len + ".ps1".len];
 
             const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
             const ps1_file = root_dir.createFile(dest, .{}) catch |err| {
@@ -641,8 +635,10 @@ pub const Bin = extern struct {
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     if (comptime Environment.isWindows) {
-                        this.createCmdFile(target_path, dest_path);
-                        this.createPs1File(target_path, dest_path);
+                        var dest_path_buf: bun.PathBuffer = undefined;
+                        @memcpy(dest_path_buf[0..dest_path.len], dest_path);
+                        this.createCmdFile(target_path, &dest_path_buf, dest_path);
+                        this.createPs1File(target_path, &dest_path_buf, dest_path);
                         this.createShFile(target_path, dest_path);
                     } else {
                         this.setSimlinkAndPermissions(target_path, dest_path);
@@ -667,8 +663,10 @@ pub const Bin = extern struct {
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     if (comptime Environment.isWindows) {
-                        this.createCmdFile(target_path, dest_path);
-                        this.createPs1File(target_path, dest_path);
+                        var dest_path_buf: bun.PathBuffer = undefined;
+                        @memcpy(dest_path_buf[0..dest_path.len], dest_path);
+                        this.createCmdFile(target_path, &dest_path_buf, dest_path);
+                        this.createPs1File(target_path, &dest_path_buf, dest_path);
                         this.createShFile(target_path, dest_path);
                     } else {
                         this.setSimlinkAndPermissions(target_path, dest_path);
@@ -679,6 +677,9 @@ pub const Bin = extern struct {
                     const end = this.bin.value.map.len + extern_string_i;
                     const _from_remain = from_remain;
                     const _remain = remain;
+
+                    var dest_path_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+
                     while (extern_string_i < end) : (extern_string_i += 2) {
                         from_remain = _from_remain;
                         remain = _remain;
@@ -703,8 +704,9 @@ pub const Bin = extern struct {
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                         if (comptime Environment.isWindows) {
-                            this.createCmdFile(target_path, dest_path);
-                            this.createPs1File(target_path, dest_path);
+                            @memcpy(dest_path_buf[0..dest_path.len], dest_path);
+                            this.createCmdFile(target_path, &dest_path_buf, dest_path);
+                            this.createPs1File(target_path, &dest_path_buf, dest_path);
                             this.createShFile(target_path, dest_path);
                         } else {
                             this.setSimlinkAndPermissions(target_path, dest_path);
@@ -743,6 +745,8 @@ pub const Bin = extern struct {
                     var target_buf_remain = target_buf[basedir_path.len + 1 ..];
                     const prev_target_buf_remain = target_buf_remain;
 
+                    var dest_path_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.Dir.Entry = entry_;
                         switch (entry.kind) {
@@ -758,8 +762,9 @@ pub const Bin = extern struct {
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
                                 if (comptime Environment.isWindows) {
-                                    this.createCmdFile(from_path, to_path);
-                                    this.createPs1File(from_path, to_path);
+                                    @memcpy(dest_path_buf[0..to_path.len], to_path);
+                                    this.createCmdFile(from_path, &dest_path_buf, to_path);
+                                    this.createPs1File(from_path, &dest_path_buf, to_path);
                                     this.createShFile(from_path, to_path);
                                 } else {
                                     this.setSimlinkAndPermissions(from_path, to_path);

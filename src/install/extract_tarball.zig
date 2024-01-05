@@ -284,11 +284,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
         // TODO(dylan-conway) make this less painful
-        var from_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var from_buf: bun.PathBuffer = undefined;
         const tmpdir_path = try bun.getFdPath(tmpdir.fd, &from_buf);
         const from_path = Path.joinAbsStringZ(tmpdir_path, &.{bun.sliceTo(tmpname, 0)}, .auto);
 
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
         const cache_dir_path = try bun.getFdPath(cache_dir.fd, &to_buf);
         const to_path = Path.joinAbsStringBufZ(cache_dir_path, &to_buf, &.{folder_name}, .auto);
 

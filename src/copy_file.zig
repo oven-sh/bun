@@ -79,20 +79,6 @@ pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
     }
 
     if (comptime Environment.isWindows) {
-        // var from_buf: bun.PathBuffer = undefined;
-        // const from = bun.getFdPath(in, &from_buf) catch unreachable;
-        // var w_from_buf: bun.WPathBuffer = undefined;
-        // strings.copyU8IntoU16(&w_from_buf, from);
-        // w_from_buf[from.len] = 0;
-        // const w_from = w_from_buf[0..from.len :0];
-
-        // var to_buf: bun.PathBuffer = undefined;
-        // const to = bun.getFdPath(out, &to_buf) catch unreachable;
-        // var w_to_buf: bun.WPathBuffer = undefined;
-        // strings.copyU8IntoU16(&w_to_buf, to);
-        // w_to_buf[to.len] = 0;
-        // const w_to = w_to_buf[0..to.len :0];
-
         if (bun.windows.CopyFileW(in.ptr, out.ptr, 0) == bun.windows.FALSE) {
             switch (@as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())))) {
                 .SUCCESS => return,

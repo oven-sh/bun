@@ -204,9 +204,11 @@ pub const WebWorker = struct {
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
 
-    fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance: JSC.JSValue) void {
+    fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance_or_exception: JSC.JSValue) void {
         // Prevent recursion
         vm.onUnhandledRejection = &JSC.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+
+        const error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
         var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
         defer array.deinit();

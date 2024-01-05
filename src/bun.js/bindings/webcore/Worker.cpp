@@ -399,9 +399,7 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
     if (globalObject) {
         JSC::VM& vm = globalObject->vm();
-        vm.apiLock().unlock(globalObject);
-        vm.notifyNeedTermination();
-        vm.apiLock().lock(globalObject);
+        vm.setHasTerminationRequest();
 
         while (!vm.hasOneRef())
             vm.deref();

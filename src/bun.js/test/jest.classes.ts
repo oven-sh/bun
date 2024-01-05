@@ -421,6 +421,9 @@ export default [
       },
       toContainAnyKeys: {
         fn: "toContainAnyKeys",
+      },
+      toContainKeys: {
+        fn: "toContainKeys",
         length: 1,
       },
       toContainEqual: {

@@ -2260,6 +2260,14 @@ describe("expect()", () => {
     expect({ a: "hello", b: "world" }).not.toContainAnyKeys(["c"]);
   });
 
+  test("toContainKeys", () => {
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);
+    expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+  });
+
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
     expect(true).toBeTruthy();

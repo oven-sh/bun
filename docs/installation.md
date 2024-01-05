@@ -41,13 +41,13 @@ $ proto install bun
 
 Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
 
-To install, paste this into your terminal:
+To install, paste this into a terminal:
 
 {% codetabs %}
 
-```powershell#PowerShell/CMD
+```powershell#PowerShell/cmd.exe
 # WARNING: No stability is guaranteed on the experimental Windows builds
-powershell -c "iwr bun.sh/install.ps1 | iex"
+powershell -c "irm bun.sh/install.ps1|iex"
 ```
 
 ```powershell#Scoop

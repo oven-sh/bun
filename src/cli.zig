@@ -32,6 +32,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
+const NPMClient = @import("./which_npm_client.zig").NPMClient;
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -242,6 +243,17 @@ pub const Arguments = struct {
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+    pub const create_params = [_]ParamType{
+        clap.parseParam("-h, --help                     Print this menu") catch unreachable,
+        clap.parseParam("--force                        Overwrite existing files") catch unreachable,
+        clap.parseParam("--no-install                   Don't install node_modules") catch unreachable,
+        clap.parseParam("--no-git                       Don't create a git repository") catch unreachable,
+        clap.parseParam("--verbose                      Too many logs") catch unreachable,
+        clap.parseParam("--no-package-json              Disable package.json transforms") catch unreachable,
+        clap.parseParam("--open                         On finish, start bun & open in-browser") catch unreachable,
+        clap.parseParam("<POS>...                       ") catch unreachable,
+    };
+
     fn printVersionAndExit() noreturn {
         @setCold(true);
         Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
@@ -385,7 +397,7 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        const print_help = args.flag("--help");
+        const print_help = args.flag("--help") or args.flag("-h");
         if (print_help) {
             cmd.printHelp(true);
             Output.flush();
@@ -400,6 +412,16 @@ pub const Arguments = struct {
             if (args.flag("--revision")) {
                 printRevisionAndExit();
             }
+        }
+
+        if (cmd == .CreateCommand) {
+            ctx.create_options.skip_package_json = args.flag("--no-package-json");
+
+            ctx.create_options.verbose = args.flag("--verbose") or Output.is_verbose;
+            ctx.create_options.open = args.flag("--open");
+            ctx.create_options.skip_install = args.flag("--no-install");
+            ctx.create_options.skip_git = args.flag("--no-git");
+            ctx.create_options.overwrite = args.flag("--force");
         }
 
         var cwd: []u8 = undefined;
@@ -1057,6 +1079,16 @@ pub const Command = struct {
         test_filter_regex: ?*RegularExpression = null,
     };
 
+    pub const CreateOptions = struct {
+        npm_client: ?NPMClient.Tag = null,
+        skip_install: bool = false,
+        overwrite: bool = false,
+        skip_git: bool = false,
+        skip_package_json: bool = false,
+        verbose: bool = false,
+        open: bool = false,
+    };
+
     pub const Debugger = union(enum) {
         unspecified: void,
         enable: struct {
@@ -1084,6 +1116,7 @@ pub const Command = struct {
 
         debug: DebugOptions = DebugOptions{},
         test_options: TestOptions = TestOptions{},
+        create_options: CreateOptions = CreateOptions{},
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
 
@@ -1580,7 +1613,7 @@ pub const Command = struct {
                     return;
                 }
 
-                const create_command_info = try CreateCommand.extractInfo(ctx);
+                const create_command_info = try CreateCommand.extractInfo(ctx, positionals);
                 const template = create_command_info.template;
                 const example_tag = create_command_info.example_tag;
 
@@ -1863,6 +1896,7 @@ pub const Command = struct {
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
+                .CreateCommand => Arguments.create_params,
                 else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
         }
@@ -1988,27 +2022,31 @@ pub const Command = struct {
                 },
                 Command.Tag.CreateCommand => {
                     const intro_text =
-                        \\<b>Usage<r>:
-                        \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
-                        \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
-                        \\
-                        \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
-                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
-                        \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
+                        \\<b>Usage<r>: <b><green>bun create<r> <cyan>\<template\><r> [\<destination\>]
+                        \\<b>Alias: <b>bun c<r>
+                        \\Create a new bun project using a create-\<template\> npm package, GitHub repo, or a local template
                     ;
 
                     const outro_text =
-                        \\If given a GitHub repository name, Bun will download it and use it as a template,
-                        \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
+                        \\<b>Examples:<r>
+                        \\  <b>From npm :<r>
+                        \\  <b><green>bun create remix<r>
                         \\
-                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\  <b>From GitHub :<r>
+                        \\  <b><green>bun create github.com/\<user\>/\<repo\><r>
                         \\
+                        \\  <b>From local template :<r>
+                        \\  <b><green>bun create $HOME/.bun-create/\<name\><r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/bun-create<r>
                     ;
 
-                    Output.pretty(intro_text, .{});
-                    Output.pretty("\n\n", .{});
-                    Output.pretty(outro_text, .{});
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&Arguments.create_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
                 Command.Tag.HelpCommand => {

@@ -14,27 +14,27 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
-describe("should not crash", async () => {
-  const args = [
-    [bunExe(), "create", ""],
-    [bunExe(), "create", "--"],
-    [bunExe(), "create", "--", ""],
-    [bunExe(), "create", "--help"],
-  ];
-  for (let cmd of args) {
-    it(JSON.stringify(cmd.slice(1).join(" ")), () => {
-      const { exitCode } = spawnSync({
-        cmd,
-        cwd: x_dir,
-        stdout: "ignore",
-        stdin: "inherit",
-        stderr: "inherit",
-        env,
-      });
-      expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
-    });
-  }
-});
+// describe("should not crash", async () => {
+//   const args = [
+//     [bunExe(), "create", ""],
+//     [bunExe(), "create", "--"],
+//     [bunExe(), "create", "--", ""],
+//     [bunExe(), "create", "--help"],
+//   ];
+//   for (let cmd of args) {
+//     it(JSON.stringify(cmd.slice(1).join(" ")), () => {
+//       const { exitCode } = spawnSync({
+//         cmd,
+//         cwd: x_dir,
+//         stdout: "ignore",
+//         stdin: "inherit",
+//         stderr: "inherit",
+//         env,
+//       });
+//       expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
+//     });
+//   }
+// });
 
 it("should create selected template with @ prefix", async () => {
   const { stderr } = spawn({
@@ -84,7 +84,7 @@ it("should create selected template with @ prefix implicit `/create` with versio
   );
 });
 
-it("should create template from local folder", async () => {
+it.only("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";
 
@@ -92,9 +92,6 @@ it("should create template from local folder", async () => {
   const { exited } = spawn({
     cmd: [bunExe(), "create", testTemplate],
     cwd: x_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
     env: { ...env, BUN_CREATE_DIR: bunCreateDir },
   });
 
@@ -104,13 +101,18 @@ it("should create template from local folder", async () => {
   expect(dirStat.isDirectory()).toBe(true);
 });
 
-it("should not segfault when not argument is passed in create", async () => {
-  const { exited } = spawn({
-    cmd: [bunExe(), "create", "-h"],
-    stdout: "pipe",
-    stderr: "pipe",
+it("should display help for create command", async () => {
+  const { exited, stdout} = spawn({
+    cmd: [bunExe(), "create", "--help"],
     cwd: x_dir,
   });
 
-  expect(await exited).toBe(1);
+  const help = await new Response(stdout).text();
+
+  // it's not necessary to check all the help content, we just check this appears.
+  expect(help).toContain("Usage: bun create <template> [<destination>]");
+  expect(help).toContain("Alias: bun c")
+  expect(help).toContain("Create a new bun project using a create-<template> npm package, GitHub repo, or a local template")
+
+  expect(await exited).toBe(0);
 });

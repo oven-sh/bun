@@ -176,56 +176,6 @@ pub const ProgressBuf = struct {
     }
 };
 
-const CreateOptions = struct {
-    npm_client: ?NPMClient.Tag = null,
-    skip_install: bool = false,
-    overwrite: bool = false,
-    skip_git: bool = false,
-    skip_package_json: bool = false,
-    positionals: []const string,
-    verbose: bool = false,
-    open: bool = false,
-
-    const params = [_]clap.Param(clap.Help){
-        clap.parseParam("-h, --help                     Print this menu") catch unreachable,
-        clap.parseParam("--force                        Overwrite existing files") catch unreachable,
-        clap.parseParam("--no-install                   Don't install node_modules") catch unreachable,
-        clap.parseParam("--no-git                       Don't create a git repository") catch unreachable,
-        clap.parseParam("--verbose                      Too many logs") catch unreachable,
-        clap.parseParam("--no-package-json              Disable package.json transforms") catch unreachable,
-        clap.parseParam("--open                         On finish, start bun & open in-browser") catch unreachable,
-        clap.parseParam("<POS>...                       ") catch unreachable,
-    };
-
-    pub fn parse(ctx: Command.Context) !CreateOptions {
-        Output.is_verbose = Output.isVerbose();
-
-        var diag = clap.Diagnostic{};
-
-        var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
-            // Report useful error and exit
-            diag.report(Output.errorWriter(), err) catch {};
-            return err;
-        };
-
-        var opts = CreateOptions{ .positionals = args.positionals() };
-
-        if (opts.positionals.len >= 1 and (strings.eqlComptime(opts.positionals[0], "c") or strings.eqlComptime(opts.positionals[0], "create"))) {
-            opts.positionals = opts.positionals[1..];
-        }
-
-        opts.skip_package_json = args.flag("--no-package-json");
-
-        opts.verbose = args.flag("--verbose") or Output.is_verbose;
-        opts.open = args.flag("--open");
-        opts.skip_install = args.flag("--no-install");
-        opts.skip_git = args.flag("--no-git");
-        opts.overwrite = args.flag("--force");
-
-        return opts;
-    }
-};
-
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
@@ -235,8 +185,11 @@ pub const CreateCommand = struct {
         Global.configureAllocator(.{ .long_running = false });
         try HTTP.HTTPThread.init();
 
-        var create_options = try CreateOptions.parse(ctx);
-        const positionals = create_options.positionals;
+        var positionals = ctx.positionals;
+
+        if (ctx.positionals.len >= 1 and (strings.eqlComptime(ctx.positionals[0], "c") or strings.eqlComptime(ctx.positionals[0], "create"))) {
+            positionals = ctx.positionals[1..];
+        }
 
         if (positionals.len == 0) {
             return try CreateListExamplesCommand.exec(ctx);
@@ -270,7 +223,7 @@ pub const CreateCommand = struct {
         if (env_loader.map.get("ALACRITTY_LOG") != null) {
             progress.refresh_rate_ns = std.time.ns_per_ms * 8;
 
-            if (create_options.verbose) {
+            if (ctx.create_options.verbose) {
                 Output.prettyErrorln("alacritty gets faster progress bars ", .{});
             }
         }
@@ -282,7 +235,7 @@ pub const CreateCommand = struct {
         var package_json_contents: MutableString = undefined;
         var package_json_file: ?std.fs.File = null;
 
-        if (create_options.verbose) {
+        if (ctx.create_options.verbose) {
             Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
         }
 
@@ -369,18 +322,18 @@ pub const CreateCommand = struct {
 
                 progress.refresh();
 
-                var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
+                var pluckers: [1]Archive.Plucker = if (!ctx.create_options.skip_package_json)
                     [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
                 var archive_context = Archive.Context{
-                    .pluckers = pluckers[0..@as(usize, @intCast(@intFromBool(!create_options.skip_package_json)))],
+                    .pluckers = pluckers[0..@as(usize, @intCast(@intFromBool(!ctx.create_options.skip_package_json)))],
                     .all_files = undefined,
                     .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
 
-                if (!create_options.overwrite) {
+                if (!ctx.create_options.overwrite) {
                     try Archive.getOverwritingFileList(
                         tarball_buf_list.items,
                         destination,
@@ -430,7 +383,7 @@ pub const CreateCommand = struct {
                     false,
                 );
 
-                if (!create_options.skip_package_json) {
+                if (!ctx.create_options.skip_package_json) {
                     const plucker = pluckers[0];
 
                     if (plucker.found and plucker.fd != 0) {
@@ -605,7 +558,7 @@ pub const CreateCommand = struct {
         var start_command: string = "bun dev";
 
         process_package_json: {
-            if (create_options.skip_package_json) package_json_file = null;
+            if (ctx.create_options.skip_package_json) package_json_file = null;
 
             if (package_json_file != null) {
                 initializeStore();
@@ -785,7 +738,7 @@ pub const CreateCommand = struct {
                 //     Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
                 // }
 
-                // if (create_options.verbose) {
+                // if (ctx.create_options.verbose) {
                 // if (needs.bun_macro_relay) {
                 //     Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
                 // }
@@ -1248,7 +1201,7 @@ pub const CreateCommand = struct {
                                         strings.contains(script, "next dev") or
                                         strings.contains(script, "react-scripts eject"))
                                     {
-                                        if (create_options.verbose) {
+                                        if (ctx.create_options.verbose) {
                                             Output.prettyErrorln("<r><d>[package.json] Pruned unnecessary script: {s}<r>", .{script});
                                         }
 
@@ -1355,7 +1308,7 @@ pub const CreateCommand = struct {
 
                 std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
 
-                // if (!create_options.skip_install) {
+                // if (!ctx.create_options.skip_install) {
                 //     if (needs.bun_bun_for_nextjs) {
                 //         try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
                 //     } else if (bun_bun_for_react_scripts) {
@@ -1365,27 +1318,28 @@ pub const CreateCommand = struct {
             }
         }
 
-        if (create_options.verbose) {
+        if (ctx.create_options.verbose) {
             Output.prettyErrorln("Has dependencies? {d}", .{@intFromBool(has_dependencies)});
         }
 
         var npm_client_: ?NPMClient = null;
 
-        create_options.skip_install = create_options.skip_install or !has_dependencies;
+        const skip_install = ctx.create_options.skip_install or !has_dependencies;
+        var skip_git = ctx.create_options.skip_git;
 
-        if (!create_options.skip_git) {
-            if (!create_options.skip_install) {
-                GitHandler.spawn(destination, PATH, create_options.verbose);
+        if (!skip_git) {
+            if (!skip_install) {
+                GitHandler.spawn(destination, PATH, ctx.create_options.verbose);
             } else {
-                if (create_options.verbose) {
-                    create_options.skip_git = GitHandler.run(destination, PATH, true) catch false;
+                if (ctx.create_options.verbose) {
+                    skip_git = GitHandler.run(destination, PATH, true) catch false;
                 } else {
-                    create_options.skip_git = GitHandler.run(destination, PATH, false) catch false;
+                    skip_git = GitHandler.run(destination, PATH, false) catch false;
                 }
             }
         }
 
-        if (!create_options.skip_install) {
+        if (!skip_install) {
             npm_client_ = NPMClient{
                 .tag = .bun,
                 .bin = try std.fs.selfExePathAlloc(ctx.allocator),
@@ -1438,8 +1392,8 @@ pub const CreateCommand = struct {
             }
         }
 
-        if (!create_options.skip_install and !create_options.skip_git) {
-            create_options.skip_git = !GitHandler.wait();
+        if (!skip_install and !skip_git) {
+            skip_git = !GitHandler.wait();
         }
 
         Output.printError("\n", .{});
@@ -1454,7 +1408,7 @@ pub const CreateCommand = struct {
             \\
         , .{});
 
-        if (!create_options.skip_install) {
+        if (!skip_install) {
             Output.pretty(
                 \\
                 \\<r><d>-----<r>
@@ -1470,19 +1424,19 @@ pub const CreateCommand = struct {
         //     Output.flush();
         // }
 
-        if (!create_options.skip_git and !create_options.skip_install) {
+        if (!skip_git and !skip_install) {
             Output.pretty(
                 \\
                 \\<d>A local git repository was created for you and dependencies were installed automatically.<r>
                 \\
             , .{});
-        } else if (!create_options.skip_git) {
+        } else if (!skip_git) {
             Output.pretty(
                 \\
                 \\<d>A local git repository was created for you.<r>
                 \\
             , .{});
-        } else if (!create_options.skip_install) {
+        } else if (!ctx.create_options.skip_install) {
             Output.pretty(
                 \\
                 \\<d>Dependencies were installed automatically.<r>
@@ -1545,7 +1499,7 @@ pub const CreateCommand = struct {
 
         Output.flush();
 
-        if (create_options.open) {
+        if (ctx.create_options.open) {
             if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
                 var argv = [_]string{bun.asByteSlice(bin)};
                 var child = std.ChildProcess.init(&argv, ctx.allocator);
@@ -1562,16 +1516,14 @@ pub const CreateCommand = struct {
             }
         }
     }
-    pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
+    pub fn extractInfo(ctx: Command.Context, positionals: [2]string) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 
-        const create_options = try CreateOptions.parse(ctx);
-        const positionals = create_options.positionals;
+        var positional = positionals[0];
 
-        if (positionals.len == 0) {
-            Output.prettyErrorln("<r><red>error<r>: No argument found for <b>bun create<r> command.", .{});
-            Global.exit(1);
+        if (positionals.len >= 1 and (strings.eqlComptime(positionals[0], "c") or strings.eqlComptime(positionals[0], "create"))) {
+            positional = positionals[1];
         }
 
         var env_loader: DotEnv.Loader = brk: {
@@ -1585,8 +1537,6 @@ pub const CreateCommand = struct {
 
         // var unsupported_packages = UnsupportedPackages{};
         const template = brk: {
-            var positional = positionals[0];
-
             if (!std.fs.path.isAbsolute(positional)) {
                 outer: {
                     if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {

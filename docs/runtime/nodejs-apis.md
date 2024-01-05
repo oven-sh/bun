@@ -6,7 +6,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)
 
-🟡 Missing `doesNotMatch`
+🟢 Fully implemented.
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 

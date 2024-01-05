@@ -2492,36 +2492,36 @@ describe("Dirent name and path values", () => {
   });
   describe("nonrecursive readdir", () => {
     it("should return the correct name and path values for directory", () => {
-      const path = join(dirPath, 'directory');
+      const path = join(dirPath, "directory");
       mkdirSync(path, { recursive: true });
       const entries = readdirSync(dirPath, { withFileTypes: true });
-      expect(entries[0].name).toBe('directory');
+      expect(entries[0].name).toBe("directory");
       expect(entries[0].path).toBe(dirPath);
     });
     it("should return the correct name and path values for file", () => {
-      const path = join(dirPath, 'file.txt')
-      writeFileSync(path, 'Hello World');
+      const path = join(dirPath, "file.txt");
+      writeFileSync(path, "Hello World");
       const entries = readdirSync(dirPath, { withFileTypes: true });
-      expect(entries[0].name).toBe('file.txt');
+      expect(entries[0].name).toBe("file.txt");
       expect(entries[0].path).toBe(dirPath);
     });
   });
   describe("recursive readdirSync", () => {
     it("should return the correct path values for directory and subdirectory", () => {
-      const path = join(dirPath, 'directory', 'subdirectory');
+      const path = join(dirPath, "directory", "subdirectory");
       mkdirSync(path, { recursive: true });
       const entries = readdirSync(dirPath, { recursive: true, withFileTypes: true });
-      expect(entries.find(e => e.name === 'directory').path).toBe(dirPath);
-      expect(entries.find(e => e.name === 'subdirectory').path).toBe(join(dirPath, 'directory'));
+      expect(entries.find(e => e.name === "directory").path).toBe(dirPath);
+      expect(entries.find(e => e.name === "subdirectory").path).toBe(join(dirPath, "directory"));
     });
   });
   describe("recursive readdir async", () => {
     it("should return the correct path values for directory and subdirectory", async () => {
-      const path = join(dirPath, 'directory', 'subdirectory');
+      const path = join(dirPath, "directory", "subdirectory");
       mkdirSync(path, { recursive: true });
       const entries = await promises.readdir(dirPath, { recursive: true, withFileTypes: true });
-      expect(entries.find(e => e.name === 'directory').path).toBe(dirPath);
-      expect(entries.find(e => e.name === 'subdirectory').path).toBe(join(dirPath, 'directory'));
+      expect(entries.find(e => e.name === "directory").path).toBe(dirPath);
+      expect(entries.find(e => e.name === "subdirectory").path).toBe(join(dirPath, "directory"));
     });
   });
 });

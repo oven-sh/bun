@@ -11,6 +11,6 @@ stream.on("ready", () => {
 });
 
 while (true) {
-  sleep(250);
+  await sleep(250);
   if (have_read) break;
 }

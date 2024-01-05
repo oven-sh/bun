@@ -155,6 +155,7 @@ function spawn(file, args, options) {
 
   $debug("spawn", options);
   child.spawn(options);
+  child.stdio; // run the getter
 
   if (options.timeout > 0) {
     let timeoutId = setTimeout(() => {

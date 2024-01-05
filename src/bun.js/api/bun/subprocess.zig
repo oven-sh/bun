@@ -1837,9 +1837,7 @@ pub const Subprocess = struct {
             const maybe = blk: {
                 var fds: [2]c_int = undefined;
                 const socket_type = os.SOCK.STREAM;
-                const have_sock_flags = !Environment.isMac;
-                const filtered_sock_type = if (!have_sock_flags) socket_type & ~@as(u32, os.SOCK.NONBLOCK | os.SOCK.CLOEXEC) else socket_type;
-                const rc = std.os.system.socketpair(os.AF.UNIX, filtered_sock_type, 0, &fds);
+                const rc = std.os.system.socketpair(os.AF.UNIX, socket_type, 0, &fds);
                 switch (std.os.system.getErrno(rc)) {
                     .SUCCESS => {},
                     .AFNOSUPPORT => break :blk error.AddressFamilyNotSupported,
@@ -1851,7 +1849,13 @@ pub const Subprocess = struct {
                     else => |err| break :blk std.os.unexpectedErrno(err),
                 }
                 actions.dup2(fds[1], item.fileno) catch |err| break :blk err;
+                actions.close(fds[1]) catch |err| break :blk err;
                 item.fd = fds[0];
+                // enable non-block
+                const before = std.c.fcntl(fds[0], os.F.GETFL);
+                _ = std.c.fcntl(fds[0], os.F.SETFL, before | os.O.NONBLOCK);
+                // enable SOCK_CLOXEC
+                _ = std.c.fcntl(fds[0], os.FD_CLOEXEC);
             };
             _ = maybe catch |err| return globalThis.handleError(err, "in configuring child stderr");
         }

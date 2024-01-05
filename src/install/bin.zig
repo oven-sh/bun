@@ -429,7 +429,7 @@ pub const Bin = extern struct {
                         index += written;
                     },
                     .err => |err| {
-                        this.err = err;
+                        this.err = @errorFromInt(err.errno);
                         return;
                     },
                 }
@@ -489,7 +489,7 @@ pub const Bin = extern struct {
                         index += written;
                     },
                     .err => |err| {
-                        this.err = err;
+                        this.err = @errorFromInt(err.errno);
                         return;
                     },
                 }
@@ -532,7 +532,7 @@ pub const Bin = extern struct {
                         index += written;
                     },
                     .err => |err| {
-                        this.err = err;
+                        this.err = @errorFromInt(err.errno);
                         return;
                     },
                 }

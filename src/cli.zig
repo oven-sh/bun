@@ -458,7 +458,7 @@ pub const Arguments = struct {
                     Output.prettyErrorln(
                         "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
                         .{
-                            strings.QuotedFormatter{
+                            bun.fmt.QuotedFormatter{
                                 .text = namePattern,
                             },
                         },

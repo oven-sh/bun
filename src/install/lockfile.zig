@@ -1067,7 +1067,7 @@ pub const Printer = struct {
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
-                    strings.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
+                    bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
             },

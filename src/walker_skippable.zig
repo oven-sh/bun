@@ -17,7 +17,7 @@ seed: u64 = 0,
 const NameBufferList = std.ArrayList(bun.OSPathChar);
 
 const Dir = std.fs.Dir;
-const WrappedIterator = DirIterator.NewWrappedIterator(Environment.isWindows);
+const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
 pub const WalkerEntry = struct {
     /// The containing directory. This can be used to operate directly on `basename`
@@ -100,7 +100,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                         {
                             errdefer new_dir.close();
                             try self.stack.append(StackItem{
-                                .iter = DirIterator.iterate(new_dir, Environment.isWindows),
+                                .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
                                 .dirname_len = self.name_buffer.items.len,
                             });
                             top = &self.stack.items[self.stack.items.len - 1];
@@ -171,7 +171,7 @@ pub fn walk(
     }
 
     try stack.append(Walker.StackItem{
-        .iter = DirIterator.iterate(self, Environment.isWindows),
+        .iter = DirIterator.iterate(self, if (Environment.isWindows) .u16 else .u8),
         .dirname_len = 0,
     });
 

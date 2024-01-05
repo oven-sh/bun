@@ -712,7 +712,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ strings.fmtUTF16(existing), strings.fmtUTF16(new) });
+                    debug("moveFileExW({s}, {s})", .{ bun.fmt.fmtUTF16(existing), bun.fmt.fmtUTF16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -1440,8 +1440,8 @@ pub const PathName = struct {
         return this.dir;
     }
 
-    pub fn fmtIdentifier(self: *const PathName) strings.FormatValidIdentifier {
-        return strings.fmtIdentifier(self.nonUniqueNameStringBase());
+    pub fn fmtIdentifier(self: *const PathName) bun.fmt.FormatValidIdentifier {
+        return bun.fmt.fmtIdentifier(self.nonUniqueNameStringBase());
     }
 
     // For readability, the names of certain automatically-generated symbols are

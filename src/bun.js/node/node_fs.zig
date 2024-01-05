@@ -4628,7 +4628,7 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-        var iterator = DirIterator.iterate(dir, false);
+        var iterator = DirIterator.iterate(dir, .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4724,7 +4724,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) }, false);
+        var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) }, .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4867,7 +4867,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) }, false);
+            var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) }, .u8);
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -5750,7 +5750,7 @@ pub const NodeFS = struct {
         }
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
@@ -5849,7 +5849,7 @@ pub const NodeFS = struct {
         }
 
         const watcher = args.createFSWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
@@ -6008,7 +6008,7 @@ pub const NodeFS = struct {
 
         var iterator = iterator: {
             const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-            break :iterator DirIterator.iterate(dir, Environment.isWindows);
+            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
         };
         var entry = iterator.next();
         while (switch (entry) {
@@ -6453,7 +6453,7 @@ pub const NodeFS = struct {
         }
 
         const dir = std.fs.Dir{ .fd = fd };
-        var iterator = DirIterator.iterate(dir);
+        var iterator = DirIterator.iterate(dir, .u8);
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {

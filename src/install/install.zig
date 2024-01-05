@@ -325,7 +325,7 @@ const NetworkTask = struct {
             if (tmp.tag == .Dead) {
                 const msg = .{
                     .fmt = "Failed to join registry {} and package {} URLs",
-                    .args = .{ strings.QuotedFormatter{ .text = scope.url.href }, strings.QuotedFormatter{ .text = name } },
+                    .args = .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                 };
 
                 if (warn_on_error)
@@ -1259,13 +1259,7 @@ const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file ", .{@errorName(err)});
-                            if (comptime Environment.isWindows) {
-                                Output.prettyErrorln("{}", .{std.unicode.fmtUtf16le(entry.path)});
-                            } else {
-                                Output.prettyErrorln("{s}", .{entry.path});
-                            }
-
+                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                             Global.crash();
                         };
                     };
@@ -1290,12 +1284,7 @@ const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file ", .{@errorName(err)});
-                            if (comptime Environment.isWindows) {
-                                Output.prettyErrorln("{}", .{std.unicode.fmtUtf16le(entry.path)});
-                            } else {
-                                Output.prettyErrorln("{s}", .{entry.path});
-                            }
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                             Global.crash();
                         };
                     } else {
@@ -1309,12 +1298,7 @@ const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file ", .{@errorName(err)});
-                            if (comptime Environment.isWindows) {
-                                Output.prettyErrorln("{}", .{std.unicode.fmtUtf16le(entry.path)});
-                            } else {
-                                Output.prettyErrorln("{s}", .{entry.path});
-                            }
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                             Global.crash();
                         };
                     }

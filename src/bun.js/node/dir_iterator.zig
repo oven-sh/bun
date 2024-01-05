@@ -360,15 +360,18 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-pub fn NewWrappedIterator(comptime use_windows_ospath: bool) type {
-    const IteratorType = if (use_windows_ospath) IteratorW else Iterator;
+const PathType = enum { u8, u16 };
+
+pub fn NewWrappedIterator(comptime path_type: PathType) type {
+    const IteratorType = if (path_type == .u16) IteratorW else Iterator;
+    const ResultType = if (path_type == .u16) ResultW else Result;
     return struct {
         iter: IteratorType,
         const Self = @This();
 
         pub const Error = IteratorError;
 
-        pub inline fn next(self: *Self) if (use_windows_ospath) ResultW else Result {
+        pub inline fn next(self: *Self) ResultType {
             return self.iter.next();
         }
 
@@ -418,9 +421,9 @@ pub fn NewWrappedIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-pub const WrappedIterator = NewWrappedIterator(false);
-pub const WrappedIteratorW = NewWrappedIterator(true);
+pub const WrappedIterator = NewWrappedIterator(.u8);
+pub const WrappedIteratorW = NewWrappedIterator(.u16);
 
-pub fn iterate(self: Dir, comptime use_windows_ospath: bool) NewWrappedIterator(use_windows_ospath) {
-    return NewWrappedIterator(use_windows_ospath).init(self);
+pub fn iterate(self: Dir, comptime path_type: PathType) NewWrappedIterator(path_type) {
+    return NewWrappedIterator(path_type).init(self);
 }

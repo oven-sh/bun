@@ -173,11 +173,11 @@ pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
-            log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), kernel32.GetLastError() });
+            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), kernel32.GetLastError() });
             return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
         }
 
-        log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), 0 });
+        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), 0 });
 
         return Maybe(void).success;
     }
@@ -424,7 +424,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -542,7 +542,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), rc, @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1506,7 +1506,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isWindows) {
         const result = kernel32.GetFileAttributesW(path.ptr);
         if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.strings.fmtUTF16(path), result });
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), result });
         }
         return result != windows.INVALID_FILE_ATTRIBUTES;
     }
@@ -1589,7 +1589,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
         //     else => false,
         // };
 
-        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.strings.fmtUTF16(path), out, result });
+        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.fmtUTF16(path), out, result });
 
         // return result;
     }

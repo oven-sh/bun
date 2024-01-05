@@ -347,7 +347,7 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     };
 
     if (comptime bun.Environment.allow_assert)
-        log("napi_create_string_utf16: {d} {any}", .{ slice.len, strings.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+        log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
         setNapiValue(result, bun.String.empty.toJS(env));

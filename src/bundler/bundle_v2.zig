@@ -4711,7 +4711,7 @@ const LinkerContext = struct {
                     var count: usize = 0;
                     if (is_entry_point and this.options.output_format == .esm) {
                         for (aliases) |alias| {
-                            count += std.fmt.count("export_{}", .{strings.fmtIdentifier(alias)});
+                            count += std.fmt.count("export_{}", .{bun.fmt.fmtIdentifier(alias)});
                         }
                     }
 
@@ -4748,7 +4748,7 @@ const LinkerContext = struct {
                     const copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
 
                     for (aliases, copies) |alias, *copy| {
-                        const original_name = builder.fmt("export_{}", .{strings.fmtIdentifier(alias)});
+                        const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
                         copy.* = this.graph.generateNewSymbol(source_index, .other, original_name);
                     }
                     this.graph.meta.items(.cjs_export_copies)[id] = copies;

@@ -185,13 +185,7 @@ pub const CreateCommand = struct {
         Global.configureAllocator(.{ .long_running = false });
         try HTTP.HTTPThread.init();
 
-        var positionals = ctx.positionals;
-
-        if (ctx.positionals.len >= 1 and (strings.eqlComptime(ctx.positionals[0], "c") or strings.eqlComptime(ctx.positionals[0], "create"))) {
-            positionals = ctx.positionals[1..];
-        }
-
-        if (positionals.len == 0) {
+        if (ctx.positionals.len == 0) {
             return try CreateListExamplesCommand.exec(ctx);
         }
 
@@ -206,11 +200,11 @@ pub const CreateCommand = struct {
         env_loader.loadProcess();
 
         const dirname: string = brk: {
-            if (positionals.len == 1) {
+            if (ctx.positionals.len == 1) {
                 break :brk std.fs.path.basename(template);
             }
 
-            break :brk positionals[1];
+            break :brk ctx.positionals[1];
         };
 
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
@@ -1521,10 +1515,6 @@ pub const CreateCommand = struct {
         var filesystem = try fs.FileSystem.init(null);
 
         var positional = positionals[0];
-
-        if (positionals.len >= 1 and (strings.eqlComptime(positionals[0], "c") or strings.eqlComptime(positionals[0], "create"))) {
-            positional = positionals[1];
-        }
 
         var env_loader: DotEnv.Loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);

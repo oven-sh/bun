@@ -14,27 +14,27 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
-// describe("should not crash", async () => {
-//   const args = [
-//     [bunExe(), "create", ""],
-//     [bunExe(), "create", "--"],
-//     [bunExe(), "create", "--", ""],
-//     [bunExe(), "create", "--help"],
-//   ];
-//   for (let cmd of args) {
-//     it(JSON.stringify(cmd.slice(1).join(" ")), () => {
-//       const { exitCode } = spawnSync({
-//         cmd,
-//         cwd: x_dir,
-//         stdout: "ignore",
-//         stdin: "inherit",
-//         stderr: "inherit",
-//         env,
-//       });
-//       expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
-//     });
-//   }
-// });
+describe("should not crash", async () => {
+  const args = [
+    [bunExe(), "create", ""],
+    [bunExe(), "create", "--"],
+    [bunExe(), "create", "--", ""],
+    [bunExe(), "create", "--help"],
+  ];
+  for (let cmd of args) {
+    it(JSON.stringify(cmd.slice(1).join(" ")), () => {
+      const { exitCode } = spawnSync({
+        cmd,
+        cwd: x_dir,
+        stdout: "ignore",
+        stdin: "inherit",
+        stderr: "inherit",
+        env,
+      });
+      expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
+    });
+  }
+});
 
 it("should create selected template with @ prefix", async () => {
   const { stderr } = spawn({
@@ -84,13 +84,16 @@ it("should create selected template with @ prefix implicit `/create` with versio
   );
 });
 
-it.only("should create template from local folder", async () => {
+it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";
 
   await mkdir(`${bunCreateDir}/${testTemplate}`, { recursive: true });
   const { exited } = spawn({
     cmd: [bunExe(), "create", testTemplate],
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
     cwd: x_dir,
     env: { ...env, BUN_CREATE_DIR: bunCreateDir },
   });
@@ -103,7 +106,7 @@ it.only("should create template from local folder", async () => {
 
 it("should display help for create command", async () => {
   const { exited, stdout} = spawn({
-    cmd: [bunExe(), "create", "--help"],
+    cmd: [bunExe(), "create", "-h"],
     cwd: x_dir,
   });
 

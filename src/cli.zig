@@ -1540,7 +1540,7 @@ pub const Command = struct {
                 const print_help = brk: {
                     for (bun.argv()) |arg_| {
                         const arg = bun.span(arg_);
-                        if (strings.eqlComptime(arg, "--help")) {
+                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                             break :brk true;
                         }
                     }

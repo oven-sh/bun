@@ -6031,9 +6031,9 @@ pub const NodeFS = struct {
                 .directory => {
                     const r = this._cpSync(
                         src_buf,
-                        src_dir_len + 1 + name_slice.len,
+                        src_dir_len + @as(PathString.PathInt, @intCast(1 + name_slice.len)),
                         dest_buf,
-                        dest_dir_len + 1 + name_slice.len,
+                        dest_dir_len + @as(PathString.PathInt, @intCast(1 + name_slice.len)),
                         args,
                     );
                     switch (r) {

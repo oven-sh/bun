@@ -966,6 +966,19 @@ declare module "bun:test" {
      */
     toContainKey(expected: unknown): void;
     /**
+     * Asserts that an `object` contains all the provided keys.
+     *
+     * The value must be an object
+     *
+     * @example
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKeys(['a', 'b', 'e']);
+     *
+     * @param expected the expected value
+     */
+    toContainKeys(expected: unknown): void;
+    /**
      * Asserts that a value contains and equals what is expected.
      *
      * This matcher will perform a deep equality check for members
@@ -1195,6 +1208,14 @@ declare module "bun:test" {
      * expect(new Set()).toBeEmpty();
      */
     toBeEmpty(): void;
+    /**
+     * Asserts that a value is an empty `object`.
+     *
+     * @example
+     * expect({}).toBeEmptyObject();
+     * expect({ a: 'hello' }).not.toBeEmptyObject();
+     */
+    toBeEmptyObject(): void;
     /**
      * Asserts that a value is `null` or `undefined`.
      *

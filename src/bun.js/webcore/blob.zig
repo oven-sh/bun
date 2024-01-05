@@ -1272,7 +1272,7 @@ pub const Blob = struct {
         var allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(3);
-        const args = arguments.ptr[0..arguments.len];
+        const args = arguments.slice();
 
         if (args.len < 2) {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
@@ -4041,7 +4041,7 @@ pub const Blob = struct {
         var allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(2);
-        const args = arguments.ptr[0..arguments.len];
+        const args = arguments.slice();
 
         switch (args.len) {
             0 => {

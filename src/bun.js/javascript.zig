@@ -3056,18 +3056,15 @@ pub const VirtualMachine = struct {
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        const socket = uws.newSocketFromFd(context, @sizeOf(*IPCInstance), fd) orelse {
-            uws.us_socket_context_free(0, context);
-            Output.warn("Failed to initialize IPC connection to parent", .{});
-            return;
-        };
-
         var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
         instance.* = .{
             .globalThis = this.global,
             .uws_context = context,
-            .ipc = .{ .socket = socket },
+            .ipc = undefined,
         };
+        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        instance.ipc = .{ .socket = socket };
+
         const ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
         this.ipc = instance;

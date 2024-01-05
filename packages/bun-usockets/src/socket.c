@@ -249,10 +249,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
 
     us_internal_socket_context_link_socket(ctx, s);
 
-    if (ctx->on_open) {
-        ctx->on_open(s, 0, 0, 0);
-    }
-
     return s;
 #endif
 }

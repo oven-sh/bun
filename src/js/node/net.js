@@ -415,6 +415,7 @@ const Socket = (function (InternalSocket) {
       }
       if (typeof port == "object") {
         var {
+          fd,
           port,
           host,
           path,
@@ -440,13 +441,31 @@ const Socket = (function (InternalSocket) {
         if (socket) {
           connection = socket;
         }
+        if (fd) {
+          bunConnect({
+            data: this,
+            fd,
+            socket: Socket.#Handlers,
+            tls,
+          }).catch(error => {
+            this.emit("error", error);
+            this.emit("close");
+          });
+        }
       }
 
       this.pauseOnConnect = pauseOnConnect;
       if (!pauseOnConnect) {
-        this.resume();
+        process.nextTick(() => {
+          this.resume();
+        });
+        this.connecting = true;
       }
-      this.connecting = true;
+
+      if (fd) {
+        return this;
+      }
+
       this.remotePort = port;
 
       const bunTLS = this[bunTlsSymbol];

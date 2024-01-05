@@ -107,9 +107,11 @@ export default [
       signalCode: {
         getter: "getSignalCode",
       },
-
       exited: {
         getter: "getExited",
+      },
+      stdio: {
+        getter: "getStdio",
       },
     },
   }),

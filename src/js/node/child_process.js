@@ -155,7 +155,6 @@ function spawn(file, args, options) {
 
   $debug("spawn", options);
   child.spawn(options);
-  child.stdio; // run the getter
 
   if (options.timeout > 0) {
     let timeoutId = setTimeout(() => {
@@ -1191,6 +1190,8 @@ class ChildProcess extends EventEmitter {
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
+    const stdioCount = stdio.length;
+    const hasSocketsToEagerlyLoad = stdioCount >= 3;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdio: bunStdio,
@@ -1198,6 +1199,9 @@ class ChildProcess extends EventEmitter {
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
+        if (hasSocketsToEagerlyLoad) {
+          this.stdio;
+        }
         $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
@@ -1221,6 +1225,10 @@ class ChildProcess extends EventEmitter {
     if (ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
+    }
+
+    if (hasSocketsToEagerlyLoad) {
+      this.stdio;
     }
   }
 

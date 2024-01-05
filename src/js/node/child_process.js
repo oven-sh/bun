@@ -1,10 +1,7 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const {
-  constants: { signals },
-} = require("node:os");
-const { promisify } = require("node:util");
+const OsModule = require("node:os");
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -13,6 +10,7 @@ var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
 var kEmptyObject = ObjectCreate(null);
+var signals = OsModule.constants.signals;
 
 var ArrayPrototypePush = Array.prototype.push;
 var ArrayPrototypeJoin = Array.prototype.join;
@@ -499,7 +497,8 @@ const customPromiseExecFunction = orig => {
   };
 };
 
-ObjectDefineProperty(exec, promisify.custom, {
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+ObjectDefineProperty(exec, kCustomPromisifiedSymbol, {
   __proto__: null,
   enumerable: false,
   value: customPromiseExecFunction(exec),

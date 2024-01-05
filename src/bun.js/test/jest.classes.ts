@@ -415,6 +415,14 @@ export default [
         fn: "toContain",
         length: 1,
       },
+      toContainKey: {
+        fn: "toContainKey",
+        length: 1,
+      },
+      toContainKeys: {
+        fn: "toContainKeys",
+        length: 1,
+      },
       toContainEqual: {
         fn: "toContainEqual",
         length: 1,
@@ -476,6 +484,10 @@ export default [
         fn: "toBeEmpty",
         length: 0,
       },
+      toBeEmptyObject: {
+        fn: "toBeEmptyObject",
+        length: 0,
+      },
       toBeEven: {
         fn: "toBeEven",
         length: 0,
@@ -518,6 +530,10 @@ export default [
       },
       toBeInteger: {
         fn: "toBeInteger",
+        length: 0,
+      },
+      toBeObject: {
+        fn: "toBeObject",
         length: 0,
       },
       toBeFinite: {

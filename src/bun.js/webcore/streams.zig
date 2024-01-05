@@ -2296,7 +2296,14 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 const wait = callframe.argumentsCount() > 0 and
                     callframe.argument(0).isBoolean() and
                     callframe.argument(0).asBoolean();
-                return this.sink.flushFromJS(globalThis, wait).result;
+                const maybe_value: JSC.Node.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
+                return switch (maybe_value) {
+                    .result => |value| value,
+                    .err => |err| blk: {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        break :blk JSC.JSValue.jsUndefined();
+                    },
+                };
             }
 
             return this.sink.flush().toJS(globalThis);
@@ -4275,11 +4282,6 @@ pub const File = struct {
             if (bun.S.ISDIR(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
-            }
-
-            if (bun.S.ISSOCK(stat.mode)) {
-                _ = Syscall.close(fd);
-                return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
 
             file.mode = @as(bun.Mode, @intCast(stat.mode));

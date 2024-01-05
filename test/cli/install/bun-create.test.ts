@@ -103,3 +103,14 @@ it("should create template from local folder", async () => {
   const dirStat = await stat(`${x_dir}/${testTemplate}`);
   expect(dirStat.isDirectory()).toBe(true);
 });
+
+it("should not segfault when not argument is passed in create", async () => {
+  const { exited } = spawn({
+    cmd: [bunExe(), "create", "-h"],
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: x_dir,
+  });
+
+  expect(await exited).toBe(1);
+});

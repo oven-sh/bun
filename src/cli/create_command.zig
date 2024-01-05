@@ -1569,6 +1569,11 @@ pub const CreateCommand = struct {
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
 
+        if (positionals.len == 0) {
+            Output.prettyErrorln("<r><red>error<r>: No argument found for <b>bun create<r> command.", .{});
+            Global.exit(1);
+        }
+
         var env_loader: DotEnv.Loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);

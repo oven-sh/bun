@@ -78,5 +78,10 @@
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
+  PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
+  PerformanceEntry                PerformanceEntryConstructorCallback                  PropertyCallback
+  PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
+  PerformanceMark                 PerformanceMarkConstructorCallback                   PropertyCallback
+  Performance                     PerformanceConstructorCallback                       PropertyCallback
 @end
 */

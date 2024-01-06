@@ -15,19 +15,11 @@ var constants = {
   NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
-var performance = globalThis.performance;
+var { performance,
+  PerformanceObserver,
+  PerformanceEntry } = globalThis;
 
-class PerformanceObserver {
-  constructor() {
-    throwNotImplemented("PerformanceObserver");
-  }
-}
 
-class PerformanceEntry {
-  constructor() {
-    throwNotImplemented("PerformanceEntry");
-  }
-}
 
 export default {
   performance,
@@ -47,7 +39,7 @@ export default {
   //   onresourcetimingbufferfull: [Getter/Setter]
   // },
   constants,
-  // Performance: [class Performance extends EventTarget],
+  Performance: performance.constructor, // [class Performance extends EventTarget],
   PerformanceEntry,
   // PerformanceMark: [class PerformanceMark extends PerformanceEntry],
   // PerformanceMeasure: [class PerformanceMeasure extends PerformanceEntry],

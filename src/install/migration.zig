@@ -885,14 +885,15 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
                             continue :dep_loop;
                         }
-                        // step
+
+                        // step down each `node_modules/` of the source
                         if (strings.lastIndexOf(name_checking_buf[0..buf_len -| ("node_modules/".len + name_bytes.len)], "node_modules/")) |idx| {
                             debug("found 'node_modules/' at {d}", .{idx});
                             buf_len = @intCast(idx + "node_modules/".len + name_bytes.len);
                             bun.copy(u8, name_checking_buf[idx + "node_modules/".len .. idx + "node_modules/".len + name_bytes.len], name_bytes);
                         } else if (!strings.hasPrefixComptime(name_checking_buf[0..buf_len], "node_modules/")) {
-                            // this is hit if you start from `packages/etc`, from `packages/etc/node_modules/xyz`
-                            // we need to hit the root node_modules
+                            // this is hit if you are at something like `packages/etc`, from `packages/etc/node_modules/xyz`
+                            // we need to hit the root `node_modules/{name}`
                             buf_len = @intCast("node_modules/".len + name_bytes.len);
                             bun.copy(u8, name_checking_buf[0..buf_len], "node_modules/");
                             bun.copy(u8, name_checking_buf[buf_len - name_bytes.len .. buf_len], name_bytes);
@@ -969,7 +970,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     var is_missing_resolutions = false;
     for (resolutions, 0..) |r, i| {
         if (r.tag == .uninitialized) {
-            Output.printErrorln("Could not resolve package '{s}' in lockfile.", .{this.packages.items(.name)[i].slice(this.buffers.string_bytes.items)});
+            Output.warn("Could not resolve package '{s}' in lockfile during migration", .{this.packages.items(.name)[i].slice(this.buffers.string_bytes.items)});
             is_missing_resolutions = true;
         } else if (Environment.allow_assert) {
             // Assertion from appendPackage. If we do this too early it will always fail as we dont have the resolution written

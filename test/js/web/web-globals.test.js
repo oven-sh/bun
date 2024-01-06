@@ -21,6 +21,12 @@ test("exists", () => {
   expect(typeof FormData !== "undefined").toBe(true);
   expect(typeof Worker !== "undefined").toBe(true);
   expect(typeof File !== "undefined").toBe(true);
+  expect(typeof Performance !== "undefined").toBe(true);
+  expect(typeof PerformanceEntry !== "undefined").toBe(true);
+  expect(typeof PerformanceMark !== "undefined").toBe(true);
+  expect(typeof PerformanceMeasure !== "undefined").toBe(true);
+  expect(typeof PerformanceObserver !== "undefined").toBe(true);
+  expect(typeof PerformanceObserverEntryList !== "undefined").toBe(true);
 });
 
 const globalSetters = [

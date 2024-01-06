@@ -97,6 +97,7 @@
 #include "JSPerformance.h"
 #include "Performance.h"
 #include "JSPerformanceObserver.h"
+#include "JSPerformanceObserverEntryList.h"
 #include "JSPerformanceEntry.h"
 #include "JSPerformanceMeasure.h"
 #include "JSPerformanceMark.h"
@@ -1091,6 +1092,12 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(FetchHeaders);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessageChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessageEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessagePort);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Performance);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceEntry);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMark);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMeasure);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserver);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserverEntryList);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBReader)
@@ -1107,11 +1114,6 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserver);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceEntry);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMark);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMeasure);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Performance);
 
 JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3950,10 +3952,8 @@ RefPtr<Performance> GlobalObject::performance()
         auto* context = this->scriptExecutionContext();
         double nanoTimeOrigin = Bun__readOriginTimerStart(this->bunVM());
         auto timeOrigin = MonotonicTime::fromRawSeconds(nanoTimeOrigin / 1000.0);
-        // TODO hacky
-        auto perf = Performance::create(context, timeOrigin);
-        m_performance = &perf.leakRef();
-    } 
+        m_performance = Performance::create(context, timeOrigin);
+    }
 
     return m_performance;
 }

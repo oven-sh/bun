@@ -44,7 +44,6 @@
 // #include "PerformancePaintTiming.h"
 // #include "PerformanceResourceTiming.h"
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -61,6 +60,8 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<P
     //     return createWrapper<PerformanceResourceTiming>(globalObject, WTFMove(entry));
     // case PerformanceEntry::Type::Paint:
     //     return createWrapper<PerformancePaintTiming>(globalObject, WTFMove(entry));
+    default: {
+    }
     }
 
     ASSERT_NOT_REACHED();

@@ -780,38 +780,24 @@ function drainPending(self) {
 }
 
 async function consumeStream(self, reader) {
-  while (true) {
-    if (self[abortedSymbol] || self.complete) return;
+  const { done, value } = await reader.readMany();
 
-    let done, value;
-    const result = await reader.readMany();
+  if (done) {
+    self.push(null);
+    self.complete = true;
+    process.nextTick(destroyBodyStreamNT, self);
+    return;
+  }
 
-    if ($isPromise(result)) {
-      ({ done, value } = await result);
+  if (!self.push(value[0])) {
+    self[pendingChunksSymbol] = value.slice(1);
+    return;
+  }
 
-      if (self.complete) {
-        self[pendingChunksSymbol].push(...value);
-        return;
-      }
-    } else {
-      ({ done, value } = result);
-    }
-
-    if (done) {
-      handleDone(self);
+  for (let i = 1, count = value.length; i < count; i++) {
+    if (!self.push(value[i])) {
+      self[pendingChunksSymbol] = value.slice(i + 1);
       return;
-    }
-
-    if (!self.push(value[0])) {
-      self[pendingChunksSymbol] = value.slice(1);
-      return;
-    }
-
-    for (let i = 1, count = value.length; i < count; i++) {
-      if (!self.push(value[i])) {
-        self[pendingChunksSymbol] = value.slice(i + 1);
-        return;
-      }
     }
   }
 }
@@ -843,16 +829,6 @@ Object.defineProperty(IncomingMessage.prototype, "aborted", {
     return this[abortedSymbol];
   },
 });
-
-function handleDone(self) {
-  if (self[bodyStreamSymbol]) {
-    self[bodyStreamSymbol].releaseLock();
-    process.nextTick(destroyBodyStreamNT, self);
-  }
-
-  self.complete = true;
-  self.push(null);
-}
 
 function abort(self) {
   if (self[abortedSymbol]) return;

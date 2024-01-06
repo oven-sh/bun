@@ -333,7 +333,7 @@ pub const Bin = extern struct {
             _ = C.fchmodat(folder, target, umask | 0o777, 0);
         }
 
-        fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+        fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             if (comptime Environment.isWindows) {
                 @panic("TODO on Windows");
             }
@@ -641,7 +641,7 @@ pub const Bin = extern struct {
                         this.createPs1File(target_path, &dest_path_buf, dest_path);
                         this.createShFile(target_path, dest_path);
                     } else {
-                        this.setSimlinkAndPermissions(target_path, dest_path);
+                        this.setSymlinkAndPermissions(target_path, dest_path);
                     }
                 },
                 .named_file => {
@@ -669,7 +669,7 @@ pub const Bin = extern struct {
                         this.createPs1File(target_path, &dest_path_buf, dest_path);
                         this.createShFile(target_path, dest_path);
                     } else {
-                        this.setSimlinkAndPermissions(target_path, dest_path);
+                        this.setSymlinkAndPermissions(target_path, dest_path);
                     }
                 },
                 .map => {
@@ -709,7 +709,7 @@ pub const Bin = extern struct {
                             this.createPs1File(target_path, &dest_path_buf, dest_path);
                             this.createShFile(target_path, dest_path);
                         } else {
-                            this.setSimlinkAndPermissions(target_path, dest_path);
+                            this.setSymlinkAndPermissions(target_path, dest_path);
                         }
                     }
                 },
@@ -767,7 +767,7 @@ pub const Bin = extern struct {
                                     this.createPs1File(from_path, &dest_path_buf, to_path);
                                     this.createShFile(from_path, to_path);
                                 } else {
-                                    this.setSimlinkAndPermissions(from_path, to_path);
+                                    this.setSymlinkAndPermissions(from_path, to_path);
                                 }
                             },
                             else => {},

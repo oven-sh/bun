@@ -170,7 +170,9 @@ void JSAbortController::finishCreation(VM& vm)
 
 JSObject* JSAbortController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSAbortControllerPrototype::create(vm, &globalObject, JSAbortControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSAbortControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSAbortControllerPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSAbortController::prototype(VM& vm, JSDOMGlobalObject& globalObject)

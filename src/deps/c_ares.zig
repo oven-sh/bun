@@ -1517,7 +1517,7 @@ pub export fn Bun__canonicalizeIP(
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
     const script_ctx = globalThis.bunVM();
-    var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
     const addr_arg = args.nextEat().?;
 
     if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {

@@ -2030,11 +2030,16 @@ pub const Crypto = struct {
         fn hashToEncoding(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.BlobOrStringOrBuffer,
             encoding: JSC.Node.Encoding,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
 
             const len = evp.hash(globalThis.bunVM().rareData().boringEngine(), input.slice(), &output_digest_buf) orelse {
                 const err = BoringSSL.ERR_get_error();
@@ -2049,12 +2054,18 @@ pub const Crypto = struct {
         fn hashToBytes(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.BlobOrStringOrBuffer,
             output: ?JSC.ArrayBuffer,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             var output_digest_slice: []u8 = &output_digest_buf;
             defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
+
             if (output) |output_buf| {
                 const size = evp.size();
                 var bytes = output_buf.byteSlice();
@@ -2084,7 +2095,7 @@ pub const Crypto = struct {
         pub fn hash_(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.BlobOrStringOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
             var evp = EVP.byName(algorithm, globalThis) orelse {
@@ -2154,12 +2165,15 @@ pub const Crypto = struct {
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
             const encoding = arguments.ptr[1];
-            const buffer = JSC.Node.StringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
-                globalThis.throwInvalidArguments("expected string or buffer", .{});
+            const buffer = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
+                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                 return JSC.JSValue.zero;
             };
-
             defer buffer.deinit();
+            if (buffer == .blob and buffer.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
 
             this.evp.update(buffer.slice());
             const err = BoringSSL.ERR_get_error();
@@ -2281,10 +2295,15 @@ pub const Crypto = struct {
 
             fn hashToEncoding(
                 globalThis: *JSGlobalObject,
-                input: JSC.Node.StringOrBuffer,
+                input: JSC.Node.BlobOrStringOrBuffer,
                 encoding: JSC.Node.Encoding,
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
+
+                if (input == .blob and input.blob.isBunFile()) {
+                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                    return .zero;
+                }
 
                 if (comptime @typeInfo(@TypeOf(Hasher.hash)).Fn.params.len == 3) {
                     Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.get().rareData().boringEngine());
@@ -2297,7 +2316,7 @@ pub const Crypto = struct {
 
             fn hashToBytes(
                 globalThis: *JSGlobalObject,
-                input: JSC.Node.StringOrBuffer,
+                input: JSC.Node.BlobOrStringOrBuffer,
                 output: ?JSC.ArrayBuffer,
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
@@ -2327,9 +2346,16 @@ pub const Crypto = struct {
 
             pub fn hash_(
                 globalThis: *JSGlobalObject,
-                input: JSC.Node.StringOrBuffer,
+                input: JSC.Node.BlobOrStringOrBuffer,
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
+                defer input.deinit();
+
+                if (input == .blob and input.blob.isBunFile()) {
+                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                    return .zero;
+                }
+
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
                         inline else => |*str| {
@@ -2367,11 +2393,16 @@ pub const Crypto = struct {
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
-                const buffer = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
-                    globalThis.throwInvalidArguments("expected string or buffer", .{});
+                const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
+                    globalThis.throwInvalidArguments("expected blob or string or buffer", .{});
                     return JSC.JSValue.zero;
                 };
                 defer buffer.deinit();
+
+                if (buffer == .blob and buffer.blob.isBunFile()) {
+                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                    return .zero;
+                }
                 this.hashing.update(buffer.slice());
                 return thisValue;
             }
@@ -2381,9 +2412,10 @@ pub const Crypto = struct {
                 globalThis: *JSGlobalObject,
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
-                if (output) |string_or_buffer| {
-                    switch (string_or_buffer) {
-                        inline else => |str| {
+                if (output) |*string_or_buffer| {
+                    switch (string_or_buffer.*) {
+                        inline else => |*str| {
+                            defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                                 globalThis.throwInvalidArguments("Unknown encoding: \"{s}\"", .{str.slice()});
                                 return JSC.JSValue.zero;
@@ -2391,7 +2423,7 @@ pub const Crypto = struct {
 
                             return this.digestToEncoding(globalThis, encoding);
                         },
-                        .buffer => |buffer| {
+                        .buffer => |*buffer| {
                             return this.digestToBytes(
                                 globalThis,
                                 buffer.buffer,

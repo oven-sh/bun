@@ -110,3 +110,42 @@ describe("process.stdin", () => {
     expect(result).toEqual("data: File read successfully");
   });
 });
+
+describe("process.stdio pipes", () => {
+  it("is writable", () => {
+    const child = spawn(bunExe(), [import.meta.dir + "/fixtures/child-process-pipe-read.js"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    const pipe = child.stdio[3];
+    expect(pipe).not.toBe(null);
+    pipe.write("stdout_test");
+
+    child.stdout.on("data", data => {
+      try {
+        expect(data).toBe("stdout_test");
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+
+  it("is readable", () => {
+    const child = spawn(bunExe(), [import.meta.dir + "/fixtures/child-process-pipe-read.js"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    const pipe = child.stdio[3];
+    expect(pipe).not.toBe(null);
+
+    child.stdout.on("data", data => {
+      try {
+        expect(data).toBe("stdout_test");
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+});

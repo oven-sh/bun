@@ -40,18 +40,18 @@ class ScriptExecutionContext;
 
 class PerformanceMeasure final : public PerformanceEntry {
 public:
-    static ExceptionOr<Ref<PerformanceMeasure>> create(const String& name, double startTime, double endTime, Ref<SerializedScriptValue>&& detail);
+    static ExceptionOr<Ref<PerformanceMeasure>> create(const String& name, double startTime, double endTime, RefPtr<SerializedScriptValue>&& detail);
 
     JSC::JSValue detail(JSC::JSGlobalObject&);
 
 private:
-    PerformanceMeasure(const String& name, double startTime, double endTime, Ref<SerializedScriptValue>&& detail);
+    PerformanceMeasure(const String& name, double startTime, double endTime, RefPtr<SerializedScriptValue>&& detail);
     ~PerformanceMeasure();
 
     Type performanceEntryType() const final { return Type::Measure; }
     ASCIILiteral entryType() const final { return "measure"_s; }
 
-    Ref<SerializedScriptValue> m_serializedDetail;
+    RefPtr<SerializedScriptValue> m_serializedDetail;
 };
 
 } // namespace WebCore

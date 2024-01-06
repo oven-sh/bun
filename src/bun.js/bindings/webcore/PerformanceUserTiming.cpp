@@ -107,12 +107,14 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
         return mark.releaseException();
 
     addPerformanceEntry(m_marksMap, markName, mark.returnValue().get());
+    m_markCounter += 1;
     return mark.releaseReturnValue();
 }
 
 void PerformanceUserTiming::clearMarks(const String& markName)
 {
     clearPerformanceEntries(m_marksMap, markName);
+    m_markCounter = 0;
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
@@ -176,8 +178,8 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(const String
         startTime = start.returnValue();
     } else
         startTime = 0.0;
-        
-    auto measure = PerformanceMeasure::create(measureName, startTime, endTime, SerializedScriptValue::nullValue());
+
+    auto measure = PerformanceMeasure::create(measureName, startTime, endTime, nullptr);
     if (measure.hasException())
         return measure.releaseException();
 
@@ -221,22 +223,32 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
     } else
         startTime = 0;
 
-
     JSC::JSValue detail = measureOptions.detail;
     if (detail.isUndefined())
         detail = JSC::jsNull();
 
-    Vector<RefPtr<MessagePort>> ignoredMessagePorts;
-    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, { }, ignoredMessagePorts);
-    if (serializedDetail.hasException())
-        return serializedDetail.releaseException();
+    if (!detail.isNull()) {
+        Vector<RefPtr<MessagePort>> ignoredMessagePorts;
+        auto serializedDetail = SerializedScriptValue::create(globalObject, detail, {}, ignoredMessagePorts);
+        if (serializedDetail.hasException())
+            return serializedDetail.releaseException();
 
-    auto measure = PerformanceMeasure::create(measureName, startTime, endTime, serializedDetail.releaseReturnValue());
-    if (measure.hasException())
-        return measure.releaseException();
+        auto measure = PerformanceMeasure::create(measureName, startTime, endTime, serializedDetail.releaseReturnValue());
+        if (measure.hasException())
+            return measure.releaseException();
 
-    addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
-    return measure.releaseReturnValue();
+        addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
+        m_measureCounter += 1;
+        return measure.releaseReturnValue();
+    } else {
+        auto measure = PerformanceMeasure::create(measureName, startTime, endTime, nullptr);
+        if (measure.hasException())
+            return measure.releaseException();
+
+        addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
+        m_measureCounter += 1;
+        return measure.releaseReturnValue();
+    }
 }
 
 static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions)
@@ -247,8 +259,9 @@ static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions
 ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
 {
     if (startOrMeasureOptions) {
-        return WTF::switchOn(*startOrMeasureOptions,
-            [&] (const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
+        return WTF::switchOn(
+            *startOrMeasureOptions,
+            [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
                 if (isNonEmptyDictionary(measureOptions)) {
                     if (!endMark.isNull())
                         return Exception { TypeError };
@@ -260,31 +273,37 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
 
                 return measure(globalObject, measureName, measureOptions);
             },
-            [&] (const String& startMark) {
+            [&](const String& startMark) {
                 return measure(measureName, startMark, endMark);
-            }
-        );
+            });
     }
 
-    return measure(measureName, { }, endMark);
+    return measure(measureName, {}, endMark);
 }
 
 void PerformanceUserTiming::clearMeasures(const String& measureName)
 {
     clearPerformanceEntries(m_measuresMap, measureName);
+    m_measureCounter = 0;
 }
 
-static Vector<RefPtr<PerformanceEntry>> convertToEntrySequence(const PerformanceEntryMap& map)
+static Vector<RefPtr<PerformanceEntry>> convertToEntrySequence(const PerformanceEntryMap& map, int64_t initialCapacity)
 {
     Vector<RefPtr<PerformanceEntry>> entries;
+    size_t safeInitialCapacity = initialCapacity > 0 && initialCapacity <= std::numeric_limits<int32_t>::max() ? static_cast<size_t>(initialCapacity) : 0;
+    if (safeInitialCapacity)
+        entries.reserveInitialCapacity(safeInitialCapacity);
+
     for (auto& entry : map.values())
         entries.appendVector(entry);
+
+    ASSERT(entries.size() <= safeInitialCapacity);
     return entries;
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMarks() const
 {
-    return convertToEntrySequence(m_marksMap);
+    return convertToEntrySequence(m_marksMap, m_markCounter);
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMarks(const String& name) const
@@ -294,7 +313,7 @@ Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMarks(const String& n
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMeasures() const
 {
-    return convertToEntrySequence(m_measuresMap);
+    return convertToEntrySequence(m_measuresMap, m_measureCounter);
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMeasures(const String& name) const

@@ -30,12 +30,12 @@
 
 namespace WebCore {
 
-ExceptionOr<Ref<PerformanceMeasure>> PerformanceMeasure::create(const String& name, double startTime, double endTime, Ref<SerializedScriptValue>&& serializedDetail)
+ExceptionOr<Ref<PerformanceMeasure>> PerformanceMeasure::create(const String& name, double startTime, double endTime, RefPtr<SerializedScriptValue>&& serializedDetail)
 {
     return adoptRef(*new PerformanceMeasure(name, startTime, endTime, WTFMove(serializedDetail)));
 }
 
-PerformanceMeasure::PerformanceMeasure(const String& name, double startTime, double endTime, Ref<SerializedScriptValue>&& serializedDetail)
+PerformanceMeasure::PerformanceMeasure(const String& name, double startTime, double endTime, RefPtr<SerializedScriptValue>&& serializedDetail)
     : PerformanceEntry(name, startTime, endTime)
     , m_serializedDetail(WTFMove(serializedDetail))
 {
@@ -45,8 +45,11 @@ PerformanceMeasure::~PerformanceMeasure() = default;
 
 JSC::JSValue PerformanceMeasure::detail(JSC::JSGlobalObject& globalObject)
 {
+    if (!m_serializedDetail) {
+        return JSC::jsNull();
+    }
+    
     return m_serializedDetail->deserialize(globalObject, &globalObject);
 }
 
 }
-

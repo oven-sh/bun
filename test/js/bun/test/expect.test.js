@@ -52,7 +52,7 @@ describe("expect()", () => {
     await expect(Promise.reject({ a: 1, b: 2 })).rejects.toMatchObject({ a: 1 });
     await expect(Promise.reject({ a: 1, b: 2 })).rejects.not.toMatchObject({ c: 1 });
     await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
-    //await expect(Promise.reject(new Error())).rejects.toThrow(); // FIXME
+    await expect(Promise.reject(new Error())).rejects.toThrow();
 
     // not receiving a rejected promise -> should throw
     if (isBun) {
@@ -82,6 +82,7 @@ describe("expect()", () => {
         throw new Error();
       }),
     ).resolves.toThrow();
+    await expect(Promise.resolve(new Error())).resolves.toThrow();
 
     // not receiving a resolved promise -> should throw
     if (isBun) {
@@ -2082,36 +2083,189 @@ describe("expect()", () => {
     });
   }
 
-  test("toContain()", () => {
-    const s1 = new String("123");
-    expect(s1).not.toContain("12");
-    const s2 = "123";
-    expect(s2).toContain("12");
+  test.each([
+    ["hello", "h"],
+    ["hello", "hello"],
+    [new String("hello"), "h"],
+    [new String("hello"), "hello"],
+    ["emoji: 😃", "😃"],
+    ["😄", "😄"],
+    ["", ""],
+    [[1, 2, 3], 1],
+    [["a", "b", "c"], "c"],
+    [[null, undefined], undefined],
+    [[1n, "abc", null, -1n, undefined], -1n],
+    [[Symbol.for("a")], Symbol.for("a")],
+    [new Set([1, 2, 3]), 1],
+    [new Set(["a", "b", "c"]), "c"],
+    [new Uint8Array([1, 2, 3]), 1],
+    [new BigInt64Array([1n, 2n, 3n]), 2n],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield 1;
+          yield 2;
+          yield 3;
+        },
+      },
+      3,
+    ],
+  ])("expect(%p).toContain(%p)", (value, expected) => {
+    expect(value).toContain(expected);
+  });
 
-    expect("test").toContain("es");
-    expect("test").toContain("est");
-    // expect("test").not.toContain("test");
-    expect(["test", "es"]).toContain("es");
-    expect("").toContain("");
-    expect([""]).toContain("");
+  test.each([
+    ["hello", "a"],
+    ["hello", "hello?"],
+    ["hello", ""],
+    [new String("hello"), "a"],
+    [new String("hello"), "hello?"],
+    [new String("hello"), ""],
+    ["emoji: 😃", "😄"],
+    [[1, 2, 3], -1],
+    [[1, 2, 3], 1n],
+    [["a", "b", "c"], "d"],
+    [[Symbol.for("a")], Symbol("a")],
+    [new Set([1, 2, 3]), 6],
+    [new Set(["a", "b", "c"]), "f"],
+    [new Uint8Array([1, 2, 3]), 0],
+    [new BigInt64Array([1n, 2n, 3n]), 1],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield 1;
+          yield 2;
+          yield 3;
+        },
+      },
+      6,
+    ],
+  ])("expect(%p).not.toContain(%p)", (value, expected) => {
+    expect(value).not.toContain(expected);
+  });
 
-    expect(["lemon", "lime"]).not.toContain("orange");
-    expect("citrus fruits").toContain("fruit");
+  test.each([
+    ["hello", "h"],
+    ["hello", "hello"],
+    [new String("hello"), "h"],
+    [new String("hello"), "hello"],
+    ["emoji: 😃", "😃"],
+    ["😄", "😄"],
+    ["", ""],
+    [[1, 2, 3], 1],
+    [[{ a: 1 }, { b: 2 }, { c: 3 }], { c: 3 }],
+    [[{}], {}],
+    [["a", "b", "c"], "c"],
+    [
+      [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9],
+      ],
+      [7, 8, 9],
+    ],
+    [[null, undefined], undefined],
+    [[1n, "abc", null, -1n, undefined], -1n],
+    [[Symbol.for("a")], Symbol.for("a")],
+    [new Set([1, 2, 3]), 1],
+    [new Set([[], { a: 1 }, new Headers()]), new Headers()],
+    [new Set(["a", "b", "c"]), "c"],
+    [new Set([new Map([[1, 2]])]), new Map([[1, 2]])],
+    [new Uint8Array([1, 2, 3]), 1],
+    [new BigInt64Array([1n, 2n, 3n]), 2n],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield new Map();
+          yield {
+            a: 1,
+            b: new Map(),
+          };
+          yield null;
+        },
+      },
+      {
+        a: 1,
+        b: new Map(),
+      },
+    ],
+  ])("expect(%p).toContainEqual(%p)", (value, expected) => {
+    expect(value).toContainEqual(expected);
+  });
 
-    const a = new Uint16Array([1, 2, 3]);
-    expect(a).toContain(2);
-    expect(a).not.toContain(4);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(5);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain("2335");
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(true);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(false);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(null);
-    expect([2, "2335", 5, true, false, null, undefined]).toContain(undefined);
-    expect([2, "2335", 5, true, false, null, undefined]).not.toContain(3);
+  test.each([
+    ["hello", "a"],
+    ["hello", "hello?"],
+    ["hello", ""],
+    [new String("hello"), "a"],
+    [new String("hello"), "hello?"],
+    [new String("hello"), ""],
+    ["emoji: 😃", "😄"],
+    [[1, 2, 3], -1],
+    [[{ a: 1 }, { b: 2 }, { c: 3 }], { c: 1 }],
+    [[], {}],
+    [[{}, { a: 1 }], { d: 4 }],
+    [[1, 2, 3], 1n],
+    [["a", "b", "c"], "d"],
+    [[Symbol.for("a")], Symbol("a")],
+    [new Set([1, 2, 3]), 6],
+    [new Set([{ a: 1 }, { b: 2 }, { c: 3 }]), { d: 4 }],
+    [new Set([]), {}],
+    [new Set(["a", "b", "c"]), "f"],
+    [new Uint8Array([1, 2, 3]), 0],
+    [new BigInt64Array([1n, 2n, 3n]), 1],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield 1;
+          yield 2;
+          yield 3;
+        },
+      },
+      6,
+    ],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield [1, 2, 3];
+        },
+      },
+      [1, 2, 4],
+    ],
+    [
+      {
+        *[Symbol.iterator]() {},
+      },
+      {},
+    ],
+  ])("expect(%p).not.toContainEqual(%p)", (value, expected) => {
+    expect(value).not.toContainEqual(expected);
+  });
 
-    // expect([4, 5, 6]).not.toContain(5);
+  test("toContainKey", () => {
+    const o = { a: "foo", b: "bar", c: "baz" };
+    expect(o).toContainKey("a");
+    expect(o).toContainKey("b");
+    expect(o).toContainKey("c");
+    expect(o).not.toContainKey("z");
+    expect(o).not.toContainKey({ a: "foo" });
+  });
 
-    expect([]).not.toContain([]);
+  test("toContainAnyKeys", () => {
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
+    expect({ 1: "test", 2: "test2" }).toContainAnyKeys([1]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["b"]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["b", "c"]);
+    expect({ a: "hello", b: "world" }).not.toContainAnyKeys(["c"]);
+  });
+
+  test("toContainKeys", () => {
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);
+    expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
+    expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
   });
 
   test("toBeTruthy()", () => {
@@ -3058,6 +3212,41 @@ describe("expect()", () => {
     }
   });
 
+  test("toBeEmptyObject()", () => {
+    // Map and Set are not considered as object in jest-extended
+    // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
+    expect(new Map().set("a", 1)).not.toBeEmptyObject();
+    expect(new Map()).not.toBeEmptyObject();
+    expect(new Set()).not.toBeEmptyObject();
+    expect(new Set().add("1")).not.toBeEmptyObject();
+    expect([]).toBeEmptyObject();
+    expect({}).toBeEmptyObject();
+    expect([1, 2]).not.toBeEmptyObject();
+    expect({ a: "hello" }).not.toBeEmptyObject();
+    expect(true).not.toBeEmptyObject();
+    expect("notAnObject").not.toBeEmptyObject();
+
+    const object1 = {};
+
+    Object.defineProperty(object1, "property1", {
+      value: 42,
+    });
+
+    // Object.keys for non-enumerable properties returns an empty array
+    // jest-extended returns true for non enumerable object
+    expect(object1).toBeEmptyObject();
+
+    // jest-extended return false for Symbol
+    expect(Symbol("a")).not.toBeEmptyObject();
+    expect(Symbol()).not.toBeEmptyObject();
+
+    // jest-extended return false for Date
+    expect(new Date()).not.toBeEmptyObject();
+
+    // jest-extended return false for RegExp
+    expect(/(foo|bar)/g).not.toBeEmptyObject();
+  });
+
   test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();
@@ -3153,6 +3342,20 @@ describe("expect()", () => {
     expect(NaN).not.toBeInteger();
     expect("").not.toBeInteger();
     expect({}).not.toBeInteger();
+  });
+
+  test("toBeObject()", () => {
+    expect({}).toBeObject();
+    expect(class A {}).toBeObject();
+    expect([]).toBeObject();
+    expect(new Set()).toBeObject();
+    expect(new Map()).toBeObject();
+    expect(new Array(0)).toBeObject();
+    expect({ e: 1, e2: 2 }).toBeObject();
+    expect("notAnObject").not.toBeObject();
+    expect(1).not.toBeObject();
+    expect(NaN).not.toBeObject();
+    expect(undefined).not.toBeObject();
   });
 
   test("toBeFinite()", () => {
@@ -3253,7 +3456,7 @@ describe("expect()", () => {
     expect(null).not.toBeDate();
   });
 
-  test.todo("toBeValidDate()", () => {
+  test("toBeValidDate()", () => {
     expect(new Date()).toBeValidDate();
     expect(new Date(-1)).toBeValidDate();
     expect("2021-01-01").not.toBeValidDate();

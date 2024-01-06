@@ -182,8 +182,9 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     }
     if (n < len) {
         auto buffer = array->possiblySharedBuffer();
-        JSC::JSUint8Array* retArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, 0, n);
-        JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, n, len - n);
+        auto off = array->byteOffset();
+        JSC::JSUint8Array* retArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off, n);
+        JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off + n, len - n);
         m_deque.first().set(vm, this, newArray);
         RELEASE_AND_RETURN(throwScope, retArray);
     }
@@ -207,7 +208,8 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
             }
             auto buffer = array->possiblySharedBuffer();
-            JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, n, len - n);
+            auto off = array->byteOffset();
+            JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off + n, len - n);
             element.set(vm, this, newArray);
             offset += n;
             break;

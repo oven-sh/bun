@@ -73,10 +73,11 @@ sink.end();
 // ArrayBuffer(5) [ 104, 101, 108, 108, 111 ]
 ```
 
-To instead retrieve the data as a `Uint8Array`, pass the `asUint8Array` option to the constructor.
+To instead retrieve the data as a `Uint8Array`, pass the `asUint8Array` option to the `start` method.
 
 ```ts-diff
-const sink = new Bun.ArrayBufferSink({
+const sink = new Bun.ArrayBufferSink();
+sink.start({
 + asUint8Array: true
 });
 
@@ -103,7 +104,8 @@ sink.end();
 Once `.end()` is called, no more data can be written to the `ArrayBufferSink`. However, in the context of buffering a stream, it's useful to continuously write data and periodically `.flush()` the contents (say, into a `WriteableStream`). To support this, pass `stream: true` to the constructor.
 
 ```ts
-const sink = new Bun.ArrayBufferSink({
+const sink = new Bun.ArrayBufferSink();
+sink.start({
   stream: true,
 });
 
@@ -124,7 +126,8 @@ The `.flush()` method returns the buffered data as an `ArrayBuffer` (or `Uint8Ar
 To manually set the size of the internal buffer in bytes, pass a value for `highWaterMark`:
 
 ```ts
-const sink = new Bun.ArrayBufferSink({
+const sink = new Bun.ArrayBufferSink();
+sink.start({
   highWaterMark: 1024 * 1024, // 1 MB
 });
 ```

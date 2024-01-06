@@ -304,7 +304,7 @@ const zig_base64 = struct {
                 return error.InvalidPadding;
             }
             if (leftover_idx == null) return;
-            var leftover = source[leftover_idx.?..];
+            const leftover = source[leftover_idx.?..];
             if (decoder.pad_char) |pad_char| {
                 const padding_len = acc_len / 2;
                 var padding_chars: usize = 0;
@@ -391,7 +391,7 @@ const zig_base64 = struct {
                 const padding_len = acc_len / 2;
 
                 if (leftover_idx) |idx| {
-                    var leftover = source[idx..];
+                    const leftover = source[idx..];
                     var padding_chars: usize = 0;
                     for (leftover) |c| {
                         if (decoder_with_ignore.char_is_ignored[c]) continue;
@@ -502,7 +502,7 @@ const zig_base64 = struct {
         // Base64Decoder
         {
             var buffer: [0x100]u8 = undefined;
-            var decoded = buffer[0..try codecs.Decoder.calcSizeForSlice(expected_encoded)];
+            const decoded = buffer[0..try codecs.Decoder.calcSizeForSlice(expected_encoded)];
             try codecs.Decoder.decode(decoded, expected_encoded);
             try testing.expectEqualSlices(u8, expected_decoded, decoded);
         }
@@ -512,7 +512,7 @@ const zig_base64 = struct {
             const decoder_ignore_nothing = codecs.decoderWithIgnore("");
             var buffer: [0x100]u8 = undefined;
             var decoded = buffer[0..try decoder_ignore_nothing.calcSizeUpperBound(expected_encoded.len)];
-            var written = try decoder_ignore_nothing.decode(decoded, expected_encoded);
+            const written = try decoder_ignore_nothing.decode(decoded, expected_encoded);
             try testing.expect(written <= decoded.len);
             try testing.expectEqualSlices(u8, expected_decoded, decoded[0..written]);
         }
@@ -522,7 +522,7 @@ const zig_base64 = struct {
         const decoder_ignore_space = codecs.decoderWithIgnore(" ");
         var buffer: [0x100]u8 = undefined;
         var decoded = buffer[0..try decoder_ignore_space.calcSizeUpperBound(encoded.len)];
-        var written = try decoder_ignore_space.decode(decoded, encoded);
+        const written = try decoder_ignore_space.decode(decoded, encoded);
         try testing.expectEqualSlices(u8, expected_decoded, decoded[0..written]);
     }
 
@@ -530,7 +530,7 @@ const zig_base64 = struct {
         const decoder_ignore_space = codecs.decoderWithIgnore(" ");
         var buffer: [0x100]u8 = undefined;
         if (codecs.Decoder.calcSizeForSlice(encoded)) |decoded_size| {
-            var decoded = buffer[0..decoded_size];
+            const decoded = buffer[0..decoded_size];
             if (codecs.Decoder.decode(decoded, encoded)) |_| {
                 return error.ExpectedError;
             } else |err| if (err != expected_err) return err;
@@ -544,7 +544,7 @@ const zig_base64 = struct {
     fn testNoSpaceLeftError(codecs: Codecs, encoded: []const u8) !void {
         const decoder_ignore_space = codecs.decoderWithIgnore(" ");
         var buffer: [0x100]u8 = undefined;
-        var decoded = buffer[0 .. (try codecs.Decoder.calcSizeForSlice(encoded)) - 1];
+        const decoded = buffer[0 .. (try codecs.Decoder.calcSizeForSlice(encoded)) - 1];
         if (decoder_ignore_space.decode(decoded, encoded)) |_| {
             return error.ExpectedError;
         } else |err| if (err != error.NoSpaceLeft) return err;

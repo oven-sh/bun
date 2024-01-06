@@ -61,6 +61,12 @@
   MessageChannel                  MessageChannelConstructorCallback                    PropertyCallback
   MessageEvent                    MessageEventConstructorCallback                      PropertyCallback
   MessagePort                     MessagePortConstructorCallback                       PropertyCallback
+  Performance                     PerformanceConstructorCallback                       PropertyCallback
+  PerformanceEntry                PerformanceEntryConstructorCallback                  PropertyCallback
+  PerformanceMark                 PerformanceMarkConstructorCallback                   PropertyCallback
+  PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
+  PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
+  PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
@@ -70,6 +76,7 @@
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
+  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
@@ -77,6 +84,5 @@
   WritableStream                  WritableStreamConstructorCallback                    PropertyCallback
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       PropertyCallback
-  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
 @end
 */

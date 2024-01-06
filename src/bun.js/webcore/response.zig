@@ -5,7 +5,6 @@ const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const http = @import("root").bun.http;
 const FetchRedirect = http.FetchRedirect;
-const AsyncIO = bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
 
@@ -60,7 +59,6 @@ pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSResponse;
 
-    allocator: std.mem.Allocator,
     body: Body,
     init: Init,
     url: bun.String = bun.String.empty,
@@ -82,7 +80,7 @@ pub const Response = struct {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
         defer content_type_slice.deinit();
         const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-        return bun.FormData.AsyncFormData.init(this.allocator, encoding) catch unreachable;
+        return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch unreachable;
     }
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -252,7 +250,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        const cloned = this.clone(globalThis);
         return Response.makeMaybePooled(globalThis, cloned);
     }
 
@@ -260,14 +258,11 @@ pub const Response = struct {
         return ptr.toJS(globalObject);
     }
 
-    pub fn cloneInto(
+    pub fn cloneValue(
         this: *Response,
-        new_response: *Response,
-        allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
-    ) void {
-        new_response.* = Response{
-            .allocator = allocator,
+    ) Response {
+        return Response{
             .body = this.body.clone(globalThis),
             .init = this.init.clone(globalThis),
             .url = this.url.clone(),
@@ -275,10 +270,8 @@ pub const Response = struct {
         };
     }
 
-    pub fn clone(this: *Response, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Response {
-        var new_response = allocator.create(Response) catch unreachable;
-        this.cloneInto(new_response, allocator, globalThis);
-        return new_response;
+    pub fn clone(this: *Response, globalThis: *JSGlobalObject) *Response {
+        return bun.new(Response, this.cloneValue(globalThis));
     }
 
     pub fn getStatus(
@@ -292,13 +285,11 @@ pub const Response = struct {
     pub fn finalize(
         this: *Response,
     ) callconv(.C) void {
-        var allocator = this.allocator;
-
-        this.init.deinit(allocator);
-        this.body.deinit(allocator);
+        this.init.deinit(bun.default_allocator);
+        this.body.deinit(bun.default_allocator);
         this.url.deref();
 
-        allocator.destroy(this);
+        bun.destroy(this);
     }
 
     pub fn getContentType(
@@ -325,7 +316,6 @@ pub const Response = struct {
         const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
-        // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
             .body = Body{
@@ -334,7 +324,6 @@ pub const Response = struct {
             .init = Response.Init{
                 .status_code = 200,
             },
-            .allocator = getAllocator(globalThis),
             .url = bun.String.empty,
         };
 
@@ -375,10 +364,7 @@ pub const Response = struct {
 
         var headers_ref = response.getOrCreateHeaders(globalThis);
         headers_ref.putDefault("content-type", MimeType.json.value, globalThis);
-        var ptr = response.allocator.create(Response) catch unreachable;
-        ptr.* = response;
-
-        return ptr.toJS(globalThis);
+        return bun.new(Response, response).toJS(globalThis);
     }
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
@@ -387,7 +373,6 @@ pub const Response = struct {
         var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
-        // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
             .init = Response.Init{
@@ -396,7 +381,6 @@ pub const Response = struct {
             .body = Body{
                 .value = .{ .Empty = {} },
             },
-            .allocator = getAllocator(globalThis),
             .url = bun.String.empty,
         };
 
@@ -423,8 +407,7 @@ pub const Response = struct {
         response.init.headers = response.getOrCreateHeaders(globalThis);
         var headers_ref = response.init.headers.?;
         headers_ref.put("location", url_string_slice.slice(), globalThis);
-        var ptr = response.allocator.create(Response) catch unreachable;
-        ptr.* = response;
+        const ptr = bun.new(Response, response);
 
         return ptr.toJS(globalThis);
     }
@@ -432,16 +415,17 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        var response = getAllocator(globalThis).create(Response) catch unreachable;
-        response.* = Response{
-            .init = Response.Init{
-                .status_code = 0,
+        const response = bun.new(
+            Response,
+            Response{
+                .init = Response.Init{
+                    .status_code = 0,
+                },
+                .body = Body{
+                    .value = .{ .Empty = {} },
+                },
             },
-            .body = Body{
-                .value = .{ .Empty = {} },
-            },
-            .allocator = getAllocator(globalThis),
-        };
+        );
 
         return response.toJS(globalThis);
     }
@@ -450,8 +434,6 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Response {
-        var allocator = getAllocator(globalThis);
-
         const args_list = brk: {
             var args = callframe.arguments(2);
             if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
@@ -478,7 +460,7 @@ pub const Response = struct {
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        break :brk Init.init(allocator, globalThis, arguments[1]) catch null;
+                        break :brk Init.init(bun.default_allocator, globalThis, arguments[1]) catch null;
                     }
 
                     std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
@@ -505,13 +487,10 @@ pub const Response = struct {
             unreachable;
         } orelse return null;
 
-        var response = allocator.create(Response) catch unreachable;
-
-        response.* = Response{
+        var response = bun.new(Response, Response{
             .body = body,
             .init = init,
-            .allocator = getAllocator(globalThis),
-        };
+        });
 
         if (response.body.value == .Blob and
             response.init.headers != null and
@@ -532,7 +511,7 @@ pub const Response = struct {
 
         pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
             var that = this;
-            var headers = this.headers;
+            const headers = this.headers;
             if (headers) |head| {
                 that.headers = head.cloneThis(ctx);
             }
@@ -621,21 +600,15 @@ pub const Response = struct {
         return emptyWithStatus(globalThis, 200);
     }
 
-    inline fn emptyWithStatus(globalThis: *JSC.JSGlobalObject, status: u16) Response {
-        var allocator = getAllocator(globalThis);
-        var response = allocator.create(Response) catch unreachable;
-
-        response.* = Response{
+    inline fn emptyWithStatus(_: *JSC.JSGlobalObject, status: u16) Response {
+        return bun.new(Response, .{
             .body = Body{
                 .value = Body.Value{ .Null = {} },
             },
             .init = Init{
                 .status_code = status,
             },
-            .allocator = getAllocator(globalThis),
-        };
-
-        return response;
+        });
     }
 };
 
@@ -747,7 +720,7 @@ pub const Fetch = struct {
         signal: ?*JSC.WebCore.AbortSignal = null,
         signals: http.Signals = .{},
         signal_store: http.Signals.Store = .{},
-        has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
         abort_reason: JSValue = JSValue.zero,
@@ -862,7 +835,7 @@ pub const Fetch = struct {
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
-                    var vm = globalThis.bunVM();
+                    const vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
@@ -903,7 +876,7 @@ pub const Fetch = struct {
                 if (readable.ptr == .Bytes) {
                     readable.ptr.Bytes.size_hint = this.getSizeHint();
                     // body can be marked as used but we still need to pipe the data
-                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                    const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                     const chunk = scheduled_response_buffer.items;
 
@@ -937,7 +910,7 @@ pub const Fetch = struct {
                             if (readable.ptr == .Bytes) {
                                 readable.ptr.Bytes.size_hint = this.getSizeHint();
 
-                                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                                const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                                 const chunk = scheduled_response_buffer.items;
 
@@ -972,7 +945,7 @@ pub const Fetch = struct {
 
                             // done resolve body
                             var old = body.value;
-                            var body_value = Body.Value{
+                            const body_value = Body.Value{
                                 .InternalBlob = .{
                                     .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
                                 },
@@ -1016,7 +989,7 @@ pub const Fetch = struct {
                 }
                 this.mutex.unlock();
                 var poll_ref = this.poll_ref;
-                var vm = globalThis.bunVM();
+                const vm = globalThis.bunVM();
 
                 poll_ref.unref(vm);
                 this.clearData();
@@ -1028,7 +1001,7 @@ pub const Fetch = struct {
             const promise_value = ref.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
-            var vm = globalThis.bunVM();
+            const vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
@@ -1114,7 +1087,7 @@ pub const Fetch = struct {
 
                 pub fn resolve(held: *@This()) void {
                     var prom = held.promise.swap().asAnyPromise().?;
-                    var globalObject = held.globalObject;
+                    const globalObject = held.globalObject;
                     const res = held.held.swap();
                     held.held.deinit();
                     held.promise.deinit();
@@ -1126,7 +1099,7 @@ pub const Fetch = struct {
 
                 pub fn reject(held: *@This()) void {
                     var prom = held.promise.swap().asAnyPromise().?;
-                    var globalObject = held.globalObject;
+                    const globalObject = held.globalObject;
                     const res = held.held.swap();
                     held.held.deinit();
                     held.promise.deinit();
@@ -1157,7 +1130,7 @@ pub const Fetch = struct {
             if (this.check_server_identity.get()) |check_server_identity| {
                 check_server_identity.ensureStillAlive();
                 if (certificate_info.cert.len > 0) {
-                    var cert = certificate_info.cert;
+                    const cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
@@ -1409,15 +1382,14 @@ pub const Fetch = struct {
             return response;
         }
 
-        fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
+        fn toResponse(this: *FetchTasklet) Response {
             log("toResponse", .{});
             std.debug.assert(this.metadata != null);
             // at this point we always should have metadata
-            var metadata = this.metadata.?;
+            const metadata = this.metadata.?;
             const http_response = metadata.response;
             this.is_waiting_body = this.result.has_more;
             return Response{
-                .allocator = allocator,
                 .url = bun.String.createAtomIfPossible(metadata.url),
                 .redirected = this.result.redirected,
                 .init = .{
@@ -1433,9 +1405,7 @@ pub const Fetch = struct {
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
             log("onResolve", .{});
-            const allocator = bun.default_allocator;
-            var response = allocator.create(Response) catch unreachable;
-            response.* = this.toResponse(allocator);
+            const response = bun.new(Response, this.toResponse());
             const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
             response_js.ensureStillAlive();
             this.response = JSC.Strong.create(response_js, this.global_this);
@@ -1635,7 +1605,7 @@ pub const Fetch = struct {
             // reset for reuse
             task.response_buffer.reset();
 
-            if (task.has_schedule_callback.compareAndSwap(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
+            if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
                     return;
                 }
@@ -1665,21 +1635,21 @@ pub const Fetch = struct {
             blob.content_type_allocated = true;
         }
 
-        var response = allocator.create(Response) catch @panic("out of memory");
-
-        response.* = Response{
-            .body = Body{
-                .value = .{
-                    .Blob = blob,
+        var response = bun.new(
+            Response,
+            Response{
+                .body = Body{
+                    .value = .{
+                        .Blob = blob,
+                    },
                 },
+                .init = Response.Init{
+                    .status_code = 200,
+                    .status_text = bun.String.createAtomASCII("OK"),
+                },
+                .url = data_url.url.dupeRef(),
             },
-            .init = Response.Init{
-                .status_code = 200,
-                .status_text = bun.String.createAtom("OK"),
-            },
-            .allocator = allocator,
-            .url = data_url.url.dupeRef(),
-        };
+        );
 
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
@@ -1693,7 +1663,7 @@ pub const Fetch = struct {
         const arguments = callframe.arguments(2);
 
         var exception_val = [_]JSC.C.JSValueRef{null};
-        var exception: JSC.C.ExceptionRef = &exception_val;
+        const exception: JSC.C.ExceptionRef = &exception_val;
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
         var free_memory_reporter = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
@@ -1717,7 +1687,7 @@ pub const Fetch = struct {
         var method = Method.GET;
         var script_ctx = globalThis.bunVM();
 
-        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
+        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
 
         var url = ZigURL{};
         var first_arg = args.nextEat().?;
@@ -2175,29 +2145,29 @@ pub const Fetch = struct {
             var file_url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
             defer file_url_string.deref();
 
-            const bun_file = Blob.findOrCreateFileFromPath(
-                .{
-                    .path = .{
-                        .string = bun.PathString.init(
-                            temp_file_path,
-                        ),
-                    },
+            var pathlike: JSC.Node.PathOrFileDescriptor = .{
+                .path = .{
+                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
+                        globalThis.throwOutOfMemory();
+                        return .zero;
+                    }),
                 },
+            };
+
+            const bun_file = Blob.findOrCreateFileFromPath(
+                &pathlike,
                 globalThis,
             );
 
-            var response = bun.default_allocator.create(Response) catch @panic("out of memory");
-
-            response.* = Response{
+            const response = bun.new(Response, Response{
                 .body = Body{
                     .value = .{ .Blob = bun_file },
                 },
                 .init = Response.Init{
                     .status_code = 200,
                 },
-                .allocator = bun.default_allocator,
                 .url = file_url_string.clone(),
-            };
+            });
 
             return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
         }

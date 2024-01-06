@@ -136,6 +136,23 @@ describe("node:http", () => {
       expect(listenResponse).toBe(server);
       listenResponse.close();
     });
+
+    it("option method should be uppercase (#7250)", async () => {
+      try {
+        var server = createServer((req, res) => {
+          expect(req.method).toBe("OPTIONS");
+          res.writeHead(204, {});
+          res.end();
+        });
+        const url = await listen(server);
+        const res = await fetch(url, {
+          method: "OPTIONS",
+        });
+        expect(res.status).toBe(204);
+      } finally {
+        server.close();
+      }
+    });
   });
 
   describe("response", () => {
@@ -1613,4 +1630,48 @@ it("#6892", () => {
     expect(req.url).toBe(url);
     expect(req.method).toBeNull();
   }
+});
+
+it("#4415.1 ServerResponse es6", () => {
+  class Response extends ServerResponse {
+    constructor(req) {
+      super(req);
+    }
+  }
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.2 ServerResponse es5", () => {
+  function Response(req) {
+    ServerResponse.call(this, req);
+  }
+  Response.prototype = Object.create(ServerResponse.prototype);
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.3 Server es5", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`);
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+it("#4415.4 IncomingMessage es5", () => {
+  const im = Object.create(IncomingMessage.prototype);
+  IncomingMessage.call(im, { url: "/foo" });
+  expect(im.url).toBe("/foo");
 });

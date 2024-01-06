@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, appendFile } from "fs/promises";
 import { join, relative } from "path";
 import { tmpdir } from "os";
 import {
@@ -69,7 +69,6 @@ it("should add existing package", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` installed foo@${add_path}`,
-    "",
     "",
     " 1 package installed",
   ]);
@@ -280,7 +279,6 @@ it("should add dependency with capital letters", async () => {
     "",
     " installed BaR@0.0.2",
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
@@ -308,7 +306,7 @@ it("should add dependency with capital letters", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should add exact version", async () => {
+it("should add exact version with --exact", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -336,6 +334,61 @@ it("should add exact version", async () => {
     "",
     " installed BaR@0.0.2",
     "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          BaR: "0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should add exact version with install.exact", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  await appendFile(join(package_dir, "bunfig.toml"), `exact = true\n`);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "BaR"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed BaR@0.0.2",
     "",
     " 1 package installed",
   ]);
@@ -390,7 +443,6 @@ it("should add exact version with -E", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed BaR@0.0.2",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -456,7 +508,6 @@ it("should add dependency with specified semver", async () => {
     " installed baz@0.0.3 with binaries:",
     "  - baz-run",
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
@@ -517,7 +568,6 @@ it("should add dependency (GitHub)", async () => {
     "",
     " installed uglify-js@github:mishoo/UglifyJS#e219a9a with binaries:",
     "  - uglifyjs",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -602,11 +652,11 @@ it("should add dependency alongside workspaces", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + bar@workspace:packages/bar",
     "",
     " installed baz@0.0.3 with binaries:",
     "  - baz-run",
-    "",
     "",
     " 2 packages installed",
   ]);
@@ -680,7 +730,6 @@ it("should add aliased dependency (npm)", async () => {
     " installed bar@0.0.3 with binaries:",
     "  - baz-run",
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
@@ -741,7 +790,6 @@ it("should add aliased dependency (GitHub)", async () => {
     "",
     " installed uglify@github:mishoo/UglifyJS#e219a9a with binaries:",
     "  - uglifyjs",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -826,7 +874,6 @@ it("should let you add the same package twice", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed baz@0.0.3",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -944,7 +991,6 @@ it("should install version tagged with `latest` by default", async () => {
     "",
     " installed baz@0.0.3",
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
@@ -994,6 +1040,7 @@ it("should install version tagged with `latest` by default", async () => {
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
     " + baz@0.0.3",
     "",
     " 1 package installed",
@@ -1059,7 +1106,6 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     "",
     " installed uglify-js@git+ssh://bun@github.com:mishoo/UglifyJS.git with binaries:",
     "  - uglifyjs",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -1206,7 +1252,6 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
     "",
     " installed bar@0.0.2",
     "",
-    "",
     " 2 packages installed",
   ]);
   expect(await exited).toBe(0);
@@ -1267,7 +1312,6 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
     "",
     " installed bar@0.0.2",
     "",
-    "",
     " 2 packages installed",
   ]);
   expect(await exited).toBe(0);
@@ -1325,7 +1369,6 @@ it("should add dependency without duplication", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed bar@0.0.2",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -1428,7 +1471,6 @@ it("should add dependency without duplication (GitHub)", async () => {
     "",
     " installed uglify-js@github:mishoo/UglifyJS#e219a9a with binaries:",
     "  - uglifyjs",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -1569,7 +1611,6 @@ it("should add dependencies to workspaces directly", async () => {
     "",
     ` installed foo@${relative(package_dir, add_dir)}`,
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
@@ -1634,7 +1675,6 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
     "",
     ` installed foo@${add_path}`,
     "",
-    "",
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
@@ -1670,7 +1710,6 @@ it("should add dependency alongside peerDependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed bar@0.0.2",
-    "",
     "",
     " 1 package installed",
   ]);
@@ -1725,7 +1764,6 @@ it("should add local tarball dependency", async () => {
     "",
     " installed baz@baz-0.0.3.tgz with binaries:",
     "  - baz-run",
-    "",
     "",
     " 1 package installed",
   ]);

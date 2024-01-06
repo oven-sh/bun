@@ -41,15 +41,25 @@ async function tempDirToBuildIn() {
 
 async function hashAllFiles(dir: string) {
   console.log("Hashing");
-  const files = (await fs.readdir(dir, { recursive: true })).sort();
+  const files = (await fs.readdir(dir, { recursive: true, withFileTypes: true })).sort();
   const hashes: Record<string, string> = {};
   const promises = new Array(files.length);
   for (let i = 0; i < promises.length; i++) {
+    if (!(files[i].isFile() || files[i].isSymbolicLink())) {
+      i--;
+      promises.length--;
+      continue;
+    }
+
     promises[i] = (async function (file, path) {
-      const contents = await fs.readFile(path);
-      console.log("file", file, path);
-      hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
-    })(files[i], join(dir, files[i]));
+      try {
+        const contents = await fs.readFile(path);
+        hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
+      } catch (error) {
+        console.error("error", error, "in", path);
+        throw error;
+      }
+    })(files[i].name, join(dir, files[i].name));
   }
   await Promise.all(promises);
   return hashes;

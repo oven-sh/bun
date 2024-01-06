@@ -5,12 +5,13 @@ const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
 const Async = bun.Async;
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
     /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
-    status: std.atomic.Atomic(Status) = std.atomic.Atomic(Status).init(.start),
+    status: std.atomic.Value(Status) = std.atomic.Value(Status).init(.start),
     /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
     requested_terminate: bool = false,
     execution_context_id: u32 = 0,
@@ -31,6 +32,9 @@ pub const WebWorker = struct {
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
 
+    argv: ?[]const WTFStringImpl,
+    execArgv: ?[]const WTFStringImpl,
+
     pub const Status = enum(u8) {
         start,
         starting,
@@ -43,7 +47,7 @@ pub const WebWorker = struct {
     extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
 
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
-        var worker = vm.worker orelse return null;
+        const worker = vm.worker orelse return null;
         return worker.cpp_worker;
     }
 
@@ -72,12 +76,16 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
+        argv_ptr: ?[*]WTFStringImpl,
+        argv_len: u32,
+        execArgv_ptr: ?[*]WTFStringImpl,
+        execArgv_len: u32,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
         defer spec_slice.deinit();
-        var prev_log = parent.bundler.log;
+        const prev_log = parent.bundler.log;
         var temp_log = bun.logger.Log.init(bun.default_allocator);
         parent.bundler.setLog(&temp_log);
         defer parent.bundler.setLog(prev_log);
@@ -90,7 +98,7 @@ pub const WebWorker = struct {
             return null;
         };
 
-        var path = resolved_entry_point.path() orelse {
+        const path = resolved_entry_point.path() orelse {
             error_message.* = bun.String.static("Worker entry point is missing");
             return null;
         };
@@ -112,6 +120,8 @@ pub const WebWorker = struct {
             },
             .user_keep_alive = !default_unref,
             .worker_event_loop_running = true,
+            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
+            .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
         };
 
         worker.parent_poll_ref.refConcurrently(parent);
@@ -169,7 +179,7 @@ pub const WebWorker = struct {
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;
         vm.onUnhandledRejection = onUnhandledRejection;
-        var callback = JSC.OpaqueWrap(WebWorker, WebWorker.spin);
+        const callback = JSC.OpaqueWrap(WebWorker, WebWorker.spin);
 
         this.vm = vm;
 
@@ -194,9 +204,11 @@ pub const WebWorker = struct {
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
 
-    fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance: JSC.JSValue) void {
+    fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance_or_exception: JSC.JSValue) void {
         // Prevent recursion
         vm.onUnhandledRejection = &JSC.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+
+        const error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
         var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
         defer array.deinit();
@@ -205,7 +217,7 @@ pub const WebWorker = struct {
         var buffered_writer = &buffered_writer_;
         var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
-        var writer = buffered_writer.writer();
+        const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
         // when it's under 4096, we want to avoid the dynamic allocation
@@ -339,7 +351,7 @@ pub const WebWorker = struct {
         this.setStatus(.terminated);
 
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
-        var cpp_worker = this.cpp_worker;
+        const cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
         var vm_to_deinit: ?*JSC.VirtualMachine = null;

@@ -3,8 +3,6 @@ import { createDenoTest } from "deno:harness";
 const { test,
   assert,
   assertEquals,
-  assertNotStrictEquals,
-  assertStringIncludes,
   assertThrows,
 } = createDenoTest(import.meta.path);
 
@@ -87,7 +85,6 @@ test(function performanceMeasure() {
       try {
         const later = new Date().valueOf();
         const measure1 = performance.measure(measureName1, markName1);
-        console.log(measure1);
         const measure2 = performance.measure(
           measureName2,
           undefined,
@@ -101,7 +98,6 @@ test(function performanceMeasure() {
         assertEquals(measure2.startTime, 0);
         assertEquals(mark1.startTime, measure1.startTime);
         assertEquals(mark1.startTime, measure2.duration);
-        console.log(measure1.duration);
         assert(
           measure1.duration >= 100,
           `duration below 100ms: ${measure1.duration}`,
@@ -128,31 +124,23 @@ test(function performanceMeasure() {
   });
 });
 
-// test(function performanceCustomInspectFunction() {
-//   assertStringIncludes(Deno.inspect(performance), "Performance");
-//   assertStringIncludes(
-//     Deno.inspect(Performance.prototype),
-//     "Performance",
-//   );
-// });
+test(function performanceObserver() {
+  function perfObserver(list, observer) {
+    list.getEntries().forEach((entry) => {
+      if (entry.entryType === "mark") {
+        assertEquals(entry.name, "testmark");
+      }
+      if (entry.entryType === "measure") {
+        assertEquals(entry.name, "testmeasure");
+      }
+    });
+  }
+  const observer = new PerformanceObserver(perfObserver);
+  observer.observe({ entryTypes: ["measure", "mark"] });
 
-// test(function performanceMarkCustomInspectFunction() {
-//   const mark1 = performance.mark("mark1");
-//   assertStringIncludes(Deno.inspect(mark1), "PerformanceMark");
-//   assertStringIncludes(
-//     Deno.inspect(PerformanceMark.prototype),
-//     "PerformanceMark",
-//   );
-// });
-
-// test(function performanceMeasureCustomInspectFunction() {
-//   const measure1 = performance.measure("measure1");
-//   assertStringIncludes(Deno.inspect(measure1), "PerformanceMeasure");
-//   assertStringIncludes(
-//     Deno.inspect(PerformanceMeasure.prototype),
-//     "PerformanceMeasure",
-//   );
-// });
+  performance.mark("testmark");
+  performance.measure("testmeasure", "testmark");
+});
 
 test(function performanceIllegalConstructor() {
   assertThrows(() => new Performance(), TypeError, "Illegal constructor");

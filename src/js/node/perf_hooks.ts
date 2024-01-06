@@ -15,11 +15,7 @@ var constants = {
   NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
-var { performance,
-  PerformanceObserver,
-  PerformanceEntry } = globalThis;
-
-
+var { performance, PerformanceObserver, PerformanceEntry } = globalThis;
 
 export default {
   performance,

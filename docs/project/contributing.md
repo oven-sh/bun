@@ -26,6 +26,14 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 
 {% /codetabs %}
 
+Note: For Fedora users, you will also need to install the Perl `Math::BigInt` module before being able to run `bun setup`.
+
+{% /codetabs %}
+```bash#Fedora
+sudo dnf install 'perl(Math::BigInt)'
+```
+{% codetabs %}
+
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}

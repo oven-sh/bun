@@ -1,5 +1,4 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented } = require("$shared");
 
 var constants = {
   NODE_PERFORMANCE_GC_MAJOR: 4,
@@ -15,19 +14,14 @@ var constants = {
   NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
-var performance = globalThis.performance;
-
-class PerformanceObserver {
-  constructor() {
-    throwNotImplemented("PerformanceObserver");
-  }
-}
-
-class PerformanceEntry {
-  constructor() {
-    throwNotImplemented("PerformanceEntry");
-  }
-}
+var {
+  Performance,
+  PerformanceEntry,
+  PerformanceMark,
+  PerformanceMeasure,
+  PerformanceObserver,
+  PerformanceObserverEntryList,
+} = globalThis;
 
 export default {
   performance,
@@ -47,12 +41,12 @@ export default {
   //   onresourcetimingbufferfull: [Getter/Setter]
   // },
   constants,
-  // Performance: [class Performance extends EventTarget],
+  Performance,
   PerformanceEntry,
-  // PerformanceMark: [class PerformanceMark extends PerformanceEntry],
-  // PerformanceMeasure: [class PerformanceMeasure extends PerformanceEntry],
+  PerformanceMark,
+  PerformanceMeasure,
   PerformanceObserver,
-  // PerformanceObserverEntryList: [class PerformanceObserverEntryList],
+  PerformanceObserverEntryList,
   // PerformanceResourceTiming: [class PerformanceResourceTiming extends PerformanceEntry],
   // monitorEventLoopDelay: [Function: monitorEventLoopDelay],
   // createHistogram: [Function: createHistogram],

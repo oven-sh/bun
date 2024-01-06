@@ -45,6 +45,11 @@ static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_s
     }
 }
 
+JSGlobalObject* ScriptExecutionContext::globalObject()
+{
+    return m_globalObject;
+}
+
 us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
 {
     if (!m_ssl_client_websockets_ctx) {

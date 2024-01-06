@@ -94,6 +94,13 @@
 #include "JSStringDecoder.h"
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
+#include "JSPerformance.h"
+#include "Performance.h"
+#include "JSPerformanceObserver.h"
+#include "JSPerformanceObserverEntryList.h"
+#include "JSPerformanceEntry.h"
+#include "JSPerformanceMeasure.h"
+#include "JSPerformanceMark.h"
 #include "BunProcess.h"
 #include "AsyncContextFrame.h"
 
@@ -1085,6 +1092,12 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(FetchHeaders);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessageChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessageEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessagePort);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Performance);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceEntry);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMark);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMeasure);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserver);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserverEntryList);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBReader)
@@ -2292,126 +2305,6 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" uint64_t Bun__readOriginTimer(void*);
-extern "C" double Bun__readOriginTimerStart(void*);
-
-static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
-{
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    // nanoseconds to seconds
-    double time = static_cast<double>(Bun__readOriginTimer(global->bunVM()));
-    double result = time / 1000000.0;
-
-    // https://github.com/oven-sh/bun/issues/5604
-    return JSValue::encode(jsDoubleNumber(result));
-}
-
-static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject)
-{
-    auto& vm = globalObject->vm();
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    auto* array = JSC::constructEmptyArray(globalObject, nullptr);
-    return JSValue::encode(array);
-}
-
-extern "C" {
-class JSPerformanceObject;
-static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
-static JSC_DECLARE_HOST_FUNCTION(functionPerformanceGetEntriesByName);
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformanceObject*));
-}
-
-class JSPerformanceObject final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSPerformanceObject* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSPerformanceObject* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObject>(vm)) JSPerformanceObject(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceObject, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSPerformanceObject(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm)
-    {
-        Base::finishCreation(vm);
-        static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
-            functionPerformanceNowWithoutTypeCheck,
-            JSPerformanceObject::info(),
-            JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
-            SpecDoubleReal);
-
-        JSFunction* now = JSFunction::create(
-            vm,
-            globalObject(),
-            0,
-            String("now"_s),
-            functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
-            &DOMJITSignatureForPerformanceNow);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, 0);
-
-        JSFunction* noopNotImplemented = JSFunction::create(
-            vm,
-            globalObject(),
-            0,
-            String("noopNotImplemented"_s),
-            functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionNoop,
-            nullptr);
-
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, 0);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "markResourceTiming"_s), noopNotImplemented, 0);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, 0);
-
-        // this is a stub impl for getEntriesByName(https://github.com/oven-sh/bun/issues/6537)
-        JSFunction* getEntriesByName = JSFunction::create(
-            vm, globalObject(), 0, String("getEntriesByName"_s), functionPerformanceGetEntriesByName, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceGetEntriesByName, nullptr);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "getEntriesByName"_s), getEntriesByName, 0);
-        this->putDirect(
-            vm,
-            JSC::Identifier::fromString(vm, "timeOrigin"_s),
-            jsNumber(Bun__readOriginTimerStart(reinterpret_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
-            PropertyAttribute::ReadOnly | 0);
-    }
-};
-const ClassInfo JSPerformanceObject::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObject) };
-
-JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return functionPerformanceNowBody(globalObject);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionPerformanceGetEntriesByName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return functionPerformanceGetEntriesByNameBody(globalObject);
-}
-
-JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformanceObject* castedThis))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return functionPerformanceNowBody(lexicalGlobalObject);
-}
-
 extern "C" JSC__JSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
 extern "C" JSC__JSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
 extern "C" JSC__JSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
@@ -3189,10 +3082,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_performanceObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            JSPerformanceObject* object = JSPerformanceObject::create(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner),
-                JSPerformanceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
-
-            init.set(object);
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            init.set(toJS(init.owner, globalObject, globalObject->performance().get()).getObject());
         });
 
     m_processEnvObject.initLater(
@@ -4053,6 +3944,18 @@ extern "C" void Bun__queueTaskConcurrently(JSC__JSGlobalObject*, WebCore::EventL
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
+}
+
+RefPtr<Performance> GlobalObject::performance()
+{
+    if (!m_performance) {
+        auto* context = this->scriptExecutionContext();
+        double nanoTimeOrigin = Bun__readOriginTimerStart(this->bunVM());
+        auto timeOrigin = MonotonicTime::fromRawSeconds(nanoTimeOrigin / 1000.0);
+        m_performance = Performance::create(context, timeOrigin);
+    }
+
+    return m_performance;
 }
 
 void GlobalObject::queueTask(WebCore::EventLoopTask* task)

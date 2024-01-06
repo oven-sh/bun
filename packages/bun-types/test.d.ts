@@ -966,11 +966,23 @@ declare module "bun:test" {
      */
     toContainKey(expected: unknown): void;
     /**
+     * Asserts that an `object` contains at least one of the provided keys.
      * Asserts that an `object` contains all the provided keys.
      *
      * The value must be an object
      *
      * @example
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['a']);
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['b']);
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['b', 'c']);
+     * expect({ a: 'hello', b: 'world' }).not.toContainAnyKeys(['c']);
+     *
+     * @param expected the expected value
+     */
+    toContainAnyKeys(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contains all the provided keys.
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKeys(['a', 'b', 'e']);

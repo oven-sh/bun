@@ -2251,6 +2251,15 @@ describe("expect()", () => {
     expect(o).not.toContainKey({ a: "foo" });
   });
 
+  test("toContainAnyKeys", () => {
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
+    expect({ 1: "test", 2: "test2" }).toContainAnyKeys([1]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["b"]);
+    expect({ a: "hello", b: "world" }).toContainAnyKeys(["b", "c"]);
+    expect({ a: "hello", b: "world" }).not.toContainAnyKeys(["c"]);
+  });
+
   test("toContainKeys", () => {
     expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
     expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);

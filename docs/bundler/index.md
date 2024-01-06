@@ -276,15 +276,15 @@ const result = await Bun.build({
   entrypoints: ["./index.ts"],
 });
 
-for (const result of result.outputs) {
+for (const res of result.outputs) {
   // Can be consumed as blobs
-  await result.text();
+  await res.text();
 
   // Bun will set Content-Type and Etag headers
-  new Response(result);
+  new Response(res);
 
   // Can be written manually, but you should use `outdir` in this case.
-  Bun.write(path.join("out", result.path), result);
+  Bun.write(path.join("out", res.path), res);
 }
 ```
 

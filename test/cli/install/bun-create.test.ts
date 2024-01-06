@@ -105,7 +105,7 @@ it("should create template from local folder", async () => {
 });
 
 it("should display help for create command", async () => {
-  const { exited, stdout} = spawn({
+  const { exited, stdout } = spawn({
     cmd: [bunExe(), "create", "-h"],
     cwd: x_dir,
   });
@@ -114,8 +114,10 @@ it("should display help for create command", async () => {
 
   // it's not necessary to check all the help content, we just check this appears.
   expect(help).toContain("Usage: bun create <template> [<destination>]");
-  expect(help).toContain("Alias: bun c")
-  expect(help).toContain("Create a new bun project using a create-<template> npm package, GitHub repo, or a local template")
+  expect(help).toContain("Alias: bun c");
+  expect(help).toContain(
+    "Create a new bun project using a create-<template> npm package, GitHub repo, or a local template",
+  );
 
   expect(await exited).toBe(0);
 });

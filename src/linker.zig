@@ -264,6 +264,15 @@ pub const Linker = struct {
                             continue;
                         }
 
+                        if (linker.resolver.standalone_module_graph) |graph| {
+                            if (strings.hasPrefixComptime(import_record.path.text, "compiled://")) {
+                                if (graph.files.contains(import_record.path.text)) {
+                                    externals.append(record_index) catch unreachable;
+                                }
+                                continue;
+                            }
+                        }
+
                         // if (strings.eqlComptime(import_record.path.text, "process")) {
                         //     import_record.path.text = "node:process";
                         //     externals.append(record_index) catch unreachable;

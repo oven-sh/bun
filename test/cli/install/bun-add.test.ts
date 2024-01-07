@@ -1418,9 +1418,8 @@ it("should add dependency without duplication", async () => {
 
   expect(err2).not.toContain("error:");
 
-  // the meta hash did not change, the display name did not change, therefore
-  // the lockfile did not change and should not need to be saved.
-  expect(err2).not.toContain("Saved lockfile");
+  // The meta-hash didn't change, but we do save everytime you do "bun add <package>".
+  expect(err2).toContain("Saved lockfile");
 
   expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual(["", " installed bar@0.0.2"]);
   expect(await exited2).toBe(0);
@@ -1533,8 +1532,8 @@ it("should add dependency without duplication (GitHub)", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
 
-  // We didn't make any changes to the lockfile, so it should not be saved.
-  expect(err2).not.toContain("Saved lockfile");
+  // The meta-hash didn't change, but we do save everytime you do "bun add <package>".
+  expect(err2).toContain("Saved lockfile");
 
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();

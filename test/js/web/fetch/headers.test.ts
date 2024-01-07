@@ -23,6 +23,19 @@ describe("Headers", () => {
       });
       expect(headers.get("content-type")).toBe("text/plain");
     });
+
+    test("deleted key in header constructor is not kept", () => {
+      const record = {
+        "content-type": "text/plain",
+        "user-agent": "bun",
+      };
+      // @ts-expect-error
+      delete record["content-type"];
+
+      const headers = new Headers(record);
+      expect(headers.get("content-type")).toBeNull();
+      expect(headers.get("user-agent")).toBe("bun");
+    });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({
         "accept": "*/*",

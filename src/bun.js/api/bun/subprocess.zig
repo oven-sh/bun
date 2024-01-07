@@ -2436,6 +2436,10 @@ pub const Subprocess = struct {
         }
 
         pub fn useMemfd(this: *@This(), index: u32) void {
+            if (comptime !Environment.isLinux) {
+                return;
+            }
+
             const label = switch (index) {
                 0 => "spawn_stdio_stdin",
                 1 => "spawn_stdio_stdout",
@@ -2444,19 +2448,7 @@ pub const Subprocess = struct {
             };
 
             // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-            const rc = std.os.linux.memfd_create(label, 0);
-
-            log("memfd_create({s}) = {d}", .{ label, rc });
-
-            switch (std.os.linux.getErrno(rc)) {
-                .SUCCESS => {},
-                else => |errno| {
-                    log("Failed to create memfd: {s}", .{@tagName(errno)});
-                    return;
-                },
-            }
-
-            const fd = bun.toFD(rc);
+            const fd = bun.sys.memfd_create(label, 0).unwrap() catch return;
 
             var remain = this.byteSlice();
 
@@ -2518,12 +2510,15 @@ pub const Subprocess = struct {
 
                     try actions.dup2(pipe_fd[idx], std_fileno);
                     try actions.close(pipe_fd[1 - idx]);
+                    try actions.close(pipe_fd[idx]);
                 },
                 .fd => |fd| {
                     try actions.dup2(fd, std_fileno);
+                    try actions.close(fd);
                 },
                 .memfd => |fd| {
                     try actions.dup2(fd, std_fileno);
+                    try actions.close(fd);
                 },
                 .path => |pathlike| {
                     const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);

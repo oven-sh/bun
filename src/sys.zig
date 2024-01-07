@@ -147,6 +147,20 @@ const open_sym = system.open;
 
 const mem = std.mem;
 
+pub fn memfd_create(label: ?[*:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
+    if (comptime !Environment.isLinux) {
+        @compileError("memfd_create is only supported on Linux");
+    }
+
+    const rc = linux.memfd_create(label orelse "", flags);
+
+    log("memfd_create({s}) = {d}", .{ label orelse "null", rc });
+
+    if (Maybe(bun.FileDescriptor).errnoSys(rc, .open)) |err| return err;
+
+    return Maybe(bun.FileDescriptor){ .result = bun.toFD(rc) };
+}
+
 pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
     const Result = Maybe([]const u8);
     buf[0] = 0;

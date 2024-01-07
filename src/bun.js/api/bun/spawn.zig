@@ -88,6 +88,9 @@ pub const PosixSpawn = struct {
     pub const Actions = struct {
         actions: system.posix_spawn_file_actions_t,
 
+        // Ensure we only close once.
+        close_list: std.ArrayListUnmanaged(fd_t) = .{},
+
         pub fn init() !Actions {
             var actions: system.posix_spawn_file_actions_t = undefined;
             switch (errno(system.posix_spawn_file_actions_init(&actions))) {
@@ -105,6 +108,8 @@ pub const PosixSpawn = struct {
             } else {
                 _ = system.posix_spawn_file_actions_destroy(&self.actions);
             }
+
+            self.close_list.deinit(bun.default_allocator);
 
             self.* = undefined;
         }
@@ -126,6 +131,9 @@ pub const PosixSpawn = struct {
         }
 
         pub fn close(self: *Actions, fd: fd_t) !void {
+            if (std.mem.indexOfScalar(fd_t, self.close_list.items, fd) != null) return;
+            self.close_list.append(bun.default_allocator, fd) catch {};
+
             switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,

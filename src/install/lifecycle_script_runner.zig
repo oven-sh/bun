@@ -22,7 +22,7 @@ pub const LifecycleScriptSubprocess = struct {
     pid: std.os.pid_t = bun.invalid_fd,
 
     pid_poll: *Async.FilePoll,
-    waitpid_result: ?PosixSpawn.WaitPidResult,
+    waitpid_result: ?PosixSpawn.WaitPidResult = null,
     stdout: OutputReader = .{},
     stderr: OutputReader = .{},
     manager: *PackageManager,
@@ -195,6 +195,7 @@ pub const LifecycleScriptSubprocess = struct {
             combined_script,
             null,
         };
+
         // Have both stdout and stderr write to the same buffer
         const fdsOut, const fdsErr = if (!this.manager.options.log_level.isVerbose())
             .{ try std.os.pipe2(0), try std.os.pipe2(0) }
@@ -207,6 +208,27 @@ pub const LifecycleScriptSubprocess = struct {
         }
 
         const pid = brk: {
+            var close_all = false;
+
+            defer {
+                if (close_all) {
+                    if (fdsOut[0] != 0)
+                        _ = bun.sys.close(fdsOut[0]);
+                    if (fdsErr[0] != 0)
+                        _ = bun.sys.close(fdsErr[0]);
+                }
+
+                if (!this.manager.options.log_level.isVerbose() or close_all) {
+                    if (fdsOut[1] != 0)
+                        _ = bun.sys.close(fdsOut[1]);
+                    if (fdsErr[1] != 0)
+                        _ = bun.sys.close(fdsErr[1]);
+                }
+            }
+            errdefer {
+                close_all = true;
+            }
+
             var attr = try PosixSpawn.Attr.init();
             defer attr.deinit();
             try attr.set(@intCast(flags));
@@ -219,6 +241,11 @@ pub const LifecycleScriptSubprocess = struct {
             if (!this.manager.options.log_level.isVerbose()) {
                 try actions.dup2(fdsOut[1], bun.STDOUT_FD);
                 try actions.dup2(fdsErr[1], bun.STDERR_FD);
+
+                if (fdsOut[0] != 0) try actions.close(fdsOut[0]);
+                if (fdsErr[0] != 0) try actions.close(fdsErr[0]);
+                if (fdsOut[1] != 0) try actions.close(fdsOut[1]);
+                if (fdsErr[1] != 0) try actions.close(fdsErr[1]);
             } else {
                 if (comptime Environment.isMac) {
                     try actions.inherit(bun.STDOUT_FD);
@@ -230,13 +257,6 @@ pub const LifecycleScriptSubprocess = struct {
             }
 
             try actions.chdir(cwd);
-
-            defer {
-                if (!this.manager.options.log_level.isVerbose()) {
-                    _ = bun.sys.close(fdsOut[1]);
-                    _ = bun.sys.close(fdsErr[1]);
-                }
-            }
 
             if (manager.options.log_level.isVerbose()) {
                 Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Spawning <b>\"{s}\"<r> script for package <b>\"{s}\"<r>", .{
@@ -261,6 +281,7 @@ pub const LifecycleScriptSubprocess = struct {
                         @tagName(err.getErrno()),
                     });
                     Output.flush();
+                    close_all = true;
                     return;
                 },
                 .result => |pid| break :brk pid,
@@ -574,9 +595,14 @@ pub const LifecycleScriptSubprocess = struct {
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
-        lifecycle_subprocess.scripts = list.items;
-        lifecycle_subprocess.manager = manager;
-        lifecycle_subprocess.envp = envp;
+        lifecycle_subprocess.* = .{
+            .manager = manager,
+            .envp = envp,
+            .scripts = list.items,
+            .package_name = "",
+            .pid_poll = undefined,
+            .waitpid_result = null,
+        };
 
         if (comptime log_level.isVerbose()) {
             Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{

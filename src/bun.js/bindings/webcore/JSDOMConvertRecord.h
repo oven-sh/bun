@@ -123,7 +123,7 @@ private:
 
         if (canUseFastPath) {
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                if ((entry.attributes() & (PropertyAttribute::DontEnum))) {
+                if (entry.attributes() & PropertyAttribute::DontEnum) {
                     return true;
                 }
 

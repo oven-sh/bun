@@ -9248,7 +9248,13 @@ pub const PackageManager = struct {
                     };
                 }
                 if (!manager.options.global) {
-                    if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                    if (log_level != .silent) {
+                        if (manager.to_remove.len > 0) {
+                            Output.prettyErrorln("\npackage.json has no dependencies! Deleted empty lockfile", .{});
+                        } else {
+                            Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                        }
+                    }
                 }
 
                 break :save;

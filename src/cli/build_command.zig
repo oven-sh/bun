@@ -109,8 +109,8 @@ pub const BuildCommand = struct {
 
             // We never want to hit the filesystem for these files
             // This "compiled" protocol is specially handled by the module resolver.
-            this_bundler.options.public_path = "compiled://root/";
-            this_bundler.resolver.opts.public_path = "compiled://root/";
+            this_bundler.options.public_path = "/$bunfs/root/";
+            this_bundler.resolver.opts.public_path = "/$bunfs/root/";
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);

@@ -40,19 +40,20 @@ namespace WebCore {
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(PerformanceEntry);
 class PerformanceEntry : public RefCounted<PerformanceEntry> {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(PerformanceEntry);
+
 public:
     virtual ~PerformanceEntry();
 
     const String& name() const { return m_name; }
-    virtual double startTime() const { return m_startTime; }
-    virtual double duration() const { return m_duration; }
+    const double startTime() const { return m_startTime; }
+    const double duration() const { return m_duration; }
 
     enum class Type : uint8_t {
-        Navigation  = 1 << 0,
-        Mark        = 1 << 1,
-        Measure     = 1 << 2,
-        Resource    = 1 << 3,
-        Paint       = 1 << 4
+        Navigation = 1 << 0,
+        Mark = 1 << 1,
+        Measure = 1 << 2,
+        Resource = 1 << 3,
+        Paint = 1 << 4
     };
 
     virtual Type performanceEntryType() const = 0;

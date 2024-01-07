@@ -99,6 +99,8 @@ it("should remove existing package", async () => {
   expect(await removeExited1).toBe(0);
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
+  const err1 = await new Response(stderr1).text();
+
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
     "",
     ` + pkg2@${pkg2_path}`,
@@ -108,7 +110,6 @@ it("should remove existing package", async () => {
     "",
   ]);
   expect(stderr1).toBeDefined();
-  const err1 = await new Response(stderr1).text();
   expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun remove", " Saved lockfile", ""]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
@@ -139,12 +140,14 @@ it("should remove existing package", async () => {
   expect(await removeExited2).toBe(0);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([" done", ""]);
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual(["", " - pkg2", " 1 package removed", ""]);
+  expect(stderr2).toBeDefined();
   expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
     "bun remove",
-    "No packages! Deleted empty lockfile",
+    "",
+    "package.json has no dependencies! Deleted empty lockfile",
     "",
   ]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(

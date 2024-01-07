@@ -7688,8 +7688,21 @@ pub const PackageManager = struct {
             }
 
             const trees = this.lockfile.buffers.trees.items;
-            this.tree_install_counts[tree_id] += 1;
-            if (this.tree_install_counts[tree_id] >= trees[tree_id].dependencies.len) {
+            const current_count = this.tree_install_counts[tree_id];
+            const max = trees[tree_id].dependencies.len;
+
+            if (current_count == std.math.maxInt(usize)) {
+                if (comptime Environment.allow_assert)
+                    Output.panic("Installed more packages than expected for tree id: {d}. Expected: {d}", .{ tree_id, max });
+
+                return;
+            }
+
+            const is_not_done = current_count + 1 < max;
+
+            this.tree_install_counts[tree_id] = if (is_not_done) current_count + 1 else std.math.maxInt(usize);
+
+            if (!is_not_done) {
                 this.completed_trees.set(tree_id);
                 this.runAvailableScripts(log_level);
             }
@@ -8771,12 +8784,6 @@ pub const PackageManager = struct {
                 scripts_node.activate();
             }
 
-            if (comptime Environment.allow_assert) {
-                for (this.lockfile.buffers.trees.items) |tree| {
-                    std.debug.assert(installer.tree_install_counts[tree.id] == tree.dependencies.len);
-                }
-            }
-
             if (!installer.options.do.install_packages) return error.InstallFailed;
 
             summary.successfully_installed = installer.successfully_installed;
@@ -9184,17 +9191,14 @@ pub const PackageManager = struct {
 
         if (manager.log.hasErrors()) Global.crash();
 
-        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
-        var did_meta_hash_change = needs_clean_lockfile;
-        if (needs_clean_lockfile) {
-            manager.lockfile = try manager.lockfile.cleanWithLogger(
-                manager.package_json_updates,
-                manager.log,
-                manager.options.enable.exact_versions,
-            );
-            if (manager.lockfile.packages.len > 0) {
-                root = manager.lockfile.packages.get(0);
-            }
+        // This operation doesn't perform any I/O, so it should be relatively cheap.
+        manager.lockfile = try manager.lockfile.cleanWithLogger(
+            manager.package_json_updates,
+            manager.log,
+            manager.options.enable.exact_versions,
+        );
+        if (manager.lockfile.packages.len > 0) {
+            root = manager.lockfile.packages.get(0);
         }
 
         if (manager.lockfile.packages.len > 0) {
@@ -9208,11 +9212,11 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        if (needs_clean_lockfile or manager.options.enable.force_save_lockfile or manager.options.enable.frozen_lockfile) {
-            did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
-                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
-            );
-        }
+        const did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
+            PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+        );
+
+        const should_save_lockfile = did_meta_hash_change or had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
 
         if (manager.options.global) {
             try manager.setupGlobalDir(&ctx);
@@ -9228,7 +9232,7 @@ pub const PackageManager = struct {
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and
-            (did_meta_hash_change or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
+            (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
         save: {
             if (manager.lockfile.isEmpty()) {
                 if (!manager.options.dry_run) {
@@ -9244,7 +9248,13 @@ pub const PackageManager = struct {
                     };
                 }
                 if (!manager.options.global) {
-                    if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                    if (log_level != .silent) {
+                        if (manager.to_remove.len > 0) {
+                            Output.prettyErrorln("\npackage.json has no dependencies! Deleted empty lockfile", .{});
+                        } else {
+                            Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                        }
+                    }
                 }
 
                 break :save;
@@ -9261,6 +9271,13 @@ pub const PackageManager = struct {
             }
 
             manager.lockfile.saveToDisk(manager.options.lockfile_path);
+
+            if (comptime Environment.allow_assert) {
+                if (manager.lockfile.hasMetaHashChanged(false) catch false) {
+                    Output.panic("Lockfile metahash non-deterministic after saving", .{});
+                }
+            }
+
             if (comptime log_level.showProgress()) {
                 save_node.end();
                 manager.progress.refresh();

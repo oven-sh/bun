@@ -880,6 +880,7 @@ pub fn cleanWithLogger(
     }
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
+    new.meta_hash = old.meta_hash;
 
     return new;
 }

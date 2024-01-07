@@ -1713,7 +1713,7 @@ pub const VirtualMachine = struct {
                     source_to_use,
                     normalized_specifier,
                     if (is_esm) .stmt else .require,
-                    .read_only,
+                    if (jsc_vm.standalone_module_graph == null) .read_only else .disable,
                 )) {
                     .success => |r| r,
                     .failure => |e| e,
@@ -2091,7 +2091,7 @@ pub const VirtualMachine = struct {
                 this.bundler.fs.top_level_dir,
                 normalizeSource(preload),
                 .stmt,
-                .read_only,
+                if (this.standalone_module_graph == null) .read_only else .disable,
             )) {
                 .success => |r| r,
                 .failure => |e| {

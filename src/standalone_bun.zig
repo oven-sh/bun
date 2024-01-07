@@ -19,7 +19,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn find(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
-        if (!bun.strings.hasPrefixComptime(name, "compiled://root/")) {
+        if (!bun.strings.isBunStandaloneFilePath(name)) {
             return null;
         }
 

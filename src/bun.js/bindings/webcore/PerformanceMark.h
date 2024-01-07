@@ -45,13 +45,13 @@ public:
     JSC::JSValue detail(JSC::JSGlobalObject&);
 
 private:
-    PerformanceMark(const String& name, double startTime, Ref<SerializedScriptValue>&&);
+    PerformanceMark(const String& name, double startTime, RefPtr<SerializedScriptValue>&&);
     ~PerformanceMark();
 
     Type performanceEntryType() const final { return Type::Mark; }
     ASCIILiteral entryType() const final { return "mark"_s; }
 
-    Ref<SerializedScriptValue> m_serializedDetail;
+    RefPtr<SerializedScriptValue> m_serializedDetail;
 };
 
 } // namespace WebCore

@@ -380,6 +380,7 @@ template<typename T> struct JSConverter<IDLSequence<T>> {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer list;
+        list.ensureCapacity(vector.size());
         for (auto& element : vector) {
             auto jsValue = toJS<T>(lexicalGlobalObject, globalObject, element);
             RETURN_IF_EXCEPTION(scope, {});
@@ -417,6 +418,7 @@ template<typename T> struct JSConverter<IDLFrozenArray<T>> {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer list;
+        list.ensureCapacity(vector.size());
         for (auto& element : vector) {
             auto jsValue = toJS<T>(lexicalGlobalObject, globalObject, element);
             RETURN_IF_EXCEPTION(scope, {});

@@ -373,7 +373,7 @@ const Scanner = struct {
     exclusion_names: []const []const u8 = &.{},
     filter_names: []const []const u8 = &.{},
     dirs_to_scan: Fifo,
-    results: std.ArrayList(bun.PathString),
+    results: *std.ArrayList(bun.PathString),
     fs: *FileSystem,
     open_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
     scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -723,7 +723,7 @@ pub const TestCommand = struct {
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
                 .filter_names = filter_names,
-                .results = results,
+                .results = &results,
             };
             const dir_to_scan = brk: {
                 if (ctx.debug.test_directory.len > 0) {

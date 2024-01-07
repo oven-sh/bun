@@ -9184,9 +9184,6 @@ pub const PackageManager = struct {
 
         if (manager.log.hasErrors()) Global.crash();
 
-        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
-        var did_meta_hash_change = needs_clean_lockfile;
-
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
             manager.package_json_updates,
@@ -9208,7 +9205,7 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
+        const did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
             PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
         );
 

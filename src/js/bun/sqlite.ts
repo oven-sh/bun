@@ -432,6 +432,11 @@ class SQLiteError extends Error {
   static [Symbol.hasInstance](instance) {
     return instance?.name === "SQLiteError";
   }
+
+  constructor() {
+    super();
+    throw new Error("SQLiteError can only be constructed by bun:sqlite");
+  }
 }
 
 export default {

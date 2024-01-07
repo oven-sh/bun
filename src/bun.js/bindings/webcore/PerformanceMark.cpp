@@ -55,7 +55,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& g
             startTime = *markOptions->startTime;
         } else
             startTime = performanceNow(scriptExecutionContext);
-        
+
         if (markOptions->detail.isUndefined())
             detail = JSC::jsNull();
         else
@@ -65,15 +65,19 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& g
         detail = JSC::jsNull();
     }
 
+    if (detail.isNull()) {
+        return adoptRef(*new PerformanceMark(name, startTime, nullptr));
+    }
+
     Vector<RefPtr<MessagePort>> ignoredMessagePorts;
-    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, { }, ignoredMessagePorts);
+    auto serializedDetail = SerializedScriptValue::create(globalObject, detail, {}, ignoredMessagePorts);
     if (serializedDetail.hasException())
         return serializedDetail.releaseException();
 
     return adoptRef(*new PerformanceMark(name, startTime, serializedDetail.releaseReturnValue()));
 }
 
-PerformanceMark::PerformanceMark(const String& name, double startTime, Ref<SerializedScriptValue>&& serializedDetail)
+PerformanceMark::PerformanceMark(const String& name, double startTime, RefPtr<SerializedScriptValue>&& serializedDetail)
     : PerformanceEntry(name, startTime, startTime)
     , m_serializedDetail(WTFMove(serializedDetail))
 {
@@ -83,6 +87,10 @@ PerformanceMark::~PerformanceMark() = default;
 
 JSC::JSValue PerformanceMark::detail(JSC::JSGlobalObject& globalObject)
 {
+    if (!m_serializedDetail) {
+        return JSC::jsNull();
+    }
+
     return m_serializedDetail->deserialize(globalObject, &globalObject);
 }
 

@@ -7688,8 +7688,21 @@ pub const PackageManager = struct {
             }
 
             const trees = this.lockfile.buffers.trees.items;
-            this.tree_install_counts[tree_id] += 1;
-            if (this.tree_install_counts[tree_id] >= trees[tree_id].dependencies.len) {
+            const current_count = this.tree_install_counts[tree_id];
+            const max = trees[tree_id].dependencies.len;
+
+            if (current_count == std.math.maxInt(usize)) {
+                if (comptime Environment.allow_assert)
+                    Output.panic("Installed more packages than expected for tree id: {d}. Expected: {d}", .{ tree_id, max });
+
+                return;
+            }
+
+            const is_not_done = current_count + 1 < max;
+
+            this.tree_install_counts[tree_id] = if (is_not_done) current_count + 1 else std.math.maxInt(usize);
+
+            if (!is_not_done) {
                 this.completed_trees.set(tree_id);
                 this.runAvailableScripts(log_level);
             }
@@ -8771,12 +8784,6 @@ pub const PackageManager = struct {
                 scripts_node.activate();
             }
 
-            if (comptime Environment.allow_assert) {
-                for (this.lockfile.buffers.trees.items) |tree| {
-                    std.debug.assert(installer.tree_install_counts[tree.id] == tree.dependencies.len);
-                }
-            }
-
             if (!installer.options.do.install_packages) return error.InstallFailed;
 
             summary.successfully_installed = installer.successfully_installed;
@@ -9209,6 +9216,8 @@ pub const PackageManager = struct {
             PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
         );
 
+        const should_save_lockfile = did_meta_hash_change or had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
+
         if (manager.options.global) {
             try manager.setupGlobalDir(&ctx);
         }
@@ -9223,7 +9232,7 @@ pub const PackageManager = struct {
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and
-            (did_meta_hash_change or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
+            (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
         save: {
             if (manager.lockfile.isEmpty()) {
                 if (!manager.options.dry_run) {

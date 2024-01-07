@@ -9186,15 +9186,15 @@ pub const PackageManager = struct {
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;
-        if (needs_clean_lockfile) {
-            manager.lockfile = try manager.lockfile.cleanWithLogger(
-                manager.package_json_updates,
-                manager.log,
-                manager.options.enable.exact_versions,
-            );
-            if (manager.lockfile.packages.len > 0) {
-                root = manager.lockfile.packages.get(0);
-            }
+
+        // This operation doesn't perform any I/O, so it should be relatively cheap.
+        manager.lockfile = try manager.lockfile.cleanWithLogger(
+            manager.package_json_updates,
+            manager.log,
+            manager.options.enable.exact_versions,
+        );
+        if (manager.lockfile.packages.len > 0) {
+            root = manager.lockfile.packages.get(0);
         }
 
         if (manager.lockfile.packages.len > 0) {
@@ -9208,11 +9208,9 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        if (needs_clean_lockfile or manager.options.enable.force_save_lockfile or manager.options.enable.frozen_lockfile) {
-            did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
-                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
-            );
-        }
+        did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
+            PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+        );
 
         if (manager.options.global) {
             try manager.setupGlobalDir(&ctx);
@@ -9261,6 +9259,13 @@ pub const PackageManager = struct {
             }
 
             manager.lockfile.saveToDisk(manager.options.lockfile_path);
+
+            if (comptime Environment.allow_assert) {
+                if (manager.lockfile.hasMetaHashChanged(false) catch false) {
+                    Output.panic("Lockfile metahash non-deterministic after saving", .{});
+                }
+            }
+
             if (comptime log_level.showProgress()) {
                 save_node.end();
                 manager.progress.refresh();

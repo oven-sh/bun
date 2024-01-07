@@ -6872,7 +6872,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.add_params);
+                    clap.simpleHelp(&PackageManager.install_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -6893,7 +6893,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.add_params);
+                    clap.simpleHelp(&PackageManager.update_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -6976,15 +6976,22 @@ pub const PackageManager = struct {
                 Subcommand.unlink => {
                     const intro_text =
                         \\<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
-                        \\
+                    ;
+
+                    const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Unregister the current directory as a linkable package.<r>
                         \\  <b><green>bun unlink<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>
                     ;
 
                     Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.unlink_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
             }

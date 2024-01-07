@@ -312,6 +312,9 @@ pub const ArrayBuffer = extern struct {
         return buffer_value;
     }
 
+    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize) JSC.JSValue;
+    pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
+
     pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
@@ -1189,7 +1192,7 @@ pub fn wrapInstanceMethod(
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
-            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
@@ -1367,7 +1370,7 @@ pub fn wrapStaticMethod(
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
-            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
             comptime var i: usize = 0;
@@ -1399,6 +1402,19 @@ pub fn wrapStaticMethod(
                             };
                         } else {
                             args[i] = null;
+                        }
+                    },
+                    JSC.Node.BlobOrStringOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
                         }
                     },
                     JSC.ArrayBuffer => {

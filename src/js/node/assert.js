@@ -998,6 +998,7 @@ var require_assert = __commonJS({
     };
     var internalMatch = function (actual, expected, message, fn) {
       if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (typeof actual !== "string") throw new ERR_INVALID_ARG_TYPE("actual", "string", actual);
       if (!isRegExp(expected)) throw new ERR_INVALID_ARG_TYPE("expected", "RegExp", expected);
       var match = fn === assert.match;
       expected.test(actual) === match ||

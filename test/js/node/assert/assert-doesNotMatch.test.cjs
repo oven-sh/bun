@@ -5,15 +5,9 @@ test("doesNotMatch does not throw when not matching", () => {
 });
 
 test("doesNotMatch throws when argument is not string", () => {
-  try {
-    assert.doesNotMatch(123, /pass/);
-    expect.unreachable();
-  } catch (e) {}
+  expect(() => assert.doesNotMatch(123, /pass/)).toThrow("The \"actual\" argument must be of type string. Received type number");
 });
 
 test("doesNotMatch throws when matching", () => {
-  try {
-    assert.doesNotMatch('I will fail', /fail/);
-    expect.unreachable();
-  } catch (e) {}
+  expect(() => assert.doesNotMatch('I will fail', /fail/, "doesNotMatch throws when matching")).toThrow("doesNotMatch throws when matching");
 });

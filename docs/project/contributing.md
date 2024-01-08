@@ -21,7 +21,7 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 {% /codetabs %}

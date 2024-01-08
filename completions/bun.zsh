@@ -29,6 +29,7 @@ _bun_add_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--lockfile-only[Only bun.lockb is updated]' \
         '--help[Print this help menu]' \
         '--dev[Add dependence to "devDependencies]' \
         '-d[Add dependence to "devDependencies]' \
@@ -79,6 +80,7 @@ _bun_unlink_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--lockfile-only[Only bun.lockb is updated]' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -123,6 +125,7 @@ _bun_link_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--lockfile-only[Only bun.lockb is updated]' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -333,6 +336,7 @@ _bun_install_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--lockfile-only[Only bun.lockb is updated]' \
         '--help[Print this help menu]' \
         '--dev[Add dependence to "devDependencies]' \
         '-d[Add dependence to "devDependencies]' \
@@ -379,6 +383,7 @@ _bun_remove_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--lockfile-only[Only bun.lockb is updated]' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -551,6 +556,7 @@ _bun_update_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+        '--lockfile-only[Only bun.lockb is updated]' \
         '--help[Print this help menu]' &&
         ret=0
 

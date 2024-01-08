@@ -401,6 +401,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (_bun.get("lockfileOnly")) |lockfile_only| {
+                        if (lockfile_only.asBool()) |value| {
+                            install.lockfile_only = value;
+                        }
+                    }
+
                     if (_bun.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expect(lockfile, .e_string);

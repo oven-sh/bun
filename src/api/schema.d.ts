@@ -724,6 +724,7 @@ export interface BunInstall {
   frozen_lockfile?: boolean;
   exact?: boolean;
   concurrent_scripts?: uint32;
+  lockfile_only?: boolean;
 }
 
 export interface ClientServerModule {

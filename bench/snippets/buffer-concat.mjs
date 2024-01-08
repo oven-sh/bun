@@ -1,6 +1,6 @@
 import { bench, run } from "./runner.mjs";
 
-for (let size of [32, 1837, 1024 * 6, 1024 * 1024 * 2 + 72, 1024 * 1024 * 16]) {
+for (let size of [32, 2048, 1024 * 16, 1024 * 1024 * 2]) {
   const first = Buffer.allocUnsafe(size);
   const second = Buffer.allocUnsafe(size);
   const third = Buffer.allocUnsafe(size);
@@ -43,5 +43,12 @@ for (let size of [32, 1837, 1024 * 6, 1024 * 1024 * 2 + 72, 1024 * 1024 * 16]) {
     },
   );
 }
+
+const chunk = Buffer.alloc(16);
+chunk.fill("3");
+const array = Array.from({ length: 100 }, () => chunk);
+bench("Buffer.concat 100 tiny chunks", () => {
+  return Buffer.concat(array);
+});
 
 await run();

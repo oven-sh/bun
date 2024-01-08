@@ -8235,19 +8235,12 @@ pub const PackageManager = struct {
                     break :brk Syscall.exists(binding_dot_gyp_path);
                 } else false;
 
-                const path_str = brk: {
-                    var base = Path.joinAbsStringBuf(
-                        node_modules_path,
-                        &path_buf_to_use,
-                        &[_]string{destination_dir_subpath},
-                        .posix,
-                    );
-
-                    base = strings.withoutTrailingSlash(base);
-                    path_buf_to_use[base.len] = std.fs.path.sep;
-                    path_buf_to_use[base.len + 1] = 0;
-                    break :brk path_buf_to_use[0 .. base.len + 1 :0];
-                };
+                const path_str = Path.joinAbsStringBufZTrailingSlash(
+                    node_modules_path,
+                    &path_buf_to_use,
+                    &[_]string{destination_dir_subpath},
+                    .posix,
+                );
 
                 if (scripts.enqueue(
                     this.lockfile,

@@ -1021,6 +1021,17 @@ pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _
     return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
 }
 
+pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    const out = _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
+    if (out.len + 2 < buf.len and out.len > 0 and out[out.len - 1] != _platform.separator()) {
+        buf[out.len] = _platform.separator();
+        buf[out.len + 1] = 0;
+        return buf[0 .. out.len + 1 :0];
+    }
+
+    return out;
+}
+
 fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
     if (_platform.resolve() == .windows) return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
 

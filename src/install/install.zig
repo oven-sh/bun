@@ -8216,6 +8216,7 @@ pub const PackageManager = struct {
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
             var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
+            var path_buf_to_use: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
             if (scripts.hasAny()) {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -8234,11 +8235,19 @@ pub const PackageManager = struct {
                     break :brk Syscall.exists(binding_dot_gyp_path);
                 } else false;
 
-                const path_str = Path.joinAbsString(
-                    node_modules_path,
-                    &[_]string{destination_dir_subpath},
-                    .posix,
-                );
+                const path_str = brk: {
+                    var base = Path.joinAbsStringBuf(
+                        node_modules_path,
+                        &path_buf_to_use,
+                        &[_]string{destination_dir_subpath},
+                        .posix,
+                    );
+
+                    base = strings.withoutTrailingSlash(base);
+                    path_buf_to_use[base.len] = std.fs.path.sep;
+                    path_buf_to_use[base.len + 1] = 0;
+                    break :brk path_buf_to_use[0 .. base.len + 1 :0];
+                };
 
                 if (scripts.enqueue(
                     this.lockfile,
@@ -8554,7 +8563,9 @@ pub const PackageManager = struct {
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
         const cwd = std.fs.cwd();
-        const node_modules_folder = cwd.openDir("node_modules", .{}) catch brk: {
+        const node_modules_folder = cwd.openDir("node_modules", .{
+            .iterate = true,
+        }) catch brk: {
             skip_verify_installed_version_number = true;
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
@@ -8562,7 +8573,9 @@ pub const PackageManager = struct {
                     Global.crash();
                 }
             };
-            break :brk cwd.openDir("node_modules", .{}) catch |err| {
+            break :brk cwd.openDir("node_modules", .{
+                .iterate = true,
+            }) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
@@ -8682,13 +8695,17 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_folder = cwd.openDir(node_modules.relative_path, .{}) catch brk: {
+                installer.node_modules_folder = cwd.openDir(node_modules.relative_path, .{
+                    .iterate = true,
+                }) catch brk: {
                     // Avoid extra mkdir() syscall
                     //
                     // note: this will recursively delete any dangling symlinks
                     // in the next.js repo, it encounters a dangling symlink in node_modules/@next/codemod/node_modules/cheerio
                     try bun.makePath(cwd, bun.span(node_modules.relative_path));
-                    break :brk try cwd.openDir(node_modules.relative_path, .{});
+                    break :brk try cwd.openDir(node_modules.relative_path, .{
+                        .iterate = true,
+                    });
                 };
 
                 var remaining = node_modules.dependencies;

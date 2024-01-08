@@ -781,6 +781,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
     size_t byteLength = 0;
 
+    // Use an argument buffer to avoid calling `getIndex` more than once per element.
+    // This is a small optimization
     MarkedArgumentBuffer args;
     args.ensureCapacity(arrayLength);
     if (UNLIKELY(args.hasOverflowed())) {

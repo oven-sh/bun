@@ -4,7 +4,7 @@ If you are using Windows, you must use a WSL environment as Bun does not yet com
 
 ## Install Dependencies
 
-Using your system's package manager, install the Bun's dependencies:
+Using your system's package manager, install Bun's dependencies:
 
 {% codetabs %}
 

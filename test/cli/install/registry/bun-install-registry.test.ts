@@ -190,7 +190,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
         "peer-deps-fixed": "1.0.0",
         "no-deps": "1.0.0",
       },
-    },),
+    }),
   );
 
   var { stdout, stderr, exited } = spawn({

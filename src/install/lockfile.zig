@@ -2562,20 +2562,23 @@ pub const Package = extern struct {
             );
 
             const json = brk: {
-                const json_path = bun.path.joinZ([_]string{ subpath, "package.json" }, .auto);
-                const json_file_fd = try bun.sys.openat(
-                    bun.toFD(node_modules.fd),
-                    json_path,
-                    std.os.O.RDONLY,
-                    0,
-                ).unwrap();
-                const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
-                defer json_file.close();
-                const json_stat_size = try json_file.getEndPos();
-                const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
-                errdefer lockfile.allocator.free(json_buf);
-                const json_len = try json_file.preadAll(json_buf, 0);
-                const json_src = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                const json_src = brk2: {
+                    const json_path = bun.path.joinZ([_]string{ subpath, "package.json" }, .auto);
+                    const json_file_fd = try bun.sys.openat(
+                        bun.toFD(node_modules.fd),
+                        json_path,
+                        std.os.O.RDONLY,
+                        0,
+                    ).unwrap();
+                    const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
+                    defer json_file.close();
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
+                    errdefer lockfile.allocator.free(json_buf);
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                };
+
                 initializeStore();
                 break :brk try json_parser.ParseJSONUTF8(
                     &json_src,

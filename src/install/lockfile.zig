@@ -2432,6 +2432,7 @@ pub const Package = extern struct {
                 inline for (install_scripts) |hook| {
                     const script = @field(this, hook);
                     if (!script.isEmpty()) {
+                        debug("enqueue({s}, {s}) in {s}", .{ hook, package_name, _cwd });
                         const entry: Lockfile.Scripts.Entry = .{
                             .cwd = cwd orelse brk: {
                                 cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
@@ -2460,6 +2461,7 @@ pub const Package = extern struct {
                     inline for (prepare_scripts) |hook| {
                         const script = @field(this, hook);
                         if (!script.isEmpty()) {
+                            debug("enqueue({s}, {s}) in {s}", .{ hook, package_name, _cwd });
                             const entry: Lockfile.Scripts.Entry = .{
                                 .cwd = cwd orelse brk: {
                                     cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
@@ -2479,6 +2481,8 @@ pub const Package = extern struct {
                 .workspace => {
                     script_index += 1;
                     if (!this.prepare.isEmpty()) {
+                        debug("enqueue({s}, {s}) in {s}", .{ "prepare", package_name, _cwd });
+
                         const entry: Lockfile.Scripts.Entry = .{
                             .cwd = cwd orelse brk: {
                                 cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
@@ -2545,32 +2549,43 @@ pub const Package = extern struct {
             name: string,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
-            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var node_modules_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const node_modules_path = try bun.getFdPath(bun.toFD(node_modules.fd), &node_modules_path_buf);
 
-            const cwd = Path.joinAbsString(
-                bun.getFdPath(bun.toFD(node_modules.fd), &path_buf) catch unreachable,
+            var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            const cwd = Path.joinAbsStringBufZTrailingSlash(
+                node_modules_path,
+                &path_buf2,
                 &[_]string{subpath},
                 .auto,
             );
 
-            const json_file_fd = try bun.sys.openat(
-                bun.toFD(node_modules.fd),
-                bun.path.joinZ([_]string{ subpath, "package.json" }, .auto),
-                std.os.O.RDONLY,
-                0,
-            ).unwrap();
-            const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
-            defer json_file.close();
-            const json_stat_size = try json_file.getEndPos();
-            const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
-            const json_len = try json_file.preadAll(json_buf, 0);
-            const json_src = logger.Source.initPathString(cwd, json_buf[0..json_len]);
-            initializeStore();
-            const json = try json_parser.ParseJSONUTF8(
-                &json_src,
-                log,
-                lockfile.allocator,
-            );
+            const json = brk: {
+                const json_src = brk2: {
+                    const json_path = bun.path.joinZ([_]string{ subpath, "package.json" }, .auto);
+                    const json_file_fd = try bun.sys.openat(
+                        bun.toFD(node_modules.fd),
+                        json_path,
+                        std.os.O.RDONLY,
+                        0,
+                    ).unwrap();
+                    const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
+                    defer json_file.close();
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
+                    errdefer lockfile.allocator.free(json_buf);
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                };
+
+                initializeStore();
+                break :brk try json_parser.ParseJSONUTF8(
+                    &json_src,
+                    log,
+                    lockfile.allocator,
+                );
+            };
 
             var tmp: Lockfile = undefined;
             try tmp.initEmpty(lockfile.allocator);
@@ -2579,8 +2594,6 @@ pub const Package = extern struct {
             Lockfile.Package.Scripts.parseCount(lockfile.allocator, &builder, json);
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
-
-            const node_modules_path = bun.getFdPath(bun.toFD(node_modules.fd), &path_buf) catch unreachable;
 
             const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(name) and
                 this.install.isEmpty() and

@@ -377,8 +377,7 @@ jobs:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
-    # if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
-    if: false
+    if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     permissions:
       pull-requests: write
     timeout-minutes: 30

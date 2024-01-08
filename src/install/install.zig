@@ -2797,7 +2797,9 @@ pub const PackageManager = struct {
 
     pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
         var list = std.ArrayList(Semver.Version).init(allocator);
-        var dir = this.getCacheDirectory().openDir(package_name, .{}) catch |err| switch (err) {
+        var dir = this.getCacheDirectory().openDir(package_name, .{
+            .iterate = true,
+        }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => return list,
             else => return err,
         };
@@ -7598,7 +7600,7 @@ pub const PackageManager = struct {
                         }
                     }
                 } else |err| {
-                    if (err != error.FileNotFound) {
+                    if (err != error.ENOENT) {
                         Output.err(err, "while reading node_modules/.bin", .{});
                         Global.crash();
                     }

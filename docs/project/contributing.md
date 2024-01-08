@@ -9,7 +9,7 @@ Using your system's package manager, install Bun's dependencies:
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust ruby
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash#Ubuntu/Debian

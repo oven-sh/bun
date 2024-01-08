@@ -779,6 +779,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
 
+    JSValue totalLengthValue = callFrame->argument(1);
+
     size_t byteLength = 0;
 
     // Use an argument buffer to avoid calling `getIndex` more than once per element.
@@ -805,11 +807,14 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
             return JSValue::encode(jsUndefined());
         }
 
-        args.append(element);
-        byteLength += typedArray->length();
+        auto length = typedArray->length();
+
+        if (length > 0)
+            args.append(element);
+
+        byteLength += length;
     }
 
-    JSValue totalLengthValue = callFrame->argument(1);
     size_t availableLength = byteLength;
     if (!totalLengthValue.isUndefined()) {
         if (UNLIKELY(!totalLengthValue.isNumber())) {

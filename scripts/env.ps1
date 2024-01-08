@@ -33,8 +33,10 @@ $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-WmiObject -Class Win32_Processo
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2 /MT'
-$CXXFLAGS = '/O2 /MT'
+$CFLAGS = '/O2'
+# $CFLAGS = '/O2 /MT'
+$CXXFLAGS = '/O2'
+# $CXXFLAGS = '/O2 /MT'
 
 if ($Baseline) {
   $CFLAGS += ' -march=nehalem'

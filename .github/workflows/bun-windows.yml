@@ -127,7 +127,7 @@ jobs:
             git submodule | Where-Object { $_ -notmatch 'WebKit' }
             clang --version
             rustc --version
-            Get-Content -Path (Get-ChildItem -Path 'scripts/build*.sh', 'scripts/all-dependencies.sh' | Sort-Object -Property Name).FullName | Out-String
+            Get-Content -Path (Get-ChildItem -Path 'scripts/build*.ps1', 'scripts/all-dependencies.ps1' | Sort-Object -Property Name).FullName | Out-String
           })"
           $hash = ( -join ((New-Object -TypeName System.Security.Cryptography.SHA1CryptoServiceProvider).ComputeHash([System.Text.Encoding]::UTF8.GetBytes($data)) | ForEach-Object { $_.ToString("x2") } )).Substring(0, 10)
           echo "sha=${hash}" >> $env:GITHUB_OUTPUT

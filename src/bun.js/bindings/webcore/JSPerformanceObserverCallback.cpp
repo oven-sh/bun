@@ -30,7 +30,6 @@
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -48,7 +47,7 @@ JSPerformanceObserverCallback::~JSPerformanceObserverCallback()
     if (!context || context->isContextThread())
         delete m_data;
     else
-        RELEASE_ASSERT_NOT_REACHED(); 
+        RELEASE_ASSERT_NOT_REACHED();
 #ifndef NDEBUG
     m_data = nullptr;
 #endif
@@ -69,7 +68,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     JSValue thisValue = toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, thisObject);
     MarkedArgumentBuffer args;
     args.append(toJS<IDLInterface<PerformanceObserverEntryList>>(lexicalGlobalObject, globalObject, entries));
-    args.append(toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, observer));
+    args.append(&observer == &thisObject ? thisValue : toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, observer));
     ASSERT(!args.hasOverflowed());
 
     NakedPtr<JSC::Exception> returnedException;
@@ -78,9 +77,9 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
         UNUSED_PARAM(lexicalGlobalObject);
         reportException(m_data->callback()->globalObject(), returnedException);
         return CallbackResultType::ExceptionThrown;
-     }
+    }
 
-    return { };
+    return {};
 }
 
 void JSPerformanceObserverCallback::visitJSFunction(JSC::AbstractSlotVisitor& visitor)

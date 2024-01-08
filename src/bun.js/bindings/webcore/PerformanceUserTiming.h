@@ -43,6 +43,7 @@ using PerformanceEntryMap = HashMap<String, Vector<RefPtr<PerformanceEntry>>>;
 
 class PerformanceUserTiming {
     WTF_MAKE_FAST_ALLOCATED;
+
 public:
     explicit PerformanceUserTiming(Performance&);
 
@@ -71,7 +72,9 @@ private:
 
     Performance& m_performance;
     PerformanceEntryMap m_marksMap;
+    int64_t m_markCounter { 0 };
     PerformanceEntryMap m_measuresMap;
+    int64_t m_measureCounter { 0 };
 };
 
 }

@@ -43,6 +43,7 @@
 #include <JavaScriptCore/BuiltinNames.h>
 
 #include "JSBufferEncodingType.h"
+#include "wtf/Assertions.h"
 #include <JavaScriptCore/JSBase.h>
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"
@@ -852,11 +853,11 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
         auto* typedArray = JSC::jsCast<JSC::JSUint8Array*>(args.at(i));
         size_t length = std::min(remain, typedArray->length());
 
-        if (length > 0) {
-            auto* source = typedArray->typedVector();
-            ASSERT(source);
-            memcpy(head, source, length);
-        }
+        ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
+
+        auto* source = typedArray->typedVector();
+        ASSERT(source);
+        memcpy(head, source, length);
 
         remain -= length;
         head += length;

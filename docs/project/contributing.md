@@ -4,12 +4,12 @@ If you are using Windows, you must use a WSL environment as Bun does not yet com
 
 ## Install Dependencies
 
-Using your system's package manager, install the Bun's dependencies:
+Using your system's package manager, install Bun's dependencies:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
+$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash#Ubuntu/Debian
@@ -21,7 +21,7 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip which libicu-devel
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel
 ```
 
 {% /codetabs %}

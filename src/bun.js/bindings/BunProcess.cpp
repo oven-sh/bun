@@ -126,7 +126,7 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 19);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 20);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
@@ -137,6 +137,10 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_boringssl))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s),
+        // https://github.com/oven-sh/bun/issues/7921
+        // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
+        JSC::JSValue(JSC::jsString(vm, String("1.1.0"_s), 0)));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_libarchive))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
@@ -1613,8 +1617,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (returnedException) {
-        throwException(globalObject, scope, returnedException.get());
+    if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
         return {};
     }
 
@@ -1653,8 +1661,12 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject, args, returnedException);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(returnedException)) {
-        throwException(globalObject, scope, returnedException.get());
+    if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
         return {};
     }
 

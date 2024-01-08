@@ -4,6 +4,19 @@ import path from "path";
 import wt from "worker_threads";
 
 describe("web worker", () => {
+  async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
+    const promise = new Promise((resolve, reject) => {
+      worker.onerror = reject;
+      worker.onmessage = e => resolve(e.data);
+    });
+    worker.postMessage(message);
+    try {
+      return await promise;
+    } finally {
+      worker.terminate();
+    }
+  }
+
   test("worker", done => {
     const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
       smol: true,
@@ -83,6 +96,35 @@ describe("web worker", () => {
         done();
       }
     };
+  });
+
+  test("argv / execArgv defaults", async () => {
+    const worker = new Worker(new URL("worker-fixture-argv.js", import.meta.url).href, {});
+    worker.postMessage("hello");
+    const result = await waitForWorkerResult(worker, "hello");
+
+    expect(result.argv).toHaveLength(2);
+    expect(result.execArgv).toHaveLength(0);
+  });
+
+  test("argv / execArgv options", async () => {
+    const worker_argv = ["--some-arg=1", "--some-arg=2"];
+    const worker_execArgv = ["--no-warnings", "--no-deprecation", "--tls-min-v1.2"];
+    const original_argv = [...process.argv];
+    const original_execArgv = [...process.execArgv];
+    const worker = new Worker(new URL("worker-fixture-argv.js", import.meta.url).href, {
+      argv: worker_argv,
+      execArgv: worker_execArgv,
+    });
+    const result = await waitForWorkerResult(worker, "hello");
+
+    expect(result).toEqual({
+      argv: [original_argv[0], original_argv[1].replace(/\/[^/]+$/, "/worker-fixture-argv.js"), ...worker_argv],
+      execArgv: worker_execArgv,
+    });
+    // ensure they didn't change for the main thread
+    expect(process.argv).toEqual(original_argv);
+    expect(process.execArgv).toEqual(original_execArgv);
   });
 
   test("sending 50 messages should just work", done => {
@@ -211,5 +253,38 @@ describe("worker_threads", () => {
     });
     const code = await worker.terminate();
     expect(code).toBe(0);
+  });
+
+  test("worker without argv/execArgv", async () => {
+    const worker = new wt.Worker(new URL("worker-fixture-argv.js", import.meta.url), {});
+    const promise = new Promise<any>(resolve => worker.on("message", resolve));
+    worker.postMessage("hello");
+    const result = await promise;
+
+    expect(result.argv).toHaveLength(2);
+    expect(result.execArgv).toHaveLength(0);
+  });
+
+  test("worker with argv/execArgv", async () => {
+    const worker_argv = ["--some-arg=1", "--some-arg=2"];
+    const worker_execArgv = ["--no-warnings", "--no-deprecation", "--tls-min-v1.2"];
+    const original_argv = [...process.argv];
+    const original_execArgv = [...process.execArgv];
+    const worker = new wt.Worker(new URL("worker-fixture-argv.js", import.meta.url), {
+      argv: worker_argv,
+      execArgv: worker_execArgv,
+    });
+    const promise = new Promise<any>(resolve => worker.once("message", resolve));
+    worker.postMessage("hello");
+    const result = await promise;
+
+    expect(result).toEqual({
+      argv: [original_argv[0], original_argv[1].replace(/\/[^/]+$/, "/worker-fixture-argv.js"), ...worker_argv],
+      execArgv: worker_execArgv,
+    });
+
+    // ensure they didn't change for the main thread
+    expect(process.argv).toEqual(original_argv);
+    expect(process.execArgv).toEqual(original_execArgv);
   });
 });

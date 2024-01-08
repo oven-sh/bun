@@ -605,6 +605,10 @@ pub const fmt = struct {
 
     // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
     pub fn fastDigitCount(x: u64) u64 {
+        if (x == 0) {
+            return 1;
+        }
+
         const table = [_]u64{
             4294967296,
             8589934582,
@@ -657,16 +661,10 @@ pub const fmt = struct {
             }
 
             const mags_si = " KMGTPEZY";
-            const mags_iec = " KMGTPEZY";
-
             const log2 = math.log2(value);
             const magnitude = @min(log2 / comptime math.log2(1000), mags_si.len - 1);
             const new_value = math.lossyCast(f64, value) / math.pow(f64, 1000, math.lossyCast(f64, magnitude));
-            const suffix = switch (1000) {
-                1000 => mags_si[magnitude],
-                1024 => mags_iec[magnitude],
-                else => unreachable,
-            };
+            const suffix = mags_si[magnitude];
 
             if (suffix == ' ') {
                 try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
@@ -674,13 +672,7 @@ pub const fmt = struct {
             } else {
                 try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
             }
-
-            const buf = switch (1000) {
-                1000 => &[_]u8{ ' ', suffix, 'B' },
-                1024 => &[_]u8{ ' ', suffix, 'i', 'B' },
-                else => unreachable,
-            };
-            return writer.writeAll(buf);
+            return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
         }
     };
 
@@ -1163,6 +1155,9 @@ pub fn assertDefined(val: anytype) void {
 }
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
+pub const linux = struct {
+    pub const memfd_allocator = @import("./linux_memfd_allocator.zig").LinuxMemFdAllocator;
+};
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {
@@ -1841,7 +1836,7 @@ var needs_proc_self_workaround: bool = false;
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
 fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", 0, 0);
+    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", std.os.O.DIRECTORY, 0);
     var needs_chdir = false;
     defer {
         if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
@@ -1881,7 +1876,18 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
 
-    if (comptime !Environment.isLinux) {
+    if (comptime Environment.allow_assert) {
+        // We need a way to test that the workaround is working
+        // but we don't want to do this check in a release build
+        const ProcSelfWorkAroundForDebugging = struct {
+            pub var has_checked = false;
+        };
+
+        if (!ProcSelfWorkAroundForDebugging.has_checked) {
+            ProcSelfWorkAroundForDebugging.has_checked = true;
+            needs_proc_self_workaround = strings.eql(getenvZ("BUN_NEEDS_PROC_SELF_WORKAROUND") orelse "0", "1");
+        }
+    } else if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd, buf);
     }
 
@@ -2802,7 +2808,7 @@ pub noinline fn outOfMemory() noreturn {
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
 
-const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
 
 /// Globally-allocate a value on the heap.
 ///
@@ -2840,7 +2846,13 @@ pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
 
 pub fn New(comptime T: type) type {
     return struct {
+        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+
         pub inline fn destroy(self: *T) void {
+            if (comptime Environment.allow_assert) {
+                allocation_logger("destroy({*})", .{self});
+            }
+
             if (comptime is_heap_breakdown_enabled) {
                 HeapBreakdown.allocator(T).destroy(self);
             } else {
@@ -2852,11 +2864,92 @@ pub fn New(comptime T: type) type {
             if (comptime is_heap_breakdown_enabled) {
                 const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
                 ptr.* = t;
+                if (comptime Environment.allow_assert) {
+                    allocation_logger("new() = {*}", .{ptr});
+                }
                 return ptr;
             }
 
             const ptr = default_allocator.create(T) catch outOfMemory();
             ptr.* = t;
+
+            if (comptime Environment.allow_assert) {
+                allocation_logger("new() = {*}", .{ptr});
+            }
+            return ptr;
+        }
+    };
+}
+
+/// Reference-counted heap-allocated instance value.
+///
+/// `ref_count` is expected to be defined on `T` with a default value set to `1`
+pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    return struct {
+        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+
+        pub fn destroy(self: *T) void {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(self.ref_count == 0);
+                allocation_logger("destroy() = {*}", .{self});
+            }
+
+            if (comptime is_heap_breakdown_enabled) {
+                HeapBreakdown.allocator(T).destroy(self);
+            } else {
+                default_allocator.destroy(self);
+            }
+        }
+
+        pub fn ref(self: *T) void {
+            self.ref_count += 1;
+        }
+
+        pub fn deref(self: *T) void {
+            self.ref_count -= 1;
+
+            if (self.ref_count == 0) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            if (comptime is_heap_breakdown_enabled) {
+                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+                ptr.* = t;
+
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(ptr.ref_count == 1);
+                    allocation_logger("new() = {*}", .{ptr});
+                }
+
+                return ptr;
+            }
+
+            const ptr = default_allocator.create(T) catch outOfMemory();
+            ptr.* = t;
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(ptr.ref_count == 1);
+                allocation_logger("new() = {*}", .{ptr});
+            }
+
             return ptr;
         }
     };
@@ -2949,3 +3042,5 @@ pub const S = if (Environment.isWindows) windows.libuv.S else std.os.S;
 
 /// Deprecated!
 pub const trait = @import("./trait.zig");
+
+pub const brotli = @import("./brotli.zig");

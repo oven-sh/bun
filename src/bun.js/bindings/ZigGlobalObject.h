@@ -24,6 +24,7 @@ class DOMWrapperWorld;
 class GlobalScope;
 class SubtleCrypto;
 class EventTarget;
+class Performance;
 } // namespace WebCore
 
 namespace Bun {
@@ -266,6 +267,8 @@ public:
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
+    RefPtr<WebCore::Performance> performance();
+    
     JSC::JSObject* processObject() { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() { return m_bunObject.getInitializedOnMainThread(this); }
@@ -278,7 +281,7 @@ public:
     template<typename Visitor>
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
-    ALWAYS_INLINE void* bunVM() { return m_bunVM; }
+    ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
@@ -448,6 +451,7 @@ private:
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
     Bun::CommonStrings m_commonStrings;
+    RefPtr<WebCore::Performance> m_performance { nullptr };
 
     // JSC's hashtable code-generator tries to access these properties, so we make them public.
     // However, we'd like it better if they could be protected.

@@ -70,6 +70,7 @@
 #include <wtf/text/StringBuilder.h>
 
 #include "JSBuffer.h"
+#include "ErrorEvent.h"
 
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
@@ -1052,7 +1053,7 @@ void WebSocket::didReceiveMessage(String&& message)
     // });
 }
 
-void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData)
+void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
 {
     // LOG(Network, "WebSocket %p didReceiveBinaryData() %u byte binary message", this, static_cast<unsigned>(binaryData.size()));
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = WTFMove(binaryData)]() mutable {
@@ -1094,9 +1095,19 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
-            JSUint8Array* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(scriptExecutionContext()->jsGlobalObject(), binaryData.size())));
-            if (binaryData.size() > 0)
-                memcpy(buffer->vector(), binaryData.data(), binaryData.size());
+            auto scope = DECLARE_CATCH_SCOPE(scriptExecutionContext()->vm());
+            JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
+
+            if (UNLIKELY(!buffer || scope.exception())) {
+                scope.clearExceptionExceptTermination();
+
+                ErrorEvent::Init errorInit;
+                errorInit.message = "Failed to allocate memory for binary data"_s;
+                dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
+                this->decPendingActivityCount();
+                return;
+            }
+
             JSC::EnsureStillAliveScope ensureStillAlive(buffer);
             MessageEvent::Init init;
             init.data = buffer;
@@ -1113,11 +1124,11 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
             this->incPendingActivityCount();
 
             context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                ASSERT(scriptExecutionContext());
                 size_t length = buffer->byteLength();
+                auto* globalObject = context.jsGlobalObject();
                 JSUint8Array* uint8array = JSUint8Array::create(
-                    scriptExecutionContext()->jsGlobalObject(),
-                    reinterpret_cast<Zig::GlobalObject*>(scriptExecutionContext()->jsGlobalObject())->JSBufferSubclassStructure(),
+                    globalObject,
+                    reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure(),
                     buffer.copyRef(),
                     0,
                     length);
@@ -1465,7 +1476,7 @@ extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool cl
     WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
     webSocket->didReceiveMessage(WTFMove(wtf_str));
 }
-extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_t* bytes, size_t len, const uint8_t op)
+extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const uint8_t* bytes, size_t len, const uint8_t op)
 {
     auto opcode = static_cast<WebCore::WebSocket::Opcode>(op);
     switch (opcode) {

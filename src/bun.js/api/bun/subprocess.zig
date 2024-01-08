@@ -2700,7 +2700,10 @@ pub const Subprocess = struct {
                 }
 
                 switch (req.ptr) {
-                    .File, .Blob => unreachable,
+                    .File, .Blob => {
+                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049");
+                        return false;
+                    },
                     .Direct, .JavaScript, .Bytes => {
                         if (req.isLocked(globalThis)) {
                             globalThis.throwInvalidArguments("ReadableStream cannot be locked", .{});
@@ -2710,11 +2713,11 @@ pub const Subprocess = struct {
                         out_stdio.* = .{ .pipe = req };
                         return true;
                     },
-                    else => {},
+                    .Invalid => {
+                        globalThis.throwInvalidArguments("ReadableStream is in invalid state.", .{});
+                        return false;
+                    },
                 }
-
-                globalThis.throwInvalidArguments("Unsupported ReadableStream type", .{});
-                return false;
             }
         } else if (value.asArrayBuffer(globalThis)) |array_buffer| {
             if (array_buffer.slice().len == 0) {

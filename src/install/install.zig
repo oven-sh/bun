@@ -8072,8 +8072,9 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (resolution.tag == .workspace or this.lockfile.hasTrustedDependency(name)) {
+                        if (resolution.tag == .workspace or this.lockfile.hasTrustedDependency(alias)) {
                             this.enqueuePackageScriptsToLockfile(
+                                alias,
                                 name,
                                 log_level,
                                 package_id,
@@ -8203,10 +8204,11 @@ pub const PackageManager = struct {
                     else => {},
                 }
             } else {
-                if (this.manager.summary.new_trusted_dependencies.contains(@truncate(String.Builder.stringHash(name)))) {
+                if (this.manager.summary.new_trusted_dependencies.contains(@truncate(String.Builder.stringHash(alias)))) {
                     // these are packages that are installed but haven't run lifecycle scripts because they weren't
                     // in `trustedDependencies`
                     this.enqueuePackageScriptsToLockfile(
+                        alias,
                         name,
                         log_level,
                         package_id,
@@ -8221,7 +8223,7 @@ pub const PackageManager = struct {
 
         fn enqueuePackageScriptsToLockfile(
             this: *PackageInstaller,
-            name: string,
+            folder_name: string,
             comptime log_level: Options.LogLevel,
             package_id: PackageID,
             destination_dir_subpath: [:0]const u8,
@@ -8236,13 +8238,13 @@ pub const PackageManager = struct {
             }
 
             if (scripts.hasAny()) {
-                const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(name) and
+                const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(folder_name) and
                     scripts.install.isEmpty() and
                     scripts.postinstall.isEmpty())
                 brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         this.node_modules_folder_path.items,
-                        &[_]string{ name, "binding.gyp" },
+                        &[_]string{ folder_name, "binding.gyp" },
                         .posix,
                     );
 
@@ -8260,7 +8262,7 @@ pub const PackageManager = struct {
                     this.lockfile,
                     buf,
                     cwd,
-                    name,
+                    folder_name,
                     resolution.tag,
                     add_node_gyp_rebuild_script,
                 )) |scripts_list| {
@@ -8288,12 +8290,12 @@ pub const PackageManager = struct {
                     this.node_modules_folder,
                     this.node_modules_folder_path.items,
                     destination_dir_subpath,
-                    name,
+                    folder_name,
                     resolution,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
-                        const args = .{ name, @errorName(err) };
+                        const args = .{ folder_name, @errorName(err) };
 
                         if (comptime log_level.showProgress()) {
                             switch (Output.enable_ansi_colors) {

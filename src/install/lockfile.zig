@@ -2547,7 +2547,7 @@ pub const Package = extern struct {
             node_modules: std.fs.Dir,
             node_modules_path: string,
             subpath: [:0]const u8,
-            name: string,
+            folder_name: string,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
             var path_buf: bun.PathBuffer = undefined;
@@ -2555,7 +2555,7 @@ pub const Package = extern struct {
             const cwd = Path.joinAbsStringBufZTrailingSlash(
                 node_modules_path,
                 &path_buf,
-                &[_]string{name},
+                &[_]string{folder_name},
                 .auto,
             );
 
@@ -2593,7 +2593,7 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(name) and
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                 this.install.isEmpty() and
                 this.postinstall.isEmpty())
             brk: {
@@ -2610,7 +2610,7 @@ pub const Package = extern struct {
                 lockfile,
                 tmp.buffers.string_bytes.items,
                 cwd,
-                name,
+                folder_name,
                 resolution.tag,
                 add_node_gyp_rebuild_script,
             );

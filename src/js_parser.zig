@@ -1046,7 +1046,7 @@ pub const ImportScanner = struct {
                         // for side effects.
                         //
                         // This culling is important for correctness when parsing TypeScript
-                        // because a) the TypeScript compiler does ths and we want to match it
+                        // because a) the TypeScript compiler does this and we want to match it
                         // and b) this may be a fake module that only exists in the type system
                         // and doesn't actually exist in reality.
                         //
@@ -2881,7 +2881,7 @@ pub const Parser = struct {
 
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
-        // So we don't have a good way to distuingish between a type-only import and not.
+        // So we don't have a good way to distinguish between a type-only import and not.
         if (comptime ParserType.parser_features.typescript) {
             p.parse_pass_symbol_uses = &scan_pass.used_symbols;
         }
@@ -4256,7 +4256,7 @@ const ParserFeatures = struct {
 
     // *** How React Fast Refresh works ***
     //
-    //  Implmenetations:
+    //  Implementations:
     //   [0]: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js
     //   [1]: https://github.com/swc-project/swc/blob/master/ecmascript/transforms/react/src/refresh/mod.rs
     //
@@ -6719,7 +6719,7 @@ fn NewParser_(
 
             if (comptime !Environment.isRelease) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
-                // where the pushed scopes are mistmatched between the first and second passes
+                // where the pushed scopes are mismatched between the first and second passes
                 if (p.scopes_in_order.items.len > 0) {
                     var last_i = p.scopes_in_order.items.len - 1;
                     while (p.scopes_in_order.items[last_i] == null and last_i > 0) {
@@ -9157,7 +9157,7 @@ fn NewParser_(
                                             try p.lexer.next();
                                             if (p.lexer.has_newline_before) {
                                                 try p.log.addErrorFmt(p.source, type_range.end(), p.allocator, "Unexpected newline after \"type\"", .{});
-                                                return error.SynaxError;
+                                                return error.SyntaxError;
                                             }
                                             var skipper = ParseStatementOptions{ .is_module_scope = opts.is_module_scope, .is_export = true };
                                             try p.skipTypeScriptTypeStmt(&skipper);
@@ -11951,7 +11951,7 @@ fn NewParser_(
             return obj;
         }
 
-        // mmmm memmory allocation
+        // mmmm memory allocation
         pub inline fn m(self: *P, kind: anytype) *@TypeOf(kind) {
             return self.mm(@TypeOf(kind), kind);
         }
@@ -12488,14 +12488,14 @@ fn NewParser_(
                                 switch (keyword) {
                                     .p_get => {
                                         if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_get) {
-                                            // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             return try p.parseProperty(.get, opts, null);
                                         }
                                     },
 
                                     .p_set => {
                                         if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_set) {
-                                            // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             return try p.parseProperty(.set, opts, null);
                                         }
                                     },
@@ -12504,7 +12504,7 @@ fn NewParser_(
                                             opts.is_async = true;
                                             opts.async_range = name_range;
 
-                                            // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             return try p.parseProperty(kind, opts, null);
                                         }
                                     },
@@ -15857,7 +15857,7 @@ fn NewParser_(
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
                                     }
 
-                                    // this ordering incase someone wants ot use a macro in a node_module conditionally
+                                    // this ordering incase someone wants to use a macro in a node_module conditionally
                                     if (p.options.features.no_macros) {
                                         p.log.addError(p.source, tag.loc, "Macros are disabled") catch unreachable;
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
@@ -17703,7 +17703,7 @@ fn NewParser_(
                                     const value = SideEffects.simpifyUnusedExpr(p, visited_value) orelse visited_value;
 
                                     // We are doing `module.exports = { ... }`
-                                    // lets rewrite it to a series of what will become export assignemnts
+                                    // lets rewrite it to a series of what will become export assignments
                                     const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
@@ -21064,7 +21064,7 @@ fn NewParser_(
                                 prev_stmt.data.s_local.decls.len == 1 and
                                 s_expr.value.data.e_binary.op == .bin_assign and
                                 // we can only do this with var because var is hoisted
-                                // the statment we are merging into may use the statement before its defined.
+                                // the statement we are merging into may use the statement before its defined.
                                 prev_stmt.data.s_local.kind == .k_var)
                             {
                                 var prev_local = prev_stmt.data.s_local;

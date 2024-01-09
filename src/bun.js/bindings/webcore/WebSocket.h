@@ -131,7 +131,7 @@ public:
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
-    void didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData);
+    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const

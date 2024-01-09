@@ -315,7 +315,7 @@ describe("net.Socket write", () => {
     "should work with .end(data)",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port)
+        .connect(server.port, server.hostname)
         .on("ready", () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
@@ -329,7 +329,7 @@ describe("net.Socket write", () => {
     "should work with .write(data).end()",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, () => {
+        .connect(server.port, server.hostname, () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
         })

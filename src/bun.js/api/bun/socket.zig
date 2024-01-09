@@ -19,14 +19,6 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 
-fn normalizeListeningHost(host: [:0]const u8) ?[*:0]const u8 {
-    if (host.len == 0 or strings.eqlComptime(host, "0.0.0.0")) {
-        return null;
-    }
-
-    return host.ptr;
-}
-
 // const Corker = struct {
 //     ptr: ?*[16384]u8 = null,
 //     holder: ?*anyopaque = null,
@@ -685,7 +677,7 @@ pub const Listener = struct {
                     const socket = uws.us_socket_context_listen(
                         @intFromBool(ssl_enabled),
                         socket_context,
-                        normalizeListeningHost(host),
+                        if (host.len == 0) null else host.ptr,
                         c.port,
                         socket_flags,
                         8,

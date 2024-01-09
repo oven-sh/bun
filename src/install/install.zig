@@ -8075,7 +8075,6 @@ pub const PackageManager = struct {
                         if (resolution.tag == .workspace or this.lockfile.hasTrustedDependency(alias)) {
                             this.enqueuePackageScriptsToLockfile(
                                 alias,
-                                name,
                                 log_level,
                                 package_id,
                                 destination_dir_subpath,
@@ -8209,7 +8208,6 @@ pub const PackageManager = struct {
                     // in `trustedDependencies`
                     this.enqueuePackageScriptsToLockfile(
                         alias,
-                        name,
                         log_level,
                         package_id,
                         destination_dir_subpath,

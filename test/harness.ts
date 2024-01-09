@@ -190,6 +190,16 @@ export function runWithError(cb: () => unknown): Error | undefined {
     return e as Error;
   }
   return undefined;
+}
+
+export async function runWithErrorPromise(cb: () => unknown): Promise<Error | undefined> {
+  try {
+    await cb();
+  } catch (e) {
+    return e as Error;
+  }
+  return undefined;
+}
 
 export function fakeNodeRun(dir: string, file: string | string[], env?: Record<string, string>) {
   var path = require("path");

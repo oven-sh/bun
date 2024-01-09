@@ -498,6 +498,9 @@ describe("lex shell", () => {
         CmdSubstEnd: {},
       },
       {
+        Delimit: {},
+      },
+      {
         CmdSubstBegin: {},
       },
       {

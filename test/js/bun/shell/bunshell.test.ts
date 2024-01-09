@@ -4,7 +4,13 @@ import { join, relative } from "path";
 import { redirect } from "./util";
 import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import { randomInvalidSurrogatePair, randomLoneSurrogate, runWithError, tempDirWithFiles } from "harness";
+import {
+  randomInvalidSurrogatePair,
+  randomLoneSurrogate,
+  runWithError,
+  runWithErrorPromise,
+  tempDirWithFiles,
+} from "harness";
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
@@ -25,74 +31,63 @@ const BUN = process.argv0;
 
 describe("bunshell", () => {
   describe("unicode", () => {
-    test("basic", () => {
-      const buffer = new Uint8Array(1 << 20);
+    test("basic", async () => {
       const whatsupbro = "元気かい、兄弟";
-      const result = $`echo ${whatsupbro} > ${buffer}`;
+      const { stdout } = await $`echo ${whatsupbro}`;
 
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(whatsupbro + "\n");
+      expect(stdout.toString("utf8")).toEqual(whatsupbro + "\n");
     });
 
-    test("escape unicode", () => {
-      const buffer = new Uint8Array(1 << 20);
-      const result = $`echo \\弟\\気 > ${buffer}`;
+    test("escape unicode", async () => {
+      const { stdout } = await $`echo \\弟\\気`;
 
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`\弟\気\n`);
+      expect(stdout.toString("utf8")).toEqual(`\弟\気\n`);
     });
 
     // Only A-Z, a-z, 0-9, and _ are allowed in variable names
-    test("varname fails", () => {
-      const error = runWithError(() => {
-        const buffer = new Uint8Array(1 << 20);
+    test("varname fails", async () => {
+      const error = await runWithErrorPromise(async () => {
         const whatsupbro = "元気かい、兄弟";
-        const result = $`${whatsupbro}=NICE; echo $${whatsupbro} > ${buffer}`;
+        const { stdout } = await $`${whatsupbro}=NICE; echo $${whatsupbro}`;
       });
       expect(error).toBeDefined();
     });
 
-    test("var value", () => {
-      const error = runWithError(() => {
-        const buffer = new Uint8Array(1 << 20);
+    test("var value", async () => {
+      const error = runWithErrorPromise(async () => {
         const whatsupbro = "元気かい、兄弟";
-        const result = $`FOO=${whatsupbro}; echo $FOO > ${buffer}`;
-        const sentinel = sentinelByte(buffer);
-        expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(whatsupbro + "\n");
+        const { stdout } = await $`FOO=${whatsupbro}; echo $FOO`;
+        expect(stdout.toString("utf-8")).toEqual(whatsupbro + "\n");
       });
       expect(error).toBeDefined();
     });
 
-    test("in compound word", () => {
-      const buffer = new Uint8Array(1 << 20);
+    test("in compound word", async () => {
       const whatsupbro = "元気かい、兄弟";
       const holymoly = "ホーリーモーリー";
-      const result = $`echo "${whatsupbro}&&nice"${holymoly} > ${buffer}`;
+      const { stdout } = await $`echo "${whatsupbro}&&nice"${holymoly}`;
 
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${whatsupbro}&&nice${holymoly}\n`);
+      expect(stdout.toString("utf-8")).toEqual(`${whatsupbro}&&nice${holymoly}\n`);
     });
 
-    test("cmd subst", () => {
-      const buffer = new Uint8Array(1 << 20);
+    test("cmd subst", async () => {
       const haha = "ハハ";
-      const result = $`echo $(echo ${haha}) > ${buffer}`;
+      const { stdout } = await $`echo $(echo ${haha})`;
 
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${haha}\n`);
+      expect(stdout.toString("utf-8")).toEqual(`${haha}\n`);
     });
 
-    test("invalid lone surrogate fails", () => {
-      const err = runWithError(() => {
+    test("invalid lone surrogate fails", async () => {
+      const err = await runWithErrorPromise(async () => {
         const loneSurrogate = randomLoneSurrogate();
         const buffer = new Uint8Array(8192);
-        const result = $`echo ${loneSurrogate} > ${buffer}`;
+        const result = await $`echo ${loneSurrogate} > ${buffer}`;
       });
       expect(err?.message).toEqual("bunshell: invalid string");
     });
 
-    test("invalid surrogate pair fails", () => {
-      const err = runWithError(() => {
+    test("invalid surrogate pair fails", async () => {
+      const err = await runWithErrorPromise(async () => {
         const loneSurrogate = randomInvalidSurrogatePair();
         const buffer = new Uint8Array(8192);
         const result = $`echo ${loneSurrogate} > ${buffer}`;
@@ -111,6 +106,15 @@ describe("bunshell", () => {
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(await thisFile.text());
   });
 
+  test("redirect Buffer", async () => {
+    const buffer = Buffer.alloc(1024, 0);
+    const result = $`cat ${import.meta.path} > ${buffer}`;
+
+    const thisFile = Bun.file(import.meta.path);
+
+    expect(buffer.toString("utf-8")).toEqual(await thisFile.text());
+  });
+
   test("redirect Bun.File", async () => {
     const filepath = join(temp_dir, "lmao.txt");
     const file = Bun.file(filepath);
@@ -121,7 +125,7 @@ describe("bunshell", () => {
   });
 
   test("redirect stderr", () => {
-    const buffer = new Uint8Array(1 << 20);
+    const buffer = Buffer.alloc(1024, 0);
     const code = /* ts */ `
     for (let i = 0; i < 10; i++) {
       console.error('LMAO')
@@ -130,10 +134,7 @@ describe("bunshell", () => {
 
     $`${BUN} -e "${code}" 2> ${buffer}`;
 
-    const sentinel = sentinelByte(buffer);
-    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(
-      `LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`,
-    );
+    expect(buffer.toString("utf-8")).toEqual(`LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`);
   });
 
   test("pipeline", () => {

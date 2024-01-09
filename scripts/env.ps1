@@ -50,10 +50,8 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_CXX_COMPILER=$CXX",
   "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
   "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
-  "-DCMAKE_C_FLAGS_RELEASE=`"$CFLAGS`"",
-  "-DCMAKE_CXX_FLAGS_RELEASE=`"$CXXFLAGS`""
 )
-
+hfdgcvnhbmjknl;;;;;
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS

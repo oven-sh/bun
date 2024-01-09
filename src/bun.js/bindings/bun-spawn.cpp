@@ -106,11 +106,13 @@ extern "C" ssize_t posix_spawn_bun(
                 break;
             }
             case FileActionType::Dup2: {
-                if (dup2(action.fds[0], action.fds[1]) == -1) {
-                    return childFailed();
+                if (action.fds[0] != action.fds[1]) {
+                    if (dup2(action.fds[0], action.fds[1]) == -1) {
+                        return childFailed();
+                    }
+                    close(action.fds[0]);
                 }
                 current_max_fd = std::max(current_max_fd, action.fds[1]);
-                close(action.fds[0]);
                 break;
             }
             case FileActionType::Open: {

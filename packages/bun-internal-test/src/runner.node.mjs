@@ -4,7 +4,7 @@ import { rmSync, writeFileSync, readFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { hostname, totalmem, userInfo } from "os";
+import { cpus, hostname, totalmem, userInfo } from "os";
 import { fileURLToPath } from "url";
 
 const run_start = new Date();
@@ -23,7 +23,13 @@ process.chdir(cwd);
 
 const ci = !!process.env["GITHUB_ACTION"];
 
-const run_concurrency = parseInt(process.env["BUN_TEST_CONCURRENCY"] || "16", 10);
+const run_concurrency = parseInt(
+  process.env["BUN_TEST_CONCURRENCY"] ||
+    // Concurrency causes more flaky tests, only enable it by default on windows
+    // See https://github.com/oven-sh/bun/issues/8071
+    (windows ? cpus().length : 1),
+  10,
+);
 
 const extensions = [".js", ".ts", ".jsx", ".tsx"];
 
@@ -179,11 +185,20 @@ async function runTest(path) {
 
   const duration = (Date.now() - start) / 1000;
 
+  if (run_concurrency !== 1 && enableANSIColors) {
+    // clear line
+    process.stdout.write("\x1b[2K\r");
+  }
+
   console.log(
     `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
       passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
     } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
+
+  if (run_concurrency !== 1 && enableANSIColors) {
+    writeProgressBar();
+  }
 
   if (run_concurrency > 1 && ci) {
     process.stderr.write(output);
@@ -212,6 +227,14 @@ let running = 0;
 let total = queue.length;
 let on_entry_finish = null;
 
+function writeProgressBar() {
+  const barWidth = Math.min(process.stdout.columns || 40, 80) - 2;
+  const percent = ((total - queue.length) / total) * 100;
+  const bar = "=".repeat(Math.floor(percent / 2));
+  const str1 = `[${total - queue.length}/${total}] [${bar}\r`;
+  process.stdout.write(`\r${str1.padEnd(barWidth)}]\r`);
+}
+
 while (queue.length > 0) {
   if (running >= run_concurrency) {
     await new Promise(resolve => (on_entry_finish = resolve));
@@ -222,7 +245,7 @@ while (queue.length > 0) {
   running++;
   runTest(path)
     .catch(e => {
-      console.error("Bug in bun-internal");
+      console.error("Bug in bun-internal-test");
       console.error(e);
       process.exit(1);
     })
@@ -240,6 +263,7 @@ while (running > 0) {
     new Promise(resolve => setTimeout(resolve, 1000)),
   ]);
 }
+console.log("\n");
 
 function linkToGH(linkTo) {
   return `https://github.com/oven-sh/bun/blob/${git_sha}/${linkTo}`;

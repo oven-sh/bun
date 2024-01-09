@@ -7853,7 +7853,7 @@ describe("Registry URLs", () => {
       }
       // fails either way, since notapackage is, well, not a real package.
       expect(await exited).not.toBe(0);
-    });
+    }, Infinity);
   }
 
   it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {

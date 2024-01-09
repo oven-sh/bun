@@ -27,27 +27,6 @@ import url from "url";
 const noop = () => {};
 const mustCallChecks = [];
 
-//? Bun does not have this function yet
-assert.doesNotMatch = (string, regexp, message) => {
-  try {
-    assert.match(string, regexp, message);
-    throw null;
-  } catch (e) {
-    if (e === null) {
-      const msg =
-        message || `The input was expected to not match the regular expression ${regexp}. Input:\n'${string}'`;
-      throw new assert.AssertionError({
-        message: msg,
-        actual: string,
-        expected: regexp,
-        operator: "doesNotMatch",
-        stackStartFn: assert.doesNotMatch,
-      });
-    }
-    // pass
-  }
-};
-
 test("no assertion failures", () => {
   assert.strictEqual(util.inspect(1), "1");
   assert.strictEqual(util.inspect(false), "false");

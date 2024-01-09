@@ -996,17 +996,25 @@ var require_assert = __commonJS({
           stackStartFn: notStrictEqual,
         });
     };
-    assert.match = function match(actual, expected, message) {
+    var internalMatch = function (actual, expected, message, fn) {
       if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (typeof actual !== "string") throw new ERR_INVALID_ARG_TYPE("actual", "string", actual);
       if (!isRegExp(expected)) throw new ERR_INVALID_ARG_TYPE("expected", "RegExp", expected);
-      expected.test(actual) ||
+      var match = fn === assert.match;
+      expected.test(actual) === match ||
         innerFail({
           actual,
           expected,
           message,
-          operator: "match",
-          stackStartFn: match,
+          operator: fn.name,
+          stackStartFn: fn,
         });
+    };
+    assert.doesNotMatch = function doesNotMatch(actual, expected, message) {
+      internalMatch(actual, expected, message, doesNotMatch);
+    };
+    assert.match = function match(actual, expected, message) {
+      internalMatch(actual, expected, message, match);
     };
     var Comparison = function Comparison2(obj, keys, actual) {
       var _this = this;

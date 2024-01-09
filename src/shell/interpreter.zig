@@ -6,7 +6,16 @@
 //! machine part manually keeps track of execution state (which coroutines would
 //! do for us), but makes the code very confusing because control flow is less obvious.
 //!
-//! Typically, you will see functions `return` this is analogous to yielding/suspending execution
+//! Things to note:
+//! - If you want to do something analogous to yielding execution, you must
+//!    `return` from the function. For example in the code we start an async
+//!    BufferedWriter and "yield" execution by calling =.start()= on the writer and
+//!    then `return`ing form the function
+//! - Sometimes a state machine will immediately finish and deinit itself so
+//!     that might cause some unintuitive things to happen. For example if you
+//!     `defer` some code, then try to yield execution to some state machine struct,
+//!     and it immediately finishes, it will deinit itself and the defer code might
+//!     use undefined memory.
 const bun = @import("root").bun;
 const std = @import("std");
 const os = std.os;
@@ -1563,8 +1572,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.currently_executing = this.makeChild(false);
                     this.left = 0;
                 }
-                var child = this.currently_executing.?.as(Cmd);
-                child.start();
+                if (this.currently_executing) |exec| {
+                    exec.start();
+                }
+                // var child = this.currently_executing.?.as(Cmd);
+                // child.start();
             }
 
             /// Returns null if child is assignments
@@ -2111,7 +2123,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             fn initSubproc(this: *Cmd) void {
                 log("cmd init subproc ({x})", .{@intFromPtr(this)});
-                this.base.interpreter.cmd_local_env.clearRetainingCapacity();
 
                 var arena = &this.spawn_arena;
                 var arena_allocator = arena.allocator();
@@ -2194,8 +2205,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 this.io.to_subproc_stdio(&spawn_args.stdio);
-
-                log("captured {any}", .{spawn_args.stdio[bun.STDOUT_FD].inherit.captured == null});
 
                 if (this.node.redirect_file) |redirect| {
                     const fd: u32 = if (this.node.redirect.stdout) bun.STDOUT_FD else (if (this.node.redirect.stdin) bun.STDIN_FD else bun.STDERR_FD);
@@ -2310,6 +2319,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
             pub fn deinit(this: *Cmd) void {
                 log("cmd deinit {x}", .{@intFromPtr(this)});
+                this.base.interpreter.cmd_local_env.clearRetainingCapacity();
                 // if (this.exit_code != null) {
                 //     if (this.cmd) |cmd| {
                 //         _ = cmd.tryKill(9);
@@ -2824,6 +2834,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         }
 
                         const len = buf.len;
+                        if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len) {
+                            // std.ArrayList(comptime T: type)
+                        }
                         const write_len = if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len)
                             io.arraybuf.buf.array_buffer.byte_len - io.arraybuf.i
                         else
@@ -2868,6 +2881,33 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         return bun.strings.cmpStringsAsc(context, this.key, other.key);
                     }
                 };
+
+                pub fn writeOutput(this: *Export, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(void) {
+                    if (!this.bltn.stdout.needsIO()) {
+                        switch (this.bltn.writeNoIO(io_kind, buf)) {
+                            .err => |e| {
+                                this.bltn.exit_code = e.errno;
+                                return Maybe(void).initErr(e);
+                            },
+                            .result => |written| {
+                                if (comptime bun.Environment.allow_assert) std.debug.assert(written == buf.len);
+                            },
+                        }
+                        this.bltn.done(0);
+                        return Maybe(void).success;
+                    }
+
+                    this.print_state = .{
+                        .bufwriter = BufferedWriter{
+                            .remain = buf,
+                            .fd = if (comptime io_kind == .stdout) this.bltn.stdout.expectFd() else this.bltn.stderr.expectFd(),
+                            .parent = BufferedWriter.ParentPtr{ .ptr = BufferedWriter.ParentPtr.Repr.init(this) },
+                            .bytelist = this.bltn.stdBufferedBytelist(io_kind),
+                        },
+                    };
+                    this.print_state.?.bufwriter.writeIfPossible(false);
+                    return Maybe(void).success;
+                }
 
                 pub fn onBufferedWriterDone(this: *Export, e: ?Syscall.Error) void {
                     if (comptime bun.Environment.allow_assert) {
@@ -2952,7 +2992,27 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         return Maybe(void).success;
                     }
 
-                    @panic("FIXME TODO set env");
+                    for (args) |arg_raw| {
+                        const arg_sentinel = arg_raw[0..std.mem.len(arg_raw) :0];
+                        const arg = arg_sentinel[0..arg_sentinel.len];
+                        if (arg.len == 0) continue;
+
+                        const eqsign_idx = std.mem.indexOfScalar(u8, arg, '=') orelse {
+                            if (!shell.isValidVarName(arg)) {
+                                const buf = this.bltn.fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
+                                return this.writeOutput(.stderr, buf);
+                            }
+                            this.bltn.parentCmd().base.interpreter.assignVar(arg, "", .exported);
+                            continue;
+                        };
+
+                        const label = arg[0..eqsign_idx];
+                        const value = arg_sentinel[eqsign_idx + 1 .. :0];
+                        this.bltn.parentCmd().base.interpreter.assignVar(label, value, .exported);
+                    }
+
+                    this.bltn.done(0);
+                    return Maybe(void).success;
                 }
 
                 pub fn deinit(this: *Export) void {

@@ -44,13 +44,17 @@ describe("bunshell", () => {
       expect(stdout.toString("utf8")).toEqual(`\弟\気\n`);
     });
 
-    // Only A-Z, a-z, 0-9, and _ are allowed in variable names
+    /**
+     * Only A-Z, a-z, 0-9, and _ are allowed in variable names
+     *
+     * Using unicode in var name will interpret the assignment as a command.
+     */
+    //
     test("varname fails", async () => {
-      const error = await runWithErrorPromise(async () => {
-        const whatsupbro = "元気かい、兄弟";
-        const { stdout } = await $`${whatsupbro}=NICE; echo $${whatsupbro}`;
-      });
-      expect(error).toBeDefined();
+      const whatsupbro = "元気かい、兄弟";
+      const { stdout, stderr } = await $`${whatsupbro}=NICE; echo $${whatsupbro}`;
+      expect(stdout.toString()).toEqual("\n");
+      expect(stderr.toString()).toEqual(`bunsh: command not found: ${whatsupbro}=NICE\n`);
     });
 
     test("var value", async () => {
@@ -153,22 +157,18 @@ describe("bunshell", () => {
   });
 
   describe("brace expansion", () => {
-    test("basic", () => {
-      const buffer = new Uint8Array(512);
-      const result = $`echo {a,b,c}{d,e,f} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("ad ae af bd be bf cd ce cf\n");
+    function doTest(pattern: string, expected: string) {
+      test(pattern, async () => {
+        const { stdout } = await $`echo ${pattern} `;
+        expect(stdout.toString()).toEqual(`${expected}\n`);
+      });
+    }
+
+    test("concatenated", () => {
+      doTest("{a,b,c}{d,e,f}", "ad ae af bd be bf cd ce cf");
     });
 
     describe("nested", () => {
-      function doTest(pattern: string, expected: string, buffer: Uint8Array = new Uint8Array(512)) {
-        test(pattern, () => {
-          const result = $`echo ${pattern} > ${buffer}`;
-          const sentinel = sentinelByte(buffer);
-          expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${expected}\n`);
-        });
-      }
-
       doTest("{a,b,{c,d}}", "a b c d");
       doTest("{a,b,{c,d,{e,f}}}", "a b c d e f");
       doTest("{a,{b,{c,d}}}", "a b c d");
@@ -183,20 +183,16 @@ describe("bunshell", () => {
       );
     });
 
-    test("command", () => {
-      const buffer = new Uint8Array(512);
-      const result = $`{echo,a,b,c} {d,e,f} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d e f\n");
+    test("command", async () => {
+      const { stdout } = await $`{echo,a,b,c} {d,e,f}`;
+      expect(stdout.toString()).toEqual("a b c d e f\n");
     });
   });
 
   describe("variables", () => {
-    test("cmd_local_var", () => {
-      const buffer = new Uint8Array(8192);
-      $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    test("cmd_local_var", async () => {
+      const { stdout } = await $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
+      const str = stdout.toString();
       expect(JSON.parse(str)).toEqual({
         ...process.env,
         FOO: "bar",
@@ -204,20 +200,17 @@ describe("bunshell", () => {
       });
     });
 
-    test("expand shell var", () => {
-      const buffer = new Uint8Array(8192);
-      $`FOO=bar BAR=baz; echo $FOO $BAR > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    test("expand shell var", async () => {
+      const { stdout } = await $`FOO=bar BAR=baz; echo $FOO $BAR`;
+      const str = stdout.toString();
 
       expect(str).toEqual("bar baz\n");
     });
 
-    test("shell var", () => {
-      const buffer = new Uint8Array(8192);
-      $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    test("shell var", async () => {
+      const { stdout } =
+        await $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
+      const str = stdout.toString();
 
       const procEnv = JSON.parse(str);
       expect(procEnv.FOO).toBeUndefined();
@@ -225,13 +218,15 @@ describe("bunshell", () => {
       expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1" });
     });
 
-    test("export var", () => {
-      const buffer = new Uint8Array(8192);
-      const buffer2 = new Uint8Array(8192);
-      $`export FOO=bar && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
+    test("export var", async () => {
+      const buffer = Buffer.alloc(8192);
+      const buffer2 = Buffer.alloc(8192);
+      await $`export FOO=bar && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
 
       const str1 = stringifyBuffer(buffer);
       const str2 = stringifyBuffer(buffer2);
+
+      console.log("Str1", str1);
 
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
@@ -239,9 +234,10 @@ describe("bunshell", () => {
       expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
     });
 
-    test("syntax edgecase", () => {
+    test("syntax edgecase", async () => {
       const buffer = new Uint8Array(8192);
-      const shellProc = $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${process.argv0} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
+      const shellProc =
+        await $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
 
       const str = stringifyBuffer(buffer);
 

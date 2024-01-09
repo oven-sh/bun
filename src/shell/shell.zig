@@ -1211,14 +1211,14 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
                         '>' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_impl(true, false, true);
                             const redirect = self.eat_simple_redirect(.out);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
                         },
                         '<' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_impl(true, false, true);
                             const redirect = self.eat_simple_redirect(.in);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
@@ -1271,7 +1271,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         // 3. Word breakers
                         ' ' => {
                             if (self.chars.state == .Normal) {
-                                try self.break_word_impl(true, true);
+                                try self.break_word_impl(true, true, false);
                                 continue;
                             }
                             break :escaped;
@@ -1316,10 +1316,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn break_word(self: *@This(), add_delimiter: bool) !void {
-            return try self.break_word_impl(add_delimiter, false);
+            return try self.break_word_impl(add_delimiter, false, false);
         }
 
-        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool) !void {
+        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_redirect_operator: bool) !void {
             const start: u32 = self.word_start;
             const end: u32 = self.j;
             if (start != end) {
@@ -1327,7 +1327,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);
                 }
-            } else if (in_normal_space and self.tokens.items.len > 0 and
+            } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
                 .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
                 else => false,

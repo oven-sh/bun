@@ -332,6 +332,16 @@ pub const FilePoll = struct {
                 var loader = ptr.as(ShellBufferedWriterMini);
                 loader.onPoll(size_or_offset, 0);
             },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriter))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriter", .{poll.fd});
+                var loader = ptr.as(ShellSubprocessCapturedBufferedWriter);
+                loader.onPoll(size_or_offset, 0);
+            },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriterMini))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriterMini", .{poll.fd});
+                var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
+                loader.onPoll(size_or_offset, 0);
+            },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocess", .{poll.fd});
                 var loader = ptr.as(ShellSubprocess);
@@ -378,7 +388,8 @@ pub const FilePoll = struct {
             },
 
             else => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) disconnected?", .{poll.fd});
+                const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });
             },
         }
     }

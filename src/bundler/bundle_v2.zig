@@ -751,6 +751,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
+        generator.linker.options.target = bundler.options.target;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -774,8 +775,9 @@ pub const BundleV2 = struct {
 
         {
             // Add the runtime
+            const rt = ParseTask.getRuntimeSource(this.bundler.options.target);
             try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
-                .source = ParseTask.runtime_source,
+                .source = rt.source,
                 .loader = .js,
                 .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
             });
@@ -784,7 +786,7 @@ pub const BundleV2 = struct {
             this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
             this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get()) catch unreachable;
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
-            runtime_parse_task.* = ParseTask.runtime;
+            runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
             runtime_parse_task.task = .{
                 .callback = &ParseTask.callback,
@@ -2309,26 +2311,71 @@ pub const ParseTask = struct {
         };
     }
 
-    pub const runtime = ParseTask{
-        .ctx = undefined,
-        .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
-        .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
-        .jsx = options.JSX.Pragma{
-            .parse = false,
-            // .supports_react_refresh = false,
-        },
-        .contents_or_fd = .{
-            .contents = @as(string, @embedFile("../runtime.js")),
-        },
-        .source_index = Index.runtime,
-        .loader = Loader.js,
+    const RuntimeSource = struct {
+        parse_task: ParseTask,
+        source: Logger.Source,
     };
-    pub const runtime_source = Logger.Source{
-        .path = ParseTask.runtime.path,
-        .key_path = ParseTask.runtime.path,
-        .contents = ParseTask.runtime.contents_or_fd.contents,
-        .index = Index.runtime,
-    };
+
+    fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
+        const code = @embedFile("../runtime.js") ++ switch (target) {
+            .bun, .bun_macro =>
+            \\
+            \\export var __require = /* @__PURE__ */ import.meta.require;
+            \\
+            ,
+            .node =>
+            \\import { createRequire } from "node:module";
+            \\export var __require = /* @__PURE__ */ createRequire(import.meta.url);
+            ,
+            // Copied from esbuild's runtime.go:
+            //
+            // > This fallback "require" function exists so that "typeof require" can
+            // > naturally be "function" even in non-CommonJS environments since esbuild
+            // > emulates a CommonJS environment (issue #1202). However, people want this
+            // > shim to fall back to "globalThis.require" even if it's defined later
+            // > (including property accesses such as "require.resolve") so we need to
+            // > use a proxy (issue #1614).
+            //
+            // when bundling to node, esbuild picks this code path as well, but `globalThis.require`
+            // is not always defined there. the `createRequire` call approach is more reliable.
+            else =>
+            \\export var __require = /* @__PURE__ */ (x =>
+            \\	typeof require !== 'undefined' ? require :
+            \\	typeof Proxy !== 'undefined' ? new Proxy(x, {
+            \\		get: (a, b) => (typeof require !== 'undefined' ? require : a)[b]
+            \\	}) : x
+            \\)((x) => {
+            \\	if (typeof require !== 'undefined') return require.apply(this, arguments)
+            \\	throw Error('Dynamic require of "' + x + '" is not supported')
+            \\})
+        };
+        const parse_task = ParseTask{
+            .ctx = undefined,
+            .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
+            .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
+            .jsx = options.JSX.Pragma{
+                .parse = false,
+                // .supports_react_refresh = false,
+            },
+            .contents_or_fd = .{
+                .contents = code,
+            },
+            .source_index = Index.runtime,
+            .loader = Loader.js,
+        };
+        const source = Logger.Source{
+            .path = parse_task.path,
+            .key_path = parse_task.path,
+            .contents = parse_task.contents_or_fd.contents,
+            .index = Index.runtime,
+        };
+        return .{ .parse_task = parse_task, .source = source };
+    }
+    fn getRuntimeSource(target: options.Target) RuntimeSource {
+        return switch (target) {
+            inline else => |t| comptime getRuntimeSourceComptime(t),
+        };
+    }
 
     pub const Result = struct {
         task: EventLoop.Task = undefined,
@@ -3559,6 +3606,7 @@ const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        target: options.Target = .bun,
         source_maps: options.SourceMapOption = .none,
 
         mode: Mode = Mode.bundle,

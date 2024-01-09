@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: panic "TODO on Windows"
+// @bun-known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "bun";
 import { bunExe, bunEnv } from "harness";

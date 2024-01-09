@@ -983,10 +983,11 @@ it("should install version tagged with `latest` by default", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  const out1 = await new Response(stdout1).text();
+
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
-  const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " installed baz@0.0.3",
@@ -1410,11 +1411,16 @@ it("should add dependency without duplication", async () => {
     env,
   });
   expect(stderr2).toBeDefined();
-  const err2 = await new Response(stderr2).text();
-  expect(err2).not.toContain("error:");
-  expect(err2).toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
+
+  const err2 = await new Response(stderr2).text();
   const out2 = await new Response(stdout2).text();
+
+  expect(err2).not.toContain("error:");
+
+  // The meta-hash didn't change, but we do save everytime you do "bun add <package>".
+  expect(err2).toContain("Saved lockfile");
+
   expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual(["", " installed bar@0.0.2"]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -1525,7 +1531,10 @@ it("should add dependency without duplication (GitHub)", async () => {
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
+
+  // The meta-hash didn't change, but we do save everytime you do "bun add <package>".
   expect(err2).toContain("Saved lockfile");
+
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual([

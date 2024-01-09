@@ -2029,13 +2029,13 @@ pub const Command = struct {
 
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <b>From npm :<r>
+                        \\  <d>From npm<r>
                         \\  <b><green>bun create remix<r>
                         \\
-                        \\  <b>From GitHub :<r>
-                        \\  <b><green>bun create github.com/\<user\>/\<repo\><r>
+                        \\  <d>From GitHub<r>
+                        \\  <b><green>bun create \<user\>/\<repo\><r>
                         \\
-                        \\  <b>From local template :<r>
+                        \\  <d>From local template<r>
                         \\  <b><green>bun create $HOME/.bun-create/\<name\><r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/bun-create<r>

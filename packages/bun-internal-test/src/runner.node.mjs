@@ -22,6 +22,7 @@ const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const ci = !!process.env["GITHUB_ACTION"];
+const enableANSIColors = !ci;
 
 const run_concurrency = parseInt(
   process.env["BUN_TEST_CONCURRENCY"] ||
@@ -231,8 +232,8 @@ function writeProgressBar() {
   const barWidth = Math.min(process.stdout.columns || 40, 80) - 2;
   const percent = ((total - queue.length) / total) * 100;
   const bar = "=".repeat(Math.floor(percent / 2));
-  const str1 = `[${total - queue.length}/${total}] [${bar}\r`;
-  process.stdout.write(`\r${str1.padEnd(barWidth)}]\r`);
+  const str1 = `[${total - queue.length}/${total}] [${bar}`;
+  process.stdout.write(`\r${str1}${" ".repeat(barWidth - str1.length)}]`);
 }
 
 while (queue.length > 0) {

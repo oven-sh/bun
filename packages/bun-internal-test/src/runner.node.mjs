@@ -389,4 +389,4 @@ if (ci) {
   }
 }
 
-process.exit(0);
+process.exit(failing_tests.length > 0 ? 1 : 0);

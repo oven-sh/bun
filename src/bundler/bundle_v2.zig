@@ -751,7 +751,6 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
-        generator.linker.options.target = bundler.options.target;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -2319,7 +2318,6 @@ pub const ParseTask = struct {
     fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
         const code = @embedFile("../runtime.js") ++ switch (target) {
             .bun, .bun_macro =>
-            \\
             \\export var __require = /* @__PURE__ */ import.meta.require;
             \\
             ,
@@ -2348,6 +2346,7 @@ pub const ParseTask = struct {
             \\	if (typeof require !== 'undefined') return require.apply(this, arguments)
             \\	throw Error('Dynamic require of "' + x + '" is not supported')
             \\})
+            \\
         };
         const parse_task = ParseTask{
             .ctx = undefined,
@@ -3606,7 +3605,6 @@ const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
-        target: options.Target = .bun,
         source_maps: options.SourceMapOption = .none,
 
         mode: Mode = Mode.bundle,

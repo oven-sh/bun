@@ -9506,7 +9506,9 @@ pub const PackageManager = struct {
                 try PATH.append(std.fs.path.delimiter);
             }
             try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
-            try PATH.append(std.fs.path.sep);
+            if (!(dir.abs_path.len == 1 and dir.abs_path[0] == std.fs.path.sep)) {
+                try PATH.append(std.fs.path.sep);
+            }
             try PATH.appendSlice(this.options.bin_path);
             current_dir = dir.getParent();
         }

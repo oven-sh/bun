@@ -160,3 +160,147 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
     return 0;
 }
 #endif
+
+#if OS(LINUX)
+
+#include <sys/syscall.h>
+#include <signal.h>
+
+static int close_range(unsigned int first)
+{
+    return syscall(__NR_close_range, first, ~0U, 0);
+}
+
+extern char** environ;
+
+enum FileActionType : uint8_t {
+    None,
+    Close,
+    Dup2,
+    Open,
+};
+
+typedef struct bun_spawn_request_file_action_t {
+    FileActionType type;
+    const char* path;
+    int fds[2];
+    int flags;
+    mode_t mode;
+} bun_spawn_request_file_action_t;
+
+typedef struct bun_spawn_file_action_list_t {
+    const bun_spawn_request_file_action_t* ptr;
+    size_t len;
+} bun_spawn_file_action_list_t;
+
+typedef struct bun_spawn_request_t {
+    const char* chdir;
+    bool detached;
+    bun_spawn_file_action_list_t actions;
+} bun_spawn_request_t;
+
+extern "C" ssize_t posix_spawn_bun(
+    int* pid,
+    const bun_spawn_request_t* request,
+    char* const argv[],
+    char* const envp[])
+{
+    volatile int status = 0;
+    sigset_t blockall, oldmask;
+    int child, res, cs, e = errno;
+    sigfillset(&blockall);
+    sigprocmask(SIG_SETMASK, &blockall, &oldmask);
+    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+    const char* path = argv[0];
+
+    if (!(child = vfork())) {
+        sigset_t childmask;
+        if (request->detached) {
+            setsid();
+        }
+
+        // POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
+        sigprocmask(SIG_SETMASK, &oldmask, nullptr);
+
+        int current_max_fd = 0;
+
+        if (request->chdir)
+            chdir(request->chdir);
+
+        const auto& actions = request->actions;
+
+        for (size_t i = 0; i < actions.len; i++) {
+            const bun_spawn_request_file_action_t action = actions.ptr[i];
+            switch (action->type) {
+            case FileActionType::Close: {
+                close(action->fds[0]);
+                break;
+            }
+            case FileActionType::Dup2: {
+                if (dup2(action->fds[0], action->fds[1]) == -1) {
+                    goto ChildFailed;
+                }
+                current_max_fd = std::max(current_max_fd, action->fds[1]);
+                close(action->fds[0]);
+                break;
+            }
+            case FileActionType::Open: {
+                int opened = -1;
+                opened = open(action->path, action->flags, action->mode);
+
+                if (opened == -1) {
+                    goto ChildFailed;
+                }
+
+                if (opened != -1) {
+                    if (dup2(opened, action->fds[0]) == -1) {
+                        close(opened);
+                        goto ChildFailed;
+                    }
+                    current_max_fd = std::max(current_max_fd, action->fds[0]);
+                    if (close(opened)) {
+                        goto ChildFailed;
+                    }
+                }
+
+                break;
+            }
+            default: {
+                __builtin_unreachable();
+                break;
+            }
+            }
+        }
+
+        close_range(current_max_fd + 1);
+        sigprocmask(SIG_SETMASK, &childmask, 0);
+        if (!envp)
+            envp = environ;
+        execve(path, argv, envp);
+        _exit(127);
+
+    ChildFailed:
+        res = errno;
+        status = res;
+        _exit(127);
+    }
+
+    if (child != -1) {
+        if (!res) {
+            res = status;
+            *pid = child;
+        } else {
+            wait4(child, 0, 0, 0);
+        }
+    }
+
+ParentFailed:
+    if (child > 0)
+        kill(child, SIGKILL);
+    sigprocmask(SIG_SETMASK, &oldmask, 0);
+    pthread_setcancelstate(cs, 0);
+    errno = e;
+    return res;
+}
+
+#endif

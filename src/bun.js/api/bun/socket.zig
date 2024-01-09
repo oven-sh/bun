@@ -369,6 +369,12 @@ pub const SocketConfig = struct {
         }
 
         hostname_or_unix: {
+            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+                if (fd_.isNumber()) {
+                    break :hostname_or_unix;
+                }
+            }
+
             if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
                 if (!unix_socket.isString()) {
                     exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
@@ -497,6 +503,7 @@ pub const Listener = struct {
             host: []const u8,
             port: u16,
         },
+        fd: bun.FileDescriptor,
 
         pub fn clone(this: UnixOrHost) UnixOrHost {
             switch (this) {
@@ -506,8 +513,14 @@ pub const Listener = struct {
                     };
                 },
                 .host => |h| {
-                    return .{ .host = .{ .host = (bun.default_allocator.dupe(u8, h.host) catch unreachable), .port = this.host.port } };
+                    return .{
+                        .host = .{
+                            .host = (bun.default_allocator.dupe(u8, h.host) catch unreachable),
+                            .port = this.host.port,
+                        },
+                    };
                 },
+                .fd => |f| return .{ .fd = f },
             }
         }
 
@@ -519,6 +532,7 @@ pub const Listener = struct {
                 .host => |h| {
                     bun.default_allocator.free(h.host);
                 },
+                .fd => {}, // this is an integer
             }
         }
     };
@@ -557,10 +571,7 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn listen(
-        globalObject: *JSC.JSGlobalObject,
-        opts: JSValue,
-    ) JSValue {
+    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) JSValue {
         log("listen", .{});
         var exception_ = [1]JSC.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_;
@@ -581,7 +592,7 @@ pub const Listener = struct {
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
         var ssl = socket_config.ssl;
-        var handlers = &socket_config.handlers;
+        var handlers = socket_config.handlers;
         var protos: ?[]const u8 = null;
         const exclusive = socket_config.exclusive;
         handlers.is_server = true;
@@ -690,6 +701,10 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
                 },
+                .fd => {
+                    // don't call listen() on an fd
+                    return .zero;
+                },
             }
         } orelse {
             defer {
@@ -716,7 +731,7 @@ pub const Listener = struct {
         };
 
         var socket = Listener{
-            .handlers = handlers.*,
+            .handlers = handlers,
             .connection = connection,
             .ssl = ssl_enabled,
             .socket_context = socket_context,
@@ -869,7 +884,6 @@ pub const Listener = struct {
         if (this.connection != .host) {
             return JSValue.jsUndefined();
         }
-
         return ZigString.init(this.connection.host.host).withEncoding().toValueGC(globalObject);
     }
 
@@ -877,7 +891,6 @@ pub const Listener = struct {
         if (this.connection != .host) {
             return JSValue.jsUndefined();
         }
-
         return JSValue.jsNumber(this.connection.host.port);
     }
 
@@ -943,10 +956,17 @@ pub const Listener = struct {
             return .zero;
         };
 
-        const connection: Listener.UnixOrHost = if (port) |port_| .{
-            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
-        } else .{
-            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
+        const connection: Listener.UnixOrHost = blk: {
+            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+                if (fd_.isNumber()) {
+                    const fd: bun.FileDescriptor = fd_.asInt32();
+                    break :blk .{ .fd = fd };
+                }
+            }
+            if (port) |_| {
+                break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port.? } };
+            }
+            break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice() };
         };
 
         if (ssl_enabled) {
@@ -1147,23 +1167,27 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
                 .host => |c| {
-                    _ = @This().Socket.connectPtr(
+                    _ = This.Socket.connectPtr(
                         normalizeHost(c.host),
                         c.port,
                         socket_ctx,
-                        @This(),
+                        This,
                         this,
                         "socket",
                     ) orelse return error.ConnectionFailed;
                 },
                 .unix => |u| {
-                    _ = @This().Socket.connectUnixPtr(
+                    _ = This.Socket.connectUnixPtr(
                         u,
                         socket_ctx,
-                        @This(),
+                        This,
                         this,
                         "socket",
                     ) orelse return error.ConnectionFailed;
+                },
+                .fd => |f| {
+                    const socket = This.Socket.fromFd(socket_ctx, f, This, this, "socket") orelse return error.ConnectionFailed;
+                    this.onOpen(socket);
                 },
             }
         }

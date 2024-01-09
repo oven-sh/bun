@@ -280,7 +280,7 @@ jobs:
           ulimit -c unlimited
           ulimit -c
 
-          node packages/bun-internal-test/src/runner.node.mjs || true
+          node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{matrix.tag}}/bun
       - uses: actions/upload-artifact@v3
         if: steps.test.outputs.failing_tests != ''
         with:

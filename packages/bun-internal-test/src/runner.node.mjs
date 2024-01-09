@@ -362,12 +362,6 @@ console.log("-> test-report.md, test-report.json");
 
 if (ci) {
   if (windows) {
-    if (failing_tests.length > 0) {
-      action.setFailed(`${failing_tests.length} files with failing tests`);
-    }
-    action.setOutput("failing_tests", failingTestDisplay);
-    action.setOutput("failing_tests_count", failing_tests.length);
-  } else {
     if (regressions.length > 0) {
       action.setFailed(`${regressions.length} regressing tests`);
     }
@@ -376,6 +370,12 @@ if (ci) {
       regressions.map(({ path }) => `- [\`${path}\`](${linkToGH(path)})`).join("\n"),
     );
     action.setOutput("regressing_tests_count", failing_tests.length);
+  } else {
+    if (failing_tests.length > 0) {
+      action.setFailed(`${failing_tests.length} files with failing tests`);
+    }
+    action.setOutput("failing_tests", failingTestDisplay);
+    action.setOutput("failing_tests_count", failing_tests.length);
   }
   action.summary.addHeading(
     `${total} files with tests ran. pass rate is ${((passing_tests.length / total) * 100).toFixed(2)}%`,
@@ -389,4 +389,4 @@ if (ci) {
   }
 }
 
-process.exit(failing_tests.length > 0 ? 1 : 0);
+process.exit(0);

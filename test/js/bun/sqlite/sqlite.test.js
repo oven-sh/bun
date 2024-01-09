@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";

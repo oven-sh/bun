@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
 let hooks_run: string[] = [];

@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import { io as ioc } from "socket.io-client";
 import { join } from "path";

@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { Server } from "socket.io";
 import { describe, it, expect } from "bun:test";
 import { getPort, success, fail } from "./support/util.ts";

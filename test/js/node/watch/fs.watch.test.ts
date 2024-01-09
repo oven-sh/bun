@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";

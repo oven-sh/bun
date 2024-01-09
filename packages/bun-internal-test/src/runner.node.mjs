@@ -48,13 +48,20 @@ function* findTests(dir, query) {
   }
 }
 
-let bunExe = process.argv[2] ?? "bun";
-const { error, stdout: revision_stdout } = spawnSync(bunExe, ["--revision"]);
-if (error) throw error;
+// pick the last one, kind of a hack to allow 'bun run test bun-release' to test the release build
+let bunExe = (process.argv.length > 2 ? process.argv[process.argv.length - 1] : null) ?? "bun";
+const { error, stdout: revision_stdout } = spawnSync(bunExe, ["--revision"], {
+  env: { ...process.env, BUN_DEBUG_QUIET_LOGS: 1 },
+});
+if (error) {
+  if (error.code !== "ENOENT") throw error;
+  console.error(`\x1b[31merror\x1b[0;2m:\x1b[0m Could not find Bun executable at '${bunExe}'`);
+  process.exit(1);
+}
 const revision = revision_stdout.toString().trim();
 
 const { error: error2, stdout: argv0_stdout } = spawnSync(bunExe, ["-e", "console.log(process.argv[0])"], {
-  env: { BUN_DEBUG_QUIET_LOGS: 1 },
+  env: { ...process.env, BUN_DEBUG_QUIET_LOGS: 1 },
 });
 if (error2) throw error2;
 const argv0 = argv0_stdout.toString().trim();
@@ -90,7 +97,7 @@ async function runTest(path) {
 
   const expected_crash_reason = windows
     ? await readFile(resolve(path), "utf-8").then(data => {
-        const match = data.match(/@bun-known-failing-on-windows:(.*)\n/);
+        const match = data.match(/@known-failing-on-windows:(.*)\n/);
         return match ? match[1].trim() : null;
       })
     : null;
@@ -295,7 +302,7 @@ ${header}
 
 if (fixes.length > 0) {
   report += `## Fixes\n\n`;
-  report += "The following tests had @bun-known-failing-on-windows but now pass:\n\n";
+  report += "The following tests had @known-failing-on-windows but now pass:\n\n";
   report += fixes
     .map(
       ({ path, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) (before: ${expected_crash_reason})`,
@@ -336,7 +343,7 @@ if (failing_tests.length) {
     if (windows && reason !== expected_crash_reason) {
       report += `To mark this as a known failing test, add this to the start of the file:\n`;
       report += `\`\`\`ts\n`;
-      report += `// @bun-known-failing-on-windows: ${reason}\n`;
+      report += `// @known-failing-on-windows: ${reason}\n`;
       report += `\`\`\`\n\n`;
     } else {
       report += `${reason}\n\n`;
@@ -384,9 +391,9 @@ if (ci) {
 } else {
   if (windows && (regressions.length > 0 || fixes.length > 0)) {
     console.log(
-      "\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @bun-known-failing-on-windows annotations, run `bun update-known-failures`",
+      "\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @known-failing-on-windows annotations, run `bun update-known-failures`",
     );
   }
 }
 
-process.exit(0);
+process.exit(failing_tests.length);

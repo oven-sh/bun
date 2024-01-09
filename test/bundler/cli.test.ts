@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { bunEnv, bunExe } from "harness";
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";

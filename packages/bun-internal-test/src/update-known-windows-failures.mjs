@@ -3,44 +3,44 @@ import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 
-if(process.platform !== 'win32') {
-    console.log('This script is only intended to be run on Windows.');
-    process.exit(1);
+if (process.platform !== "win32") {
+  console.log("This script is only intended to be run on Windows.");
+  process.exit(1);
 }
 
-process.chdir(join(fileURLToPath(import.meta.url), '../../../../'));
+process.chdir(join(fileURLToPath(import.meta.url), "../../../../"));
 
-const test_report = JSON.parse(readFileSync('test-report.json', 'utf8'));
+const test_report = JSON.parse(readFileSync("test-report.json", "utf8"));
 assert(Array.isArray(test_report.failing_tests));
 
 for (const { path, reason, expected_crash_reason } of test_report.failing_tests) {
-    assert(path);
-    assert(reason);
-    
-    if(expected_crash_reason !== reason) {
-        const old_content = readFileSync(path, 'utf8');
+  assert(path);
+  assert(reason);
 
-        let content = old_content.replace(/\/\/\s*@bun-known-failing-on-windows:.*\n/, '')
-        if (reason) {
-            content = `// @bun-known-failing-on-windows: ${reason}\n` + content;
-        }
+  if (expected_crash_reason !== reason) {
+    const old_content = readFileSync(path, "utf8");
 
-        if (content !== old_content) {
-            writeFileSync(path, content, 'utf8');
-            console.log(path);
-        } 
+    let content = old_content.replace(/\/\/\s*@known-failing-on-windows:.*\n/, "");
+    if (reason) {
+      content = `// @known-failing-on-windows: ${reason}\n` + content;
     }
+
+    if (content !== old_content) {
+      writeFileSync(path, content, "utf8");
+      console.log(path);
+    }
+  }
 }
 
 for (const { path } of test_report.fixes) {
-    assert(path);
+  assert(path);
 
-    const old_content = readFileSync(path, 'utf8');
+  const old_content = readFileSync(path, "utf8");
 
-    let content = old_content.replace(/\/\/\s*@bun-known-failing-on-windows:.*\n/, '')
+  let content = old_content.replace(/\/\/\s*@known-failing-on-windows:.*\n/, "");
 
-    if (content !== old_content) {
-        writeFileSync(path, content, 'utf8');
-        console.log(path);
-    } 
+  if (content !== old_content) {
+    writeFileSync(path, content, "utf8");
+    console.log(path);
+  }
 }

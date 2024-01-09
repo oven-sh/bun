@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";

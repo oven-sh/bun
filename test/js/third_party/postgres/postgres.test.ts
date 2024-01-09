@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { test, expect, describe } from "bun:test";
 import { Pool, Client } from "pg";
 import { parse } from "pg-connection-string";

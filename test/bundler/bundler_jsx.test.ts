@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import assert from "assert";
 import dedent from "dedent";
 import { BundlerTestInput, itBundled, testForFile } from "./expectBundled";

@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 const fetch = require("node-fetch");
 
 test("require('node-fetch') fetches", async () => {

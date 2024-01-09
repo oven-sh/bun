@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;

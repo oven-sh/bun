@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 // Portions of this file are derived from works under the MIT License:
 //
 // Copyright (c) Denis Malinochkin

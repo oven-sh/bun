@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { describe, expect, it } from "bun:test";
 import path from "path";
 import sharp from "sharp";

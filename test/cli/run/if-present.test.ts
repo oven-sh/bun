@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { describe, test, expect, beforeAll } from "bun:test";
 import { spawnSync } from "bun";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";

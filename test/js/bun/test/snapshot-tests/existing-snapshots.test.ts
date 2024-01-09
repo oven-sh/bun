@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { it, test, expect, describe } from "bun:test";
 
 test("it will work with an existing snapshot file made with bun", () => {

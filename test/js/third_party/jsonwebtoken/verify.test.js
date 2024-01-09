@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import jwt from "jsonwebtoken";
 import { expect, describe, it, afterEach } from "bun:test";
 import jws from "jws";

@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { bunExe, bunEnv as env } from "harness";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { join, relative } from "path";

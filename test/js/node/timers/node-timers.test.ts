@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import { describe, test } from "bun:test";
 import { setTimeout, clearTimeout, setInterval, clearInterval, setImmediate } from "node:timers";
 

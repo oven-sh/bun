@@ -1,4 +1,4 @@
-// @bun-known-failing-on-windows: 1 failing
+// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import { bunExe } from "harness";
 import { tmpdir } from "os";

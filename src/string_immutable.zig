@@ -1286,6 +1286,42 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
 
 const strings = @This();
 
+pub fn writeUTF16IntoUTF8List(list: *std.ArrayList(u8), str: []const u16) !usize {
+    const initial = list.items.len;
+    outer: {
+        const trimmed = bun.simdutf.trim.utf16(str);
+        if (trimmed.len == 0)
+            break :outer;
+        const available_len = (list.capacity - list.items.len);
+
+        // maximum UTF-16 length is 3 times the UTF-8 length + 2
+        // only do the pass over the input length if we may not have enough space
+        const out_len = if (available_len <= (trimmed.len * 3 + 2))
+            bun.simdutf.length.utf8.from.utf16.le(trimmed)
+        else
+            str.len;
+
+        if (out_len == 0)
+            break :outer;
+
+        // intentionally over-allocate a little
+        try list.ensureTotalCapacity(list.items.len + out_len);
+
+        var remain = str;
+        while (remain.len > 0) {
+            const orig_len = list.items.len;
+
+            const slice_ = list.items.ptr[orig_len..list.capacity];
+            const result = strings.copyUTF16IntoUTF8WithBuffer(slice_, []const u16, remain, trimmed, out_len, true);
+            remain = remain[result.read..];
+            list.items.len += @as(usize, result.written);
+            if (result.read == 0 or result.written == 0) break;
+        }
+    }
+
+    return list.items.len - initial;
+}
+
 pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     var remain = src;
     var to = dest;

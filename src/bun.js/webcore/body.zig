@@ -1285,7 +1285,7 @@ pub const BodyValueBufferer = struct {
 
     fn handleResolveStream(sink: *@This(), is_async: bool) void {
         if (sink.js_sink) |wrapper| {
-            const bytes = wrapper.sink.bytes.slice();
+            const bytes = wrapper.sink.bytes.items;
             log("handleResolveStream {}", .{bytes.len});
             sink.onFinishedBuffering(sink.ctx, bytes, null, is_async);
         } else {

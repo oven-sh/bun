@@ -243,41 +243,10 @@ pub fn BabyList(comptime Type: type) type {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 
-            var list_ = this.listManaged(allocator);
-            const initial = this.len;
-            outer: {
-                defer this.update(list_);
-                const trimmed = bun.simdutf.trim.utf16(str);
-                if (trimmed.len == 0)
-                    break :outer;
-                const available_len = (list_.capacity - list_.items.len);
-
-                // maximum UTF-16 length is 3 times the UTF-8 length + 2
-                // only do the pass over the input length if we may not have enough space
-                const out_len = if (available_len <= (trimmed.len * 3 + 2))
-                    bun.simdutf.length.utf8.from.utf16.le(trimmed)
-                else
-                    str.len;
-
-                if (out_len == 0)
-                    break :outer;
-
-                // intentionally over-allocate a little
-                try list_.ensureTotalCapacity(list_.items.len + out_len);
-
-                var remain = str;
-                while (remain.len > 0) {
-                    const orig_len = list_.items.len;
-
-                    const slice_ = list_.items.ptr[orig_len..list_.capacity];
-                    const result = strings.copyUTF16IntoUTF8WithBuffer(slice_, []const u16, remain, trimmed, out_len, true);
-                    remain = remain[result.read..];
-                    list_.items.len += @as(usize, result.written);
-                    if (result.read == 0 or result.written == 0) break;
-                }
-            }
-
-            return this.len - initial;
+            var managed = this.listManaged(allocator);
+            defer this.update(managed);
+            const wrote = try strings.writeUTF16IntoUTF8List(&managed, str);
+            return @truncate(wrote);
         }
 
         pub fn writeTypeAsBytesAssumeCapacity(this: *@This(), comptime Int: type, int: Int) void {

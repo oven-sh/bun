@@ -261,9 +261,9 @@ pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
-    offset: u32 = 0,
-    len: u32 = 0,
-    byte_len: u32 = 0,
+    offset: usize = 0,
+    len: usize = 0,
+    byte_len: usize = 0,
     typed_array_type: JSC.JSValue.JSType = .Cell,
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
@@ -419,8 +419,10 @@ pub const ArrayBuffer = extern struct {
         return out;
     }
 
+    pub const max = std.math.maxInt(u32);
+
     pub fn fromBytes(bytes: []u8, typed_array_type: JSC.JSValue.JSType) ArrayBuffer {
-        return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
+        return ArrayBuffer{ .offset = 0, .len = bytes.len, .byte_len = bytes.len, .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {

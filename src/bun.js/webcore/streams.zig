@@ -636,6 +636,10 @@ pub const StreamResult = union(Tag) {
         };
     }
 
+    pub fn utf16Slice(this: *const StreamResult) []const u16 {
+        return @as([*]const u16, @ptrCast(@alignCast(this.slice().ptr)))[0..std.mem.bytesAsSlice(u16, this.slice()).len];
+    }
+
     pub const Writable = union(StreamResult.Tag) {
         pending: *Writable.Pending,
 
@@ -1820,7 +1824,7 @@ pub const FileSink = struct {
 };
 
 pub const ArrayBufferSink = struct {
-    bytes: bun.ByteList,
+    bytes: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
     done: bool = false,
     signal: Signal = .{},
@@ -1834,15 +1838,12 @@ pub const ArrayBufferSink = struct {
     }
 
     pub fn start(this: *ArrayBufferSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
-        this.bytes.len = 0;
-        var list = this.bytes.listManaged(this.allocator);
-        list.clearRetainingCapacity();
+        this.bytes.clearRetainingCapacity();
 
         switch (stream_start) {
             .ArrayBufferSink => |config| {
                 if (config.chunk_size > 0) {
-                    list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = Syscall.Error.oom };
-                    this.bytes.update(list);
+                    this.bytes.ensureTotalCapacityPrecise(bun.default_allocator, config.chunk_size) catch return .{ .err = Syscall.Error.oom };
                 }
 
                 this.as_uint8array = config.as_uint8array;
@@ -1861,14 +1862,21 @@ pub const ArrayBufferSink = struct {
         return .{ .result = {} };
     }
 
-    pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+    pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
         if (this.streaming) {
+            const chunk = this.bytes.items[0..@min(this.bytes.items.len, ArrayBuffer.max)];
             const value: JSValue = switch (this.as_uint8array) {
-                true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
-                false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+                true => JSC.ArrayBuffer.create(globalThis, chunk, .Uint8Array),
+                false => JSC.ArrayBuffer.create(globalThis, chunk, .ArrayBuffer),
             };
-            this.bytes.len = 0;
-            if (wait) {}
+
+            if (value != .zero) {
+                if (this.bytes.items.len > chunk.len) {
+                    bun.C.memmove(this.bytes.items.ptr, chunk.ptr, chunk.len);
+                    this.bytes.items.len -= chunk.len;
+                }
+            }
+
             return .{ .result = value };
         }
 
@@ -1876,9 +1884,8 @@ pub const ArrayBufferSink = struct {
     }
 
     pub fn finalize(this: *ArrayBufferSink) void {
-        if (this.bytes.len > 0) {
-            this.bytes.listManaged(this.allocator).deinit();
-            this.bytes = bun.ByteList.init("");
+        if (this.bytes.items.len > 0) {
+            this.bytes.clearAndFree(bun.default_allocator);
             this.done = true;
         }
 
@@ -1888,7 +1895,7 @@ pub const ArrayBufferSink = struct {
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
         const this = try allocator.create(ArrayBufferSink);
         this.* = ArrayBufferSink{
-            .bytes = bun.ByteList.init(&.{}),
+            .bytes = .{},
             .allocator = allocator,
             .next = next,
         };
@@ -1900,7 +1907,7 @@ pub const ArrayBufferSink = struct {
         allocator: std.mem.Allocator,
     ) void {
         this.* = ArrayBufferSink{
-            .bytes = bun.ByteList{},
+            .bytes = .{},
             .allocator = allocator,
             .next = null,
         };
@@ -1911,32 +1918,41 @@ pub const ArrayBufferSink = struct {
             return next.writeBytes(data);
         }
 
-        const len = this.bytes.write(this.allocator, data.slice()) catch {
+        const initial_length = this.bytes.items.len;
+        this.bytes.appendSlice(bun.default_allocator, data.slice()) catch {
             return .{ .err = Syscall.Error.oom };
         };
         this.signal.ready(null, null);
-        return .{ .owned = len };
+        return .{ .owned = @truncate(this.bytes.items.len - initial_length) };
     }
     pub const writeBytes = write;
     pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
         if (this.next) |*next| {
             return next.writeLatin1(data);
         }
-        const len = this.bytes.writeLatin1(this.allocator, data.slice()) catch {
+        const initial_length = this.bytes.items.len;
+        var bytes = strings.allocateLatin1IntoUTF8WithList(this.bytes.toManaged(bun.default_allocator), this.bytes.items.len, []const u8, data.slice()) catch {
             return .{ .err = Syscall.Error.oom };
         };
+        this.bytes = bytes.moveToUnmanaged();
         this.signal.ready(null, null);
-        return .{ .owned = len };
+        return .{ .owned = @truncate(this.bytes.items.len - initial_length) };
     }
     pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
         if (this.next) |*next| {
             return next.writeUTF16(data);
         }
-        const len = this.bytes.writeUTF16(this.allocator, @as([*]const u16, @ptrCast(@alignCast(data.slice().ptr)))[0..std.mem.bytesAsSlice(u16, data.slice()).len]) catch {
-            return .{ .err = Syscall.Error.oom };
+
+        const len = brk: {
+            var managed = this.bytes.toManaged(bun.default_allocator);
+            defer this.bytes = managed.moveToUnmanaged();
+            break :brk strings.writeUTF16IntoUTF8List(&managed, data.utf16Slice()) catch {
+                return .{ .err = Syscall.Error.oom };
+            };
         };
+
         this.signal.ready(null, null);
-        return .{ .owned = len };
+        return .{ .owned = @truncate(len) };
     }
 
     pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
@@ -1947,23 +1963,29 @@ pub const ArrayBufferSink = struct {
         return .{ .result = {} };
     }
     pub fn destroy(this: *ArrayBufferSink) void {
-        this.bytes.deinitWithAllocator(this.allocator);
+        this.bytes.clearAndFree(bun.default_allocator);
         this.allocator.destroy(this);
     }
     pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
+        if (this.bytes.slice().len > ArrayBuffer.max) {
+            this.bytes.clearAndFree(bun.default_allocator);
+            globalThis.throwOutOfMemory();
+            return .zero;
+        }
+
         if (this.streaming) {
             const value: JSValue = switch (as_uint8array) {
                 true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
                 false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
             };
-            this.bytes.len = 0;
+            this.bytes.clearRetainingCapacity();
             return value;
         }
 
-        var list = this.bytes.listManaged(this.allocator);
-        this.bytes = bun.ByteList.init("");
+        const bytes = this.bytes.items;
+        this.bytes = .{};
         return ArrayBuffer.fromBytes(
-            try list.toOwnedSlice(),
+            bytes,
             if (as_uint8array)
                 .Uint8Array
             else
@@ -1977,17 +1999,27 @@ pub const ArrayBufferSink = struct {
         }
 
         std.debug.assert(this.next == null);
-        var list = this.bytes.listManaged(this.allocator);
-        this.bytes = bun.ByteList.init("");
+        const bytes = this.bytes.items;
+        if (bytes.len > ArrayBuffer.max) {
+            this.bytes.clearAndFree(bun.default_allocator);
+            this.done = true;
+            this.signal.close(null);
+            return .{ .err = Syscall.Error.oom };
+        }
+
+        this.bytes = .{};
         this.done = true;
         this.signal.close(null);
-        return .{ .result = ArrayBuffer.fromBytes(
-            list.toOwnedSlice() catch @panic("TODO"),
-            if (this.as_uint8array)
-                .Uint8Array
-            else
-                .ArrayBuffer,
-        ) };
+
+        return .{
+            .result = ArrayBuffer.fromBytes(
+                bytes,
+                if (this.as_uint8array)
+                    .Uint8Array
+                else
+                    .ArrayBuffer,
+            ),
+        };
     }
 
     pub fn sink(this: *ArrayBufferSink) Sink {

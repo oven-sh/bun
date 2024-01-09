@@ -396,4 +396,4 @@ if (ci) {
   }
 }
 
-process.exit(failing_tests.length);
+process.exit(failing_tests.length ? 1 : 0);

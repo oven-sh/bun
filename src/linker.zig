@@ -179,21 +179,9 @@ pub const Linker = struct {
         return std.fmt.allocPrint(this.allocator, "{s}://{}{s}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
     }
 
-    // pub const Scratch = struct {
-    //     threadlocal var externals: std.ArrayList(u32) = undefined;
-    //     threadlocal var has_externals: std.ArrayList(u32) = undefined;
-    //     pub fn externals() {
-
-    //     }
-    // };
     // This modifies the Ast in-place!
     // But more importantly, this does the following:
     // - Wrap CommonJS files
-    threadlocal var require_part: js_ast.Part = undefined;
-    threadlocal var require_part_stmts: [1]js_ast.Stmt = undefined;
-    threadlocal var require_part_import_statement: js_ast.S.Import = undefined;
-    threadlocal var require_part_import_clauses: [1]js_ast.ClauseItem = undefined;
-    const require_alias: string = "__require";
     pub fn link(
         linker: *ThisLinker,
         file_path: Fs.Path,

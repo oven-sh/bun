@@ -5138,8 +5138,6 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
-
-                        // TODO: refactor this runtime symbol
                         "__require",
                         runtime_require_uses,
                     ) catch unreachable;

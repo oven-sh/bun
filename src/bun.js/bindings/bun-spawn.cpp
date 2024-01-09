@@ -110,12 +110,17 @@ extern "C" ssize_t posix_spawn_bun(
                 break;
             }
             case FileActionType::Dup2: {
+                // Even if the file descrtiptors are the same, we still need to
+                // call dup2() because it will reset the close-on-exec flag.
+                if (dup2(action.fds[0], action.fds[1]) == -1) {
+                    return childFailed();
+                }
+
+                // Only close it if it's not the same as the other fd.
                 if (action.fds[0] != action.fds[1]) {
-                    if (dup2(action.fds[0], action.fds[1]) == -1) {
-                        return childFailed();
-                    }
                     close(action.fds[0]);
                 }
+
                 current_max_fd = std::max(current_max_fd, action.fds[1]);
                 break;
             }

@@ -44,13 +44,13 @@ pub const BunSpawn = struct {
         path: ?[*:0]const u8 = null,
         fds: [2]c_int = .{ 0, 0 },
         flags: c_int = 0,
-        mode: mode_t = 0,
+        mode: c_int = 0,
 
         pub fn init() !Action {
             return .{};
         }
 
-        pub fn deinit(self: *Action, allocator: *std.mem.Allocator) void {
+        pub fn deinit(self: *Action, allocator: std.mem.Allocator) void {
             if (self.kind == .open) {
                 if (self.path) |path| {
                     allocator.free(bun.span(path));
@@ -73,25 +73,25 @@ pub const BunSpawn = struct {
                 bun.default_allocator.free(bun.span(buf));
             }
 
-            for (self.actions) |*action| {
+            for (self.actions.items) |*action| {
                 action.deinit(bun.default_allocator);
             }
 
             self.actions.deinit(bun.default_allocator);
         }
 
-        pub fn open(self: *Actions, fd: fd_t, path: []const u8, flags: i32, mode: i32) !void {
+        pub fn open(self: *Actions, fd: fd_t, path: []const u8, flags: u32, mode: i32) !void {
             const posix_path = try toPosixPath(path);
 
             return self.openZ(fd, &posix_path, flags, mode);
         }
 
-        pub fn openZ(self: *Actions, fd: fd_t, path: [*:0]const u8, flags: i32, mode: i32) !void {
+        pub fn openZ(self: *Actions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: i32) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .open,
-                .path = (try bun.default_allocator.dupeZ(path)).ptr,
-                .flags = flags,
-                .mode = mode,
+                .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
+                .flags = @intCast(flags),
+                .mode = @intCast(mode),
                 .fds = .{ fd, 0 },
             });
         }
@@ -106,7 +106,7 @@ pub const BunSpawn = struct {
         pub fn dup2(self: *Actions, fd: fd_t, newfd: fd_t) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .dup2,
-                .fds = .{ fd, newfd },
+                .fds = .{ @truncate(fd), @truncate(newfd) },
             });
         }
 
@@ -122,7 +122,7 @@ pub const BunSpawn = struct {
                 bun.default_allocator.free(bun.span(buf));
             }
 
-            self.chdir_buf = (try bun.default_allocator.dupeZ(path)).ptr;
+            self.chdir_buf = (try bun.default_allocator.dupeZ(u8, path)).ptr;
         }
     };
 
@@ -332,7 +332,7 @@ pub const PosixSpawn = struct {
             const rc = posix_spawn_bun(&pid, &req, argv, envp);
             if (comptime bun.Environment.allow_assert)
                 bun.sys.syslog("posix_spawn_bun({s}) = {d} ({d})", .{
-                    bun.span(argv[0]),
+                    bun.span(argv[0] orelse ""),
                     rc,
                     pid,
                 });
@@ -345,7 +345,7 @@ pub const PosixSpawn = struct {
                 .err = .{
                     .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
                     .syscall = .posix_spawn,
-                    .path = bun.span(argv[0]),
+                    .path = bun.span(argv[0] orelse ""),
                 },
             };
         }
@@ -364,11 +364,11 @@ pub const PosixSpawn = struct {
                     .actions = if (actions) |act| .{
                         .ptr = act.actions.items.ptr,
                         .len = act.actions.items.len,
-                    } else BunSpawnRequest.ActionsList{
+                    } else .{
                         .ptr = null,
                         .len = 0,
                     },
-                    .chdir_buf = if (actions) |a| a.chdir_buf,
+                    .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
                 },
                 argv,

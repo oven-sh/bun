@@ -38,7 +38,6 @@ const shell = @import("./shell.zig");
 const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;
-const NewBuiltin = @import("./builtins.zig").NewBuiltin;
 
 const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
@@ -78,7 +77,9 @@ pub const IO = struct {
 
     pub const Kind = union(enum) {
         /// Use stdin/stdout/stderr of this process
-        /// if `captured` is non-null, it will write to std{out,err} and also buffer it
+        /// If `captured` is non-null, it will write to std{out,err} and also buffer it.
+        /// The pointer points to the `buffered_stdout`/`buffered_stdin` fields
+        /// in the Interpreter struct
         std: struct { captured: ?*bun.ByteList = null },
         /// Write/Read to/from file descriptor
         fd: bun.FileDescriptor,
@@ -172,6 +173,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         io: IO = .{},
 
         /// FIXME think about lifetimes
+        /// These MUST use the `bun.default_allocator` Allocator
         buffered_stdout: bun.ByteList = .{},
         buffered_stderr: bun.ByteList = .{},
 
@@ -1843,7 +1845,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 },
                 exec,
                 done,
-                err: Syscall.Error,
+                waiting_write_err: BufferedWriter,
+                err: ?Syscall.Error,
             },
 
             const Subprocess = bun.shell.subproc.NewShellSubprocess(EventLoopKind, @This());
@@ -1962,6 +1965,36 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return true;
             }
 
+            /// If starting a command results in an error (failed to find executable in path for example)
+            /// then it should write to the stderr of the entire shell script process
+            pub fn writeFailingError(this: *Cmd, buf: []const u8, exit_code: u8) void {
+                _ = exit_code; // autofix
+
+                switch (this.base.interpreter.io.stderr) {
+                    .std => |val| {
+                        this.state = .{ .waiting_write_err = BufferedWriter{
+                            .fd = bun.STDERR_FD,
+                            .remain = buf,
+                            .parent = BufferedWriter.ParentPtr.init(this),
+                            .bytelist = val.captured,
+                        } };
+                        this.state.waiting_write_err.writeIfPossible(false);
+                    },
+                    .fd => {
+                        this.state = .{ .waiting_write_err = BufferedWriter{
+                            .fd = bun.STDERR_FD,
+                            .remain = buf,
+                            .parent = BufferedWriter.ParentPtr.init(this),
+                        } };
+                        this.state.waiting_write_err.writeIfPossible(false);
+                    },
+                    .pipe, .ignore => {
+                        this.parent.childDone(this, 1);
+                    },
+                }
+                return;
+            }
+
             pub fn init(interpreter: *ThisInterpreter, node: *const ast.Cmd, parent: ParentPtr, io: IO) *Cmd {
                 var cmd = interpreter.allocator.create(Cmd) catch |err| {
                     std.debug.print("Ruh roh: {any}\n", .{err});
@@ -2018,6 +2051,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             // yield execution to expansion
                             return;
                         },
+                        .waiting_write_err => {
+                            return;
+                        },
                         .exec => {
                             // yield execution to subproc/builtin
                             return;
@@ -2031,21 +2067,25 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return;
                 }
 
-                @panic("FIXME TODO handle error Cmd");
+                this.parent.childDone(this, 1);
+                return;
             }
 
             fn transitionToExecStateAndYield(this: *Cmd) void {
                 this.state = .exec;
-                this.initSubproc() catch |err| {
-                    // FIXME this might throw errors other than allocations so this is bad need to handle this properly
-                    std.debug.print("THIS THE ERROR: {any}\n", .{err});
-                    bun.outOfMemory();
-                };
+                this.initSubproc();
             }
 
             pub fn start(this: *Cmd) void {
                 log("cmd start {x}", .{@intFromPtr(this)});
                 return this.next();
+            }
+
+            pub fn onBufferedWriterDone(this: *Cmd, e: ?Syscall.Error) void {
+                std.debug.assert(this.state == .waiting_write_err);
+                this.state = .{ .err = e };
+                this.next();
+                return;
             }
 
             pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: u8) void {
@@ -2069,7 +2109,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 unreachable;
             }
 
-            fn initSubproc(this: *Cmd) !void {
+            fn initSubproc(this: *Cmd) void {
                 log("cmd init subproc ({x})", .{@intFromPtr(this)});
                 this.base.interpreter.cmd_local_env.clearRetainingCapacity();
 
@@ -2086,7 +2126,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 spawn_args.cmd_parent = this;
 
                 const args = args: {
-                    try this.args.append(null);
+                    this.args.append(null) catch bun.outOfMemory();
 
                     for (this.args.items) |maybe_arg| {
                         if (maybe_arg) |arg| {
@@ -2095,9 +2135,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     const first_arg = this.args.items[0] orelse {
-                        @panic("FIXME TODO");
-                        // this.base.interpreter.global.throwInvalidArguments("No command specified", .{});
-                        // return ShellError.Process;
+                        // If no args then this is a bug
+                        @panic("No arguments provided");
                     };
 
                     const first_arg_len = std.mem.len(first_arg);
@@ -2134,15 +2173,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
-                        // GlobalHandle.init(this.base.interpreter.global).throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{first_arg});
-                        // return ShellError.Process;
-                        @panic("FIXME TODO");
+                        const buf = std.fmt.allocPrint(arena_allocator, "bunsh: command not found: {s}\n", .{first_arg}) catch bun.outOfMemory();
+                        this.writeFailingError(buf, 1);
+                        return;
                     };
-                    const duped = arena_allocator.dupeZ(u8, bun.span(resolved)) catch {
-                        // GlobalHandle.init(this.base.interpreter.global).throw("out of memory", .{});
-                        // return ShellError.Process;
-                        @panic("FIXME TODO");
-                    };
+
+                    const duped = arena_allocator.dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
                     this.args.items[0] = duped;
 
                     break :args this.args;
@@ -2152,13 +2188,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // Fill the env from the export end and cmd local env
                 {
                     var env_iter = this.base.interpreter.export_env.iterator();
-                    if (!spawn_args.fillEnv(&env_iter, false)) {
-                        return ShellError.GlobalThisThrown;
-                    }
+                    spawn_args.fillEnv(&env_iter, false);
                     env_iter = this.base.interpreter.cmd_local_env.iterator();
-                    if (!spawn_args.fillEnv(&env_iter, false)) {
-                        return ShellError.GlobalThisThrown;
-                    }
+                    spawn_args.fillEnv(&env_iter, false);
                 }
 
                 this.io.to_subproc_stdio(&spawn_args.stdio);
@@ -2173,7 +2205,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         spawn_args.stdio[fd] = .ignore;
                     } else switch (redirect) {
                         .jsbuf => |val| {
-                            if (comptime EventLoopKind != .js) @panic("FIXME TODO throw error");
+                            // JS values in here is probably a bug
+                            if (comptime EventLoopKind != .js) @panic("JS values not allowed in this context");
+
                             if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(this.base.interpreter.global)) |buf| {
                                 const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = .{
                                     .buf = JSC.ArrayBuffer.Strong{
@@ -2315,7 +2349,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.exec = .none;
                 }
 
-                // this.spawn_arena.deinit();
+                this.spawn_arena.deinit();
                 this.freed = true;
                 this.base.interpreter.allocator.destroy(this);
             }
@@ -2757,7 +2791,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             //     }
             // }
 
-            pub fn ioBytelist(this: *Builtin, comptime io_kind: @Type(.EnumLiteral)) ?*bun.ByteList {
+            pub fn stdBufferedBytelist(this: *Builtin, comptime io_kind: @Type(.EnumLiteral)) ?*bun.ByteList {
                 if (comptime io_kind != .stdout and io_kind != .stderr) {
                     @compileError("Bad IO" ++ @tagName(io_kind));
                 }
@@ -2900,7 +2934,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .remain = buf,
                                 .fd = this.bltn.stdout.expectFd(),
                                 .parent = BufferedWriter.ParentPtr{ .ptr = BufferedWriter.ParentPtr.Repr.init(this) },
-                                .bytelist = this.bltn.ioBytelist(.stdout),
+                                .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                             },
                         };
 
@@ -2974,7 +3008,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         .fd = this.bltn.stdout.expectFd(),
                         .remain = this.output.items[0..],
                         .parent = BufferedWriter.ParentPtr.init(this),
-                        .bytelist = this.bltn.ioBytelist(.stdout),
+                        .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                     };
                     this.state = .waiting;
                     this.io_write_state.?.writeIfPossible(false);
@@ -3044,7 +3078,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     .fd = this.bltn.stdout.expectFd(),
                                     .remain = "\n",
                                     .parent = BufferedWriter.ParentPtr.init(this),
-                                    .bytelist = this.bltn.ioBytelist(.stdout),
+                                    .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                                 },
                             },
                         };
@@ -3110,7 +3144,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .fd = this.bltn.stdout.expectFd(),
                                 .remain = buf,
                                 .parent = BufferedWriter.ParentPtr.init(this),
-                                .bytelist = this.bltn.ioBytelist(.stdout),
+                                .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                             },
                         };
                         multiargs.state.waiting_write.writeIfPossible(false);
@@ -3124,7 +3158,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .fd = this.bltn.stdout.expectFd(),
                             .remain = buf,
                             .parent = BufferedWriter.ParentPtr.init(this),
-                            .bytelist = this.bltn.ioBytelist(.stdout),
+                            .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                         },
                     };
                     multiargs.state.waiting_write.writeIfPossible(false);
@@ -3190,7 +3224,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .fd = this.bltn.stderr.expectFd(),
                                 .remain = buf,
                                 .parent = BufferedWriter.ParentPtr.init(this),
-                                .bytelist = this.bltn.ioBytelist(.stderr),
+                                .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                             },
                         },
                     };
@@ -3319,7 +3353,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                         .fd = this.bltn.stderr.expectFd(),
                                         .remain = msg,
                                         .parent = BufferedWriter.ParentPtr.init(this),
-                                        .bytelist = this.bltn.ioBytelist(.stderr),
+                                        .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                     },
                                 },
                             };
@@ -3345,7 +3379,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     .fd = this.bltn.stdout.expectFd(),
                                     .remain = buf,
                                     .parent = BufferedWriter.ParentPtr.init(this),
-                                    .bytelist = this.bltn.ioBytelist(.stdout),
+                                    .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                                 },
                             },
                         };
@@ -3435,7 +3469,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .fd = this.bltn.stderr.expectFd(),
                                 .remain = buf,
                                 .parent = BufferedWriter.ParentPtr.init(this),
-                                .bytelist = this.bltn.ioBytelist(.stderr),
+                                .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                             },
                         };
                         this.state.waiting_write_err.writeIfPossible(false);
@@ -3556,7 +3590,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .fd = this.bltn.stdout.expectFd(),
                                 .remain = output.items[0..],
                                 .parent = BufferedWriter.ParentPtr.init(this),
-                                .bytelist = this.bltn.ioBytelist(.stdout),
+                                .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                             },
                             .arr = output,
                         };
@@ -4349,7 +4383,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     .fd = this.bltn.stderr.expectFd(),
                                     .remain = buf,
                                     .parent = BufferedWriter.ParentPtr.init(this),
-                                    .bytelist = this.bltn.ioBytelist(.stderr),
+                                    .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                 },
                                 .exit_code = exit_code,
                             },
@@ -4817,7 +4851,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                         .fd = this.bltn.stderr.expectFd(),
                                                         .remain = error_string,
                                                         .parent = BufferedWriter.ParentPtr.init(this),
-                                                        .bytelist = this.bltn.ioBytelist(.stderr),
+                                                        .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                     },
                                                 };
                                                 parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -4855,7 +4889,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                                 .fd = this.bltn.stderr.expectFd(),
                                                                 .remain = buf,
                                                                 .parent = BufferedWriter.ParentPtr.init(this),
-                                                                .bytelist = this.bltn.ioBytelist(.stderr),
+                                                                .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                             },
                                                         };
                                                         parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -4899,7 +4933,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                                         .fd = this.bltn.stderr.expectFd(),
                                                                         .remain = error_string,
                                                                         .parent = BufferedWriter.ParentPtr.init(this),
-                                                                        .bytelist = this.bltn.ioBytelist(.stderr),
+                                                                        .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                                     },
                                                                 };
                                                                 parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -4936,7 +4970,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                             .fd = this.bltn.stderr.expectFd(),
                                                             .remain = error_string,
                                                             .parent = BufferedWriter.ParentPtr.init(this),
-                                                            .bytelist = this.bltn.ioBytelist(.stderr),
+                                                            .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                         },
                                                     };
                                                     parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -4959,7 +4993,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                             .fd = this.bltn.stderr.expectFd(),
                                                             .remain = error_string,
                                                             .parent = BufferedWriter.ParentPtr.init(this),
-                                                            .bytelist = this.bltn.ioBytelist(.stderr),
+                                                            .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                         },
                                                     };
                                                     parse_opts.state.wait_write_err.writeIfPossible(false);
@@ -5186,7 +5220,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                             .fd = this.bltn.stderr.expectFd(),
                                             .remain = error_string,
                                             .parent = BufferedWriter.ParentPtr.init(this),
-                                            .bytelist = this.bltn.ioBytelist(.stderr),
+                                            .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                         };
                                         exec.state.waiting_but_errored.error_writer.?.writeIfPossible(false);
                                         return;
@@ -5749,6 +5783,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             bytelist: ?*bun.ByteList = null,
 
             const print = bun.Output.scoped(.BufferedWriter, false);
+            const CmdJs = bun.shell.Interpreter.Cmd;
+            const CmdMini = bun.shell.InterpreterMini.Cmd;
             const BuiltinJs = bun.shell.Interpreter.Builtin;
             const BuiltinMini = bun.shell.InterpreterMini.Builtin;
 
@@ -5770,6 +5806,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     BuiltinMini.Pwd,
                     BuiltinMini.Mv,
                     BuiltinMini.Ls,
+                    CmdJs,
+                    CmdMini,
                 };
                 ptr: Repr,
                 pub const Repr = TaggedPointerUnion(Types);
@@ -5804,6 +5842,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     if (this.ptr.is(BuiltinMini.Pwd)) return this.ptr.as(BuiltinMini.Pwd).onBufferedWriterDone(e);
                     if (this.ptr.is(BuiltinMini.Mv)) return this.ptr.as(BuiltinMini.Mv).onBufferedWriterDone(e);
                     if (this.ptr.is(BuiltinMini.Ls)) return this.ptr.as(BuiltinMini.Ls).onBufferedWriterDone(e);
+                    if (this.ptr.is(CmdJs)) return this.ptr.as(CmdJs).onBufferedWriterDone(e);
+                    if (this.ptr.is(CmdMini)) return this.ptr.as(CmdMini).onBufferedWriterDone(e);
                     @panic("Invalid ptr tag");
                 }
             };

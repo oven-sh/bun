@@ -1203,7 +1203,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 return out;
             }
 
-            pub fn fillEnvFromProcess(this: *SpawnArgs, globalThis: *JSGlobalObject) bool {
+            pub fn fillEnvFromProcess(this: *SpawnArgs, globalThis: *JSGlobalObject) void {
                 var env_iter = EnvMapIter.init(globalThis.bunVM().bundler.env.map, this.arena.allocator());
                 return this.fillEnv(globalThis, &env_iter, false);
             }
@@ -1214,7 +1214,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 this: *SpawnArgs,
                 env_iter: *std.StringArrayHashMap([:0]const u8).Iterator,
                 comptime disable_path_lookup_for_arv0: bool,
-            ) bool {
+            ) void {
                 const allocator = this.arena.allocator();
                 this.override_env = true;
                 this.env_array.ensureTotalCapacityPrecise(allocator, env_iter.len) catch bun.outOfMemory();
@@ -1236,8 +1236,6 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
                     this.env_array.append(allocator, line) catch bun.outOfMemory();
                 }
-
-                return true;
             }
         };
 

@@ -1853,7 +1853,7 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(()=>{ throw new Error(`Cannot require module ");
+            p.print("(()=>{throw new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
             p.print("`);})()");
         }
@@ -2029,10 +2029,10 @@ fn NewPrinter(
                     }
                 }
 
-                if (p.options.require_ref) |ref| {
-                    p.printSymbol(ref);
-                } else if (p.options.module_type == .esm and is_bun_platform) {
+                if (p.options.module_type == .esm and is_bun_platform) {
                     p.print("import.meta.require");
+                } else if (p.options.require_ref) |ref| {
+                    p.printSymbol(ref);
                 } else {
                     p.print("require");
                 }
@@ -2385,10 +2385,10 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.require_ref) |require_ref| {
-                        p.printSymbol(require_ref);
-                    } else if (p.options.module_type == .esm and is_bun_platform) {
+                    if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.require");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
                     } else {
                         p.print("require");
                     }
@@ -2424,10 +2424,10 @@ fn NewPrinter(
 
                         p.printSpaceBeforeIdentifier();
 
-                        if (p.options.require_ref) |require_ref| {
-                            p.printSymbol(require_ref);
-                        } else if (p.options.module_type == .esm and is_bun_platform) {
+                        if (p.options.module_type == .esm and is_bun_platform) {
                             p.print("import.meta.require");
+                        } else if (p.options.require_ref) |require_ref| {
+                            p.printSymbol(require_ref);
                         } else {
                             p.print("require");
                         }

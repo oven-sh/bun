@@ -5125,7 +5125,6 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5168,7 +5167,6 @@ describe("bundler", () => {
       "/node_modules/some-path/index.js": `module.exports = 123`,
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
-    bundling: false,
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
@@ -5194,7 +5192,6 @@ describe("bundler", () => {
   itBundled("default/RequireShimSubstitutionNode", {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
-    bundling: false,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",

@@ -208,7 +208,7 @@
       "request": "launch",
       "name": "bun build debug",
       "program": "bun-debug",
-      "args": ["bun", "${file}"],
+      "args": ["bun", "${file}", "--target=node"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "env": {
@@ -369,7 +369,7 @@
       "name": "Windows: bun run [file]",
       "program": "${workspaceFolder}/build/bun-debug.exe",
       "args": ["run", "${file}"],
-      "cwd": "${fileDirname}",
-    },
+      "cwd": "${fileDirname}"
+    }
   ]
 }

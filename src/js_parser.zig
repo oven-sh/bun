@@ -1554,7 +1554,7 @@ const StaticSymbolName = struct {
 
         pub const __name = NewStaticSymbol("__name");
         pub const __toModule = NewStaticSymbol("__toModule");
-        pub const __require = NewStaticSymbol("__require");
+        pub const __require = NewStaticSymbol("require");
         pub const __cJS2eSM = NewStaticSymbol("__cJS2eSM");
         pub const __export = NewStaticSymbol("__export");
         pub const __load = NewStaticSymbol("__load");
@@ -16649,6 +16649,14 @@ fn NewParser_(
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
+
+                        return p.newExpr(
+                            E.Call{
+                                .target = p.valueForRequire(e_.target.loc),
+                                .args = e_.args,
+                            },
+                            expr.loc,
+                        );
                     }
 
                     if (could_be_require_resolve) {

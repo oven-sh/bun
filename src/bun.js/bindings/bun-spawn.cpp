@@ -116,11 +116,6 @@ extern "C" ssize_t posix_spawn_bun(
                     return childFailed();
                 }
 
-                // Only close it if it's not the same as the other fd.
-                if (action.fds[0] != action.fds[1]) {
-                    close(action.fds[0]);
-                }
-
                 current_max_fd = std::max(current_max_fd, action.fds[1]);
                 break;
             }

@@ -1761,6 +1761,7 @@ const TaskCallbackContext = union(Tag) {
     node_modules_folder: struct {
         fd: bun.FileDescriptor,
         tree_id: Lockfile.Tree.Id,
+        node_modules_folder_path: std.ArrayList(u8),
     },
     root_dependency: DependencyID,
     root_request_id: PackageID,
@@ -7649,7 +7650,11 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         lockfile: *Lockfile,
         progress: *std.Progress,
+
+        // relative paths from `nextNodeModulesFolder` will be copied into this list.
+        node_modules_folder_path: std.ArrayList(u8),
         node_modules_folder: std.fs.Dir,
+
         skip_verify_installed_version_number: bool,
         skip_delete: bool,
         force_install: bool,
@@ -7822,6 +7827,7 @@ pub const PackageManager = struct {
             this.completed_trees.deinit(allocator);
             allocator.free(this.tree_install_counts);
             this.tree_ids_to_trees_the_id_depends_on.deinit(allocator);
+            this.node_modules_folder_path.deinit();
         }
 
         /// Call when you mutate the length of `lockfile.packages`
@@ -7860,10 +7866,14 @@ pub const PackageManager = struct {
                 defer this.node_modules_folder = prev_node_modules_folder;
                 const prev_tree_id = this.current_tree_id;
                 defer this.current_tree_id = prev_tree_id;
+                const prev_node_modules_folder_path = this.node_modules_folder_path;
+                defer this.node_modules_folder_path = prev_node_modules_folder_path;
                 for (callbacks.items) |cb| {
                     this.node_modules_folder = .{ .fd = bun.fdcast(cb.node_modules_folder.fd) };
                     this.current_tree_id = cb.node_modules_folder.tree_id;
+                    this.node_modules_folder_path = cb.node_modules_folder.node_modules_folder_path;
                     this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution);
+                    cb.node_modules_folder.node_modules_folder_path.deinit();
                 }
             }
         }
@@ -8080,6 +8090,7 @@ pub const PackageManager = struct {
                                 .node_modules_folder = .{
                                     .fd = bun.toFD(this.node_modules_folder.fd),
                                     .tree_id = this.current_tree_id,
+                                    .node_modules_folder_path = this.node_modules_folder_path.clone() catch bun.outOfMemory(),
                                 },
                             };
                             switch (resolution.tag) {
@@ -8220,25 +8231,26 @@ pub const PackageManager = struct {
             var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
             var path_buf_to_use: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
-            if (scripts.hasAny()) {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.fd), &path_buf) catch unreachable;
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(scripts.hasAny() or !scripts.filled);
+            }
 
+            if (scripts.hasAny()) {
                 const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(name) and
                     scripts.install.isEmpty() and
                     scripts.postinstall.isEmpty())
                 brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
-                        node_modules_path,
-                        &[_]string{ destination_dir_subpath, "binding.gyp" },
+                        this.node_modules_folder_path.items,
+                        &[_]string{ name, "binding.gyp" },
                         .posix,
                     );
 
                     break :brk Syscall.exists(binding_dot_gyp_path);
                 } else false;
 
-                const path_str = Path.joinAbsStringBufZTrailingSlash(
-                    node_modules_path,
+                const cwd = Path.joinAbsStringBufZTrailingSlash(
+                    this.node_modules_folder_path.items,
                     &path_buf_to_use,
                     &[_]string{destination_dir_subpath},
                     .posix,
@@ -8247,7 +8259,7 @@ pub const PackageManager = struct {
                 if (scripts.enqueue(
                     this.lockfile,
                     buf,
-                    path_str,
+                    cwd,
                     name,
                     resolution.tag,
                     add_node_gyp_rebuild_script,
@@ -8266,7 +8278,7 @@ pub const PackageManager = struct {
                         this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                             .list = scripts_list,
                             .tree_id = this.current_tree_id,
-                        }) catch unreachable;
+                        }) catch bun.outOfMemory();
                     }
                 }
             } else if (!scripts.filled) {
@@ -8274,6 +8286,7 @@ pub const PackageManager = struct {
                     this.manager.log,
                     this.lockfile,
                     this.node_modules_folder,
+                    this.node_modules_folder_path.items,
                     destination_dir_subpath,
                     name,
                     resolution,
@@ -8317,7 +8330,7 @@ pub const PackageManager = struct {
                         this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                             .list = list,
                             .tree_id = this.current_tree_id,
-                        }) catch unreachable;
+                        }) catch bun.outOfMemory();
                     }
                 }
             }
@@ -8660,6 +8673,13 @@ pub const PackageManager = struct {
                     .lockfile = this.lockfile,
                     .node = &install_node,
                     .node_modules_folder = node_modules_folder,
+                    .node_modules_folder_path = std.ArrayList(u8).fromOwnedSlice(
+                        this.allocator,
+                        try this.allocator.dupe(
+                            u8,
+                            strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
+                        ),
+                    ),
                     .progress = progress,
                     .skip_verify_installed_version_number = skip_verify_installed_version_number,
                     .skip_delete = skip_delete,
@@ -8678,11 +8698,16 @@ pub const PackageManager = struct {
                 };
             };
 
+            try installer.node_modules_folder_path.append(std.fs.path.sep);
+
             // installer.printTreeDeps();
 
             defer installer.deinit();
 
             while (iterator.nextNodeModulesFolder(&installer.completed_trees)) |node_modules| {
+                installer.node_modules_folder_path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
+                try installer.node_modules_folder_path.appendSlice(node_modules.relative_path);
+
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
@@ -9304,7 +9329,7 @@ pub const PackageManager = struct {
             manager.root_lifecycle_scripts = root.scripts.enqueue(
                 manager.lockfile,
                 manager.lockfile.buffers.string_bytes.items,
-                strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
                 root.name.slice(manager.lockfile.buffers.string_bytes.items),
                 .root,
                 add_node_gyp_rebuild_script,
@@ -9315,7 +9340,7 @@ pub const PackageManager = struct {
                 manager.root_lifecycle_scripts = root.scripts.enqueue(
                     manager.lockfile,
                     manager.lockfile.buffers.string_bytes.items,
-                    strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                    strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
                     root.name.slice(manager.lockfile.buffers.string_bytes.items),
                     .root,
                     true,

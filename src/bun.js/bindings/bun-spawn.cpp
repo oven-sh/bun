@@ -78,15 +78,19 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     const auto startChild = [&]() -> ssize_t {
-        // we are in the child
-        sigset_t childmask;
+        sigset_t childmask = oldmask;
 
+        // Reset signals
+        struct sigaction sa = { 0 };
+        sa.sa_handler = SIG_DFL;
+        for (int i = 0; i < NSIG; i++) {
+            sigaction(i, &sa, 0);
+        }
+
+        // Make "detached" work
         if (request->detached) {
             setsid();
         }
-
-        // POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
-        sigprocmask(SIG_SETMASK, &oldmask, nullptr);
 
         int current_max_fd = 0;
 

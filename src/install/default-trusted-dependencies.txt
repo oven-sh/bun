@@ -73,9 +73,6 @@
 @pulumi/awsx
 @pulumi/command
 @pulumi/kubernetes
-@pulumi/postgresql
-@pulumi/random
-@pulumi/tls
 @railway/cli
 @replayio/cypress
 @replayio/playwright

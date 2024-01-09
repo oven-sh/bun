@@ -1,40 +1,22 @@
-import { bench, run } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "./runner.mjs";
 
-// pure JS implementation will optimze this out
-bench("new Headers", function () {
-  return new Headers();
-});
+// bench("new URLSearchParams({})", () => {
+//   return new URLSearchParams({});
+// });
 
-var big = new Headers({
-  "Content-Type": "text/plain",
-  "Content-Length": "123",
-  hello: "there",
-  "X-Custom-Header": "Hello World",
-  "X-Another-Custom-Header": "Hello World",
-  "X-Yet-Another-Custom-ader": "Hello World",
-  "X-Yet-Another-Custom-Heder": "Hello World",
-  "X-Yet-Another-Custom-Heade": "Hello World",
-  "X-Yet-Another-Custom-Headz": "Hello Worlda",
-});
-
-bench("new Headers([])", () => {
-  return new Headers([]);
-});
-
-bench("new Headers({})", () => {
-  return new Headers({});
-});
-
-bench("new Headers(object)", () => {
-  return new Headers({
+bench("new URLSearchParams(obj)", () => {
+  return new URLSearchParams({
     "Content-Type": "text/plain",
     "Content-Length": "123",
     "User-Agent": "node-fetch/1.0",
+    "Accept-Encoding": "gzip,deflate",
+    "Content-Length": "0",
+    "Content-Range": "bytes 0-9/10",
   });
 });
 
-bench("new Headers(hugeObject)", () => {
-  return new Headers({
+bench("new URLSearchParams(absurdlyHugeObject)", () => {
+  return new URLSearchParams({
     "Accept": "123",
     "Accept-Charset": "123",
     "Accept-Language": "123",
@@ -126,31 +108,6 @@ bench("new Headers(hugeObject)", () => {
     "X-XSS-Protection": "123",
     "X-Temp-Tablet": "123",
   });
-});
-
-bench("Header.get", function () {
-  return big.get("Content-Type");
-});
-
-bench("Header.set (standard)", function () {
-  return big.set("Content-Type", "text/html");
-});
-
-bench("Header.set (non-standard)", function () {
-  return big.set("X-My-Custom", "text/html123");
-});
-
-if (big.toJSON)
-  bench("Headers.toJSON", function () {
-    return big.toJSON();
-  });
-
-bench("Object.fromEntries(headers.entries())", function () {
-  return Object.fromEntries(big.entries());
-});
-
-bench("Object.fromEntries(headers)", function () {
-  return Object.fromEntries(big);
 });
 
 await run();

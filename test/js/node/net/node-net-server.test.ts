@@ -234,6 +234,62 @@ describe("net.createServer listen", () => {
       }),
     );
   });
+
+  it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(
+      0,
+      "0.0.0.0",
+      mustCall(async () => {
+        const address = server.address() as AddressInfo;
+        expect(address.address).toStrictEqual("0.0.0.0");
+        expect(address.family).toStrictEqual("IPv4");
+
+        let err: Error | null = null;
+        try {
+          await Bun.connect({
+            hostname: "0.0.0.0",
+            port: address.port,
+            socket: {
+              data(socket) {},
+            },
+          });
+        } catch (e) {
+          err = e as Error;
+        }
+        expect(err).toBeNull();
+
+        try {
+          await Bun.connect({
+            hostname: "::",
+            port: address.port,
+            socket: {
+              data(socket) {},
+            },
+          });
+        } catch (e) {
+          err = e as Error;
+        }
+        expect(err).not.toBeNull();
+        expect(err!.message).toBe("Failed to connect");
+        expect(err!.name).toBe("ECONNREFUSED");
+
+        server.close();
+        done();
+      }),
+    );
+  });
 });
 
 describe("net.createServer events", () => {

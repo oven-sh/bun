@@ -1554,7 +1554,7 @@ const StaticSymbolName = struct {
 
         pub const __name = NewStaticSymbol("__name");
         pub const __toModule = NewStaticSymbol("__toModule");
-        pub const __require = NewStaticSymbol("require");
+        pub const __require = NewStaticSymbol("__require");
         pub const __cJS2eSM = NewStaticSymbol("__cJS2eSM");
         pub const __export = NewStaticSymbol("__export");
         pub const __load = NewStaticSymbol("__load");
@@ -5535,13 +5535,6 @@ fn NewParser_(
                     p.panic("Unexpected binding export type {any}", .{binding});
                 },
             }
-        }
-
-        // If we're auto-importing JSX and it's bundled, we use the bundled version
-        // This means we need to transform from require(react) to react()
-        // unless we're building inside of bun, then it's just normal commonjs
-        pub inline fn callUnbundledRequire(p: *P, require_args: []Expr) Expr {
-            return p.callRuntime(require_args[0].loc, "__require", require_args);
         }
 
         pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) anyerror!void {

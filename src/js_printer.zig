@@ -2029,14 +2029,12 @@ fn NewPrinter(
                     }
                 }
 
-                if (comptime is_bun_platform) {
-                    if (p.options.module_type == .esm) {
-                        p.print("import.meta.require");
-                    } else {
-                        p.print("require");
-                    }
+                if (p.options.require_ref) |ref| {
+                    p.printSymbol(ref);
+                } else if (p.options.module_type == .esm and is_bun_platform) {
+                    p.print("import.meta.require");
                 } else {
-                    p.printSymbol(p.options.require_ref.?);
+                    p.print("require");
                 }
 
                 p.print("(");
@@ -2387,20 +2385,25 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require");
-                    } else {
+                    if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                    } else if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.require");
+                    } else {
+                        p.print("require");
                     }
                 },
                 .e_require_resolve_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require.resolve");
-                    } else {
+                    if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
+                    } else if (p.options.module_type != .cjs and is_bun_platform) {
                         p.print("import.meta.resolveSync");
+                    } else {
+                        p.print("require.resolve");
                     }
                 },
                 .e_require_string => |e| {
@@ -2420,7 +2423,16 @@ fn NewPrinter(
                         }
 
                         p.printSpaceBeforeIdentifier();
-                        p.print("require.resolve(");
+
+                        if (p.options.require_ref) |require_ref| {
+                            p.printSymbol(require_ref);
+                        } else if (p.options.module_type == .esm and is_bun_platform) {
+                            p.print("import.meta.require");
+                        } else {
+                            p.print("require");
+                        }
+
+                        p.print("(");
                         p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
                         p.print(")");
 
@@ -4950,19 +4962,6 @@ fn NewPrinter(
         inline fn printModuleIdAssumeEnabled(p: *Printer, module_id: u32) void {
             p.print("$");
             std.fmt.formatInt(module_id, 16, .lower, .{}, p) catch unreachable;
-        }
-
-        pub fn printBundledRequire(p: *Printer, require: E.RequireString) void {
-            if (p.importRecord(require.import_record_index).is_internal) {
-                return;
-            }
-
-            p.printSymbol(p.options.runtime_imports.__require.?.ref);
-
-            // d is for default
-            p.print(".d(");
-            p.printLoadFromBundle(require.import_record_index);
-            p.print(")");
         }
 
         pub fn printBundledRexport(p: *Printer, name: string, import_record_index: u32) void {

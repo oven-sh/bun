@@ -337,6 +337,8 @@ const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
+const BrotliDecoder = JSC.API.BrotliDecoder;
+const BrotliEncoder = JSC.API.BrotliEncoder;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -397,6 +399,7 @@ pub const Task = TaggedPointerUnion(.{
     Unlink,
     WaitPidResultTask,
     TimerReference,
+    BrotliEncoder,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -932,6 +935,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
                     var any: *TimerReference = task.get(TimerReference).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
+                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
                     any.runFromJSThread();
                 },
 

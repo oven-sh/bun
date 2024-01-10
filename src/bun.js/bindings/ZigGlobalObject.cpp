@@ -1701,7 +1701,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 }
 
 extern "C" EncodedJSValue BunInternalFunction__syntaxHighlighter(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
-
+extern "C" EncodedJSValue BrotliEncoder__createFromJS(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1894,6 +1894,15 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getUnpackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getUnpackedSettings"_s, BUN__HTTP2__getUnpackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
             return JSValue::encode(obj);
         }
+
+        if (string == "internal/zlib"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
+            obj->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "createBrotliEncoder"_s), 1, BrotliEncoder__createFromJS, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+
+            return JSValue::encode(obj);
+        }
+
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 

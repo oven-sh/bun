@@ -64,4 +64,7 @@ pub const Classes = struct {
     pub const Crypto = JSC.WebCore.Crypto;
     pub const FFI = JSC.FFI;
     pub const H2FrameParser = JSC.API.H2FrameParser;
+
+    pub const BrotliEncoder = JSC.API.BrotliEncoder;
+    pub const BrotliDecoder = JSC.API.BrotliDecoder;
 };

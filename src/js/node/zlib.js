@@ -8,6 +8,8 @@ const BufferModule = require("node:buffer");
 const StreamModule = require("node:stream");
 const Util = require("node:util");
 
+const { createBrotliEncoder } = $lazy("internal/zlib");
+
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
   function __require() {
@@ -4067,21 +4069,15 @@ var require_lib = __commonJS({
       return zlibBufferSync(new InflateRaw(opts), buffer);
     };
 
-    // not implemented, stubs
-    for (const method of [
-      "BrotliCompress",
-      "BrotliDecompress",
-      "brotliCompress",
-      "brotliCompressSync",
-      "brotliDecompress",
-      "brotliDecompressSync",
-      "createBrotliCompress",
-      "createBrotliDecompress",
-    ]) {
-      exports[method] = function (buffer, opts, callback) {
-        throw new Error(`zlib.${method} is not implemented`);
-      };
-    }
+    exports.brotliCompress = function (buffer, opts, callback) {
+      if (typeof opts === "function") {
+        callback = opts;
+        opts = {};
+      }
+
+      const encoder = createBrotliEncoder(opts, {}, callback);
+      encoder.encode(buffer, undefined, true);
+    };
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];

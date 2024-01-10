@@ -4916,5 +4916,6 @@ comptime {
         _ = Crypto.JSPasswordObject.JSPasswordObject__create;
         BunObject.exportAll();
         @export(InternalTestingAPIs.BunInternalFunction__syntaxHighlighter, .{ .name = "BunInternalFunction__syntaxHighlighter" });
+        @import("./brotli.zig").exportAll();
     }
 }

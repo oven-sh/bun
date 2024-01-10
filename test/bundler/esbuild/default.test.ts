@@ -891,7 +891,7 @@ describe("bundler", () => {
       "/node_modules/c/index.js": `exports.foo = 123`,
       "/node_modules/c/package.json": `{"main": "index.js", "name": "c"}`,
     },
-    target: 'node',
+    target: "node",
     run: [
       {
         args: ["true", "true", "./c.js"],
@@ -5171,7 +5171,7 @@ describe("bundler", () => {
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
-    external: ['*'],
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",
@@ -5197,7 +5197,7 @@ describe("bundler", () => {
     target: "node",
     format: "esm",
     outfile: "/out.mjs",
-    external: ['*'],
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",

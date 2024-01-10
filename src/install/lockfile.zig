@@ -1659,7 +1659,8 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         }
     }
 
-    switch (bun.sys.fchmod(tmpfile.fd, 0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020)) {
+    // chmod 777
+    switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
         .err => |err| {
             tmpfile.dir().deleteFileZ(tmpname) catch {};
             Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});

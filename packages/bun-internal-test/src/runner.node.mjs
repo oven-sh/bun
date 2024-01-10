@@ -28,7 +28,7 @@ const run_concurrency = parseInt(
   process.env["BUN_TEST_CONCURRENCY"] ||
     // Concurrency causes more flaky tests, only enable it by default on windows
     // See https://github.com/oven-sh/bun/issues/8071
-    (windows ? cpus().length : 1),
+    (windows ? cpus().length : 2),
   10,
 );
 

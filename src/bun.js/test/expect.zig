@@ -189,7 +189,7 @@ pub const Expect = struct {
 
                     if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
                         if (Jest.runner.?.pending_test) |pending_test|
-                            pending_test.timeout();
+                            pending_test.timeout(false);
                         return null;
                     }
 
@@ -4306,7 +4306,7 @@ pub const Expect = struct {
 
             if (!globalObject.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
                 if (Jest.runner.?.pending_test) |pending_test|
-                    pending_test.timeout();
+                    pending_test.timeout(false);
                 globalObject.throw("Timed out while awaiting the promise returned by matcher \"{s}\"", .{matcher_name});
                 return false;
             }

@@ -111,7 +111,7 @@ pub const TestRunner = struct {
                 const elapsed = now.since(pending_test.started_at);
 
                 if (elapsed >= (@as(u64, this.last_test_timeout_timer_duration) * std.time.ns_per_ms)) {
-                    pending_test.timeout();
+                    pending_test.timeout(true);
                 }
             }
         }
@@ -1371,12 +1371,30 @@ pub const TestRunnerTask = struct {
         return false;
     }
 
-    pub fn timeout(this: *TestRunnerTask) void {
+    pub fn timeout(this: *TestRunnerTask, from_on_test_timeout: bool) void {
         if (comptime Environment.allow_assert) std.debug.assert(!this.reported);
 
         this.ref.unref(this.globalThis.bunVM());
-        this.globalThis.throwTerminationException();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .timeout);
+
+        // For some reason, this exception only gets logged when the processPromise poll sees the timeout,
+        // and not onTestTimeout.
+        // TODO: get rid of from_on_test_timeout, find a way to always log this exception
+        const test_ = this.describe.tests.items[this.test_id];
+        const allocator = getAllocator(this.globalThis);
+        const msg = std.fmt.allocPrint(
+            allocator,
+            "test {} timed out after {d}ms",
+            .{ bun.fmt.quote(test_.label), test_.timeout_millis },
+        ) catch bun.outOfMemory();
+        const error_value = bun.String.init(msg).toErrorInstance(this.globalThis);
+        error_value.put(this.globalThis, ZigString.static("name"), bun.String.init("Timeout").toJS(this.globalThis));
+        this.globalThis.throwValue(error_value);
+
+        if (from_on_test_timeout) {
+            this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .timeout);
+        } else {
+            this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .timeout_promise);
+        }
     }
 
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
@@ -1404,7 +1422,7 @@ pub const TestRunnerTask = struct {
                 if (comptime Environment.allow_assert) std.debug.assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
-            .timeout, .unhandledRejection => {},
+            .timeout, .timeout_promise, .unhandledRejection => {},
             else => @compileError("Bad from"),
         }
 
@@ -1422,6 +1440,8 @@ pub const TestRunnerTask = struct {
         const test_ = this.describe.tests.items[test_id];
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
+        // Don't print this timeout error message when we timeout awaiting a promise, because this same info will be
+        // included when the timeout exception is logged.
         if (comptime from == .timeout) {
             Output.prettyErrorln("<r><red>Timeout<r><d>:<r> test <b>{}<r> timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
             Output.flush();

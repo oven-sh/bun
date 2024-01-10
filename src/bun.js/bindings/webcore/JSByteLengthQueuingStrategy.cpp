@@ -136,7 +136,9 @@ void JSByteLengthQueuingStrategy::finishCreation(VM& vm)
 
 JSObject* JSByteLengthQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSByteLengthQueuingStrategyPrototype::create(vm, &globalObject, JSByteLengthQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSByteLengthQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSByteLengthQueuingStrategyPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSByteLengthQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -189,7 +189,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
             };
 
-            var events: us_socket_events_t = .{
+            const events: us_socket_events_t = .{
                 .on_open = SocketHandler.on_open,
                 .on_close = SocketHandler.on_close,
                 .on_data = SocketHandler.on_data,
@@ -231,7 +231,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             else
                 std.meta.alignment(ContextType);
 
-            var ptr = us_socket_ext(
+            const ptr = us_socket_ext(
                 comptime ssl_int,
                 this.socket,
             ) orelse return null;
@@ -414,10 +414,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            var host_ = allocator.dupeZ(u8, host) catch return null;
+            const host_ = allocator.dupeZ(u8, host) catch return null;
             defer allocator.free(host_);
 
-            var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(Context)) orelse return null;
+            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(Context)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
 
             var holder = socket_.ext(Context) orelse {
@@ -443,6 +443,28 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return ctx;
         }
 
+        pub fn fromFd(
+            ctx: *SocketContext,
+            handle: bun.FileDescriptor,
+            comptime This: type,
+            this: *This,
+            comptime socket_field_name: ?[]const u8,
+        ) ?ThisSocket {
+            const socket_ = ThisSocket{ .socket = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle) orelse return null };
+
+            const holder = socket_.ext(*anyopaque) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                return null;
+            };
+            holder.* = this;
+
+            if (comptime socket_field_name) |field| {
+                @field(this, field) = socket_;
+            }
+
+            return socket_;
+        }
+
         pub fn connectUnixPtr(
             path: []const u8,
             socket_ctx: *SocketContext,
@@ -463,13 +485,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            var path_ = allocator.dupeZ(u8, path) catch return null;
+            const path_ = allocator.dupeZ(u8, path) catch return null;
             defer allocator.free(path_);
 
-            var socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
+            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
 
             const socket_ = ThisSocket{ .socket = socket };
-            var holder = socket_.ext(*anyopaque) orelse {
+            const holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);
                 return null;
@@ -488,7 +510,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
-            var host_: ?[*:0]u8 = brk: {
+            const host_: ?[*:0]u8 = brk: {
                 // getaddrinfo expects `node` to be null if localhost
                 if (host.len < 6 and (bun.strings.eqlComptime(host, "[::1]") or bun.strings.eqlComptime(host, "[::]"))) {
                     break :brk null;
@@ -499,10 +521,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             defer if (host_) |host__| allocator.free(host__[0..host.len]);
 
-            var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
+            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
 
-            var holder = socket_.ext(*anyopaque) orelse {
+            const holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);
                 return null;
@@ -764,6 +786,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             @field(holder, socket_field_name) = adopted;
             return holder;
         }
+
+        pub fn adoptPtr(
+            socket: *Socket,
+            socket_ctx: *SocketContext,
+            comptime Context: type,
+            comptime socket_field_name: []const u8,
+            ctx: *Context,
+        ) bool {
+            var adopted = ThisSocket{ .socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(*Context)) orelse return false };
+            const holder = adopted.ext(*anyopaque) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                _ = us_socket_close(comptime ssl_int, socket, 0, null);
+                return false;
+            };
+            holder.* = ctx;
+            @field(ctx, socket_field_name) = adopted;
+            return true;
+        }
     };
 }
 
@@ -791,7 +831,7 @@ pub const Timer = opaque {
 
     pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
         us_timer_set(this, cb, ms, repeat_ms);
-        var value_ptr = us_timer_ext(this);
+        const value_ptr = us_timer_ext(this);
         @setRuntimeSafety(false);
         @as(*@TypeOf(ptr), @ptrCast(@alignCast(value_ptr))).* = ptr;
     }
@@ -853,7 +893,7 @@ pub const SocketContext = opaque {
         else
             std.meta.alignment(ContextType);
 
-        var ptr = us_socket_context_ext(
+        const ptr = us_socket_context_ext(
             @intFromBool(ssl),
             this,
         ) orelse return null;
@@ -891,6 +931,10 @@ pub const PosixLoop = extern struct {
     };
 
     const log = bun.Output.scoped(.Loop, false);
+
+    pub fn iterationNumber(this: *const PosixLoop) c_longlong {
+        return this.internal_loop_data.iteration_nr;
+    }
 
     pub fn inc(this: *PosixLoop) void {
         this.num_polls += 1;
@@ -1375,12 +1419,12 @@ pub const WebSocketBehavior = extern struct {
 
             pub fn _open(raw_ws: *RawWebSocket) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
-                var this = ws.as(Type).?;
+                const this = ws.as(Type).?;
                 @call(.always_inline, Type.onOpen, .{ this, ws });
             }
             pub fn _message(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
-                var this = ws.as(Type).?;
+                const this = ws.as(Type).?;
                 @call(
                     .always_inline,
                     Type.onMessage,
@@ -1389,7 +1433,7 @@ pub const WebSocketBehavior = extern struct {
             }
             pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
-                var this = ws.as(Type).?;
+                const this = ws.as(Type).?;
                 @call(.always_inline, Type.onDrain, .{
                     this,
                     ws,
@@ -1397,7 +1441,7 @@ pub const WebSocketBehavior = extern struct {
             }
             pub fn _ping(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
-                var this = ws.as(Type).?;
+                const this = ws.as(Type).?;
                 @call(.always_inline, Type.onPing, .{
                     this,
                     ws,
@@ -1406,7 +1450,7 @@ pub const WebSocketBehavior = extern struct {
             }
             pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
-                var this = ws.as(Type).?;
+                const this = ws.as(Type).?;
                 @call(.always_inline, Type.onPong, .{
                     this,
                     ws,
@@ -1415,7 +1459,7 @@ pub const WebSocketBehavior = extern struct {
             }
             pub fn _close(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
-                var this = ws.as(Type).?;
+                const this = ws.as(Type).?;
                 @call(
                     .always_inline,
                     Type.onClose,
@@ -2429,6 +2473,16 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
+    pub fn init() *UVLoop {
+        return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
+    }
+
+    extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+
+    pub fn iterationNumber(this: *const UVLoop) c_longlong {
+        return this.internal_loop_data.iteration_nr;
+    }
+
     pub fn isActive(this: *const UVLoop) bool {
         return this.uv_loop.isActive();
     }
@@ -2532,18 +2586,12 @@ extern fn us_socket_pair(
 extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
-    fds: LIBUS_SOCKET_DESCRIPTOR,
+    fd: LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
 pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
     return SocketTCP{
         .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
-    };
-}
-
-pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
-    return SocketTCP{
-        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
     };
 }
 

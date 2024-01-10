@@ -13,6 +13,18 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  itBundled("compile/pathToFileURLWorks", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {pathToFileURL, fileURLToPath} from 'bun';
+        console.log(pathToFileURL(import.meta.path).href + " " + fileURLToPath(import.meta.url));
+        if (fileURLToPath(import.meta.url) !== import.meta.path) throw "fail";
+        if (pathToFileURL(import.meta.path).href !== import.meta.url) throw "fail";
+      `,
+    },
+    run: { stdout: `file:///$bunfs/root/out /$bunfs/root/out`, setCwd: true },
+  });
   itBundled("compile/VariousBunAPIs", {
     compile: true,
     files: {
@@ -144,11 +156,25 @@ describe("bundler", () => {
     files: {
       "/entry.tsx": /* tsx */ `
         const req = (x) => require(x);
-        req('express');
+        console.log(req('express'));
       `,
     },
     run: {
       error: 'Cannot find package "express"',
+      setCwd: true,
+    },
+    compile: true,
+  });
+  itBundled("compile/CanRequireLocalPackages", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(req('react/package.json').version);
+      `,
+    },
+    run: {
+      stdout: require("react/package.json").version,
+      setCwd: false,
     },
     compile: true,
   });

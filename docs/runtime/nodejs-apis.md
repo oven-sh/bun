@@ -6,7 +6,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)
 
-🟡 Missing `doesNotMatch`
+🟢 Fully implemented.
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
@@ -125,6 +125,10 @@ Some methods are not optimized yet.
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
 🟡 See [`node:util`](#node-util).
+
+### [`node:test`](https://nodejs.org/api/test.html)
+
+🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 

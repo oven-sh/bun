@@ -91,7 +91,7 @@ pub const DiffFormatter = struct {
             var buffered_writer_ = MutableString.BufferedWriter{ .context = &received_buf };
             var buffered_writer = &buffered_writer_;
 
-            var buf_writer = buffered_writer.writer();
+            const buf_writer = buffered_writer.writer();
             const Writer = @TypeOf(buf_writer);
 
             const fmt_options = ZigConsoleClient.FormatOptions{

@@ -1,17 +1,7 @@
-To install the TypeScript definitions for Bun's built-in APIs, install `bun-types`.
+To install the TypeScript definitions for Bun's built-in APIs, install `@types/bun`.
 
 ```sh
-$ bun add -d bun-types # dev dependency
-```
-
-Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json`:
-
-```json-diff
-  {
-    "compilerOptions": {
-+     "types": ["bun-types"]
-    }
-  }
+$ bun add -d @types/bun # dev dependency
 ```
 
 At this point, you should be able to reference the `Bun` global in your TypeScript files without seeing errors in your editor.
@@ -27,32 +17,30 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 ```jsonc
 {
   "compilerOptions": {
-    // add Bun type definitions
-    "types": ["bun-types"],
-
     // enable latest features
     "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-
-    // if TS 5.x+
-    "moduleResolution": "bundler",
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
+    "target": "ESNext",
+    "module": "ESNext",
     "moduleDetection": "force",
-    // if TS 4.x or earlier
-    // "moduleResolution": "nodenext",
-
     "jsx": "react-jsx", // support JSX
     "allowJs": true, // allow importing `.js` from `.ts`
 
-    // best practices
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
     "strict": true,
-    "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "composite": true,
-    "downlevelIteration": true,
-    "allowSyntheticDefaultImports": true
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // Some stricter flags
+    "useUnknownInCatchVariables": true,
+    "noPropertyAccessFromIndexSignature": true
   }
 }
 ```
@@ -61,13 +49,4 @@ If you run `bun init` in a new directory, this `tsconfig.json` will be generated
 
 ```sh
 $ bun init
-```
-
-## DOM types
-
-Unfortunately, setting a value for `"types"` means that TypeScript will ignore other global type definitions, including `lib: ["dom"]`. If you need to add DOM types into your project, add the following [triple-slash directives](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) at the top of any TypeScript file in your project.
-
-```ts
-/// <reference lib="dom" />
-/// <reference lib="dom.iterable" />
 ```

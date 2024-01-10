@@ -4,12 +4,12 @@ If you are using Windows, you must use a WSL environment as Bun does not yet com
 
 ## Install Dependencies
 
-Using your system's package manager, install the Bun's dependencies:
+Using your system's package manager, install Bun's dependencies:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash#Ubuntu/Debian
@@ -21,7 +21,7 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip which libicu-devel
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 {% /codetabs %}
@@ -130,7 +130,7 @@ These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
 $ ./scripts/setup.sh
-$ cmake -S . -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
@@ -287,12 +287,13 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Arch Linux / Cannot find `libatomic.a`
+## Cannot find `libatomic.a`
 
-Bun requires `libatomic` to be statically linked. On Arch Linux, it is only given as a shared library, but as a workaround you can symlink it to get the build working locally.
+Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ sudo ln -s /lib/libatomic.so /lib/libatomic.a
+$ cmake -Bbuild -GNinja -DUSE_STATIC_LIBATOMIC=ON
+$ ninja -Cbuild
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

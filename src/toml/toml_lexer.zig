@@ -180,7 +180,7 @@ pub const Lexer = struct {
 
     fn parseNumericLiteralOrDot(lexer: *Lexer) !void {
         // Number or dot;
-        var first = lexer.code_point;
+        const first = lexer.code_point;
         lexer.step();
 
         // Dot without a digit after it;
@@ -295,11 +295,11 @@ pub const Lexer = struct {
                 isFirst = false;
             }
 
-            var isBigIntegerLiteral = lexer.code_point == 'n' and !hasDotOrExponent;
+            const isBigIntegerLiteral = lexer.code_point == 'n' and !hasDotOrExponent;
 
             // Slow path: do we need to re-scan the input as text?
             if (isBigIntegerLiteral or isInvalidLegacyOctalLiteral) {
-                var text = lexer.raw();
+                const text = lexer.raw();
 
                 // Can't use a leading zero for bigint literals;
                 if (isBigIntegerLiteral and is_legacy_octal_literal) {
@@ -331,7 +331,7 @@ pub const Lexer = struct {
             }
         } else {
             // Floating-point literal;
-            var isInvalidLegacyOctalLiteral = first == '0' and (lexer.code_point == '8' or lexer.code_point == '9');
+            const isInvalidLegacyOctalLiteral = first == '0' and (lexer.code_point == '8' or lexer.code_point == '9');
 
             // Initial digits;
             while (true) {

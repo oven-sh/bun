@@ -132,36 +132,36 @@ test("formData uploads roundtrip, without a call to .body", async () => {
   server.stop(true);
 });
 
-// test("uploads roundtrip with sendfile()", async () => {
-//   var hugeTxt = "huge".repeat(1024 * 1024 * 32);
-//   const path = join(tmpdir(), "huge.txt");
-//   require("fs").writeFileSync(path, hugeTxt);
+test("uploads roundtrip with sendfile()", async () => {
+  var hugeTxt = "huge".repeat(1024 * 1024 * 32);
+  const path = join(tmpdir(), "huge.txt");
+  require("fs").writeFileSync(path, hugeTxt);
 
-//   const server = Bun.serve({
-//     port: 0,
-//     development: false,
-//     maxRequestBodySize: 1024 * 1024 * 1024 * 8,
-//     async fetch(req) {
-//       var count = 0;
-//       for await (let chunk of req.body!) {
-//         count += chunk.byteLength;
-//       }
-//       return new Response(count + "");
-//     },
-//   });
+  const server = Bun.serve({
+    port: 0,
+    development: false,
+    maxRequestBodySize: 1024 * 1024 * 1024 * 8,
+    async fetch(req) {
+      var count = 0;
+      for await (let chunk of req.body!) {
+        count += chunk.byteLength;
+      }
+      return new Response(count + "");
+    },
+  });
 
-//   const resp = await fetch("http://" + server.hostname + ":" + server.port, {
-//     body: Bun.file(path),
-//     method: "PUT",
-//   });
+  const resp = await fetch("http://" + server.hostname + ":" + server.port, {
+    body: Bun.file(path),
+    method: "PUT",
+  });
 
-//   expect(resp.status).toBe(200);
+  expect(resp.status).toBe(200);
 
-//   const body = parseInt(await resp.text());
-//   expect(body).toBe(hugeTxt.length);
+  const body = parseInt(await resp.text());
+  expect(body).toBe(hugeTxt.length);
 
-//   server.stop(true);
-// });
+  server.stop(true);
+});
 
 test("missing file throws the expected error", async () => {
   Bun.gc(true);

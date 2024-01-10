@@ -1,0 +1,38 @@
+{
+  "name": "bun-integration-test-nuxt-hn",
+  "private": true,
+  "description": "Nuxt Hacker News for Bun Integration Test",
+  "author": "Evan You <yyx990803@gmail.com>",
+  "contributors": [
+    {
+      "name": "Sebastien Chopin (@Atinux)"
+    },
+    {
+      "name": "Alexandre Chopin (@alexchopin)"
+    },
+    {
+      "name": "Pooya Parsa (@pi0)"
+    },
+    {
+      "name": "Anthony Fu (@antfu)"
+    }
+  ],
+  "scripts": {
+    "dev": "nuxi dev",
+    "build": "nuxi build",
+    "start": "nuxi start",
+    "lint": "eslint --ext .vue,.js,.ts --ignore-path .gitignore .",
+    "postinstall": "cd node_modules/puppeteer && bun install.mjs"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "1.0.4",
+    "@nuxt/eslint-config": "0.2.0",
+    "@types/node": "20.10.3",
+    "bun-types": "^1.0.15",
+    "eslint": "8.55.0",
+    "nuxt": "3.8.2",
+    "postcss-nesting": "12.0.1",
+    "puppeteer": "21.5.2",
+    "typescript": "5.3.2"
+  }
+}

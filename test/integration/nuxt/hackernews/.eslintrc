@@ -1,0 +1,7 @@
+{
+  "extends": "@nuxt",
+  "rules": {
+    "vue/no-v-html": "off",
+    "vue/no-multiple-template-root": "off"
+  }
+}

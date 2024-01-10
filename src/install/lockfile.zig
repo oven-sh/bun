@@ -2545,19 +2545,17 @@ pub const Package = extern struct {
             log: *logger.Log,
             lockfile: *Lockfile,
             node_modules: std.fs.Dir,
+            node_modules_path: string,
             subpath: [:0]const u8,
-            name: string,
+            folder_name: string,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
-            var node_modules_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const node_modules_path = try bun.getFdPath(bun.toFD(node_modules.fd), &node_modules_path_buf);
-
-            var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf: bun.PathBuffer = undefined;
 
             const cwd = Path.joinAbsStringBufZTrailingSlash(
                 node_modules_path,
-                &path_buf2,
-                &[_]string{subpath},
+                &path_buf,
+                &[_]string{folder_name},
                 .auto,
             );
 
@@ -2595,13 +2593,13 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(name) and
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                 this.install.isEmpty() and
                 this.postinstall.isEmpty())
             brk: {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
-                    node_modules_path,
-                    &[_]string{ subpath, "binding.gyp" },
+                    cwd,
+                    &[_]string{"binding.gyp"},
                     .posix,
                 );
 
@@ -2612,7 +2610,7 @@ pub const Package = extern struct {
                 lockfile,
                 tmp.buffers.string_bytes.items,
                 cwd,
-                name,
+                folder_name,
                 resolution.tag,
                 add_node_gyp_rebuild_script,
             );

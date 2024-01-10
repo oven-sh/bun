@@ -2396,7 +2396,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type != .cjs and is_bun_platform) {
+                    if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.resolveSync");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);

@@ -4889,6 +4889,12 @@ fn NewParser_(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
+        /// use this instead of checking p.source.index
+        /// because when not bundling, p.source.index is `0`
+        inline fn isSourceRuntime(p: *const P) bool {
+            return p.options.bundle and p.source.index.isRuntime();
+        }
+
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -15511,9 +15517,11 @@ fn NewParser_(
                         }
 
                         // Substitute uncalled "require" for the require target
-                        if (p.require_ref.eql(e_.ref) and p.source.index.value != Index.runtime.value) {
+                        if (p.require_ref.eql(e_.ref) and !p.isSourceRuntime()) {
                             // mark a reference to __require only if this is not about to be used for a call target
-                            if (!(p.call_target == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref))) {
+                            if (!(p.call_target == .e_identifier and
+                                expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref)))
+                            {
                                 p.recordUsageOfRuntimeRequire();
                             }
 
@@ -16830,8 +16838,8 @@ fn NewParser_(
             }
         }
 
-        inline fn valueForRequire(p: *const P, loc: logger.Loc) Expr {
-            std.debug.assert(p.source.index.value != Index.runtime.value);
+        inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
+            std.debug.assert(!p.isSourceRuntime());
             return Expr{
                 .data = .{
                     .e_require_call_target = {},

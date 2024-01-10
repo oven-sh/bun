@@ -1135,7 +1135,14 @@ pub const Bundler = struct {
                         .minify_syntax = bundler.options.minify_syntax,
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
-                        .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
+                        .module_type = if (is_bun and bundler.options.transform_only)
+                            // this is for when using `bun build --no-bundle`
+                            // it should copy what was passed for the cli
+                            bundler.options.output_format
+                        else if (ast.exports_kind == .cjs)
+                            .cjs
+                        else
+                            .esm,
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,

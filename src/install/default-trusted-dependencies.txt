@@ -73,6 +73,7 @@
 @pulumi/awsx
 @pulumi/command
 @pulumi/kubernetes
+@railway/cli
 @replayio/cypress
 @replayio/playwright
 @roots/bud-framework
@@ -222,6 +223,8 @@ libpg-query
 libpq
 libxmljs
 libxmljs2
+lightningcss-cli
+lint
 lmdb
 lmdb-store
 local-cypress
@@ -365,5 +368,3 @@ yorkie
 zeromq
 zlib-sync
 zopflipng-bin
-lightningcss-cli
-@railway/cli

@@ -102,7 +102,7 @@ describe("bunshell", () => {
 
   test("redirect Uint8Array", async () => {
     const buffer = new Uint8Array(1 << 20);
-    const result = $`cat ${import.meta.path} > ${buffer}`;
+    const result = await $`cat ${import.meta.path} > ${buffer}`;
 
     const sentinel = sentinelByte(buffer);
     const thisFile = Bun.file(import.meta.path);
@@ -111,24 +111,24 @@ describe("bunshell", () => {
   });
 
   test("redirect Buffer", async () => {
-    const buffer = Buffer.alloc(1024, 0);
-    const result = $`cat ${import.meta.path} > ${buffer}`;
+    const buffer = Buffer.alloc(1 << 20);
+    const result = await $`cat ${import.meta.path} > ${buffer}`;
 
     const thisFile = Bun.file(import.meta.path);
 
-    expect(buffer.toString("utf-8")).toEqual(await thisFile.text());
+    expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(await thisFile.text());
   });
 
   test("redirect Bun.File", async () => {
     const filepath = join(temp_dir, "lmao.txt");
     const file = Bun.file(filepath);
     const thisFileText = await Bun.file(import.meta.path).text();
-    const result = $`cat ${import.meta.path} > ${file}`;
+    const result = await $`cat ${import.meta.path} > ${file}`;
 
     expect(await file.text()).toEqual(thisFileText);
   });
 
-  test("redirect stderr", () => {
+  test("redirect stderr", async () => {
     const buffer = Buffer.alloc(1024, 0);
     const code = /* ts */ `
     for (let i = 0; i < 10; i++) {
@@ -136,24 +136,23 @@ describe("bunshell", () => {
     }
     `;
 
-    $`${BUN} -e "${code}" 2> ${buffer}`;
+    await $`${BUN} -e "${code}" 2> ${buffer}`;
 
-    expect(buffer.toString("utf-8")).toEqual(`LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`);
+    expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(
+      `LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`,
+    );
   });
 
-  test("pipeline", () => {
-    const buffer = new Uint8Array(1 << 20);
-    const result = $`echo "LMAO" | cat > ${buffer}`;
+  test("pipeline", async () => {
+    const { stdout } = await $`echo "LMAO" | cat`;
 
-    const sentinel = sentinelByte(buffer);
-    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("LMAO\n");
+    expect(stdout.toString()).toEqual("LMAO\n");
   });
 
-  test("cmd subst", () => {
-    const buffer = new Uint8Array(1 << 20);
+  test("cmd subst", async () => {
     const haha = "noice";
-    console.log($`echo $(echo noice) > ${buffer}`);
-    expect(stringifyBuffer(buffer)).toEqual(`noice\n`);
+    const { stdout } = await $`echo $(echo noice)`;
+    expect(stdout.toString()).toEqual(`noice\n`);
   });
 
   describe("brace expansion", () => {
@@ -249,30 +248,27 @@ describe("bunshell", () => {
 
   describe("cd & pwd", () => {
     test("cd", async () => {
-      const buffer = new Uint8Array(8192);
-      const result = $`cd ${temp_dir} && ls > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
-      expect(str).toEqual(`${temp_files.join("\n")}\n`);
+      const { stdout } = await $`cd ${temp_dir} && ls`;
+      const str = stdout.toString();
+      expect(
+        str
+          .split("\n")
+          .filter(s => s.length > 0)
+          .sort(),
+      ).toEqual(temp_files.sort());
     });
 
     test("cd -", async () => {
-      const buffer = new Uint8Array(8192);
-      const result = $`cd ${temp_dir} && cd - && pwd > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
-      expect(str).toEqual(`${process.cwd()}\n`);
+      const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
+      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd()}\n`);
     });
   });
 
-  test("which", () => {
-    const buffer = new Uint8Array(8192);
+  test("which", async () => {
     const bogus = "akdfjlsdjflks";
-    const result = $`which ${BUN} ${bogus}> ${buffer}`;
-    const sentinel = sentinelByte(buffer);
-    const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    const { stdout } = await $`which ${BUN} ${bogus}`;
     const bunWhich = Bun.which(BUN);
-    expect(str).toEqual(`${bunWhich}\n${bogus} not found\n`);
+    expect(stdout.toString()).toEqual(`${bunWhich}\n${bogus} not found\n`);
   });
 
   describe("rm", () => {
@@ -289,27 +285,28 @@ describe("bunshell", () => {
       temp_dir = tempDirWithFiles("temp-rm", files);
     });
 
-    // test("error without recursive option", () => {
-    //   const buffer = new Uint8Array(8192);
-    //   const result = $`rm -v ${temp_dir} 2> ${buffer}`;
-    //   const sentinel = sentinelByte(buffer);
-    //   const str = new TextDecoder().decode(buffer.slice(0, sentinel));
-    //   expect(str).toEqual(`rm: ${temp_dir}: is a directory\n`);
+    // test("error without recursive option", async () => {
+    //   const { stderr } = await $`rm -v ${temp_dir}`;
+    //   expect(stderr.toString()).toEqual(`rm: ${temp_dir}: is a directory\n`);
     // });
 
-    test("recursive", () => {
-      const buffer = new Uint8Array(8192);
-      const result = $`rm -vrf ${temp_dir} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
-      expect(str).toEqual(
+    test("recursive", async () => {
+      const { stdout } = await $`rm -vrf ${temp_dir}`;
+      const str = stdout.toString();
+      expect(
+        str
+          .split("\n")
+          .filter(s => s.length !== 0)
+          .sort(),
+      ).toEqual(
         `${temp_dir}/foo
 ${temp_dir}/dir/files
 ${temp_dir}/dir/some
 ${temp_dir}/dir
 ${temp_dir}/bar
-${temp_dir}
-`,
+${temp_dir}`
+          .split("\n")
+          .sort(),
       );
     });
   });

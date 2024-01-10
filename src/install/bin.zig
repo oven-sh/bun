@@ -413,6 +413,9 @@ pub const Bin = extern struct {
                 return;
             };
 
+            const cmd_file_fd = bun.toLibUVOwnedFD(cmd_file.handle);
+            defer _ = bun.sys.close(cmd_file_fd);
+
             @memcpy(cmd_contents_buf[cmd_contents_begin.len..][0..target_path.len], target_path);
             @memcpy(cmd_contents_buf[cmd_contents_begin.len + target_path.len ..][0..cmd_contents_end.len], cmd_contents_end);
 
@@ -420,7 +423,7 @@ pub const Bin = extern struct {
 
             var index: usize = 0;
             while (index < contents.len) {
-                switch (bun.sys.write(bun.toFD(cmd_file.handle), contents[index..])) {
+                switch (bun.sys.write(bun.toFD(cmd_file_fd), contents[index..])) {
                     .result => |written| {
                         index += written;
                     },
@@ -473,12 +476,15 @@ pub const Bin = extern struct {
                 return;
             };
 
+            const ps1_file_fd = bun.toLibUVOwnedFD(ps1_file.handle);
+            defer _ = bun.sys.close(ps1_file_fd);
+
             const contents = std.fmt.allocPrint(bun.default_allocator, ps1_contents_fmt, .{ target_path, target_path, target_path, target_path }) catch bun.outOfMemory();
             defer bun.default_allocator.free(contents);
 
             var index: usize = 0;
             while (index < contents.len) {
-                switch (bun.sys.write(bun.toFD(ps1_file.handle), contents[index..])) {
+                switch (bun.sys.write(bun.toFD(ps1_file_fd), contents[index..])) {
                     .result => |written| {
                         index += written;
                     },
@@ -516,12 +522,15 @@ pub const Bin = extern struct {
                 return;
             };
 
+            const sh_file_fd = bun.toLibUVOwnedFD(sh_file.handle);
+            defer _ = bun.sys.close(sh_file_fd);
+
             const contents = std.fmt.allocPrint(bun.default_allocator, sh_contents_fmt, .{ target_path, target_path }) catch bun.outOfMemory();
             defer bun.default_allocator.free(contents);
 
             var index: usize = 0;
             while (index < contents.len) {
-                switch (bun.sys.write(bun.toFD(sh_file.handle), contents[index..])) {
+                switch (bun.sys.write(bun.toFD(sh_file_fd), contents[index..])) {
                     .result => |written| {
                         index += written;
                     },

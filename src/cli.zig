@@ -1768,9 +1768,10 @@ pub const Command = struct {
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                var winResolver = resolve_path.PosixToWinNormalizer{};
+                var win_resolver = resolve_path.PosixToWinNormalizer{};
+                const resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
                 break :brk bun.openFile(
-                    resolve_path.normalizeString(winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"), true, .auto),
+                    resolved,
                     .{ .mode = .read_only },
                 );
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {

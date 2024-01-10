@@ -88,6 +88,11 @@ pub const HTMLRewriter = opaque {
             strict: bool,
         ) ?*HTMLRewriter;
 
+        pub fn deinit(this: *HTMLRewriter.Builder) void {
+            auto_disable();
+            this.lol_html_rewriter_builder_free();
+        }
+
         extern fn lol_html_rewriter_builder_add_document_content_handlers(
             builder: *HTMLRewriter.Builder,
             doctype_handler: ?DirectiveFunctionType(DocType),
@@ -257,7 +262,7 @@ pub const HTMLRewriter = opaque {
                     auto_disable();
 
                     @setRuntimeSafety(false);
-                    var this = @as(*OutputSinkType, @ptrCast(@alignCast(user_data)));
+                    const this = @as(*OutputSinkType, @ptrCast(@alignCast(user_data)));
                     switch (len) {
                         0 => Done(this),
                         else => Writer(this, ptr[0..len]),

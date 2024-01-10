@@ -150,7 +150,7 @@ pub const MinifyRenamer = struct {
         first_top_level_slots: js_ast.SlotCounts,
         reserved_names: bun.StringHashMapUnmanaged(u32),
     ) !*MinifyRenamer {
-        var renamer = try allocator.create(MinifyRenamer);
+        const renamer = try allocator.create(MinifyRenamer);
         var slots = SymbolSlot.List.initUndefined();
 
         for (first_top_level_slots.slots.values, 0..) |count, ns| {
@@ -261,7 +261,7 @@ pub const MinifyRenamer = struct {
             const symbol = this.symbols.get(stable.ref).?;
             var slots = this.slots.getPtr(symbol.slotNamespace());
 
-            var existing = try this.top_level_symbol_to_slot.getOrPut(this.allocator, stable.ref);
+            const existing = try this.top_level_symbol_to_slot.getOrPut(this.allocator, stable.ref);
             if (existing.found_existing) {
                 var slot = &slots.items[existing.value_ptr.*];
                 slot.count += stable.count;
@@ -297,7 +297,7 @@ pub const MinifyRenamer = struct {
                     .count = slot.count,
                 };
             }
-            std.sort.block(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
+            std.sort.pdq(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
 
             var next_name: isize = 0;
 
@@ -395,7 +395,7 @@ pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: 
             sorted_members_buf[i] = member.ref.innerIndex();
             i += 1;
         }
-        std.sort.block(u32, sorted_members_buf, {}, std.sort.asc(u32));
+        std.sort.pdq(u32, sorted_members_buf, {}, std.sort.asc(u32));
 
         // Assign slots for this scope's symbols. Only do this if the slot is
         // not already assigned. Nested scopes have copies of symbols from parent
@@ -593,7 +593,7 @@ pub const NumberRenamer = struct {
                 remaining = remaining[1..];
             }
             std.debug.assert(remaining.len == 0);
-            std.sort.block(u32, sorted.items, {}, std.sort.asc(u32));
+            std.sort.pdq(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
                 r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));
@@ -621,7 +621,7 @@ pub const NumberRenamer = struct {
 
         while (true) {
             if (scope.members.count() > 0 or scope.generated.len > 0) {
-                var new_child_scope = r.number_scope_pool.get();
+                const new_child_scope = r.number_scope_pool.get();
                 new_child_scope.* = .{
                     .parent = s,
                     .name_counts = .{},
@@ -755,7 +755,7 @@ pub const NumberRenamer = struct {
                             name = mutable_name.toOwnedSliceLeaky();
 
                             if (use == .same_scope) {
-                                var existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
+                                const existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
                                 if (!existing.found_existing) {
                                     if (strings.eqlLong(input_name, prefix, true)) {
                                         existing.key_ptr.* = input_name;
@@ -777,7 +777,7 @@ pub const NumberRenamer = struct {
                                 switch (NameUse.find(this, mutable_name.toOwnedSliceLeaky())) {
                                     .unused => {
                                         if (cur_use == .same_scope) {
-                                            var existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
+                                            const existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
                                             if (!existing.found_existing) {
                                                 if (strings.eqlLong(input_name, prefix, true)) {
                                                     existing.key_ptr.* = input_name;
@@ -846,7 +846,7 @@ pub const ExportRenamer = struct {
                 var writer = this.string_buffer.writer();
                 writer.print("{s}{d}", .{ input, tries }) catch unreachable;
                 tries += 1;
-                var attempt = this.string_buffer.toOwnedSliceLeaky();
+                const attempt = this.string_buffer.toOwnedSliceLeaky();
                 entry = this.used.getOrPut(attempt) catch unreachable;
                 if (!entry.found_existing) {
                     const to_use = this.string_buffer.allocator.dupe(u8, attempt) catch unreachable;

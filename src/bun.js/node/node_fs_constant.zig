@@ -140,5 +140,5 @@ pub const Constants = struct {
     /// When set, a memory file mapping is used to access the file. This flag
     /// is available on Windows operating systems only. On other operating systems,
     /// this flag is ignored.
-    pub const UV_FS_O_FILEMAP = 49152;
+    pub const UV_FS_O_FILEMAP = 536870912;
 };

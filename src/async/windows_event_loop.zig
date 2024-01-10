@@ -178,9 +178,27 @@ pub const FilePoll = struct {
         return poll;
     }
 
+    pub fn initWithPackageManager(m: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
+        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
+    }
+
+    pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+        var poll = manager.file_poll_store.get();
+        poll.fd = fd;
+        poll.flags = Flags.Set.init(flags);
+        poll.owner = owner;
+        poll.next_to_free = null;
+
+        return poll;
+    }
+
     pub fn deinit(this: *FilePoll) void {
-        var vm = JSC.VirtualMachine.get();
+        const vm = JSC.VirtualMachine.get();
         this.deinitWithVM(vm);
+    }
+
+    pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
+        return this.fd;
     }
 
     pub const deinitForceUnregister = deinit;
@@ -231,7 +249,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        var loop = vm.event_loop_handle.?;
+        const loop = vm.event_loop_handle.?;
         this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
     }
 
@@ -269,6 +287,12 @@ pub const FilePoll = struct {
 
     pub inline fn canUnref(this: *const FilePoll) bool {
         return this.flags.contains(.has_incremented_poll_count);
+    }
+
+    pub fn onEnded(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.insert(.closed);
+        this.deactivate(vm.event_loop_handle.?);
     }
 
     /// Prevent a poll from keeping the process alive.
@@ -343,4 +367,30 @@ pub const FilePoll = struct {
             vm.after_event_loop_callback_ctx = this;
         }
     };
+};
+
+pub const Waker = struct {
+    loop: *bun.uws.UVLoop,
+
+    pub fn init(_: std.mem.Allocator) !Waker {
+        return .{ .loop = bun.uws.UVLoop.init() };
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        _ = this;
+
+        @compileError("Waker.getFd is unsupported on Windows");
+    }
+
+    pub fn initWithFileDescriptor(_: std.mem.Allocator, _: bun.FileDescriptor) Waker {
+        @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
+    }
+
+    pub fn wait(this: Waker) void {
+        this.loop.wait();
+    }
+
+    pub fn wake(this: *const Waker) void {
+        this.loop.wakeup();
+    }
 };

@@ -288,13 +288,14 @@ pub const SystemErrno = enum(u8) {
     pub const max = 107;
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
+        if (code < 0) {
+            if (code <= -max) {
+                return null;
+            }
+            return @enumFromInt(-code);
         }
-
         if (code >= max) return null;
-        return @as(SystemErrno, @enumFromInt(code));
+        return @enumFromInt(code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -616,11 +617,11 @@ const IO_CTL_RELATED = struct {
         return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
     }
     pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
-    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hexadecimal));
-    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hexadecimal));
-    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hexadecimal));
+    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
+    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
+    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
     pub const IOC_INOUT = IOC_IN | IOC_OUT;
-    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hexadecimal));
+    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
     pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
         return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
     }

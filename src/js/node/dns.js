@@ -30,21 +30,16 @@ function lookup(domain, options, callback) {
     return;
   }
 
-  dns.lookup(domain, options).then(
-    res => {
-      res.sort((a, b) => a.family - b.family);
+  dns.lookup(domain, options).then(res => {
+    res.sort((a, b) => a.family - b.family);
 
-      if (options?.all) {
-        callback(null, res.map(mapLookupAll));
-      } else {
-        const [{ address, family }] = res;
-        callback(null, address, family);
-      }
-    },
-    error => {
-      callback(error);
-    },
-  );
+    if (options?.all) {
+      callback(null, res.map(mapLookupAll));
+    } else {
+      const [{ address, family }] = res;
+      callback(null, address, family);
+    }
+  }, callback);
 }
 
 function resolveSrv(hostname, callback) {

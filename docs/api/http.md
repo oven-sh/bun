@@ -171,14 +171,14 @@ Optionally, you can override the trusted CA certificates by passing a value for 
   });
 ```
 
-To override Diffie-Helman parameters:
+To override Diffie-Hellman parameters:
 
 ```ts
 Bun.serve({
   // ...
   tls: {
     // other config
-    dhParamsFile: "/path/to/dhparams.pem", // path to Diffie Helman parameters
+    dhParamsFile: "/path/to/dhparams.pem", // path to Diffie Hellman parameters
   },
 });
 ```

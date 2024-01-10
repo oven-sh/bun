@@ -60,7 +60,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -85,7 +85,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -113,7 +113,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Setup Tag
@@ -250,7 +250,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Release

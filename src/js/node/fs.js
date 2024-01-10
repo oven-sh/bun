@@ -56,7 +56,14 @@ class FSWatcher extends EventEmitter {
   }
 
   #onEvent(eventType, filenameOrError) {
-    if (eventType === "error" || eventType === "close") {
+    if (eventType === "close") {
+      // close on next microtask tick to avoid long-running function calls when
+      // we're trying to detach the watcher
+      queueMicrotask(() => {
+        this.emit("close", filenameOrError);
+      });
+      return;
+    } else if (eventType === "error") {
       this.emit(eventType, filenameOrError);
     } else {
       this.emit("change", eventType, filenameOrError);
@@ -518,8 +525,8 @@ ReadStream = (function (InternalReadStream) {
 })(
   class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
-      if (typeof options !== "object" || !options) {
-        throw new TypeError("Expected options to be an object");
+      if (options && (typeof options !== "object") & (typeof options !== "string")) {
+        throw new TypeError("Expected options to be an object or a string");
       }
 
       var {
@@ -535,6 +542,10 @@ ReadStream = (function (InternalReadStream) {
         highWaterMark = defaultReadStreamOptions.highWaterMark,
         fd = defaultReadStreamOptions.fd,
       } = options;
+
+      if (typeof options === "string") {
+        encoding = options;
+      }
 
       if (pathOrFd?.constructor?.name === "URL") {
         pathOrFd = Bun.fileURLToPath(pathOrFd);

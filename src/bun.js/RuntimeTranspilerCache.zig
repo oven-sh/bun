@@ -1,5 +1,5 @@
 // ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
-const expected_version = 1;
+const expected_version = 2;
 
 const bun = @import("root").bun;
 const std = @import("std");
@@ -44,11 +44,10 @@ pub const RuntimeTranspilerCache = struct {
 
         pub const size = brk: {
             var count: usize = 0;
-            var meta: Metadata = undefined;
+            const meta: Metadata = .{};
             for (std.meta.fieldNames(Metadata)) |name| {
                 count += @sizeOf(@TypeOf(@field(meta, name)));
             }
-
             break :brk count;
         };
 
@@ -211,21 +210,34 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                var vecs: [3]std.os.iovec = .{
-                    .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                    .{ .iov_base = @constCast(output_bytes.ptr), .iov_len = output_bytes.len },
-                    .{ .iov_base = @constCast(sourcemap.ptr), .iov_len = sourcemap.len },
-                };
+                const vecs: []const std.os.iovec_const = if (output_bytes.len > 0)
+                    &.{
+                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
+                        .{ .iov_base = output_bytes.ptr, .iov_len = output_bytes.len },
+                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                    }
+                else
+                    &.{
+                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
+                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                    };
 
                 var position: isize = 0;
                 const end_position = Metadata.size + output_bytes.len + sourcemap.len;
-                std.debug.assert(end_position == @as(i64, @intCast(vecs[0].iov_len + vecs[1].iov_len + vecs[2].iov_len)));
+
+                if (bun.Environment.allow_assert) {
+                    var total: usize = 0;
+                    for (vecs) |v| {
+                        std.debug.assert(v.iov_len > 0);
+                        total += v.iov_len;
+                    }
+                    std.debug.assert(end_position == total);
+                }
                 std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
-                bun.C.preallocate_file(tmpfile.fd, 0, @intCast(end_position)) catch {};
-                var current_vecs: []std.os.iovec = vecs[0..];
+                bun.C.preallocate_file(bun.fdcast(tmpfile.fd), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {
-                    const written = try bun.sys.pwritev(tmpfile.fd, current_vecs, position).unwrap();
+                    const written = try bun.sys.pwritev(tmpfile.fd, vecs, position).unwrap();
                     if (written <= 0) {
                         return error.WriteFailed;
                     }
@@ -250,61 +262,54 @@ pub const RuntimeTranspilerCache = struct {
 
             std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
-            this.output_code = brk: {
-                switch (this.metadata.output_encoding) {
-                    .utf8 => {
-                        var utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
-                        errdefer output_code_allocator.free(utf8);
-                        const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
+            this.output_code = if (this.metadata.output_byte_length == 0)
+                .{ .string = bun.String.empty }
+            else switch (this.metadata.output_encoding) {
+                .utf8 => brk: {
+                    const utf8 = try output_code_allocator.alloc(u8, this.metadata.output_byte_length);
+                    errdefer output_code_allocator.free(utf8);
+                    const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
+                    }
+                    break :brk .{ .utf8 = utf8 };
+                },
+                .latin1 => brk: {
+                    var latin1, const bytes = bun.String.createUninitialized(.latin1, this.metadata.output_byte_length);
+                    errdefer latin1.deref();
+                    const read_bytes = try file.preadAll(bytes, this.metadata.output_byte_offset);
+
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(latin1.latin1()) != this.metadata.output_hash) {
+                            return error.InvalidHash;
                         }
+                    }
 
-                        if (this.metadata.output_hash != 0) {
-                            if (hash(utf8) != this.metadata.output_hash) {
-                                return error.InvalidHash;
-                            }
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
+                    }
+
+                    break :brk .{ .string = latin1 };
+                },
+                .utf16 => brk: {
+                    var string, const chars = bun.String.createUninitialized(.utf16, this.metadata.output_byte_length / 2);
+                    errdefer string.deref();
+
+                    const read_bytes = try file.preadAll(std.mem.sliceAsBytes(chars), this.metadata.output_byte_offset);
+                    if (read_bytes != this.metadata.output_byte_length) {
+                        return error.MissingData;
+                    }
+
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(std.mem.sliceAsBytes(string.utf16())) != this.metadata.output_hash) {
+                            return error.InvalidHash;
                         }
+                    }
 
-                        break :brk .{ .utf8 = utf8 };
-                    },
-                    .latin1 => {
-                        var latin1 = bun.String.createUninitializedLatin1(this.metadata.output_byte_length);
-                        errdefer latin1.deref();
-                        const read_bytes = try file.preadAll(@constCast(latin1.latin1()), this.metadata.output_byte_offset);
+                    break :brk .{ .string = string };
+                },
 
-                        if (this.metadata.output_hash != 0) {
-                            if (hash(latin1.latin1()) != this.metadata.output_hash) {
-                                return error.InvalidHash;
-                            }
-                        }
-
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
-                        }
-
-                        break :brk .{ .string = latin1 };
-                    },
-
-                    .utf16 => {
-                        var utf16 = bun.String.createUninitializedUTF16(this.metadata.output_byte_length / 2);
-                        errdefer utf16.deref();
-                        const read_bytes = try file.preadAll(std.mem.sliceAsBytes(@constCast(utf16.utf16())), this.metadata.output_byte_offset);
-                        if (read_bytes != this.metadata.output_byte_length) {
-                            return error.MissingData;
-                        }
-
-                        if (this.metadata.output_hash != 0) {
-                            if (hash(std.mem.sliceAsBytes(utf16.utf16())) != this.metadata.output_hash) {
-                                return error.InvalidHash;
-                            }
-                        }
-
-                        break :brk .{ .string = utf16 };
-                    },
-
-                    else => @panic("Unexpected output encoding"),
-                }
+                else => @panic("Unexpected output encoding"),
             };
 
             errdefer {
@@ -315,7 +320,7 @@ pub const RuntimeTranspilerCache = struct {
             }
 
             if (this.metadata.sourcemap_byte_length > 0) {
-                var sourcemap = try sourcemap_allocator.alloc(u8, this.metadata.sourcemap_byte_length);
+                const sourcemap = try sourcemap_allocator.alloc(u8, this.metadata.sourcemap_byte_length);
                 errdefer sourcemap_allocator.free(sourcemap);
                 const read_bytes = try file.preadAll(sourcemap, this.metadata.sourcemap_byte_offset);
                 if (read_bytes != this.metadata.sourcemap_byte_length) {
@@ -359,10 +364,7 @@ pub const RuntimeTranspilerCache = struct {
         buf: *[bun.MAX_PATH_BYTES]u8,
         input_hash: u64,
     ) ![:0]const u8 {
-        const cache_dir = getCacheDir(buf);
-        if (cache_dir.len == 0) {
-            return "";
-        }
+        const cache_dir = try getCacheDir(buf);
         buf[cache_dir.len] = std.fs.path.sep;
         const cache_filename_len = try writeCacheFilename(buf[cache_dir.len + 1 ..], input_hash);
         buf[cache_dir.len + 1 + cache_filename_len] = 0;
@@ -370,10 +372,8 @@ pub const RuntimeTranspilerCache = struct {
         return buf[0 .. cache_dir.len + 1 + cache_filename_len :0];
     }
 
-    fn reallyGetCacheDir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
-    ) [:0]const u8 {
-        if (comptime bun.Environment.allow_assert) {
+    fn reallyGetCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+        if (comptime bun.Environment.isDebug) {
             bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE") != null;
         }
 
@@ -389,7 +389,7 @@ pub const RuntimeTranspilerCache = struct {
         }
 
         if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {
-            var parts = &[_][]const u8{ dir, "bun", "@t@" };
+            const parts = &[_][]const u8{ dir, "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
 
@@ -409,40 +409,35 @@ pub const RuntimeTranspilerCache = struct {
         }
 
         if (bun.getenvZ(bun.DotEnv.home_env)) |dir| {
-            var parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
+            const parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
 
         {
-            var parts = &[_][]const u8{ bun.fs.FileSystem.instance.fs.tmpdirPath(), "bun", "@t@" };
+            const parts = &[_][]const u8{ bun.fs.FileSystem.instance.fs.tmpdirPath(), "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
     }
 
     // Only do this at most once per-thread.
     threadlocal var runtime_transpiler_cache_static_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var runtime_transpiler_cache: [:0]u8 = undefined;
-    threadlocal var runtime_transpiler_cache_loaded: bool = false;
+    threadlocal var runtime_transpiler_cache: ?[:0]const u8 = null;
     pub var is_disabled = false;
 
-    fn getCacheDir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
-    ) [:0]const u8 {
-        if (is_disabled) return "";
-
-        if (!runtime_transpiler_cache_loaded) {
-            runtime_transpiler_cache_loaded = true;
-            runtime_transpiler_cache = @constCast(reallyGetCacheDir(&runtime_transpiler_cache_static_buffer));
-            if (runtime_transpiler_cache.len == 0) {
+    fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
+        if (is_disabled) return error.CacheDisabled;
+        const path = runtime_transpiler_cache orelse path: {
+            const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
+            if (path.len == 0) {
                 is_disabled = true;
-                return "";
+                return error.CacheDisabled;
             }
-        }
-
-        @memcpy(buf[0..runtime_transpiler_cache.len], runtime_transpiler_cache);
-        buf[runtime_transpiler_cache.len] = 0;
-
-        return buf[0..runtime_transpiler_cache.len :0];
+            runtime_transpiler_cache = path;
+            break :path path;
+        };
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
+        return path;
     }
 
     pub fn fromFile(
@@ -457,9 +452,7 @@ pub const RuntimeTranspilerCache = struct {
 
         var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
-        if (cache_file_path.len == 0) {
-            return error.CacheDisabled;
-        }
+        std.debug.assert(cache_file_path.len > 0);
         return fromFileWithCacheFilePath(
             bun.PathString.init(cache_file_path),
             input_hash,
@@ -495,7 +488,7 @@ pub const RuntimeTranspilerCache = struct {
             .output_code = .{ .utf8 = "" },
             .sourcemap = "",
         };
-        var reader = metadata_stream.reader();
+        const reader = metadata_stream.reader();
         try entry.metadata.decode(reader);
         if (entry.metadata.input_hash != input_hash or entry.metadata.input_byte_length != input_stat_size) {
             // delete the cache in this case
@@ -537,6 +530,7 @@ pub const RuntimeTranspilerCache = struct {
         };
 
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
+        debug("filename to put into: '{s}'", .{cache_file_path});
 
         if (cache_file_path.len == 0) {
             return;
@@ -544,8 +538,8 @@ pub const RuntimeTranspilerCache = struct {
 
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
-                const dir = try std.fs.cwd().makeOpenPathIterable(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toFD(dir.dir.fd);
+                const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
+                break :brk bun.toFD(dir.fd);
             }
 
             break :brk bun.toFD(std.fs.cwd().fd);
@@ -620,6 +614,9 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     pub fn put(this: *RuntimeTranspilerCache, output_code_bytes: []const u8, sourcemap: []const u8) void {
+        if (comptime !bun.FeatureFlags.runtime_transpiler_cache)
+            @compileError("RuntimeTranspilerCache is disabled");
+
         if (this.input_hash == null or is_disabled) {
             return;
         }

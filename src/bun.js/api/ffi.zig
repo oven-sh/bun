@@ -126,7 +126,7 @@ pub const FFI = struct {
                 return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
-                var function_ = bun.default_allocator.create(Function) catch unreachable;
+                const function_ = bun.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
                 return JSValue.createObject2(
                     globalThis,
@@ -205,7 +205,7 @@ pub const FFI = struct {
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
-                allocator.free(bun.constStrToU8(key));
+                allocator.free(@constCast(key));
             }
             symbols.clearAndFree(allocator);
             return val;
@@ -218,10 +218,10 @@ pub const FFI = struct {
             function.printSourceCode(&writer) catch {
                 // an error while generating source code
                 for (symbols.keys()) |key| {
-                    allocator.free(bun.constStrToU8(key));
+                    allocator.free(@constCast(key));
                 }
                 for (zig_strings) |zig_string| {
-                    allocator.free(bun.constStrToU8(zig_string.slice()));
+                    allocator.free(@constCast(zig_string.slice()));
                 }
                 for (symbols.values()) |*function_| {
                     function_.arg_types.deinit(allocator);
@@ -236,10 +236,10 @@ pub const FFI = struct {
         const ret = JSC.JSValue.createStringArray(global, zig_strings.ptr, zig_strings.len, true);
 
         for (symbols.keys()) |key| {
-            allocator.free(bun.constStrToU8(key));
+            allocator.free(@constCast(key));
         }
         for (zig_strings) |zig_string| {
-            allocator.free(bun.constStrToU8(zig_string.slice()));
+            allocator.free(@constCast(zig_string.slice()));
         }
         for (symbols.values()) |*function_| {
             function_.arg_types.deinit(allocator);
@@ -263,7 +263,7 @@ pub const FFI = struct {
     //     if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
     //         // an error while validating symbols
     //         for (symbols.keys()) |key| {
-    //             allocator.free(bun.constStrToU8(key));
+    //             allocator.free(@constCast(key));
     //         }
     //         symbols.clearAndFree(allocator);
     //         return val;
@@ -290,7 +290,7 @@ pub const FFI = struct {
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
-                allocator.free(bun.constStrToU8(key));
+                allocator.free(@constCast(key));
             }
             symbols.clearAndFree(allocator);
             return val;
@@ -328,10 +328,10 @@ pub const FFI = struct {
 
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
-                var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
+                const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
                     const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name_slice.slice() }, global);
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -349,7 +349,7 @@ pub const FFI = struct {
                     name_slice.slice(),
                 }, global);
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                    allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -359,7 +359,7 @@ pub const FFI = struct {
             switch (function.step) {
                 .failed => |err| {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
 
@@ -371,7 +371,7 @@ pub const FFI = struct {
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -422,7 +422,7 @@ pub const FFI = struct {
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
-                allocator.free(bun.constStrToU8(key));
+                allocator.free(@constCast(key));
             }
             symbols.clearAndFree(allocator);
             return val;
@@ -440,7 +440,7 @@ pub const FFI = struct {
             if (function.symbol_from_dynamic_library == null) {
                 const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)}, global);
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                    allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -453,7 +453,7 @@ pub const FFI = struct {
                     bun.asByteSlice(function_name),
                 }, global);
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                    allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -462,7 +462,7 @@ pub const FFI = struct {
             switch (function.step) {
                 .failed => |err| {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
 
@@ -473,7 +473,7 @@ pub const FFI = struct {
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
+                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -663,7 +663,7 @@ pub const FFI = struct {
 
             if (val.base_name) |base_name| {
                 if (bun.asByteSlice(base_name).len > 0) {
-                    allocator.free(bun.constStrToU8(bun.asByteSlice(base_name)));
+                    allocator.free(@constCast(bun.asByteSlice(base_name)));
                 }
             }
 
@@ -713,7 +713,7 @@ pub const FFI = struct {
         const FFI_HEADER: string = @embedFile("./FFI.h");
         pub inline fn ffiHeader() string {
             if (comptime Environment.isDebug) {
-                var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
+                const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
                 var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
                 const dir = std.mem.replaceOwned(
@@ -723,7 +723,7 @@ pub const FFI = struct {
                     "jarred",
                     env.get("USER").?,
                 ) catch unreachable;
-                var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
+                const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
                 const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");
                 defer file.close();
                 return file.readToEndAlloc(default_allocator, file.getEndPos() catch unreachable) catch unreachable;
@@ -782,7 +782,7 @@ pub const FFI = struct {
             try source_code.append(0);
             defer source_code.deinit();
 
-            var state = TCC.tcc_new() orelse return error.TCCMissing;
+            const state = TCC.tcc_new() orelse return error.TCCMissing;
             TCC.tcc_set_options(state, tcc_options);
             // addSharedLibPaths(state);
             TCC.tcc_set_error_func(state, this, handleTCCError);
@@ -834,7 +834,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var relocation_size = TCC.tcc_relocate(state, null);
+            const relocation_size = TCC.tcc_relocate(state, null);
             if (this.step == .failed) {
                 return;
             }
@@ -845,7 +845,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
+            const bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -860,7 +860,7 @@ pub const FFI = struct {
                 pthread_jit_write_protect_np(true);
             }
 
-            var symbol = TCC.tcc_get_symbol(state, "JSFunctionCall") orelse {
+            const symbol = TCC.tcc_get_symbol(state, "JSFunctionCall") orelse {
                 this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
 
                 return;
@@ -949,7 +949,7 @@ pub const FFI = struct {
             JSC.markBinding(@src());
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
-            var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
+            const ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
             if (comptime Environment.allow_assert and Environment.isPosix) {
@@ -963,7 +963,7 @@ pub const FFI = struct {
 
             try source_code.append(0);
             // defer source_code.deinit();
-            var state = TCC.tcc_new() orelse return error.TCCMissing;
+            const state = TCC.tcc_new() orelse return error.TCCMissing;
             TCC.tcc_set_options(state, tcc_options);
             TCC.tcc_set_error_func(state, this, handleTCCError);
             this.state = state;
@@ -1015,7 +1015,7 @@ pub const FFI = struct {
                     else => FFI_Callback_call,
                 },
             );
-            var relocation_size = TCC.tcc_relocate(state, null);
+            const relocation_size = TCC.tcc_relocate(state, null);
 
             if (relocation_size < 0) {
                 if (this.step != .failed)
@@ -1023,7 +1023,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
+            const bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -1038,7 +1038,7 @@ pub const FFI = struct {
                 pthread_jit_write_protect_np(true);
             }
 
-            var symbol = TCC.tcc_get_symbol(state, "my_callback_function") orelse {
+            const symbol = TCC.tcc_get_symbol(state, "my_callback_function") orelse {
                 this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
 
                 return;
@@ -1445,7 +1445,7 @@ pub const FFI = struct {
         pub const map_to_js_object = brk: {
             var count: usize = 2;
             for (map, 0..) |item, i| {
-                var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
+                const fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
                 count += std.fmt.count("{}", .{fmt});
                 count += @intFromBool(i > 0);
             }
@@ -1455,7 +1455,7 @@ pub const FFI = struct {
             buf[buf.len - 1] = '}';
             var end: usize = 1;
             for (map, 0..) |item, i| {
-                var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
+                const fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
                 if (i > 0) {
                     buf[end] = ',';
                     end += 1;

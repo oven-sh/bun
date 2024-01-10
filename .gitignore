@@ -160,3 +160,5 @@ x64
 /build-*/
 
 .vs
+
+**/.verdaccio-db.json

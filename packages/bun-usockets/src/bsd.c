@@ -453,7 +453,7 @@ int bsd_would_block() {
 #endif
 }
 
-inline LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
+inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
     LIBUS_SOCKET_DESCRIPTOR listenFd,
     struct addrinfo *listenAddr,
     int port,

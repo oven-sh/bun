@@ -47,6 +47,7 @@ pub const Classes = struct {
     pub const Stats = JSC.Node.StatsSmall;
     pub const BigIntStats = JSC.Node.StatsBig;
     pub const Subprocess = JSC.Subprocess;
+    pub const ResourceUsage = JSC.ResourceUsage;
     pub const TCPSocket = JSC.API.TCPSocket;
     pub const TLSSocket = JSC.API.TLSSocket;
     pub const TextDecoder = JSC.WebCore.TextDecoder;

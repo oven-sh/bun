@@ -1861,6 +1861,7 @@ pub const BundleV2 = struct {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -1875,6 +1876,7 @@ pub const BundleV2 = struct {
                         import_record.path.namespace = "bun";
                         import_record.tag = .bun_test;
                         import_record.path.text = "test";
+                        import_record.is_external_without_side_effects = true;
                         continue;
                     }
                 }
@@ -1883,6 +1885,7 @@ pub const BundleV2 = struct {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
+                    import_record.is_external_without_side_effects = true;
 
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;
@@ -1968,6 +1971,7 @@ pub const BundleV2 = struct {
                 if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
                     import_record.path = resolve_result.path_pair.primary;
                 }
+                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
                 continue;
             }
 
@@ -2316,12 +2320,20 @@ pub const ParseTask = struct {
     };
 
     fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
-        const code = @embedFile("../runtime.js") ++ switch (target) {
+        // When the `require` identifier is visited, it is replaced with e_require_call_target
+        // and then that is either replaced with the module itself, or an import to the
+        // runtime here.
+        const runtime_require = switch (target) {
+            // __require is intentionally not implemented here, as we
+            // always inline 'import.meta.require' and 'import.meta.resolveSync'
+            // Omitting it here acts as an extra assertion.
             .bun, .bun_macro => "",
+
             .node =>
             \\import { createRequire } from "node:module";
             \\export var __require = /* @__PURE__ */ createRequire(import.meta.url);
             ,
+
             // Copied from esbuild's runtime.go:
             //
             // > This fallback "require" function exists so that "typeof require" can
@@ -2342,9 +2354,10 @@ pub const ParseTask = struct {
             \\)(function (x) {
             \\	if (typeof require !== 'undefined') return require.apply(this, arguments)
             \\	throw Error('Dynamic require of "' + x + '" is not supported')
-            \\})
-            \\
+            \\});
         };
+        const runtime_code = @embedFile("../runtime.js") ++ runtime_require;
+
         const parse_task = ParseTask{
             .ctx = undefined,
             .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
@@ -2354,7 +2367,7 @@ pub const ParseTask = struct {
                 // .supports_react_refresh = false,
             },
             .contents_or_fd = .{
-                .contents = code,
+                .contents = runtime_code,
             },
             .source_index = Index.runtime,
             .loader = Loader.js,
@@ -2987,7 +3000,7 @@ pub const Graph = struct {
     pub const InputFile = struct {
         source: Logger.Source,
         loader: options.Loader = options.Loader.file,
-        side_effects: _resolver.SideEffects = _resolver.SideEffects.has_side_effects,
+        side_effects: _resolver.SideEffects,
         additional_files: BabyList(AdditionalFile) = .{},
         unique_key_for_additional_file: string = "",
         content_hash_for_additional_file: u64 = 0,
@@ -3157,7 +3170,8 @@ const LinkerGraph = struct {
         name: []const u8,
         count: u32,
     ) !void {
-        if (count > 0) debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
+        if (count == 0) return;
+        debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
         const ref = graph.runtimeFunction(name);
         try graph.generateSymbolImportAndUse(
@@ -6431,7 +6445,7 @@ const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         const result = c.generateCodeForFileInChunkJS(
             &buffer_writer,
@@ -6479,7 +6493,7 @@ const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const indent: usize = 0;
@@ -8159,7 +8173,7 @@ const LinkerContext = struct {
         part_range: PartRange,
         toCommonJSRef: Ref,
         toESMRef: Ref,
-        runtimeRequireRef: Ref,
+        runtimeRequireRef: ?Ref,
         stmts: *StmtList,
         allocator: std.mem.Allocator,
         temp_allocator: std.mem.Allocator,

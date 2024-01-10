@@ -238,6 +238,7 @@ pub const Linker = struct {
                         if (JSC.HardcodedModule.Aliases.get(import_record.path.text, linker.options.target)) |replacement| {
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
+                            import_record.is_external_without_side_effects = true;
                             if (replacement.tag != .none) {
                                 externals.append(record_index) catch unreachable;
                                 continue;

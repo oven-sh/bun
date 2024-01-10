@@ -233,37 +233,4 @@ describe("web worker", () => {
     });
     worker.terminate();
   });
-
-  test("worker without argv/execArgv", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-argv.js", import.meta.url), {});
-    const promise = new Promise<any>(resolve => worker.on("message", resolve));
-    worker.postMessage("hello");
-    const result = await promise;
-
-    expect(result.argv).toHaveLength(2);
-    expect(result.execArgv).toHaveLength(0);
-  });
-
-  test("worker with argv/execArgv", async () => {
-    const worker_argv = ["--some-arg=1", "--some-arg=2"];
-    const worker_execArgv = ["--no-warnings", "--no-deprecation", "--tls-min-v1.2"];
-    const original_argv = [...process.argv];
-    const original_execArgv = [...process.execArgv];
-    const worker = new wt.Worker(new URL("worker-fixture-argv.js", import.meta.url), {
-      argv: worker_argv,
-      execArgv: worker_execArgv,
-    });
-    const promise = new Promise<any>(resolve => worker.once("message", resolve));
-    worker.postMessage("hello");
-    const result = await promise;
-
-    expect(result).toEqual({
-      argv: [original_argv[0], original_argv[1].replace(/\/[^/]+$/, "/worker-fixture-argv.js"), ...worker_argv],
-      execArgv: worker_execArgv,
-    });
-
-    // ensure they didn't change for the main thread
-    expect(process.argv).toEqual(original_argv);
-    expect(process.execArgv).toEqual(original_execArgv);
-  });
 });

@@ -117,9 +117,7 @@ test("all worker_threads worker instance properties are present", async () => {
 });
 
 test("worker with process.exit", done => {
-  const worker = new Worker(new URL("./../../web/workers/worker-fixture-process-exit.js", import.meta.url).href, {
-    smol: true,
-  });
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-process-exit.js", import.meta.url).href);
   worker.on("exit", code => {
     try {
       expect(code).toBe(2);
@@ -132,17 +130,13 @@ test("worker with process.exit", done => {
 });
 
 test("worker terminate", async () => {
-  const worker = new Worker(new URL("./../../web/workers/worker-fixture-hang.js", import.meta.url).href, {
-    smol: true,
-  });
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-hang.js", import.meta.url).href);
   const code = await worker.terminate();
   expect(code).toBe(0);
 });
 
 test("worker with process.exit (delay) and terminate", async () => {
-  const worker = new Worker(new URL("./../../web/workers/worker-fixture-process-exit.js", import.meta.url).href, {
-    smol: true,
-  });
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-process-exit.js", import.meta.url).href);
   await Bun.sleep(200);
   const code = await worker.terminate();
   expect(code).toBe(2);
@@ -155,6 +149,40 @@ test.todo("worker terminating forcefully properly interrupts", async () => {
   });
   const code = await worker.terminate();
   expect(code).toBe(0);
+});
+
+test("worker without argv/execArgv", async () => {
+  const worker = new Worker(new URL("./../../web/workers/worker-fixture-argv.js", import.meta.url), {});
+  const promise = new Promise<any>(resolve => worker.on("message", resolve));
+  worker.postMessage("hello");
+  const result = await promise;
+
+  expect(result.argv).toHaveLength(2);
+  expect(result.execArgv).toHaveLength(0);
+});
+
+test("worker with argv/execArgv", async () => {
+  const worker_argv = ["--some-arg=1", "--some-arg=2"];
+  const worker_execArgv = ["--no-warnings", "--no-deprecation", "--tls-min-v1.2"];
+  const original_argv = [...process.argv];
+  const original_execArgv = [...process.execArgv];
+  const workerScriptUrl = new URL("./../../web/workers/worker-fixture-argv.js", import.meta.url);
+  const worker = new Worker(workerScriptUrl, {
+    argv: worker_argv,
+    execArgv: worker_execArgv,
+  });
+  const promise = new Promise<any>(resolve => worker.once("message", resolve));
+  worker.postMessage("hello");
+  const result = await promise;
+
+  expect(result).toEqual({
+    argv: [original_argv[0], workerScriptUrl.pathname, ...worker_argv],
+    execArgv: worker_execArgv,
+  });
+
+  // ensure they didn't change for the main thread
+  expect(process.argv).toEqual(original_argv);
+  expect(process.execArgv).toEqual(original_execArgv);
 });
 
 test("threadId module and worker property is consistent", async () => {

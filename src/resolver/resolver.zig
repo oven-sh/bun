@@ -798,7 +798,7 @@ pub const Resolver = struct {
 
     pub fn resolveAndAutoInstall(
         r: *ThisResolver,
-        source_dir: string,
+        source_dir_: string,
         import_path: string,
         kind: ast.ImportKind,
         global_cache: GlobalCache,
@@ -864,22 +864,34 @@ pub const Resolver = struct {
             };
         }
 
-        if (r.standalone_module_graph) |graph| {
-            if (strings.hasPrefixComptime(import_path, "compiled://")) {
-                if (graph.files.contains(import_path)) {
-                    return .{
-                        .success = Result{
-                            .import_kind = kind,
-                            .path_pair = PathPair{
-                                .primary = Path.init(import_path),
+        // When using `bun build --compile`, module resolution is never relative
+        // to our special /$bunfs/ directory.
+        //
+        // It's always relative to the current working directory of the project
+        // root.
+        const source_dir = brk: {
+            if (r.standalone_module_graph) |graph| {
+                if (strings.isBunStandaloneFilePath(import_path)) {
+                    if (graph.files.contains(import_path)) {
+                        return .{
+                            .success = Result{
+                                .import_kind = kind,
+                                .path_pair = PathPair{
+                                    .primary = Path.init(import_path),
+                                },
+                                .is_standalone_module = true,
+                                .module_type = .esm,
                             },
-                            .is_standalone_module = true,
-                            .module_type = .esm,
-                        },
-                    };
+                        };
+                    }
+
+                    return .{ .not_found = {} };
+                } else if (strings.isBunStandaloneFilePath(source_dir_)) {
+                    break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }
-        }
+            break :brk source_dir_;
+        };
 
         if (DataURL.parse(import_path) catch {
             return .{ .failure = error.InvalidDataURL };

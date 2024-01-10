@@ -1,5 +1,5 @@
 import { expect, it, describe } from "bun:test";
-import { Database, constants } from "bun:sqlite";
+import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";
 import { spawnSync } from "bun";
 import { bunExe } from "harness";
@@ -650,6 +650,7 @@ it("Missing DB throws SQLITE_CANTOPEN", () => {
     expect.unreachable();
   } catch (error) {
     expect(error.code).toBe("SQLITE_CANTOPEN");
+    expect(error).toBeInstanceOf(SQLiteError);
   }
 });
 

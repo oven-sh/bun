@@ -175,6 +175,16 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
+  Object.defineProperty(fake, "removeListener", {
+    value: self.removeEventListener.bind(self),
+    enumerable: false,
+  });
+
+  Object.defineProperty(fake, "addListener", {
+    value: self.addEventListener.bind(self),
+    enumerable: false,
+  });
+
   return fake;
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
@@ -195,16 +205,7 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = [
-  "eval",
-  "argv",
-  "execArgv",
-  "stdin",
-  "stdout",
-  "stderr",
-  "trackedUnmanagedFds",
-  "resourceLimits",
-];
+const unsupportedOptions = ["eval", "stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
 
 class Worker extends EventEmitter {
   #worker: WebWorker;
@@ -217,7 +218,7 @@ class Worker extends EventEmitter {
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
     for (const key of unsupportedOptions) {
-      if (key in options) {
+      if (key in options && options[key] != null) {
         emitWarning("option." + key, `worker_threads.Worker option "${key}" is not implemented.`);
       }
     }
@@ -297,7 +298,15 @@ class Worker extends EventEmitter {
     this.emit("exit", e.code);
   }
 
-  #onError(error: ErrorEvent) {
+  #onError(event: ErrorEvent) {
+    let error = event?.error;
+    if (!error) {
+      error = new Error(event.message, { cause: event });
+      const stack = event?.stack;
+      if (stack) {
+        error.stack = stack;
+      }
+    }
     this.emit("error", error);
   }
 

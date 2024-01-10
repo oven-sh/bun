@@ -2639,7 +2639,7 @@ pub const ParseTask = struct {
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.legacy_transform_require_to_import = false;
         opts.features.allow_runtime = !source.index.isRuntime();
-        opts.features.dynamic_require = target.isBun();
+        opts.features.use_import_meta_require = target.isBun();
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
@@ -3973,11 +3973,15 @@ const LinkerContext = struct {
                 chunk.template = PathTemplate.file;
                 if (this.resolver.opts.entry_naming.len > 0)
                     chunk.template.data = this.resolver.opts.entry_naming;
+
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
 
-                var dir = std.fs.cwd().openDir(pathname.dir, .{}) catch |err| {
+                // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
+                const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
+
+                var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
                     try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
                     return error.FailedToOpenEntryPointDirectory;
                 };
@@ -4995,9 +4999,9 @@ const LinkerContext = struct {
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
                             // This is an external import. Check if it will be a "require()" call.
-                            if (kind == .require or !output_format.keepES6ImportExportSyntax() or
-                                (kind == .dynamic))
-                            {
+                            if (kind == .require or !output_format.keepES6ImportExportSyntax()
+                            // or (kind == .dynamic and TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport))
+                            ) {
                                 if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
                                     // If the CommonJS module was converted to ESM
                                     // and the developer `import("cjs_module")`, then
@@ -5117,7 +5121,6 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
-
                         "__toESM",
                         to_esm_uses,
                     ) catch unreachable;

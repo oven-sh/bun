@@ -488,7 +488,6 @@ pub const Options = struct {
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
@@ -2411,34 +2410,29 @@ fn NewPrinter(
                         p.printRequireOrImportExpr(e.import_record_index, e.unwrapped_id != std.math.maxInt(u32), &([_]G.Comment{}), level, flags);
                     }
                 },
-                .e_require_resolve_string => |e| {
-                    if (p.options.rewrite_require_resolve) {
-                        // require.resolve("../src.js") => "../src.js"
-                        p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
-                    } else {
-                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
-                        if (wrap) {
-                            p.print("(");
-                        }
-
-                        p.printSpaceBeforeIdentifier();
-
-                        if (p.options.module_type == .esm and is_bun_platform) {
-                            p.print("import.meta.require");
-                        } else if (p.options.require_ref) |require_ref| {
-                            p.printSymbol(require_ref);
-                        } else {
-                            p.print("require");
-                        }
-
+                .e_require_resolve_string => |e| brk: {
+                    const wrap = level.gte(.new) or flags.contains(.forbid_call);
+                    if (wrap) {
                         p.print("(");
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
-                        p.print(")");
+                    }
 
-                        if (wrap) {
-                            p.print(")");
-                        }
+                    p.printSpaceBeforeIdentifier();
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.resolveSync");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
+                    } else {
+                        p.print("require.resolve");
+                    }
+
+                    p.print("(");
+                    p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print(")");
+
+                    if (wrap) {
+                        p.print(")");
                     }
                 },
                 .e_import => |e| {

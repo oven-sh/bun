@@ -57,6 +57,20 @@ describe("bundler", () => {
       stdout: "function\nfunction\nundefined",
     },
   });
+  itBundled("browser/NodeTTY", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isatty, ReadStream, WriteStream } from "node:tty";
+        console.log(typeof ReadStream);
+        console.log(typeof WriteStream);
+        console.log(isatty(0));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "function\nfunction\nfalse",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

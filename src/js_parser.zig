@@ -3738,8 +3738,8 @@ pub const Parser = struct {
 
                     try p.log.addRangeErrorWithNotes(p.source, record.range, "Cannot use import statement with CommonJS-only features", notes.items);
                 }
-            } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
-                if (p.options.legacy_transform_require_to_import or p.options.features.dynamic_require) {
+            } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.use_import_meta_require)) {
+                if (p.options.legacy_transform_require_to_import or p.options.features.use_import_meta_require) {
                     const args = p.allocator.alloc(Expr, 2) catch unreachable;
 
                     if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
@@ -15485,7 +15485,7 @@ fn NewParser_(
                             }
                         }
 
-                        if (!p.options.bundle and p.options.features.dynamic_require) {
+                        if (!p.options.bundle and p.options.features.use_import_meta_require) {
                             const is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
                             if (!is_call_target and p.require_ref.eql(e_.ref)) {
                                 // Substitute "require" for import.meta.require
@@ -16619,7 +16619,7 @@ fn NewParser_(
                             }
                         }
 
-                        if (p.options.features.dynamic_require) {
+                        if (p.options.features.use_import_meta_require) {
                             // Ignore calls to require() if the control flow is provably
                             // dead here. We don't want to spend time scanning the required files
                             // if they will never be used.
@@ -16667,7 +16667,7 @@ fn NewParser_(
                             return p.newExpr(E.Null{}, expr.loc);
                         }
 
-                        if (p.options.features.dynamic_require and !p.options.bundle) {
+                        if (p.options.features.use_import_meta_require and !p.options.bundle) {
                             p.ignoreUsage(p.require_ref);
                             // require.resolve(FOO) => import.meta.resolveSync(FOO)
                             // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
@@ -16829,7 +16829,7 @@ fn NewParser_(
         }
 
         fn valueForRequire(p: *P, loc: logger.Loc) Expr {
-            if (p.options.features.dynamic_require) {
+            if (p.options.features.use_import_meta_require) {
                 return p.importMetaRequire(loc);
             } else {
                 return p.runtimeIdentifier(loc, "__require");

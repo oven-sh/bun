@@ -2334,15 +2334,15 @@ pub const ParseTask = struct {
             // > (including property accesses such as "require.resolve") so we need to
             // > use a proxy (issue #1614).
             //
-            // when bundling to node, esbuild picks this code path as well, but `globalThis.require`
-            // is not always defined there. the `createRequire` call approach is more reliable.
+            // When bundling to node, esbuild picks this code path as well, but `globalThis.require`
+            // is not always defined there. The `createRequire` call approach is more reliable.
             else =>
             \\export var __require = /* @__PURE__ */ (x =>
             \\	typeof require !== 'undefined' ? require :
             \\	typeof Proxy !== 'undefined' ? new Proxy(x, {
             \\		get: (a, b) => (typeof require !== 'undefined' ? require : a)[b]
             \\	}) : x
-            \\)((x) => {
+            \\)(function (x) {
             \\	if (typeof require !== 'undefined') return require.apply(this, arguments)
             \\	throw Error('Dynamic require of "' + x + '" is not supported')
             \\})
@@ -5017,8 +5017,9 @@ const LinkerContext = struct {
                                 } else {
 
                                     // We should use "__require" instead of "require" if we're not
-                                    // generating a CommonJS output file, since it won't exist otherwise
-                                    if (shouldCallRuntimeRequire(output_format)) {
+                                    // generating a CommonJS output file, since it won't exist otherwise.
+                                    // Disabled for target bun because `import.meta.require` will be inlined.
+                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
                                         record.calls_runtime_require = true;
                                         runtime_require_uses += 1;
                                     }

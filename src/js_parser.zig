@@ -4918,7 +4918,7 @@ fn NewParser_(
                     return p.newExpr(E.Null{}, arg.loc);
                 }
 
-                const import_record_index = p.addImportRecord(.require, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+                const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
                 p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.newExpr(
@@ -4942,7 +4942,6 @@ fn NewParser_(
         pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
             switch (arg.data) {
                 .e_string => |str| {
-
                     // Ignore calls to require() if the control flow is provably dead here.
                     // We don't want to spend time scanning the required files if they will
                     // never be used.
@@ -10549,7 +10548,7 @@ fn NewParser_(
             try p.skipTypeScriptObjectType();
         }
 
-        fn importMetaRequire(_: *P, loc: logger.Loc) Expr {
+        fn requireCallTarget(_: *P, loc: logger.Loc) Expr {
             return Expr{
                 .data = .{
                     .e_require_call_target = {},
@@ -15485,13 +15484,11 @@ fn NewParser_(
                             }
                         }
 
-                        if (!p.options.bundle and p.options.features.use_import_meta_require) {
-                            const is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
-                            if (!is_call_target and p.require_ref.eql(e_.ref)) {
-                                // Substitute "require" for import.meta.require
-                                p.ignoreUsage(e_.ref);
-                                return p.importMetaRequire(expr.loc);
-                            }
+                        const is_call_target = p.call_target == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
+                        if (!is_call_target and p.require_ref.eql(e_.ref)) {
+                            // Substitute uncalled "require" for the require target
+                            p.ignoreUsage(e_.ref);
+                            return p.valueForRequire(expr.loc);
                         }
                     }
 
@@ -16292,6 +16289,18 @@ fn NewParser_(
 
                     e_.target = p.visitExpr(e_.target);
 
+                    // 'require.resolve' -> .e_require_resolve_call_target
+                    if (e_.target.data == .e_require_call_target and
+                        strings.eqlComptime(e_.name, "resolve"))
+                    {
+                        return .{
+                            .data = .{
+                                .e_require_resolve_call_target = {},
+                            },
+                            .loc = expr.loc,
+                        };
+                    }
+
                     if (e_.optional_chain == null) {
                         if (p.maybeRewritePropertyAccess(
                             expr.loc,
@@ -16525,7 +16534,7 @@ fn NewParser_(
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
-                    var could_be_require_resolve: bool = false;
+                    var is_require_resolve = false;
 
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
@@ -16566,12 +16575,9 @@ fn NewParser_(
                         },
                         .e_dot => |dot| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
-                            // Prepare to recognize "require.resolve()" calls
-                            could_be_require_resolve = (e_.args.len >= 1 and
-                                dot.optional_chain == null and
-                                @as(Expr.Tag, dot.target.data) == .e_identifier and
-                                dot.target.data.e_identifier.ref.eql(p.require_ref) and
-                                strings.eqlComptime(dot.name, "resolve"));
+                        },
+                        .e_require_resolve_call_target => {
+                            is_require_resolve = true;
                         },
                         else => {},
                     }
@@ -16632,9 +16638,12 @@ fn NewParser_(
                                 p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has dynamic arguments") catch unreachable;
                             }
 
-                            p.ignoreUsage(p.require_ref);
+                            if (!is_require_resolve) {
+                                // when we have `use_import_meta_require`, we will rewrite this to not use the require ref
+                                if (p.options.features.use_import_meta_require) {
+                                    p.ignoreUsage(p.require_ref);
+                                }
 
-                            if (!could_be_require_resolve) {
                                 return p.newExpr(
                                     E.Call{
                                         .target = p.valueForRequire(e_.target.loc),
@@ -16650,6 +16659,11 @@ fn NewParser_(
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
 
+                        // when we have `use_import_meta_require`, we will rewrite this to not use the require ref
+                        if (p.options.features.use_import_meta_require) {
+                            p.ignoreUsage(p.require_ref);
+                        }
+
                         return p.newExpr(
                             E.Call{
                                 .target = p.valueForRequire(e_.target.loc),
@@ -16659,31 +16673,12 @@ fn NewParser_(
                         );
                     }
 
-                    if (could_be_require_resolve) {
+                    if (is_require_resolve) {
                         // Ignore calls to require.resolve() if the control flow is provably
                         // dead here. We don't want to spend time scanning the required files
                         // if they will never be used.
                         if (p.is_control_flow_dead) {
                             return p.newExpr(E.Null{}, expr.loc);
-                        }
-
-                        if (p.options.features.use_import_meta_require and !p.options.bundle) {
-                            p.ignoreUsage(p.require_ref);
-                            // require.resolve(FOO) => import.meta.resolveSync(FOO)
-                            // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
-                            return p.newExpr(
-                                E.Call{
-                                    .target = Expr{
-                                        .data = .{
-                                            .e_require_resolve_call_target = {},
-                                        },
-                                        .loc = e_.target.loc,
-                                    },
-                                    .args = e_.args,
-                                    .close_paren_loc = e_.close_paren_loc,
-                                },
-                                expr.loc,
-                            );
                         }
 
                         if (e_.args.len == 1) {
@@ -16701,6 +16696,10 @@ fn NewParser_(
                                 else => {},
                             }
                         }
+
+                        // require.resolve(FOO) => import.meta.resolveSync(FOO)
+                        // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
+                        return expr;
                     }
 
                     if (comptime allow_macros) {
@@ -16829,8 +16828,9 @@ fn NewParser_(
         }
 
         fn valueForRequire(p: *P, loc: logger.Loc) Expr {
+            // when bundling for bun, `require` is `import.meta.require`, and we inline that usage everywhere.
             if (p.options.features.use_import_meta_require) {
-                return p.importMetaRequire(loc);
+                return p.requireCallTarget(loc);
             } else {
                 return p.runtimeIdentifier(loc, "__require");
             }

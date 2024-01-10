@@ -2396,11 +2396,11 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.require_ref) |require_ref| {
+                    if (p.options.module_type != .cjs and is_bun_platform) {
+                        p.print("import.meta.resolveSync");
+                    } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
-                    } else if (p.options.module_type != .cjs and is_bun_platform) {
-                        p.print("import.meta.resolveSync");
                     } else {
                         p.print("require.resolve");
                     }
@@ -2410,7 +2410,7 @@ fn NewPrinter(
                         p.printRequireOrImportExpr(e.import_record_index, e.unwrapped_id != std.math.maxInt(u32), &([_]G.Comment{}), level, flags);
                     }
                 },
-                .e_require_resolve_string => |e| brk: {
+                .e_require_resolve_string => |e| {
                     const wrap = level.gte(.new) or flags.contains(.forbid_call);
                     if (wrap) {
                         p.print("(");

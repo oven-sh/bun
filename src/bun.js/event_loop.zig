@@ -350,6 +350,8 @@ const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
+const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
+const ShellRmDirTaskMini = bun.shell.InterpreterMini.Builtin.Rm.ShellRmTask.DirTask;
 const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
@@ -418,6 +420,8 @@ pub const Task = TaggedPointerUnion(.{
     bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
     ShellGlobTask,
     ShellRmTask,
+    ShellRmDirTask,
+    ShellRmDirTaskMini,
     ShellMvCheckTargetTask,
     ShellMvBatchedTask,
     ShellLsTask,
@@ -739,7 +743,17 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
                     var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
                     shell_rm_task.runFromMainThread();
-                    shell_rm_task.deinit();
+                    // shell_rm_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
+                    var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
+                    shell_rm_task.runFromMainThread();
+                    // shell_rm_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTaskMini))) => {
+                    var shell_rm_task: *ShellRmDirTaskMini = task.get(ShellRmDirTaskMini).?;
+                    shell_rm_task.runFromMainThread();
+                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;

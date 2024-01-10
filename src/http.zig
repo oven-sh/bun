@@ -143,8 +143,6 @@ pub const Sendfile = struct {
         const adjusted_count_temporary = @min(@as(u64, this.remain), @as(u63, std.math.maxInt(u63)));
         // TODO we should not need this int cast; improve the return type of `@min`
         const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
-        // int uv_fs_sendfile(uv_loop_t *loop, uv_fs_t *req, uv_file out_fd, uv_file in_fd, int64_t in_offset, size_t length, uv_fs_cb cb)
-
         
         if (Environment.isLinux) {
             var signed_offset = @as(i64, @intCast(this.offset));

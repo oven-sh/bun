@@ -43,9 +43,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
         var top = &self.stack.items[self.stack.items.len - 1];
         var dirname_len = top.dirname_len;
         switch (top.iter.next()) {
-            .err => {
-                // TODO(dylan-conway):
-            },
+            .err => |err| return bun.errnoToZigErr(err.errno),
             .result => |res| {
                 if (res) |base| {
                     switch (base.kind) {

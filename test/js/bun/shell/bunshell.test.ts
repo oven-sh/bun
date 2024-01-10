@@ -285,10 +285,10 @@ describe("bunshell", () => {
       temp_dir = tempDirWithFiles("temp-rm", files);
     });
 
-    // test("error without recursive option", async () => {
-    //   const { stderr } = await $`rm -v ${temp_dir}`;
-    //   expect(stderr.toString()).toEqual(`rm: ${temp_dir}: is a directory\n`);
-    // });
+    test("error without recursive option", async () => {
+      const { stderr } = await $`rm -v ${temp_dir}`;
+      expect(stderr.toString()).toEqual(`rm: ${temp_dir}: is a directory\n`);
+    });
 
     test("recursive", async () => {
       const { stdout } = await $`rm -vrf ${temp_dir}`;

@@ -4839,22 +4839,30 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             waiting: struct {
                                 tasks_done: usize = 0,
                             },
-                            // TODO probably not necessary, i think when rm encounters an error it keeps continuing
-                            waiting_but_errored: struct {
-                                tasks_done: usize,
-                                error_writer: ?BufferedWriter = null,
-                            },
 
                             pub fn tasksDone(this: *@This()) usize {
                                 return switch (this.*) {
                                     .idle => 0,
                                     .waiting => this.waiting.tasks_done,
-                                    .waiting_but_errored => this.waiting_but_errored.tasks_done,
                                 };
                             }
                         },
+
+                        fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) void {
+                            @fence(.SeqCst);
+                            var atomicvar = &@field(this, @tagName(thevar));
+                            const result = atomicvar.fetchAdd(1, .SeqCst);
+                            log("[rm] {s}: {d} + 1", .{ @tagName(thevar), result });
+                            return;
+                        }
+
+                        fn getOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) usize {
+                            @fence(.SeqCst);
+                            var atomicvar = &@field(this, @tagName(thevar));
+                            return atomicvar.load(.SeqCst);
+                        }
                     },
-                    done,
+                    done: struct { exit_code: u8 },
                     err: Syscall.Error,
                 } = .idle,
 
@@ -5110,7 +5118,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                                         // Done writing
                                         if (this.state.parse_opts.state.wait_write_err.remain.len == 0) {
-                                            this.state = .done;
+                                            this.state = .{ .done = .{ .exit_code = 0 } };
                                             continue;
                                         }
 
@@ -5156,24 +5164,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 pub fn onBufferedWriterDone(this: *Rm, e: ?Syscall.Error) void {
                     if (comptime bun.Environment.allow_assert) {
                         std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
-                            (this.state == .exec and
-                            this.state.exec.state == .waiting_but_errored and
-                            this.state.exec.state.waiting_but_errored.error_writer != null) or
                             (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_queue.len > 0));
                     }
 
-                    if (this.state == .exec and this.state.exec.state == .waiting_but_errored) {
-                        if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks) {
-                            this.state = .{ .err = this.state.exec.err.? };
-                            _ = this.next();
-                            return;
-                        }
-                        return;
-                    }
-
                     if (this.state == .exec and this.state.exec.state == .waiting) {
-                        log("[rm] output done={d} output count={d}", .{ this.state.exec.output_done.load(.Monotonic), this.state.exec.output_count.load(.Monotonic) });
-                        _ = this.state.exec.output_done.fetchAdd(1, .Monotonic);
+                        log("[rm] output done={d} output count={d}", .{ this.state.exec.getOutputCount(.output_done), this.state.exec.getOutputCount(.output_count) });
+                        this.state.exec.incrementOutputCount(.output_done);
+                        // _ = this.state.exec.output_done.fetchAdd(1, .Monotonic);
                         var queue = &this.state.exec.output_queue;
                         var first = queue.popFirst().?;
                         defer {
@@ -5183,7 +5180,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         if (first.next) |next_writer| {
                             next_writer.data.writer.writeIfPossible(false);
                         } else {
-                            if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.output_done.load(.Monotonic) >= this.state.exec.output_count.load(.Monotonic)) {
+                            if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
                                 this.bltn.done(if (this.state.exec.err != null) 1 else 0);
                                 return;
                             }
@@ -5311,82 +5308,44 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 pub fn asyncTaskDone(this: *Rm, task: *ShellRmTask) void {
-                    _ = task; // autofix
-
                     var exec = &this.state.exec;
                     const tasks_done = switch (exec.state) {
                         .idle => @panic("Invalid state"),
                         .waiting => brk: {
                             exec.state.waiting.tasks_done += 1;
                             const amt = exec.state.waiting.tasks_done;
-                            // if (task.err) |err| {
-                            //     if (this.state.exec.err == null) {
-                            //         this.state.exec.err = err;
-                            //         const error_string = this.taskErrorToString(err);
-
-                            //         exec.state = .{
-                            //             .waiting_but_errored = .{
-                            //                 .tasks_done = amt,
-                            //             },
-                            //         };
-
-                            //         if (this.bltn.stderr.needsIO()) {
-                            //             exec.state.waiting_but_errored.error_writer = BufferedWriter{
-                            //                 .fd = this.bltn.stderr.expectFd(),
-                            //                 .remain = error_string,
-                            //                 .parent = BufferedWriter.ParentPtr.init(this),
-                            //                 .bytelist = this.bltn.stdBufferedBytelist(.stderr),
-                            //             };
-                            //             exec.state.waiting_but_errored.error_writer.?.writeIfPossible(false);
-                            //             return;
-                            //         }
-
-                            //         switch (this.bltn.writeNoIO(.stderr, error_string)) {
-                            //             .result => {},
-                            //             .err => {},
-                            //         }
-                            //     } else {
-                            //         this.state.exec.state = .{
-                            //             .waiting_but_errored = .{
-                            //                 .tasks_done = amt,
-                            //             },
-                            //         };
-                            //     }
-                            // }
+                            if (task.err) |err| {
+                                exec.err = err;
+                                const error_string = this.taskErrorToString(err);
+                                if (!this.bltn.stderr.needsIO()) {
+                                    switch (this.bltn.writeNoIO(.stderr, error_string)) {
+                                        .result => {},
+                                        .err => @panic("FIXME TODO"),
+                                    }
+                                } else {
+                                    const bo = BlockingOutput{
+                                        .writer = BufferedWriter{
+                                            .fd = this.bltn.stderr.expectFd(),
+                                            .remain = error_string,
+                                            .parent = BufferedWriter.ParentPtr.init(this),
+                                            .bytelist = this.bltn.stdBufferedBytelist(.stderr),
+                                        },
+                                        .arr = std.ArrayList(u8).init(bun.default_allocator),
+                                    };
+                                    exec.incrementOutputCount(.output_count);
+                                    // _ = exec.output_count.fetchAdd(1, .Monotonic);
+                                    return this.queueBlockingOutput(bo);
+                                }
+                            }
                             break :brk amt;
-                        },
-                        .waiting_but_errored => brk: {
-                            exec.state.waiting_but_errored.tasks_done += 1;
-                            break :brk exec.state.waiting_but_errored.tasks_done;
                         },
                     };
 
-                    // if (this.opts.verbose and this.bltn.stdout.needsIO()) {
-                    //     const output = BlockingOutput{
-                    //         .arr =
-                    //     };
-                    //     this.queueBlockingOutput(output);
-                    // }
-
-                    if (tasks_done >= this.state.exec.total_tasks) {
-                        if (exec.state == .waiting_but_errored) {
-                            if (exec.state.waiting_but_errored.error_writer) |*writer| {
-                                if (!writer.isDone()) {
-                                    // Need to keep waiting
-                                    return;
-                                }
-                            }
-
-                            const err = this.state.exec.err.?;
-                            this.state = .{
-                                .err = err,
-                            };
-                        }
-
-                        // Wait until all output is written
-                        if (exec.output_done.load(.Monotonic) < exec.output_count.load(.Monotonic)) return;
-
-                        this.state = .done;
+                    // Wait until all tasks done and all output is written
+                    if (tasks_done >= this.state.exec.total_tasks and
+                        exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
+                    {
+                        this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
                         _ = this.next();
                         return;
                     }
@@ -5399,24 +5358,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                             @panic("FIXME TODO");
                         }
-                        _ = this.state.exec.output_done.fetchAdd(1, .SeqCst);
+                        // _ = this.state.exec.output_done.fetchAdd(1, .SeqCst);
+                        _ = this.state.exec.incrementOutputCount(.output_done);
                         return;
                     }
-                    this.queueBlockingOutput(verbose);
+                    this.queueBlockingOutput(verbose.toBlockingOutput());
                 }
 
-                fn queueBlockingOutput(this: *Rm, dir_task: *ShellRmTask.DirTask) void {
-                    const arr = dir_task.takeDeletedEntries();
-                    const bo = BlockingOutput{
-                        .arr = arr,
-                        .writer = BufferedWriter{
-                            .fd = bun.STDOUT_FD,
-                            .remain = arr.items[0..],
-                            .parent = BufferedWriter.ParentPtr.init(this),
-                            .bytelist = this.bltn.stdBufferedBytelist(.stdout),
-                        },
-                    };
-
+                fn queueBlockingOutput(this: *Rm, bo: BlockingOutput) void {
                     const node = bun.default_allocator.create(std.DoublyLinkedList(BlockingOutput).Node) catch bun.outOfMemory();
                     node.* = .{
                         .data = bo,
@@ -5478,6 +5427,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                         const EntryKindHint = enum { idk, dir, file };
 
+                        pub fn toBlockingOutput(this: *DirTask) BlockingOutput {
+                            const arr = this.takeDeletedEntries();
+                            const bo = BlockingOutput{
+                                .arr = arr,
+                                .writer = BufferedWriter{
+                                    .fd = bun.STDOUT_FD,
+                                    .remain = arr.items[0..],
+                                    .parent = BufferedWriter.ParentPtr.init(this.task_manager.rm),
+                                    .bytelist = this.task_manager.rm.bltn.stdBufferedBytelist(.stdout),
+                                },
+                            };
+                            return bo;
+                        }
+
                         pub fn takeDeletedEntries(this: *DirTask) std.ArrayList(u8) {
                             const ret = this.deleted_entries;
                             this.deleted_entries = std.ArrayList(u8).init(ret.allocator);
@@ -5501,6 +5464,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         fn runFromThreadPoolImpl(this: *DirTask) void {
                             defer this.postRun();
 
+                            print("DirTask: {s}", .{this.path});
                             switch (this.task_manager.removeEntry(this, ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]))) {
                                 .err => |err| {
                                     print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
@@ -5578,6 +5542,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         }
 
                         pub fn queueForWrite(this: *DirTask) void {
+                            if (this.deleted_entries.items.len == 0) return;
                             if (comptime EventLoopKind == .js) {
                                 this.task_manager.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
                             } else {
@@ -5597,10 +5562,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     };
 
                     pub fn create(root_path: bun.PathString, rm: *Rm, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
-                        // if (rm.opts.verbose) {
-                        //     _ = rm.state.exec.output_count.fetchAdd(1, .SeqCst);
-                        // }
-
                         const task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
                         task.* = ShellRmTask{
                             .rm = rm,
@@ -5642,13 +5603,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
+                        print("enqueue: {s}", .{path});
                         if (this.error_signal.load(.SeqCst)) {
                             return;
                         }
 
-                        if (this.opts.verbose) {
-                            _ = this.rm.state.exec.output_count.fetchAdd(1, .SeqCst);
-                        }
+                        // if (this.opts.verbose) {
+                        //     // _ = this.rm.state.exec.output_count.fetchAdd(1, .SeqCst);
+                        //     _ = this.rm.state.exec.incrementOutputCount(.output_count);
+                        // }
 
                         var subtask = bun.default_allocator.create(DirTask) catch bun.outOfMemory();
                         subtask.* = DirTask{
@@ -5667,6 +5630,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     pub fn verboseDeleted(this: *@This(), dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
                         print("deleted: {s}", .{path[0..path.len]});
                         if (!this.opts.verbose) return Maybe(void).success;
+                        if (dir_task.deleted_entries.items.len == 0) {
+                            _ = this.rm.state.exec.incrementOutputCount(.output_count);
+                        }
                         dir_task.deleted_entries.appendSlice(path[0..path.len]) catch bun.outOfMemory();
                         if (comptime bun.Environment.isWindows) {
                             dir_task.deleted_entries.appendSlice(&[_]u8{ 0, '\n' }) catch bun.outOfMemory();
@@ -6123,7 +6089,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 if (to_write.len == 0) {
                     // we are done!
-                    this.closeFDIfOpen();
+                    this.deinit();
                     return;
                 }
 

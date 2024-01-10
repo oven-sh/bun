@@ -4128,7 +4128,7 @@ var require_lib = __commonJS({
             buffer,
           );
         }
-        buffer = Buffer.from(buffer);
+        buffer = Buffer2.from(buffer);
       }
       var flushFlag = engine._finishFlushFlag;
       return engine._processChunk(buffer, flushFlag);

@@ -340,6 +340,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 auto bunStr = Bun::toString(parentIdStr);
                 args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 
+                auto thisValue = callFrame.thisValue();
+
                 return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
             }
         }

@@ -2317,10 +2317,7 @@ pub const ParseTask = struct {
 
     fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
         const code = @embedFile("../runtime.js") ++ switch (target) {
-            .bun, .bun_macro =>
-            \\export var __require = /* @__PURE__ */ import.meta.require;
-            \\
-            ,
+            .bun, .bun_macro => "",
             .node =>
             \\import { createRequire } from "node:module";
             \\export var __require = /* @__PURE__ */ createRequire(import.meta.url);

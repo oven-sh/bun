@@ -299,6 +299,18 @@ pub fn ExpressionTransposer(
                 },
             }
         }
+
+        pub fn tranposeKnownToBeIf(self: *This, arg: Expr, state: anytype) Expr {
+            return Expr.init(
+                E.If,
+                E.If{
+                    .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
+                    .no = self.maybeTransposeIf(arg.data.e_if.no, state),
+                    .test_ = arg.data.e_if.test_,
+                },
+                arg.loc,
+            );
+        }
     };
 }
 
@@ -4908,26 +4920,10 @@ fn NewParser_(
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(p: *P, arg: Expr, state: anytype) Expr {
+        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: anytype) Expr {
             // The argument must be a string
-            if (@as(Expr.Tag, arg.data) == .e_string) {
-                // Ignore calls to import() if the control flow is provably dead here.
-                // We don't want to spend time scanning the required files if they will
-                // never be used.
-                if (p.is_control_flow_dead) {
-                    return p.newExpr(E.Null{}, arg.loc);
-                }
-
-                const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
-                p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
-                p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
-                return p.newExpr(
-                    E.RequireResolveString{
-                        .import_record_index = Ref.toInt(import_record_index),
-                        // .leading_interior_comments = arg.getString().
-                    },
-                    arg.loc,
-                );
+            if (arg.data == .e_string) {
+                return p.transposeRequireResolveKnownString(arg);
             }
 
             if (p.options.warn_about_unbundled_modules) {
@@ -4936,7 +4932,36 @@ fn NewParser_(
                 p.log.addRangeDebug(p.source, r, "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
 
-            return state;
+            const args = p.allocator.alloc(Expr, 1) catch unreachable;
+            args[0] = arg;
+
+            return p.newExpr(E.Call{
+                .target = require_resolve_ref,
+                .args = ExprNodeList.init(args),
+            }, arg.loc);
+        }
+
+        pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
+            std.debug.assert(arg.data == .e_string);
+
+            // Ignore calls to import() if the control flow is provably dead here.
+            // We don't want to spend time scanning the required files if they will
+            // never be used.
+            if (p.is_control_flow_dead) {
+                return p.newExpr(E.Null{}, arg.loc);
+            }
+
+            const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+            p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+            p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+
+            return p.newExpr(
+                E.RequireResolveString{
+                    .import_record_index = Ref.toInt(import_record_index),
+                    // .leading_interior_comments = arg.getString().
+                },
+                arg.loc,
+            );
         }
 
         pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
@@ -5051,22 +5076,26 @@ fn NewParser_(
                     p.ignoreUsage(p.require_ref);
 
                     // require(import_object_assign)
-                    return p.callRuntime(arg.loc, "__require", args);
+                    return p.newExpr(
+                        E.Call{
+                            .target = p.uncheckedValueForRequire(arg.loc),
+                            .args = ExprNodeList.init(args),
+                        },
+                        arg.loc,
+                    );
                 },
                 else => {
                     const args = p.allocator.alloc(Expr, 1) catch unreachable;
                     args[0] = arg;
                     return p.newExpr(
                         E.Call{
-                            .target = p.valueForRequire(arg.loc),
+                            .target = p.uncheckedValueForRequire(arg.loc),
                             .args = ExprNodeList.init(args),
                         },
                         arg.loc,
                     );
                 },
             }
-
-            return arg;
         }
 
         fn isBindingUsed(p: *P, binding: Binding, default_export_ref: Ref) bool {
@@ -10548,15 +10577,6 @@ fn NewParser_(
             try p.skipTypeScriptObjectType();
         }
 
-        fn requireCallTarget(_: *P, loc: logger.Loc) Expr {
-            return Expr{
-                .data = .{
-                    .e_require_call_target = {},
-                },
-                .loc = loc,
-            };
-        }
-
         fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
             try p.lexer.expect(.t_equals);
 
@@ -15484,9 +15504,8 @@ fn NewParser_(
                             }
                         }
 
-                        const is_call_target = p.call_target == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
-                        if (!is_call_target and p.require_ref.eql(e_.ref)) {
-                            // Substitute uncalled "require" for the require target
+                        // Substitute uncalled "require" for the require target
+                        if (p.require_ref.eql(e_.ref)) {
                             p.ignoreUsage(e_.ref);
                             return p.valueForRequire(expr.loc);
                         }
@@ -16534,7 +16553,6 @@ fn NewParser_(
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
-                    var is_require_resolve = false;
 
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
@@ -16576,9 +16594,6 @@ fn NewParser_(
                         .e_dot => |dot| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
                         },
-                        .e_require_resolve_call_target => {
-                            is_require_resolve = true;
-                        },
                         else => {},
                     }
 
@@ -16598,9 +16613,7 @@ fn NewParser_(
                         }
                     }
 
-                    if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and
-                        e_.target.data.e_identifier.ref.eql(p.require_ref))
-                    {
+                    if (e_.target.data == .e_require_call_target) {
                         e_.can_be_unwrapped_if_unused = false;
 
                         // Heuristic: omit warnings inside try/catch blocks because presumably
@@ -16619,39 +16632,17 @@ fn NewParser_(
                                 .e_if => {
                                     // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                                     // This makes static analysis later easier
-                                    return p.require_transposer.maybeTransposeIf(first, state);
+                                    return p.require_transposer.tranposeKnownToBeIf(first, state);
                                 },
                                 else => {},
                             }
                         }
 
-                        if (p.options.features.use_import_meta_require) {
-                            // Ignore calls to require() if the control flow is provably
-                            // dead here. We don't want to spend time scanning the required files
-                            // if they will never be used.
-                            if (p.is_control_flow_dead) {
-                                return p.newExpr(E.Null{}, expr.loc);
-                            }
-
-                            if (p.options.warn_about_unbundled_modules) {
-                                const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
-                                p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has dynamic arguments") catch unreachable;
-                            }
-
-                            if (!is_require_resolve) {
-                                // when we have `use_import_meta_require`, we will rewrite this to not use the require ref
-                                if (p.options.features.use_import_meta_require) {
-                                    p.ignoreUsage(p.require_ref);
-                                }
-
-                                return p.newExpr(
-                                    E.Call{
-                                        .target = p.valueForRequire(e_.target.loc),
-                                        .args = e_.args,
-                                    },
-                                    expr.loc,
-                                );
-                            }
+                        // Ignore calls to require() if the control flow is provably
+                        // dead here. We don't want to spend time scanning the required files
+                        // if they will never be used.
+                        if (p.is_control_flow_dead) {
+                            return p.newExpr(E.Null{}, expr.loc);
                         }
 
                         if (p.options.warn_about_unbundled_modules) {
@@ -16659,21 +16650,10 @@ fn NewParser_(
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
 
-                        // when we have `use_import_meta_require`, we will rewrite this to not use the require ref
-                        if (p.options.features.use_import_meta_require) {
-                            p.ignoreUsage(p.require_ref);
-                        }
-
-                        return p.newExpr(
-                            E.Call{
-                                .target = p.valueForRequire(e_.target.loc),
-                                .args = e_.args,
-                            },
-                            expr.loc,
-                        );
+                        return expr;
                     }
 
-                    if (is_require_resolve) {
+                    if (e_.target.data == .e_require_resolve_call_target) {
                         // Ignore calls to require.resolve() if the control flow is provably
                         // dead here. We don't want to spend time scanning the required files
                         // if they will never be used.
@@ -16685,20 +16665,21 @@ fn NewParser_(
                             const first = e_.args.first_();
                             switch (first.data) {
                                 .e_string => {
-                                    // require(FOO) => require(FOO)
-                                    return p.transposeRequireResolve(first, expr);
+                                    // require.resolve(FOO) => require.resolve(FOO)
+                                    // (this will register dependencies)
+                                    return p.transposeRequireResolveKnownString(first);
                                 },
                                 .e_if => {
-                                    // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
+                                    // require.resolve(FOO  ? '123' : '456')
+                                    //  =>
+                                    // FOO ? require.resolve('123') : require.resolve('456')
                                     // This makes static analysis later easier
-                                    return p.require_resolve_transposer.maybeTransposeIf(first, expr);
+                                    return p.require_resolve_transposer.tranposeKnownToBeIf(first, e_.target);
                                 },
                                 else => {},
                             }
                         }
 
-                        // require.resolve(FOO) => import.meta.resolveSync(FOO)
-                        // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
                         return expr;
                     }
 
@@ -16829,11 +16810,23 @@ fn NewParser_(
 
         fn valueForRequire(p: *P, loc: logger.Loc) Expr {
             // when bundling for bun, `require` is `import.meta.require`, and we inline that usage everywhere.
-            if (p.options.features.use_import_meta_require) {
-                return p.requireCallTarget(loc);
-            } else {
-                return p.runtimeIdentifier(loc, "__require");
+            if (!p.options.features.use_import_meta_require) {
+                p.ensureRequireSymbol();
             }
+            return p.uncheckedValueForRequire(loc);
+        }
+
+        inline fn uncheckedValueForRequire(p: *const P, loc: logger.Loc) Expr {
+            std.debug.assert(
+                p.options.features.use_import_meta_require or
+                    p.runtime_imports.__require != null,
+            );
+            return Expr{
+                .data = .{
+                    .e_require_call_target = {},
+                },
+                .loc = loc,
+            };
         }
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
@@ -17619,8 +17612,7 @@ fn NewParser_(
                         // This also makes correctness a little easier.
                         if (identifier_opts.is_call_target and strings.eqlComptime(name, "require")) {
                             p.ignoreUsage(p.module_ref);
-                            p.recordUsage(p.require_ref);
-                            return p.newExpr(E.Identifier{ .ref = p.require_ref }, name_loc);
+                            return p.valueForRequire(name_loc);
                         } else if (!p.commonjs_named_exports_deoptimized and strings.eqlComptime(name, "exports")) {
 
                             // Detect if we are doing
@@ -20608,13 +20600,11 @@ fn NewParser_(
             var ref: Ref = undefined;
             p.has_called_runtime = true;
 
+            comptime std.debug.assert(!strings.eqlComptime(name, "__require"));
+
             if (!p.runtime_imports.contains(name)) {
                 ref = brk: {
                     if (!p.options.bundle) {
-                        if (comptime strings.eqlComptime(name, "__require")) {
-                            p.ensureRequireSymbol();
-                            break :brk p.runtime_imports.__require.?.ref;
-                        }
                         const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
                         p.runtime_imports.put(name, generated_symbol);
                         break :brk generated_symbol.ref;

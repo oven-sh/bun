@@ -190,7 +190,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
         "peer-deps-fixed": "1.0.0",
         "no-deps": "1.0.0",
       },
-    },),
+    }),
   );
 
   var { stdout, stderr, exited } = spawn({
@@ -4078,7 +4078,7 @@ describe("yarn tests", () => {
     expect(await exited).toBe(0);
   });
 
-  test.todo(
+  test(
     "it should install in such a way that two identical packages with different peer dependencies are different instances",
     async () => {
       await writeFile(
@@ -4180,7 +4180,7 @@ describe("yarn tests", () => {
 
       err = await new Response(stderr).text();
       out = await new Response(stdout).text();
-      expect(out).toBe("true\ntrue\ntrue");
+      expect(out).toBe("true\ntrue\nfalse\n");
       expect(err).toBeEmpty();
       expect(await exited).toBe(0);
     },

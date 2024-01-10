@@ -174,7 +174,7 @@ test("missing file throws the expected error", async () => {
         method: "POST",
         proxy: "http://localhost:3000",
       });
-      // expect(Bun.peek.status(resp)).toBe("rejected");
+      expect(Bun.peek.status(resp)).toBe("rejected");
       expect(async () => await resp).toThrow("No such file or directory");
     }
   });

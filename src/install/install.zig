@@ -8231,10 +8231,6 @@ pub const PackageManager = struct {
             var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
             var path_buf_to_use: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(scripts.hasAny() or !scripts.filled);
-            }
-
             if (scripts.hasAny()) {
                 const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(folder_name) and
                     scripts.install.isEmpty() and

@@ -2797,7 +2797,9 @@ pub const PackageManager = struct {
 
     pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
         var list = std.ArrayList(Semver.Version).init(allocator);
-        var dir = this.getCacheDirectory().openDir(package_name, .{}) catch |err| switch (err) {
+        var dir = this.getCacheDirectory().openDir(package_name, .{
+            .iterate = true,
+        }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => return list,
             else => return err,
         };
@@ -7573,7 +7575,7 @@ pub const PackageManager = struct {
 
                 // This is where we clean dangling symlinks
                 // This could be slow if there are a lot of symlinks
-                if (cwd.openDir(manager.options.bin_path, .{})) |node_modules_bin_handle| {
+                if (bun.openDir(cwd, manager.options.bin_path)) |node_modules_bin_handle| {
                     var node_modules_bin: std.fs.Dir = node_modules_bin_handle;
                     defer node_modules_bin.close();
                     var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();
@@ -7598,7 +7600,7 @@ pub const PackageManager = struct {
                         }
                     }
                 } else |err| {
-                    if (err != error.FileNotFound) {
+                    if (err != error.ENOENT) {
                         Output.err(err, "while reading node_modules/.bin", .{});
                         Global.crash();
                     }
@@ -8216,6 +8218,7 @@ pub const PackageManager = struct {
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
             var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
+            var path_buf_to_use: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
             if (scripts.hasAny()) {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -8234,8 +8237,9 @@ pub const PackageManager = struct {
                     break :brk Syscall.exists(binding_dot_gyp_path);
                 } else false;
 
-                const path_str = Path.joinAbsString(
+                const path_str = Path.joinAbsStringBufZTrailingSlash(
                     node_modules_path,
+                    &path_buf_to_use,
                     &[_]string{destination_dir_subpath},
                     .posix,
                 );
@@ -8554,7 +8558,7 @@ pub const PackageManager = struct {
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
         const cwd = std.fs.cwd();
-        const node_modules_folder = cwd.openDir("node_modules", .{}) catch brk: {
+        const node_modules_folder = bun.openDir(cwd, "node_modules") catch brk: {
             skip_verify_installed_version_number = true;
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
@@ -8562,7 +8566,7 @@ pub const PackageManager = struct {
                     Global.crash();
                 }
             };
-            break :brk cwd.openDir("node_modules", .{}) catch |err| {
+            break :brk bun.openDir(cwd, "node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
@@ -8682,13 +8686,13 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_folder = cwd.openDir(node_modules.relative_path, .{}) catch brk: {
+                installer.node_modules_folder = bun.openDir(cwd, node_modules.relative_path) catch brk: {
                     // Avoid extra mkdir() syscall
                     //
                     // note: this will recursively delete any dangling symlinks
                     // in the next.js repo, it encounters a dangling symlink in node_modules/@next/codemod/node_modules/cheerio
                     try bun.makePath(cwd, bun.span(node_modules.relative_path));
-                    break :brk try cwd.openDir(node_modules.relative_path, .{});
+                    break :brk try bun.openDir(cwd, node_modules.relative_path);
                 };
 
                 var remaining = node_modules.dependencies;

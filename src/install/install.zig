@@ -1290,7 +1290,7 @@ const PackageInstall = struct {
                     } else {
                         if (comptime Environment.isPosix) {
                             const stat = in_file.stat() catch continue;
-                            _ = C.fchmod(outfile.handle, stat.mode);
+                            _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                         }
 
                         bun.copyFile(in_file.handle, outfile.handle) catch |err| {

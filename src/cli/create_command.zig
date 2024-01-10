@@ -507,7 +507,7 @@ pub const CreateCommand = struct {
                             if (comptime Environment.isPosix) {
                                 // Assumption: you only really care about making sure something that was executable is still executable
                                 const stat = infile.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, stat.mode);
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             } else {
                                 @panic("TODO on Windows");
                             }

@@ -330,7 +330,7 @@ pub const Bin = extern struct {
 
         fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
             // we use fchmodat to avoid any issues with current working directory
-            _ = C.fchmodat(folder, target, umask | 0o777, 0);
+            _ = C.fchmodat(folder, target, @intCast(umask | 0o777), 0);
         }
 
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {

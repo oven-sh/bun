@@ -115,6 +115,17 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
+pub fn canUseBrotli() bool {
+    if (Environment.isMac) {
+        if (bun.CompressionFramework.isAvailable()) {
+            return true;
+        }
+    }
+
+    return bun.brotli.hasBrotli();
+}
+
+
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -132,7 +143,9 @@ pub const Sendfile = struct {
         const adjusted_count_temporary = @min(@as(u64, this.remain), @as(u63, std.math.maxInt(u63)));
         // TODO we should not need this int cast; improve the return type of `@min`
         const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
+        // int uv_fs_sendfile(uv_loop_t *loop, uv_fs_t *req, uv_file out_fd, uv_file in_fd, int64_t in_offset, size_t length, uv_fs_cb cb)
 
+        
         if (Environment.isLinux) {
             var signed_offset = @as(i64, @intCast(this.offset));
             const begin = this.offset;
@@ -152,6 +165,18 @@ pub const Sendfile = struct {
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
+        } else if(Environment.isWindows) {
+            const win = std.os.windows;
+            const uv = bun.windows.libuv;
+            const wsocket = bun.socketcast(socket.fd());
+            const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
+            if(win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
+                return .{ .done = {} };
+            }
+            this.offset += this.remain;
+            this.remain = 0;
+            const errorno = win.ws2_32.WSAGetLastError();
+            return .{ .err = bun.errnoToZigErr(errorno) };
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));

@@ -248,10 +248,10 @@ void MessagePort::start()
     if (!isEntangled())
         return;
 
-    ASSERT(scriptExecutionContext());
     if (m_started)
         return;
 
+    ASSERT(scriptExecutionContext());
     m_started = true;
     scriptExecutionContext()->processMessageWithMessagePortsSoon([pendingActivity = Ref { *this }] {});
 }
@@ -429,9 +429,10 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
-    if (eventType == eventNames().messageEvent) {
-        start();
+    if (!hasEventListeners(eventNames().messageEvent) && eventType == eventNames().messageEvent) {
         m_hasMessageEventListener = true;
+        if (listener->isAttribute())
+            start();
     }
     return EventTarget::addEventListener(eventType, WTFMove(listener), options);
 }

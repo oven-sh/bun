@@ -128,22 +128,7 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
-test("message port starts at message listener registration", async () => {
-  const worker = new Worker(new URL("./worker-message-port.ts", import.meta.url).href);
-  const messageChannel = new MessageChannel();
-  const responsePromise = new Promise(resolve => {
-    messageChannel.port1.on("message", message => resolve(message));
-  });
-  worker.postMessage({ port: messageChannel.port2 }, [messageChannel.port2]);
-  const messageText = "Hello, world!";
-  messageChannel.port1.postMessage({ text: messageText });
-  await expect(responsePromise).resolves.toStrictEqual({ text: messageText });
-  messageChannel.port1.close();
-  messageChannel.port2.close();
-  await worker.terminate();
-});
-
-test("receiveMessageOnPort works across threads", async () => {
+test("receiveMessageOnPort works across workers", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
     workerData: port2,

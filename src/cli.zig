@@ -1769,7 +1769,10 @@ pub const Command = struct {
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
                 var win_resolver = resolve_path.PosixToWinNormalizer{};
-                const resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                if (comptime Environment.isWindows) {
+                    resolved = resolve_path.normalizeString(resolved, true, .windows);
+                }
                 break :brk bun.openFile(
                     resolved,
                     .{ .mode = .read_only },

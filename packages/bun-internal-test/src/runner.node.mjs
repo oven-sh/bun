@@ -375,7 +375,7 @@ if (failing_tests.length) {
   report += `## Failing tests log output\n\n`;
   for (const { path, output, reason, expected_crash_reason } of failing_tests) {
     report += `### ${path}\n\n`;
-    report += "Link to file: " + linkToGH(path) + "\n\n";
+    report += "[Link to file](" + linkToGH(path) + ")\n\n";
     if (windows && reason !== expected_crash_reason) {
       report += `To mark this as a known failing test, add this to the start of the file:\n`;
       report += `\`\`\`ts\n`;

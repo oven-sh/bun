@@ -82,7 +82,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
 
         pub fn registerPoll(this: *OutputReader) void {
-            const loop = if(Environment.isWindows) this.subprocess().manager.uws_event_loop.uv_loop else this.subprocess().manager.uws_event_loop;
+            const loop = if (Environment.isWindows) this.subprocess().manager.uws_event_loop.uv_loop else this.subprocess().manager.uws_event_loop;
             switch (this.poll.register(loop, .readable, true)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{

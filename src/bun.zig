@@ -1197,9 +1197,9 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         const handle = FDImpl.decode(fd).system();
         std.os.windows.WaitForSingleObject(handle, 0) catch |err| {
-            return switch(err) {
-               error.WaitTimeOut, error.WaitAbandoned => return PollFlag.not_ready,
-               else => return PollFlag.hup,
+            return switch (err) {
+                error.WaitTimeOut, error.WaitAbandoned => return PollFlag.not_ready,
+                else => return PollFlag.hup,
             };
         };
         return PollFlag.ready;
@@ -1230,9 +1230,9 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         // we can only know if is writable using overlapped and GetOverlappedResult, we say is not read so we can trigger watch and use uv to poll the state for us
         // we can at least know if is disconnected or busy here using a shortish timeout
         std.os.windows.WaitForSingleObject(handle, 100) catch |err| {
-            return switch(err) {
-               error.WaitTimeOut, error.WaitAbandoned => return PollFlag.not_ready,
-               else => return PollFlag.hup,
+            return switch (err) {
+                error.WaitTimeOut, error.WaitAbandoned => return PollFlag.not_ready,
+                else => return PollFlag.hup,
             };
         };
         return PollFlag.not_ready;
@@ -2560,7 +2560,7 @@ pub inline fn socketcast(fd: anytype) std.os.socket_t {
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)
-    // On Windows the maximum length, in bytes, of the string returned in the buffer pointed to by the name parameter is dependent on the namespace provider, but this string must be 256 bytes or less. 
+    // On Windows the maximum length, in bytes, of the string returned in the buffer pointed to by the name parameter is dependent on the namespace provider, but this string must be 256 bytes or less.
     // So if a buffer of 256 bytes is passed in the name parameter and the namelen parameter is set to 256, the buffer size will always be adequate.
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-gethostname
     256

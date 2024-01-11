@@ -125,7 +125,6 @@ pub fn canUseBrotli() bool {
     return bun.brotli.hasBrotli();
 }
 
-
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -143,7 +142,7 @@ pub const Sendfile = struct {
         const adjusted_count_temporary = @min(@as(u64, this.remain), @as(u63, std.math.maxInt(u63)));
         // TODO we should not need this int cast; improve the return type of `@min`
         const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
-        
+
         if (Environment.isLinux) {
             var signed_offset = @as(i64, @intCast(this.offset));
             const begin = this.offset;
@@ -163,12 +162,12 @@ pub const Sendfile = struct {
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
-        } else if(Environment.isWindows) {
+        } else if (Environment.isWindows) {
             const win = std.os.windows;
             const uv = bun.windows.libuv;
             const wsocket = bun.socketcast(socket.fd());
             const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
-            if(win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
+            if (win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
                 return .{ .done = {} };
             }
             this.offset += this.remain;

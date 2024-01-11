@@ -214,7 +214,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
 
-            if(comptime Environment.isWindows) {
+            if (comptime Environment.isWindows) {
                 // on windows uSockets exposes SOCKET
                 return bun.toFD(@as(bun.FDImpl.System, @ptrCast(us_socket_get_native_handle(0, this.socket))));
             }
@@ -1954,11 +1954,11 @@ pub fn NewApp(comptime ssl: bool) type {
             }
 
             pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
-                if(comptime Environment.isWindows) {
+                if (comptime Environment.isWindows) {
                     // on windows uSockets exposes SOCKET
-                   return bun.toFD(@as(bun.FDImpl.System, @ptrCast(uws_res_get_native_handle(ssl_flag, res.downcast()))));
+                    return bun.toFD(@as(bun.FDImpl.System, @ptrCast(uws_res_get_native_handle(ssl_flag, res.downcast()))));
                 }
-                
+
                 return bun.toFD(@as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast())))));
             }
             pub fn getRemoteAddress(res: *Response) ?[]const u8 {

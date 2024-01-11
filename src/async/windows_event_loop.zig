@@ -209,19 +209,19 @@ pub const FilePoll = struct {
         const data = handle.data orelse return;
         const this: *FilePoll = @ptrCast(@alignCast(data));
 
-        if(this.flags.contains(.one_shot)) {
+        if (this.flags.contains(.one_shot)) {
             _ = uv.uv_poll_stop(handle);
         }
 
-        if(status != 0) {
+        if (status != 0) {
             this.updateFlags(Flags.fromLibUVEvent(uv.UV_DISCONNECT));
         } else {
             this.updateFlags(Flags.fromLibUVEvent(events));
         }
-         
+
         this.onUpdate(0);
     }
-    
+
     pub fn onUpdate(poll: *FilePoll, size_or_offset: i64) void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
             poll.flags.insert(.needs_rearm);
@@ -272,7 +272,7 @@ pub const FilePoll = struct {
         }
 
         const handle = &(this.handle.?);
-        if(uv.uv_poll_init_socket(loop, handle, system_fd).errno()) |err| {
+        if (uv.uv_poll_init_socket(loop, handle, system_fd).errno()) |err| {
             if (JSC.Maybe(void).errnoSys(err, .epoll_ctl)) |errno| {
                 return errno;
             }
@@ -285,7 +285,7 @@ pub const FilePoll = struct {
             .writable => uv.UV_WRITABLE | uv.UV_DISCONNECT,
             else => unreachable,
         };
-        if(uv.uv_poll_start(handle, events, FilePoll.uvEventPoll).errno()) |err| {
+        if (uv.uv_poll_start(handle, events, FilePoll.uvEventPoll).errno()) |err| {
             if (JSC.Maybe(void).errnoSys(err, .epoll_ctl)) |errno| {
                 return errno;
             }
@@ -301,7 +301,7 @@ pub const FilePoll = struct {
     }
     pub fn unregister(this: *FilePoll) bool {
         uv.uv_unref(@ptrFromInt(this.fd));
-        if(this.handle != null) {
+        if (this.handle != null) {
             return uv.uv_poll_stop(&this.handle.?).errno() == null;
         }
         return true;

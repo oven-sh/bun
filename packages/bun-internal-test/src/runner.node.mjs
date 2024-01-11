@@ -21,7 +21,7 @@ if (!(Number.isSafeInteger(force_ram_size_input) && force_ram_size_input > 0)) {
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
-const ci = !!process.env["GITHUB_ACTION"];
+const ci = !!process.env["GITHUB_ACTIONS"];
 const enableProgressBar = !ci;
 
 function defaultConcurrency() {

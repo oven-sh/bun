@@ -1575,12 +1575,12 @@ pub const Subprocess = struct {
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, 1, value, &stdio[1]))
+                        if (!extractStdio(globalThis, 2, value, &stdio[2]))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, 2, value, &stdio[2]))
+                        if (!extractStdio(globalThis, 1, value, &stdio[1]))
                             return .zero;
                     }
                 }

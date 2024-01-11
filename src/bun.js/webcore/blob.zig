@@ -2809,7 +2809,7 @@ pub const Blob = struct {
                     // seemed to have zero performance impact in
                     // microbenchmarks.
                     if (!this.could_block and this.bytes_blob.sharedView().len > 1024) {
-                        bun.C.preallocate_file(fd, 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
+                        bun.C.preallocate_file(fd.cast(), 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
                     }
                 }
 
@@ -3121,7 +3121,7 @@ pub const Blob = struct {
                             return bun.errnoToZigErr(err.errno);
                         },
                         .result => {
-                            _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                            _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                             return;
                         },
                     }
@@ -3129,9 +3129,9 @@ pub const Blob = struct {
 
                 while (true) {
                     const written = switch (comptime use) {
-                        .copy_file_range => linux.copy_file_range(src_fd, null, dest_fd, null, remain, 0),
-                        .sendfile => linux.sendfile(dest_fd, src_fd, null, remain),
-                        .splice => bun.C.splice(src_fd, null, dest_fd, null, remain, 0),
+                        .copy_file_range => linux.copy_file_range(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
+                        .sendfile => linux.sendfile(dest_fd.cast(), src_fd.cast(), null, remain),
+                        .splice => bun.C.splice(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
                     };
 
                     switch (linux.getErrno(written)) {
@@ -3144,7 +3144,7 @@ pub const Blob = struct {
                                     return bun.errnoToZigErr(err.errno);
                                 },
                                 .result => {
-                                    _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                    _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                                     return;
                                 },
                             }
@@ -3157,9 +3157,9 @@ pub const Blob = struct {
                                     // make() can set STDOUT / STDERR to O_APPEND
                                     // this messes up sendfile()
                                     has_unset_append = true;
-                                    const flags = linux.fcntl(dest_fd, linux.F.GETFL, 0);
+                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, 0);
                                     if ((flags & O.APPEND) != 0) {
-                                        _ = linux.fcntl(dest_fd, linux.F.SETFL, flags ^ O.APPEND);
+                                        _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ O.APPEND);
                                         continue;
                                     }
                                 }
@@ -3176,7 +3176,7 @@ pub const Blob = struct {
                                         return bun.errnoToZigErr(err.errno);
                                     },
                                     .result => {
-                                        _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                        _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                                         return;
                                     },
                                 }
@@ -4574,7 +4574,7 @@ pub const Blob = struct {
                                     const byteLength = buf.len;
 
                                     const result = JSC.ArrayBuffer.toArrayBufferFromSharedMemfd(
-                                        @intCast(allocator.fd),
+                                        allocator.fd.cast(),
                                         global,
                                         byteOffset,
                                         byteLength,

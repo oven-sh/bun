@@ -591,14 +591,14 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
     }
 
     while (true) {
-        const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, flags, perm);
+        const rc = Syscall.system.openat(dirfd.cast(), file_path, flags, perm);
         if (comptime Environment.allow_assert)
             log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
+            .SUCCESS => .{ .result = bun.toFD(rc) },
             .INTR => continue,
             else => |err| {
-                return Maybe(std.os.fd_t){
+                return .{
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = .open,
@@ -688,7 +688,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         },
         .linux => {
             while (true) {
-                const rc = sys.write(fd, bytes.ptr, adjusted_len);
+                const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
                 log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
@@ -725,7 +725,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
+            const rc = writev_sym(fd.cast(), @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
             if (comptime Environment.allow_assert)
                 log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -753,7 +753,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const std.os.iovec_const, posi
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, buffers.ptr, buffers.len, position);
+            const rc = pwritev_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -787,7 +787,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = readv_sym(fd, buffers.ptr, buffers.len);
+            const rc = readv_sym(fd.cast(), buffers.ptr, buffers.len);
             if (comptime Environment.allow_assert)
                 log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -821,7 +821,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = preadv_sym(fd, buffers.ptr, buffers.len, position);
+            const rc = preadv_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -944,7 +944,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         },
         .linux => {
             while (true) {
-                const rc = sys.read(fd, buf.ptr, adjusted_len);
+                const rc = sys.read(fd.cast(), buf.ptr, adjusted_len);
                 log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
@@ -978,7 +978,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = linux.recvfrom(fd, buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
+            const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
             log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
@@ -1445,12 +1445,12 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
 
     // We don't use glibc here
     // It didn't work. Always returned 0.
-    const pipe_len = std.os.linux.fcntl(fd, F_GETPIPE_SZ, 0);
+    const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
     if (Maybe(usize).errnoSys(pipe_len, .fcntl)) |err| return err;
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
-    const new_pipe_len = std.os.linux.fcntl(fd, F_SETPIPE_SZ, capacity);
+    const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
     if (Maybe(usize).errnoSys(new_pipe_len, .fcntl)) |err| return err;
     return Maybe(usize){ .result = new_pipe_len };
 }
@@ -1613,7 +1613,7 @@ pub fn isExecutableFilePath(path: anytype) bool {
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysFd(
-            linux.lseek(fd, @intCast(offset), os.SEEK.SET),
+            linux.lseek(fd.cast(), @intCast(offset), os.SEEK.SET),
             .lseek,
             fd,
         ) orelse Maybe(void).success;

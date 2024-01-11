@@ -57,7 +57,7 @@ pub const LifecycleScriptSubprocess = struct {
         );
 
         pub fn getFd(this: *OutputReader) bun.FileDescriptor {
-            return bun.toFD(this.poll.fd);
+            return this.poll.fd;
         }
 
         pub fn getBuffer(this: *OutputReader) *std.ArrayList(u8) {

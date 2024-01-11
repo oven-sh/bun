@@ -3972,16 +3972,16 @@ pub const NodeFS = struct {
                     _ = bun.sys.unlink(dest);
                     return err;
                 }
-                _ = C.fchmod(dest_fd, stat_.mode);
+                _ = C.fchmod(dest_fd.cast(), stat_.mode);
                 _ = Syscall.close(dest_fd);
                 return ret.success;
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
             if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
-                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
+                const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd, stat_.mode);
+                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -3992,8 +3992,8 @@ pub const NodeFS = struct {
             }
 
             defer {
-                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd, stat_.mode);
+                _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = linux.fchmod(dest_fd.cast(), stat_.mode);
                 _ = Syscall.close(dest_fd);
             }
 
@@ -4009,7 +4009,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -4029,7 +4029,7 @@ pub const NodeFS = struct {
                 while (size > 0) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -5277,7 +5277,7 @@ pub const NodeFS = struct {
                     else brk: {
                         // on linux, it's absolutely positioned
                         const pos = bun.sys.system.lseek(
-                            fd,
+                            fd.cast(),
                             @as(std.os.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
                         );
@@ -5289,7 +5289,7 @@ pub const NodeFS = struct {
                     };
 
                     bun.C.preallocate_file(
-                        fd,
+                        fd.cast(),
                         @as(std.os.off_t, @intCast(offset)),
                         @as(std.os.off_t, @intCast(buf.len)),
                     ) catch {};
@@ -6269,9 +6269,9 @@ pub const NodeFS = struct {
             var size: usize = @intCast(@max(stat_.size, 0));
 
             if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
-                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
+                const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd, stat_.mode);
+                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -6280,8 +6280,8 @@ pub const NodeFS = struct {
             }
 
             defer {
-                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd, stat_.mode);
+                _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = linux.fchmod(dest_fd.cast(), stat_.mode);
                 _ = Syscall.close(dest_fd);
             }
 
@@ -6297,7 +6297,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -6317,7 +6317,7 @@ pub const NodeFS = struct {
                 while (size > 0) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {

@@ -207,7 +207,7 @@ pub const INotify = struct {
 
     pub fn stop() void {
         if (inotify_fd != 0) {
-            _ = bun.sys.close(inotify_fd);
+            _ = bun.sys.close(bun.toFD(inotify_fd));
             inotify_fd = 0;
         }
     }
@@ -705,7 +705,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (this.indexOf(hash)) |index| {
                 if (comptime FeatureFlags.atomic_file_watcher) {
                     // On Linux, the file descriptor might be out of date.
-                    if (fd > 0) {
+                    if (fd.int() > 0) {
                         var fds = this.watchlist.items(.fd);
                         fds[index] = fd;
                     }

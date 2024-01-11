@@ -591,7 +591,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isLinux) {
             if (std.fs.openFileAbsoluteZ("/proc/self/exe", flags)) |easymode| {
-                return easymode.handle;
+                return bun.toFD(easymode.handle);
             } else |_| {
                 if (bun.argv().len > 0) {
                     // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
@@ -602,7 +602,7 @@ pub const StandaloneModuleGraph = struct {
                         "",
                         bun.span(bun.argv()[0]),
                     )) |path| {
-                        return (try std.fs.cwd().openFileZ(path, flags)).handle;
+                        return bun.toFD((try std.fs.cwd().openFileZ(path, flags)).handle);
                     }
                 }
 

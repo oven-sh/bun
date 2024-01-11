@@ -148,7 +148,7 @@ pub const Subprocess = struct {
     pid: if (Environment.isWindows) uv.uv_process_t else std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
-    pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
+    pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
 
     stdin: Writable,
     stdout: Readable,
@@ -608,7 +608,7 @@ pub const Subprocess = struct {
                 if (!WaiterThread.shouldUseWaiterThread()) {
                     // should this be handled differently?
                     // this effectively shouldn't happen
-                    if (this.pidfd == bun.invalid_fd) {
+                    if (this.pidfd == bun.invalid_fd.int()) {
                         return .{ .result = {} };
                     }
 
@@ -658,10 +658,10 @@ pub const Subprocess = struct {
 
         const pidfd = this.pidfd;
 
-        this.pidfd = bun.invalid_fd;
+        this.pidfd = bun.invalid_fd.int();
 
-        if (pidfd != bun.invalid_fd) {
-            _ = std.os.close(pidfd);
+        if (pidfd != bun.invalid_fd.int()) {
+            _ = bun.sys.close(bun.toFD(pidfd));
         }
     }
 
@@ -2832,8 +2832,8 @@ pub const Subprocess = struct {
                 const linux = std.os.linux;
                 var mask = std.os.empty_sigset;
                 linux.sigaddset(&mask, std.os.SIG.CHLD);
-                instance.signalfd = try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK);
-                instance.eventfd = try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0);
+                instance.signalfd = bun.toFD(try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK));
+                instance.eventfd = bun.toFD(try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
             }
         }
 
@@ -2876,7 +2876,7 @@ pub const Subprocess = struct {
 
             if (comptime Environment.isLinux) {
                 const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
             }
         }
 
@@ -2891,7 +2891,7 @@ pub const Subprocess = struct {
 
             if (comptime Environment.isLinux) {
                 const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
             }
         }
 
@@ -3009,12 +3009,12 @@ pub const Subprocess = struct {
                 if (comptime Environment.isLinux) {
                     var polls = [_]std.os.pollfd{
                         .{
-                            .fd = @intCast(this.signalfd),
+                            .fd = this.signalfd.cast(),
                             .events = std.os.POLL.IN | std.os.POLL.ERR,
                             .revents = 0,
                         },
                         .{
-                            .fd = @intCast(this.eventfd),
+                            .fd = this.eventfd.cast(),
                             .events = std.os.POLL.IN | std.os.POLL.ERR,
                             .revents = 0,
                         },
@@ -3024,7 +3024,7 @@ pub const Subprocess = struct {
 
                     // Make sure we consume any pending signals
                     var buf: [1024]u8 = undefined;
-                    _ = std.os.read(this.signalfd, &buf) catch 0;
+                    _ = std.os.read(this.signalfd.cast(), &buf) catch 0;
                 } else {
                     var mask = std.os.empty_sigset;
                     var signal: c_int = std.os.SIG.CHLD;

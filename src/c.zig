@@ -175,7 +175,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     defer _ = bun.sys.close(out_handle);
 
     if (comptime Environment.isLinux) {
-        _ = std.os.linux.fallocate(out_handle, 0, 0, @intCast(stat_.size));
+        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
     }
 
     try bun.copyFile(bun.fdcast(in_handle), bun.fdcast(out_handle));

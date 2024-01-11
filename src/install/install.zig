@@ -1562,8 +1562,7 @@ const PackageInstall = struct {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
-                    const fd = @as(bun.FileDescriptor, @intCast(rc));
-                    _ = Syscall.system.close(fd);
+                    _ = Syscall.system.close(@intCast(rc));
                     return false;
                 },
                 else => return true,

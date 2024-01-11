@@ -1879,7 +1879,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 const start = this.sendfile.offset;
                 const val =
                     // this does the syscall directly, without libc
-                    linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
+                    linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd.cast(), &signed_offset, this.sendfile.remain);
                 this.sendfile.offset = @as(Blob.SizeType, @intCast(signed_offset));
 
                 const errcode = linux.getErrno(val);

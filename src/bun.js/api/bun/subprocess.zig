@@ -2658,12 +2658,11 @@ pub const Subprocess = struct {
 
             return true;
         } else if (value.isNumber()) {
-            const fd_ = value.toInt64();
-            if (fd_ < 0) {
+            const fd = value.asFileDescriptor();
+            if (fd.int() < 0) {
                 globalThis.throwInvalidArguments("file descriptor must be a positive integer", .{});
                 return false;
             }
-            const fd = bun.toFD(fd_);
 
             switch (bun.FDTag.get(fd)) {
                 .stdin => {

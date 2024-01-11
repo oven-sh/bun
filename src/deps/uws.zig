@@ -214,7 +214,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
 
-            return bun.toFD(@intFromPtr(us_socket_get_native_handle(0, this.socket)));
+            return bun.toFD(Poll.us_poll_fd(@ptrCast(this.socket)));
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
@@ -1198,7 +1198,7 @@ pub const Poll = opaque {
     }
 
     pub fn fd(self: *Poll) std.os.fd_t {
-        return @intCast(us_poll_fd(self));
+        return us_poll_fd(self);
     }
 
     pub fn start(self: *Poll, loop: *Loop, flags: Flags) void {
@@ -1239,7 +1239,7 @@ pub const Poll = opaque {
     extern fn us_poll_stop(p: ?*Poll, loop: ?*Loop) void;
     extern fn us_poll_events(p: ?*Poll) i32;
     extern fn us_poll_ext(p: ?*Poll) ?*anyopaque;
-    extern fn us_poll_fd(p: ?*Poll) i32;
+    extern fn us_poll_fd(p: ?*Poll) std.os.fd_t;
     extern fn us_poll_resize(p: ?*Poll, loop: ?*Loop, ext_size: c_uint) ?*Poll;
 };
 

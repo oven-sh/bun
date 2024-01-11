@@ -1454,7 +1454,7 @@ pub const FDHashMapContext = struct {
         // a file descriptor is i32 on linux, u64 on windows
         // the goal here is to do zero work and widen the 32 bit type to 64
         // this should compile error if FileDescriptor somehow is larger than 64 bits.
-        if (@bitSizeOf(FileDescriptorInt) > 64) @compileError("no bueno");
+        comptime std.debug.assert(@bitSizeOf(FileDescriptor) <= 64);
         return @intCast(fd.int());
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
@@ -2508,10 +2508,10 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         return (switch (T) {
             FDImpl => fd,
             FDImpl.System => FDImpl.fromSystem(fd),
-            FDImpl.UV => FDImpl.fromUV(fd),
+            FDImpl.UV, i32, comptime_int => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
             // TODO: remove u32
-            u32, i32, comptime_int, usize, i64 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
+            u32 => FDImpl.fromUV(@intCast(fd)),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {
@@ -2631,10 +2631,9 @@ const WindowsStat = extern struct {
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
 pub const posix = struct {
-    // we use these on windows for crt/uv stuff, and std.os does not define them, hence the if
-    pub const STDIN_FD = toFD(if (Environment.isPosix) std.os.STDIN_FILENO else 0);
-    pub const STDOUT_FD = toFD(if (Environment.isPosix) std.os.STDOUT_FILENO else 1);
-    pub const STDERR_FD = toFD(if (Environment.isPosix) std.os.STDERR_FILENO else 2);
+    pub const STDIN_FD = toFD(0);
+    pub const STDOUT_FD = toFD(1);
+    pub const STDERR_FD = toFD(2);
 
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;

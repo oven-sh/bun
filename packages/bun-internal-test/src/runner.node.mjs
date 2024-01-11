@@ -28,7 +28,7 @@ function defaultConcurrency() {
   // Concurrency causes more flaky tests, only enable it by default on windows
   // See https://github.com/oven-sh/bun/issues/8071
   if (windows) {
-    return cpus().length - 2;
+    return Math.floor((cpus().length - 2) / 2);
   }
   // Our macos x64 ci is slow, so only run 1 test at a time
   if (process.platform === "darwin" && process.arch === "x64") {

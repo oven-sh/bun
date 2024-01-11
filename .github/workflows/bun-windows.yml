@@ -436,7 +436,7 @@ jobs:
 
             [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}}
       - name: Comment on PR
-        if: steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
+        if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
@@ -449,7 +449,7 @@ jobs:
 
             [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}}
       - name: Uncomment on PR
-        if: steps.test.outputs.failing_tests == '' && github.event_name == 'pull_request'
+        if: steps.test.outputs.regressing_tests == '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-windows-${{ matrix.arch }}-${{ matrix.cpu }}
@@ -459,5 +459,5 @@ jobs:
             ✅🪟 Test regressions on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }} have been resolved.
       - id: fail
         name: Fail the build
-        if: steps.test.outputs.failing_tests != ''
+        if: steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
         run: exit 1

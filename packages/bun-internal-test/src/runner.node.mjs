@@ -24,13 +24,20 @@ process.chdir(cwd);
 const ci = !!process.env["GITHUB_ACTION"];
 const enableANSIColors = !ci;
 
-const run_concurrency = parseInt(
-  process.env["BUN_TEST_CONCURRENCY"] ||
-    // Concurrency causes more flaky tests, only enable it by default on windows
-    // See https://github.com/oven-sh/bun/issues/8071
-    (windows ? cpus().length : 2),
-  10,
-);
+function defaultConcurrency() {
+  // Concurrency causes more flaky tests, only enable it by default on windows
+  // See https://github.com/oven-sh/bun/issues/8071
+  if (windows) {
+    return cpus().length - 2;
+  }
+  // Our macos x64 ci is slow, so only run 1 test at a time
+  if (process.platform === "darwin" && process.arch === "x64") {
+    return 1;
+  }
+  return 2;
+}
+
+const run_concurrency = Math.max(Number(process.env["BUN_TEST_CONCURRENCY"] || defaultConcurrency(), 10), 1);
 
 const extensions = [".js", ".ts", ".jsx", ".tsx"];
 

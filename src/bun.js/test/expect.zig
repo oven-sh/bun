@@ -524,12 +524,12 @@ pub const Expect = struct {
                 .globalObject = globalObject,
                 .not = not,
             };
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = comptime signature ++ "\n\n{any}\n";
             if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
+                globalObject.throw(comptime Output.prettyFmt(fmt, true), .{diff_format});
                 return .zero;
             }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+            globalObject.throw(comptime Output.prettyFmt(fmt, false), .{diff_format});
             return .zero;
         }
 
@@ -723,6 +723,195 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContain", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainKey(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainKey() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = value.hasOwnProperty(globalObject, expected.toString(globalObject).getZigString(globalObject));
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toContainKey", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toContainKey", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainKeys(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainKeys() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainKeys", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainKeys", "expected", "array");
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = true;
+
+        const count = expected.getLength(globalObject);
+
+        var i: u32 = 0;
+
+        while (i < count) : (i += 1) {
+            const key = expected.getIndex(globalObject, i);
+
+            if (!value.hasOwnProperty(globalObject, key.toString(globalObject).getZigString(globalObject))) {
+                pass = false;
+                break;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toContainKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toContainKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainAnyKeys(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAnyKeys() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAnyKeys", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAnyKeys", "expected", "array");
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const count = expected.getLength(globalObject);
+
+        var i: u32 = 0;
+
+        while (i < count) : (i += 1) {
+            const key = expected.getIndex(globalObject, i);
+
+            if (value.hasOwnProperty(globalObject, key.toString(globalObject).getZigString(globalObject))) {
+                pass = true;
+                break;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toContainAnyKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toContainAnyKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         if (Output.enable_ansi_colors) {
             globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
@@ -2361,6 +2550,34 @@ pub const Expect = struct {
         const fmt = signature ++ "\n\nExpected value to be empty" ++
             "\n\nReceived: <red>{any}<r>\n";
         globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+        return .zero;
+    }
+
+    pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeEmptyObject", "") orelse return .zero;
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        var pass = value.isObjectEmpty(globalThis);
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeEmptyObject", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeEmptyObject", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
         return .zero;
     }
 

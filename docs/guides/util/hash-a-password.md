@@ -13,7 +13,7 @@ const hash = await Bun.password.hash(password);
 
 ---
 
-By default this uses the [Argon2id](https://en.wikipedia.org/wiki/Argon2) algorithm. Pass a second argument to `Bun.hash.password()` to use a different algorithm or configure the hashing parameters.
+By default, this uses the [Argon2id](https://en.wikipedia.org/wiki/Argon2) algorithm. Pass a second argument to `Bun.password.hash()` to use a different algorithm or configure the hashing parameters.
 
 ```ts
 const password = "super-secure-pa$$word";
@@ -39,7 +39,7 @@ const bcryptHash = await Bun.password.hash(password, {
 
 ---
 
-To verify a password, use `Bun.password.verify()`. The algorithm and its parameters are stored in the hash itself, so there's no need to re-specify any configuration.
+Use `Bun.password.verify()` to verify a password. The algorithm and its parameters are stored in the hash itself, so re-specifying configuration is unnecessary.
 
 ```ts
 const password = "super-secure-pa$$word";

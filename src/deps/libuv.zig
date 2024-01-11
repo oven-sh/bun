@@ -1066,7 +1066,7 @@ const union_unnamed_411 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_timer_cb = ?*const fn ([*c]uv_timer_t) callconv(.C) void;
+pub const uv_timer_cb = ?*const fn (*uv_timer_t) callconv(.C) void;
 pub const struct_uv_timer_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,

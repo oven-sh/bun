@@ -1537,7 +1537,7 @@ inline fn createScope(
 ) JSValue {
     const this = callframe.this();
     const arguments = callframe.arguments(3);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects a description or function", .{signature});
@@ -1688,7 +1688,7 @@ inline fn createIfScope(
     comptime is_skip: bool,
 ) JSValue {
     const arguments = callframe.arguments(1);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects a condition", .{signature});
@@ -1926,7 +1926,7 @@ fn eachBind(
     const signature = "eachBind";
     const callee = callframe.callee();
     const arguments = callframe.arguments(3);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len < 2) {
         globalThis.throwPretty("{s} a description and callback function", .{signature});
@@ -2077,7 +2077,7 @@ inline fn createEach(
     comptime is_test: bool,
 ) JSValue {
     const arguments = callframe.arguments(1);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects an array", .{signature});

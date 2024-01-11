@@ -124,7 +124,7 @@ pub const Subprocess = struct {
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
-    pipes: if(Environment.isWindows) [3]uv.uv_pipe_t else u0 = if(Environment.isWindows) undefined else u0,
+    pipes: if(Environment.isWindows) [3]uv.uv_pipe_t else u0 = if(Environment.isWindows) undefined else 0,
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,

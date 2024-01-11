@@ -1750,7 +1750,7 @@ pub const Subprocess = struct {
             const resource_usage = subprocess.createResourceUsageObject(globalThis);
             subprocess.finalizeSync();
 
-            const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
+            const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
             sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
             sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
             sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);

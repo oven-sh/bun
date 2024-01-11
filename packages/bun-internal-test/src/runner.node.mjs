@@ -204,6 +204,8 @@ async function runTest(path) {
     } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
+  finished++;
+
   if (run_concurrency !== 1 && enableProgressBar) {
     writeProgressBar();
   }
@@ -233,13 +235,14 @@ async function runTest(path) {
 const queue = [...findTests(resolve(cwd, "test"))];
 let running = 0;
 let total = queue.length;
+let finished = 0;
 let on_entry_finish = null;
 
 function writeProgressBar() {
   const barWidth = Math.min(process.stdout.columns || 40, 80) - 2;
-  const percent = ((total - queue.length) / total) * 100;
+  const percent = (finished / total) * 100;
   const bar = "=".repeat(Math.floor(percent / 2));
-  const str1 = `[${total - queue.length}/${total}] [${bar}`;
+  const str1 = `[${finished}/${total}] [${bar}`;
   process.stdout.write(`\r${str1}${" ".repeat(barWidth - str1.length)}]`);
 }
 
@@ -278,7 +281,7 @@ function linkToGH(linkTo) {
 }
 
 function sectionLink(linkTo) {
-  return "#" + linkTo.replace(/[^a-zA-Z0-9_]/g, "-").toLowerCase();
+  return "#" + linkTo.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
 }
 
 const failingTestDisplay = failing_tests
@@ -371,7 +374,8 @@ if (failingTestDisplay.length > 0) {
 if (failing_tests.length) {
   report += `## Failing tests log output\n\n`;
   for (const { path, output, reason, expected_crash_reason } of failing_tests) {
-    report += `### [\`${path}\`](${linkToGH(path)})]\n\n`;
+    report += `### ${path}\n\n`;
+    report += "Link to file: " + linkToGH(path) + "\n\n";
     if (windows && reason !== expected_crash_reason) {
       report += `To mark this as a known failing test, add this to the start of the file:\n`;
       report += `\`\`\`ts\n`;

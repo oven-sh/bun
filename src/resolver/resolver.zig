@@ -3812,7 +3812,7 @@ pub const Resolver = struct {
                             bin_folders = BinFolderArray.init(0) catch unreachable;
                         }
 
-                        const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+                        const this_dir = fd.asDir();
                         var file = this_dir.openDirZ(bun.pathLiteral("node_modules/.bin"), .{ .iterate = true }) catch break :append_bin_dir;
                         defer file.close();
                         const bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;

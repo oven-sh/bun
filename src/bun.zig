@@ -2505,7 +2505,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             FDImpl.UV => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
             // TODO: remove u32
-            u32, i32 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
+            u32, i32, comptime_int, usize, i64 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {

@@ -3917,9 +3917,9 @@ pub const Resolver = struct {
             const entry = lookup.entry;
             if (entry.kind(rfs, r.store_fd) == .file) {
                 info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, package_id, true) catch null
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .zero, package_id, true) catch null
                 else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, null, false) catch null;
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .zero, null, false) catch null;
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
@@ -3970,7 +3970,7 @@ pub const Resolver = struct {
             if (tsconfig_path) |tsconfigpath| {
                 info.tsconfig_json = r.parseTSConfig(
                     tsconfigpath,
-                    if (FeatureFlags.store_file_descriptors) fd else 0,
+                    if (FeatureFlags.store_file_descriptors) fd else .zero,
                 ) catch |err| brk: {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 

@@ -3837,30 +3837,37 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                         defer {
                             _ = Syscall.close(fd);
+                            print("run done", .{});
                         }
 
-                        if (!this.is_root) {
-                            const writer = this.output.writer();
-                            std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
-                        }
-
-                        const dir = std.fs.Dir{ .fd = fd };
-                        var iterator = DirIterator.iterate(dir);
-                        var entry = iterator.next();
-
-                        while (switch (entry) {
-                            .err => |e| {
-                                this.err = this.errorWithPath(e, this.path);
-                                return;
-                            },
-                            .result => |ent| ent,
-                        }) |current| : (entry = iterator.next()) {
-                            this.addEntry(current.name.sliceAssumeZ());
-                            if (current.kind == .directory and this.opts.recursive) {
-                                this.enqueue(current.name.sliceAssumeZ());
+                        if (!this.opts.list_directories) {
+                            if (!this.is_root) {
+                                const writer = this.output.writer();
+                                std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
                             }
+
+                            const dir = std.fs.Dir{ .fd = fd };
+                            var iterator = DirIterator.iterate(dir);
+                            var entry = iterator.next();
+
+                            while (switch (entry) {
+                                .err => |e| {
+                                    this.err = this.errorWithPath(e, this.path);
+                                    return;
+                                },
+                                .result => |ent| ent,
+                            }) |current| : (entry = iterator.next()) {
+                                this.addEntry(current.name.sliceAssumeZ());
+                                if (current.kind == .directory and this.opts.recursive) {
+                                    this.enqueue(current.name.sliceAssumeZ());
+                                }
+                            }
+
+                            return;
                         }
-                        print("run done", .{});
+
+                        const writer = this.output.writer();
+                        std.fmt.format(writer, "{s}\n", .{this.path}) catch bun.outOfMemory();
                     }
 
                     fn shouldSkipEntry(this: *@This(), name: [:0]const u8) bool {
@@ -5707,12 +5714,32 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
-                        if (!(this.opts.recursive or this.opts.remove_empty_dirs)) {
+                        const path = dir_task.path;
+                        const dirfd = bun.toFD(std.fs.cwd().fd);
+
+                        // If `-d` is specified without `-r` then we can just use `rmdirat`
+                        if (this.opts.remove_empty_dirs and !this.opts.recursive) {
+                            switch (Syscall.rmdirat(dirfd, path)) {
+                                .result => return Maybe(void).success,
+                                .err => |e| {
+                                    switch (e.getErrno()) {
+                                        bun.C.E.NOENT => {
+                                            if (this.opts.force) return this.verboseDeleted(dir_task, path);
+                                            return .{ .err = this.errorWithPath(e, path) };
+                                        },
+                                        bun.C.E.NOTDIR => {
+                                            return this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, false);
+                                        },
+                                        else => return .{ .err = this.errorWithPath(e, path) },
+                                    }
+                                },
+                            }
+                        }
+
+                        if (!this.opts.recursive) {
                             return Maybe(void).initErr(Syscall.Error.fromCode(bun.C.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
                         }
 
-                        const path = dir_task.path;
-                        const dirfd = bun.toFD(std.fs.cwd().fd);
                         const flags = os.O.DIRECTORY | os.O.RDONLY;
                         const fd = switch (Syscall.openat(dirfd, path, flags, 0)) {
                             .result => |fd| fd,

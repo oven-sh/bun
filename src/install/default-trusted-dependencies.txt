@@ -51,10 +51,7 @@
 @microsoft.azure/autorest-core
 @microsoft/teamsfx-cli
 @microsoft/ts-command-line
-@napi-rs/canvas-linux-x64-musl
 @napi-rs/pinyin
-@napi-rs/simple-git-linux-arm64-musl
-@napi-rs/simple-git-linux-x64-musl
 @nativescript/core
 @netlify/esbuild
 @newrelic/native-metrics

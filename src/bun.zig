@@ -866,6 +866,12 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     pub inline fn asFile(fd: FileDescriptor) std.fs.File {
         return std.fs.File{ .handle = fdcast(fd) };
     }
+
+    pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt_;
+        _ = options_;
+        try writer.print("{d}", .{@intFromEnum(fd)});
+    }
 };
 
 pub const FDImpl = @import("./fd.zig").FDImpl;

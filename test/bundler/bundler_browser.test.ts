@@ -329,7 +329,7 @@ describe("bundler", () => {
     target: "node",
     onAfterBundle(api) {
       const contents = api.readFile("out.js");
-      expect(contents).toBe('');
+      expect(contents).toBe("");
     },
   });
 });

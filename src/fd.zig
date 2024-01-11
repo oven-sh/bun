@@ -139,11 +139,12 @@ pub const FDImpl = packed struct {
 
     /// Convert to bun.FileDescriptor
     pub fn encode(this: FDImpl) bun.FileDescriptor {
-        return @bitCast(this);
+        // https://github.com/ziglang/zig/issues/18462
+        return @enumFromInt(@as(bun.FileDescriptorInt, @bitCast(this)));
     }
 
     pub fn decode(fd: bun.FileDescriptor) FDImpl {
-        return @bitCast(fd);
+        return @bitCast(fd.int());
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.
@@ -207,10 +208,10 @@ pub const FDImpl = packed struct {
                 };
             },
             .mac => result: {
-                const fd = this.system();
+                const fd = this.encode();
                 std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd > -1);
-                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd))) {
+                std.debug.assert(fd.cast() > -1);
+                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

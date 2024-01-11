@@ -234,13 +234,13 @@ pub const PosixSpawn = struct {
             self.* = undefined;
         }
 
-        pub fn open(self: *PosixSpawnActions, fd: fd_t, path: []const u8, flags: u32, mode: mode_t) !void {
+        pub fn open(self: *PosixSpawnActions, fd: bun.FileDescriptor, path: []const u8, flags: u32, mode: mode_t) !void {
             const posix_path = try toPosixPath(path);
             return self.openZ(fd, &posix_path, flags, mode);
         }
 
-        pub fn openZ(self: *PosixSpawnActions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @as(c_int, @bitCast(flags)), mode))) {
+        pub fn openZ(self: *PosixSpawnActions, fd: bun.FileDescriptor, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
+            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd.cast(), path, @as(c_int, @bitCast(flags)), mode))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -250,8 +250,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn close(self: *PosixSpawnActions, fd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd))) {
+        pub fn close(self: *PosixSpawnActions, fd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -261,8 +261,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn dup2(self: *PosixSpawnActions, fd: fd_t, newfd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd, newfd))) {
+        pub fn dup2(self: *PosixSpawnActions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd.cast(), newfd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -272,8 +272,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn inherit(self: *PosixSpawnActions, fd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addinherit_np(&self.actions, fd))) {
+        pub fn inherit(self: *PosixSpawnActions, fd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_addinherit_np(&self.actions, fd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,

@@ -829,7 +829,8 @@ pub const fmt = struct {
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
 
-pub const FileDescriptor = if (Environment.isBrowser)
+// make this non-pub after https://github.com/ziglang/zig/issues/18462 is resolved
+pub const FileDescriptorInt = if (Environment.isBrowser)
     u0
 else if (Environment.isWindows)
     // On windows, this is a bitcast "bun.FDImpl" struct
@@ -837,6 +838,35 @@ else if (Environment.isWindows)
     u64
 else
     std.os.fd_t;
+
+pub const FileDescriptor = enum(FileDescriptorInt) {
+    zero,
+    _,
+
+    pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
+        return @intFromEnum(fd);
+    }
+
+    pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
+        try writer.writeInt(FileDescriptorInt, fd.int(), endian);
+    }
+
+    pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
+        return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
+    }
+
+    pub inline fn cast(fd: FileDescriptor) std.os.fd_t {
+        return fdcast(fd);
+    }
+
+    pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
+        return std.fs.Dir{ .fd = fdcast(fd) };
+    }
+
+    pub inline fn asFile(fd: FileDescriptor) std.fs.File {
+        return std.fs.File{ .handle = fdcast(fd) };
+    }
+};
 
 pub const FDImpl = @import("./fd.zig").FDImpl;
 
@@ -1200,7 +1230,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 
     var polls = [_]std.os.pollfd{
         .{
-            .fd = fd,
+            .fd = fd.cast(),
             .events = std.os.POLL.IN | std.os.POLL.ERR,
             .revents = 0,
         },
@@ -1224,7 +1254,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
 
     var polls = [_]std.os.pollfd{
         .{
-            .fd = fd,
+            .fd = fd.cast(),
             .events = std.os.POLL.OUT,
             .revents = 0,
         },
@@ -1362,8 +1392,8 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return std.fs.Dir{ .fd = fdcast(res) };
     } else {
-        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
-        return std.fs.Dir{ .fd = fd };
+        const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return fd.asDir();
     }
 }
 
@@ -1372,8 +1402,8 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return std.fs.Dir{ .fd = fdcast(res) };
     } else {
-        const fd = try sys.openatA(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
-        return std.fs.Dir{ .fd = fd };
+        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return fd.asDir();
     }
 }
 
@@ -1383,7 +1413,7 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
         return std.fs.Dir{ .fd = fdcast(res) };
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
-        return std.fs.Dir{ .fd = fd };
+        return fd.asDir();
     }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
@@ -1418,7 +1448,8 @@ pub const FDHashMapContext = struct {
         // a file descriptor is i32 on linux, u64 on windows
         // the goal here is to do zero work and widen the 32 bit type to 64
         // this should compile error if FileDescriptor somehow is larger than 64 bits.
-        return @as(std.meta.Int(.unsigned, @bitSizeOf(FileDescriptor)), @bitCast(fd));
+        if (@bitSizeOf(FileDescriptorInt) > 64) @compileError("no bueno");
+        return @intCast(fd.int());
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
         return a == b;
@@ -2175,9 +2206,9 @@ pub fn reloadProcess(
     // macOS doesn't have CLOEXEC, so we must go through posix_spawn
     if (comptime Environment.isMac) {
         var actions = PosixSpawn.Actions.init() catch unreachable;
-        actions.inherit(0) catch unreachable;
-        actions.inherit(1) catch unreachable;
-        actions.inherit(2) catch unreachable;
+        actions.inherit(posix.STDIN_FD) catch unreachable;
+        actions.inherit(posix.STDOUT_FD) catch unreachable;
+        actions.inherit(posix.STDERR_FD) catch unreachable;
         var attrs = PosixSpawn.Attr.init() catch unreachable;
         attrs.set(
             C.POSIX_SPAWN_CLOEXEC_DEFAULT |
@@ -2456,7 +2487,7 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 ///
 /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
 pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
-    if (!Environment.isWindows) return fd;
+    if (!Environment.isWindows) return fd.int();
     // if not having this check, the cast may crash zig compiler?
     if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
     return FDImpl.decode(fd).system();
@@ -2480,7 +2511,12 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
     } else {
         // TODO: remove intCast. we should not be casting u32 -> i32
         // even though file descriptors are always positive, linux/mac repesents them as signed integers
-        return @intCast(fd);
+        return switch (T) {
+            FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
+            c_int, i32, u32, comptime_int => @enumFromInt(fd),
+            usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
+            else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),
+        };
     }
 }
 
@@ -2500,7 +2536,7 @@ pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {
-        return @intCast(fd);
+        return toFD(fd);
     }
 }
 
@@ -2590,9 +2626,9 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.
 
 pub const posix = struct {
     // we use these on windows for crt/uv stuff, and std.os does not define them, hence the if
-    pub const STDIN_FD = if (Environment.isPosix) std.os.STDIN_FILENO else 0;
-    pub const STDOUT_FD = if (Environment.isPosix) std.os.STDOUT_FILENO else 1;
-    pub const STDERR_FD = if (Environment.isPosix) std.os.STDERR_FILENO else 2;
+    pub const STDIN_FD = toFD(if (Environment.isPosix) std.os.STDIN_FILENO else 0);
+    pub const STDOUT_FD = toFD(if (Environment.isPosix) std.os.STDOUT_FILENO else 1);
+    pub const STDERR_FD = toFD(if (Environment.isPosix) std.os.STDERR_FILENO else 2);
 
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;
@@ -2603,9 +2639,9 @@ pub const posix = struct {
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
-            STDOUT_FD => STDOUT_FD,
-            STDERR_FD => STDERR_FD,
-            STDIN_FD => STDIN_FD,
+            1 => STDOUT_FD,
+            2 => STDERR_FD,
+            0 => STDIN_FD,
             else => @panic("Invalid stdio fd"),
         };
     }

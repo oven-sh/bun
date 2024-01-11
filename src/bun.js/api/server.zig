@@ -1898,9 +1898,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
                 const errcode = std.c.getErrno(std.c.sendfile(
-                    this.sendfile.fd,
+                    this.sendfile.fd.cast(),
                     this.sendfile.socket_fd,
-
                     signed_offset,
                     &sbytes,
                     null,
@@ -5476,7 +5475,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.unref();
 
             if (!ssl_enabled_)
-                this.vm.removeListeningSocketForWatchMode(@intCast(listener.socket().fd()));
+                this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
 
             if (!abrupt) {
                 listener.close();
@@ -5661,7 +5660,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.listener = socket;
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
-                this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
+                this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
         }
 
         pub fn ref(this: *ThisServer) void {

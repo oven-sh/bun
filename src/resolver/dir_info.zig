@@ -84,7 +84,7 @@ pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
     if (dirinfo.getEntries(0)) |entries| {
         return entries.fd;
     } else {
-        return 0;
+        return .zero;
     }
 }
 

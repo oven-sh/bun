@@ -38,7 +38,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = 0,
+dir: StoredFileDescriptorType = .zero,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -736,8 +736,8 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (entry.cache.fd != 0) {
-                file = std.fs.File{ .handle = bun.fdcast(entry.cache.fd) };
+            if (entry.cache.fd != .zero) {
+                file = entry.cache.fd.asFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);

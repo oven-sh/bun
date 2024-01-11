@@ -144,7 +144,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
-                        .fd = @intCast(bun.toFD(fd)),
+                        .fd = bun.toFD(fd),
                     },
                 },
             };

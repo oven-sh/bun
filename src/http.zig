@@ -156,9 +156,8 @@ pub const Sendfile = struct {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(
-                this.fd,
-                socket.fd(),
-
+                this.fd.cast(),
+                socket.fd().cast(),
                 signed_offset,
                 &sbytes,
                 null,

@@ -951,7 +951,13 @@ pub const Listener = struct {
         const connection: Listener.UnixOrHost = blk: {
             if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
-                    const fd: bun.FileDescriptor = fd_.asInt32();
+                    if (Environment.isWindows) {
+                        // SOCKET is actually a u32 but we are casting to a *anyopaque, so we are conservative here
+                        const socket: bun.FDImpl.System = @ptrFromInt(fd_.to(u64));
+                        const fd: bun.FileDescriptor = bun.toFD(socket);
+                        break :blk .{ .fd = fd };
+                    }
+                    const fd: bun.FileDescriptor = bun.toFD(fd_.to(i32));
                     break :blk .{ .fd = fd };
                 }
             }

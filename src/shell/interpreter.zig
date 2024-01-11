@@ -1469,7 +1469,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn next(this: *Stmt) void {
                 if (this.idx >= this.node.exprs.len)
-                    return this.parent.childDone(Script.ChildPtr.init(this), 0);
+                    return this.parent.childDone(Script.ChildPtr.init(this), this.last_exit_code orelse 0);
 
                 const child = &this.node.exprs[this.idx];
                 switch (child.*) {
@@ -2515,6 +2515,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     i: u32 = 0,
                 };
 
+                pub fn asFd(this: *BuiltinIO) ?bun.FileDescriptor {
+                    return switch (this.*) {
+                        .fd => this.fd,
+                        .captured => if (this.captured.out_kind == .stdout) @as(bun.FileDescriptor, bun.STDOUT_FD) else @as(bun.FileDescriptor, bun.STDERR_FD),
+                        else => null,
+                    };
+                }
+
                 pub fn expectFd(this: *BuiltinIO) bun.FileDescriptor {
                     return switch (this.*) {
                         .fd => this.fd,
@@ -2778,7 +2786,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.exit_code = exit_code;
 
                 var cmd = this.parentCmd();
-                log("builtin done ({s}) cmd to free: ({x})", .{ @tagName(this.kind), @intFromPtr(cmd) });
+                log("builtin done ({s}: {d}) cmd to free: ({x})", .{ @tagName(this.kind), exit_code, @intFromPtr(cmd) });
                 cmd.exit_code = this.exit_code.?;
                 cmd.parent.childDone(cmd, this.exit_code.?);
             }
@@ -2837,6 +2845,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     @compileError("Bad IO" ++ @tagName(io_kind));
                 }
 
+                if (buf.len == 0) return .{ .result = 0 };
+
                 var io: *BuiltinIO = &@field(this, @tagName(io_kind));
 
                 switch (io.*) {
@@ -2869,6 +2879,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     },
                     .ignore => return Maybe(usize).initResult(buf.len),
                 }
+            }
+
+            /// Error messages formatted to match bash
+            fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: Syscall.Error) []const u8 {
+                return switch (err.getErrno()) {
+                    bun.C.E.NOENT => this.fmtErrorArena(kind, "{s}: No such file or directory\n", .{err.path}),
+                    bun.C.E.NAMETOOLONG => this.fmtErrorArena(kind, "{s}: File name too long\n", .{err.path}),
+                    bun.C.E.ISDIR => this.fmtErrorArena(kind, "{s}: is a directory\n", .{err.path}),
+                    bun.C.E.NOTEMPTY => this.fmtErrorArena(kind, "{s}: Directory not empty\n", .{err.path}),
+                    else => err.toSystemError().message.byteSlice(),
+                };
             }
 
             pub fn ioAllClosed(this: *Builtin) bool {
@@ -3526,6 +3547,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         task_count: usize,
                         tasks_done: usize = 0,
                         output_queue: std.DoublyLinkedList(BlockingOutput) = .{},
+                        started_output_queue: bool = false,
                     },
                     waiting_write_err: BufferedWriter,
                     done,
@@ -3608,8 +3630,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .exec => {
                                 // It's done
                                 if (this.state.exec.tasks_done >= this.state.exec.task_count and this.state.exec.output_queue.len == 0) {
+                                    const exit_code: u8 = if (this.state.exec.err != null) 1 else 0;
                                     this.state = .done;
-                                    this.bltn.done(0);
+                                    this.bltn.done(exit_code);
                                     return;
                                 }
                                 return;
@@ -3630,14 +3653,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 pub fn queueBlockingOutput(this: *Ls, bo: BlockingOutput) void {
+                    this.queueBlockingOutputImpl(bo, true);
+                }
+
+                pub fn queueBlockingOutputImpl(this: *Ls, bo: BlockingOutput, do_run: bool) void {
                     const node = bun.default_allocator.create(std.DoublyLinkedList(BlockingOutput).Node) catch bun.outOfMemory();
                     node.* = .{
                         .data = bo,
                     };
                     this.state.exec.output_queue.append(node);
 
-                    // Need to start it
-                    if (this.state.exec.output_queue.len == 1) {
+                    // Start it
+                    if (do_run and !this.state.exec.started_output_queue) {
+                        this.state.exec.started_output_queue = true;
                         this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
                     }
                 }
@@ -3664,9 +3692,35 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 pub fn onAsyncTaskDone(this: *Ls, task: *ShellLsTask) void {
-                    // TODO check for error, print that (but still want to print task output)
                     this.state.exec.tasks_done += 1;
                     const output = task.takeOutput();
+
+                    const need_to_write_to_stdout_with_io = output.items.len > 0 and this.bltn.stdout.needsIO();
+
+                    // Check for error, print it, but still want to print task output
+                    if (task.err) |e| {
+                        const error_string = this.bltn.taskErrorToString(.ls, e);
+                        this.state.exec.err = e;
+
+                        if (this.bltn.stderr.needsIO()) {
+                            const blocking_output: BlockingOutput = .{
+                                .writer = BufferedWriter{
+                                    .fd = this.bltn.stderr.expectFd(),
+                                    .remain = error_string,
+                                    .parent = BufferedWriter.ParentPtr.init(this),
+                                    .bytelist = this.bltn.stdBufferedBytelist(.stderr),
+                                },
+                                .arr = std.ArrayList(u8).init(bun.default_allocator),
+                            };
+                            this.queueBlockingOutputImpl(blocking_output, !need_to_write_to_stdout_with_io);
+                            if (!need_to_write_to_stdout_with_io) return; // yield execution
+                        } else {
+                            if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |tesfsdfe| {
+                                _ = tesfsdfe; // autofix
+                                @panic("FIXME TODO");
+                            }
+                        }
+                    }
 
                     if (this.bltn.stdout.needsIO()) {
                         const blocking_output: BlockingOutput = .{
@@ -5055,7 +5109,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                         .total_tasks = total_tasks,
                                                         .state = .idle,
                                                         .output_done = std.atomic.Value(usize).init(0),
-                                                        .output_count = std.atomic.Value(usize).init(if (this.opts.verbose) 0 else total_tasks),
+                                                        .output_count = std.atomic.Value(usize).init(0),
                                                     },
                                                 };
                                                 // this.state.exec.task.schedule();
@@ -5296,18 +5350,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return .continue_parsing;
                 }
 
-                /// Error messages formatted to match bash
-                fn taskErrorToString(this: *Rm, err: Syscall.Error) []const u8 {
-                    return switch (err.getErrno()) {
-                        bun.C.E.NOENT => this.bltn.fmtErrorArena(.rm, "{s}: No such file or directory\n", .{err.path}),
-                        bun.C.E.NAMETOOLONG => this.bltn.fmtErrorArena(.rm, "{s}: File name too long\n", .{err.path}),
-                        bun.C.E.ISDIR => this.bltn.fmtErrorArena(.rm, "{s}: is a directory\n", .{err.path}),
-                        bun.C.E.NOTEMPTY => this.bltn.fmtErrorArena(.rm, "{s}: Directory not empty\n", .{err.path}),
-                        else => err.toSystemError().message.byteSlice(),
-                    };
-                }
-
-                pub fn asyncTaskDone(this: *Rm, task: *ShellRmTask) void {
+                pub fn onAsyncTaskDone(this: *Rm, task: *ShellRmTask) void {
                     var exec = &this.state.exec;
                     const tasks_done = switch (exec.state) {
                         .idle => @panic("Invalid state"),
@@ -5316,7 +5359,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const amt = exec.state.waiting.tasks_done;
                             if (task.err) |err| {
                                 exec.err = err;
-                                const error_string = this.taskErrorToString(err);
+                                const error_string = this.bltn.taskErrorToString(.rm, err);
                                 if (!this.bltn.stderr.needsIO()) {
                                     switch (this.bltn.writeNoIO(.stderr, error_string)) {
                                         .result => {},
@@ -5553,11 +5596,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         pub fn deinit(this: *DirTask) void {
                             this.deleted_entries.deinit();
                             // The root's path string is from Rm's argv so don't deallocate it
-                            // And root is field on the struct of the AsyncRmTask so don't deallocate it either
+                            // And the root task is actually a field on the struct of the AsyncRmTask so don't deallocate it either
                             if (this.parent_task != null) {
                                 bun.default_allocator.free(this.path);
+                                bun.default_allocator.destroy(this);
                             }
-                            bun.default_allocator.destroy(this);
                         }
                     };
 
@@ -5939,11 +5982,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     pub fn runFromMainThread(this: *ShellRmTask) void {
-                        this.rm.asyncTaskDone(this);
+                        this.rm.onAsyncTaskDone(this);
                     }
 
                     pub fn runFromMainThreadMini(this: *ShellRmTask, _: *void) void {
-                        this.rm.asyncTaskDone(this);
+                        this.rm.onAsyncTaskDone(this);
                     }
 
                     pub fn deinit(this: *ShellRmTask) void {
@@ -6049,6 +6092,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn writeIfPossible(this: *BufferedWriter, comptime is_sync: bool) void {
+                if (this.remain.len == 0) return this.deinit();
                 if (comptime !is_sync) {
                     // we ask, "Is it possible to write right now?"
                     // we do this rather than epoll or kqueue()
@@ -6451,6 +6495,7 @@ pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type, comptime Eve
         }
 
         pub fn writeIfPossible(this: *@This(), comptime is_sync: bool) void {
+            if (SrcHandler.bufToWrite(this.src, 0).len == 0) return this.deinit();
             if (comptime !is_sync) {
                 // we ask, "Is it possible to write right now?"
                 // we do this rather than epoll or kqueue()

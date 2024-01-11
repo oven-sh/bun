@@ -160,6 +160,7 @@ pub const BunObject = struct {
 const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
+const uv = bun.windows.libuv;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
@@ -3522,17 +3523,16 @@ pub const Timer = struct {
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         arguments: JSC.Strong = .{},
         has_scheduled_job: bool = false,
-
         pub const TimerReference = struct {
             id: ID = .{ .id = 0 },
             cancelled: bool = false,
 
             event_loop: *JSC.EventLoop,
-            timer: bun.io.Timer = .{
+            timer: if (Environment.isWindows) uv.uv_timer_t else bun.io.Timer = if (Environment.isWindows) std.mem.zeroes(uv.uv_timer_t) else .{
                 .tag = .TimerReference,
                 .next = std.mem.zeroes(std.os.timespec),
             },
-            request: bun.io.Request = .{
+            request: if (Environment.isWindows) u0 else bun.io.Request = if (Environment.isWindows) 0 else .{
                 .callback = &onRequest,
             },
             interval: i32 = -1,
@@ -3540,8 +3540,20 @@ pub const Timer = struct {
             scheduled_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
             pub const Pool = bun.HiveArray(TimerReference, 1024).Fallback;
+            fn onUVRequest(handle: *uv.uv_timer_t) callconv(.C) void {
+                const data = handle.data orelse @panic("Invalid data on uv timer");
+                var this: *TimerReference = @ptrCast(@alignCast(data));
+                if (this.cancelled) {
+                    _ = uv.uv_timer_stop(&this.timer);
+                }
+                // libuv runs on the same thread
+                return this.runFromJSThread();
+            }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
+                if (Environment.isWindows) {
+                    @panic("This should not be called on Windows");
+                }
                 var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
 
                 if (this.cancelled) {
@@ -3571,9 +3583,11 @@ pub const Timer = struct {
             }
 
             pub fn reschedule(this: *TimerReference) void {
-                this.request = .{
-                    .callback = &onRequest,
-                };
+                if (!Environment.isWindows) {
+                    this.request = .{
+                        .callback = &onRequest,
+                    };
+                }
                 this.schedule(this.interval);
             }
 
@@ -3604,19 +3618,33 @@ pub const Timer = struct {
             }
 
             pub fn create(event_loop: *JSC.EventLoop, id: ID) *TimerReference {
-                const timer = event_loop.timerReferencePool().get();
-                timer.* = .{
+                const this = event_loop.timerReferencePool().get();
+                this.* = .{
                     .id = id,
                     .event_loop = event_loop,
                 };
-                return timer;
+                if (Environment.isWindows) {
+                    this.timer.data = this;
+                    if (uv.uv_timer_init(uv.Loop.get(), &this.timer) != 0) {
+                        bun.outOfMemory();
+                    }
+                    // we manage the ref/unref in the same way that linux does
+                    uv.uv_unref(@ptrCast(&this.timer));
+                }
+                return this;
             }
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
                 std.debug.assert(!this.cancelled);
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
+                const ms: usize = @max(interval orelse this.interval, 1);
+                if (Environment.isWindows) {
+                    if (uv.uv_timer_start(&this.timer, TimerReference.onUVRequest, @intCast(ms), 0) != 0) @panic("unable to start timer");
+                    return;
+                }
+
                 this.timer.state = .PENDING;
-                this.timer.next = msToTimespec(@intCast(@max(interval orelse this.interval, 1)));
+                this.timer.next = msToTimespec(ms);
                 bun.io.Loop.get().schedule(&this.request);
             }
 

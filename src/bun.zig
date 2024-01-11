@@ -2544,7 +2544,9 @@ pub inline fn socketcast(fd: anytype) std.os.socket_t {
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)
-    // TODO: i have no idea what this value should be
+    // On Windows the maximum length, in bytes, of the string returned in the buffer pointed to by the name parameter is dependent on the namespace provider, but this string must be 256 bytes or less.
+    // So if a buffer of 256 bytes is passed in the name parameter and the namelen parameter is set to 256, the buffer size will always be adequate.
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-gethostname
     256
 else
     std.os.HOST_NAME_MAX;

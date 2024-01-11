@@ -171,7 +171,7 @@ pub const FDImpl = packed struct {
         if (env.os != .windows or this.kind == .uv) {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
-            const fd = this.uv();
+            const fd = bun.toFD(this.uv());
             if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
                 log("close({}) SKIPPED", .{this});
                 return null;

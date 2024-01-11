@@ -833,7 +833,7 @@ const union_unnamed_380 = extern union {
 };
 pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, [*]uv_buf_t) callconv(.C) void;
 pub const uv_stream_t = struct_uv_stream_s;
-pub const uv_read_cb = ?*const fn (*uv_stream_t, isize, [*]const uv_buf_t) callconv(.C) void;
+pub const uv_read_cb = ?*const fn (*anyopaque, isize, [*]const uv_buf_t) callconv(.C) void;
 const struct_unnamed_382 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -1925,7 +1925,7 @@ pub const UV_WRITABLE: c_int = 2;
 pub const UV_DISCONNECT: c_int = 4;
 pub const UV_PRIORITIZED: c_int = 8;
 pub const enum_uv_poll_event = c_uint;
-pub extern fn uv_poll_init(loop: *uv_loop_t, handle: *uv_poll_t, fd: c_int) c_int;
+pub extern fn uv_poll_init(loop: *uv_loop_t, handle: *uv_poll_t, fd: c_int) ReturnCode;
 pub extern fn uv_poll_init_socket(loop: *uv_loop_t, handle: *uv_poll_t, socket: uv_os_sock_t) ReturnCode;
 pub extern fn uv_poll_start(handle: *uv_poll_t, events: c_int, cb: uv_poll_cb) ReturnCode;
 pub extern fn uv_poll_stop(handle: *uv_poll_t) ReturnCode;

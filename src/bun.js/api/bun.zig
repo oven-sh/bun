@@ -3637,7 +3637,7 @@ pub const Timer = struct {
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
                 std.debug.assert(!this.cancelled);
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
-                const ms: i32 = @max(interval orelse this.interval, 1);
+                const ms: usize = @max(interval orelse this.interval, 1);
                 if (Environment.isWindows) {
                     if (uv.uv_timer_start(&this.timer, TimerReference.onUVRequest, @intCast(ms), 0) != 0) @panic("unable to start timer");
                     return;

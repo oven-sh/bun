@@ -1813,6 +1813,7 @@ pub const Subprocess = struct {
             }
         }
 
+        // TODO: move pipe2 to bun.sys so it can return [2]bun.FileDesriptor
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;

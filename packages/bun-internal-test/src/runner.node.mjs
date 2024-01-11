@@ -129,7 +129,7 @@ async function runTest(path) {
         BUN_JSC_forceRAMSize: force_ram_size,
         BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
         // reproduce CI results locally
-        GITHUB_ACTION: process.env.GITHUB_ACTION ?? "true",
+        GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
         BUN_DEBUG_QUIET_LOGS: "1",
       },
     });

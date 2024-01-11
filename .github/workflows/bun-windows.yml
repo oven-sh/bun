@@ -434,7 +434,7 @@ jobs:
 
             ${{ steps.test.outputs.regressing_tests }}
 
-            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}}
+            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
       - name: Comment on PR
         if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
@@ -447,7 +447,7 @@ jobs:
 
             ${{ steps.test.outputs.regressing_tests }}
 
-            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}}
+            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
       - name: Uncomment on PR
         if: steps.test.outputs.regressing_tests == '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2

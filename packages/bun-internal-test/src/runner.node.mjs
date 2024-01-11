@@ -408,7 +408,7 @@ if (ci) {
       "regressing_tests",
       regressions.map(({ path }) => `- [\`${path}\`](${linkToGH(path)})`).join("\n"),
     );
-    action.setOutput("regressing_tests_count", failing_tests.length);
+    action.setOutput("regressing_test_count", regressions.length);
   } else {
     if (failing_tests.length > 0) {
       action.setFailed(`${failing_tests.length} files with failing tests`);
@@ -416,9 +416,7 @@ if (ci) {
     action.setOutput("failing_tests", failingTestDisplay);
     action.setOutput("failing_tests_count", failing_tests.length);
   }
-  action.summary.addHeading(
-    `${total} files with tests ran. pass rate is ${((passing_tests.length / total) * 100).toFixed(2)}%`,
-  );
+  action.summary.addRaw(report);
   await action.summary.write();
 } else {
   if (windows && (regressions.length > 0 || fixes.length > 0)) {

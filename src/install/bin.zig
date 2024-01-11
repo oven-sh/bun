@@ -366,7 +366,10 @@ pub const Bin = extern struct {
             \\SETLOCAL
             \\CALL :find_dp0
             \\
-            \\IF EXIST "%dp0%\node.exe" (
+            \\IF NOT "%BUN_RUN_WINDOWS_BINARY_WITH_BUN%" == "" (
+            \\  SET "_prog=%BUN_RUN_WINDOWS_BINARY_WITH_BUN%"
+            \\  SET PATHEXT=%PATHEXT:;.JS;=;%
+            \\) ELSE IF EXIST "%dp0%\node.exe" (
             \\  SET "_prog=%dp0%\node.exe"
             \\) ELSE (
             \\  SET "_prog=node"

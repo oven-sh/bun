@@ -396,6 +396,16 @@ pub const RunCommand = struct {
 
         var child_process = std.ChildProcess.init(argv, ctx.allocator);
 
+        if (comptime Environment.isWindows) {
+            if (ctx.debug.run_in_bun) {
+                try env.map.putAllocKeyAndValue(
+                    env.map.map.allocator,
+                    "BUN_RUN_WINDOWS_BINARY_WITH_BUN",
+                    if (comptime Environment.isDebug) "bun-debug.exe" else "bun.exe",
+                );
+            }
+        }
+
         var buf_map = try env.map.cloneToEnvMap(ctx.allocator);
         child_process.cwd = cwd;
         child_process.env_map = &buf_map;

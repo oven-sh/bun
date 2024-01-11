@@ -1959,10 +1959,12 @@ fn NewLexer_(
                                         if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
                                             lexer.has_pure_comment_before = true;
                                             continue;
-                                        } else if (strings.hasPrefixWithWordBoundary(chunk, "__NO_SIDE_EFFECTS__")) {
-                                            lexer.has_no_side_effect_comment_before = true;
-                                            continue;
                                         }
+                                        // TODO: implement NO_SIDE_EFFECTS
+                                        // else if (strings.hasPrefixWithWordBoundary(chunk, "__NO_SIDE_EFFECTS__")) {
+                                        //     lexer.has_no_side_effect_comment_before = true;
+                                        //     continue;
+                                        // }
                                     }
 
                                     if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {

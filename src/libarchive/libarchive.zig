@@ -506,8 +506,11 @@ pub const Archive = struct {
                         }
                     }
 
-                    // TODO(dylan-conway): I think this should only be '/'
-                    var tokenizer = std.mem.tokenizeAny(u8, bun.asByteSlice(pathname), "/\\");
+                    var tokenizer = if (comptime Environment.isWindows)
+                        // TODO(dylan-conway): I think this should only be '/'
+                        std.mem.tokenizeAny(u8, bun.asByteSlice(pathname), "/\\")
+                    else
+                        std.mem.tokenizeScalar(u8, bun.asByteSlice(pathname), '/');
                     comptime var depth_i: usize = 0;
 
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {

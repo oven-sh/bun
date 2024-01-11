@@ -355,6 +355,7 @@ pub const Bin = extern struct {
             setPermissions(this.package_installed_node_modules, dest_path);
         }
 
+        // https://github.com/npm/cli/blob/86ac76caa4a8bd5d1acb1777befdbc4d9ebc8a1a/node_modules/cmd-shim/lib/index.js#L89
         const cmd_contents_begin =
             \\@ECHO off
             \\GOTO start

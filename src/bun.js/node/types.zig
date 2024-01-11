@@ -1439,7 +1439,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+        const S = if (!Environment.isWindows) os.system.S else bun.C.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));

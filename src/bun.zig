@@ -2432,7 +2432,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
     return error.Unexpected;
 }
 
-pub const S = if (Environment.isWindows) windows.libuv.S else std.os.S;
+pub const S = if (Environment.isWindows) C.S else std.os.S;
 
 /// Deprecated!
 pub const trait = @import("./trait.zig");

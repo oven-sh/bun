@@ -3851,25 +3851,28 @@ pub const FIFO = struct {
     }
 
     pub fn getAvailableToReadOnLinux(this: *FIFO) u32 {
-        var len: c_int = 0;
-        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, @as(*c_int, &len));
-        if (rc != 0) {
-            len = 0;
-        }
-
-        if (len > 0) {
-            if (this.poll_ref) |poll| {
-                poll.flags.insert(.readable);
-            }
-        } else {
-            if (this.poll_ref) |poll| {
-                poll.flags.remove(.readable);
+        if (comptime Environment.isLinux) {
+            var len: c_int = 0;
+            const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, @as(*c_int, &len));
+            if (rc != 0) {
+                len = 0;
             }
 
-            return @as(u32, 0);
-        }
+            if (len > 0) {
+                if (this.poll_ref) |poll| {
+                    poll.flags.insert(.readable);
+                }
+            } else {
+                if (this.poll_ref) |poll| {
+                    poll.flags.remove(.readable);
+                }
 
-        return @as(u32, @intCast(@max(len, 0)));
+                return @as(u32, 0);
+            }
+
+            return @as(u32, @intCast(@max(len, 0)));
+        }
+        return 0;
     }
 
     pub fn adjustPipeCapacityOnLinux(this: *FIFO, current: usize, max: usize) void {
@@ -4840,15 +4843,21 @@ pub fn NewReadyWatcher(
 
         pub fn unwatch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
+                const fd = @as(bun.FileDescriptor, @intCast(fd_));
+                std.debug.assert(this.poll_ref.?.fd == fd);
+                std.debug.assert(
+                    this.poll_ref.?.unregister(),
+                );
+                this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+            } else {
 
-            const fd = @as(c_int, @intCast(fd_));
-            std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
-            std.debug.assert(
-                this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
-            );
-            this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                const fd = @as(c_int, @intCast(fd_));
+                std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
+                std.debug.assert(
+                    this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
+                );
+                this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+            }
         }
 
         pub fn pollRef(this: *Context) *Async.FilePoll {
@@ -4873,9 +4882,6 @@ pub fn NewReadyWatcher(
         }
 
         pub fn watch(this: *Context, fd_: anytype) void {
-            if (comptime Environment.isWindows) {
-                @panic("Do not call watch() on windows");
-            }
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = Async.FilePoll.init(

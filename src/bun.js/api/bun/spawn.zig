@@ -25,7 +25,7 @@ const system = _getSystem();
 const Maybe = JSC.Node.Maybe;
 
 const fd_t = std.os.fd_t;
-const pid_t = std.os.pid_t;
+const pid_t = if(Environment.isWindows) bun.windows.libuv.uv_pid_t else std.os.pid_t;
 const toPosixPath = std.os.toPosixPath;
 const errno = std.os.errno;
 const mode_t = std.os.mode_t;
@@ -154,6 +154,34 @@ pub const BunSpawn = struct {
         }
     };
 };
+
+
+const win_rusage = struct {
+    utime: struct {
+        tv_sec: c_long = 0,
+        tv_usec: c_long = 0,
+    },
+    stime: struct {
+        tv_sec: c_long = 0,
+        tv_usec: c_long = 0,
+    },
+    maxrss: u0 = 0,
+    ixrss: u0 = 0,
+    idrss: u0 = 0,
+    isrss: u0 = 0,
+    minflt: u0 = 0,
+    majflt: u0 = 0,
+    nswap: u0 = 0,
+    inblock: u0 = 0,
+    oublock: u0 = 0,
+    msgsnd: u0 = 0,
+    msgrcv: u0 = 0,
+    nsignals: u0 = 0,
+    nvcsw: u0 = 0,
+    nivcsw: u0 = 0,
+};
+pub const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
+
 
 // mostly taken from zig's posix_spawn.zig
 pub const PosixSpawn = struct {
@@ -412,28 +440,90 @@ pub const PosixSpawn = struct {
     /// See also `std.os.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
-        while (true) {
-            const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
-            switch (errno(rc)) {
-                .SUCCESS => return Maybe(WaitPidResult){
-                    .result = .{
-                        .pid = @as(pid_t, @intCast(rc)),
-                        .status = @as(u32, @bitCast(status)),
+        
+        if(Environment.isWindows) {
+            var status: u32 = 0;
+            const process: *anyopaque = @ptrFromInt(@as(usize, @intCast(pid)));
+            while(true) {
+                std.os.windows.WaitForSingleObject(process, 0) catch |err| {
+                    return switch(err) {
+                       error.WaitTimeOut, error.WaitAbandoned => continue,
+                       else => return .{
+                            .err = .{
+                                .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                                .syscall = .waitpid,
+                            },
+                       },
+                    };
+                };
+                break;
+            }
+            if(std.os.windows.kernel32.GetExitCodeProcess(process, &status) == 0) {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                        .syscall = .waitpid,
                     },
+               };
+            }
+            return .{
+                .result = .{
+                    .pid = pid,
+                    .status = @as(u32, @bitCast(status)),
                 },
-                .INTR => continue,
+            };
+        } else {
+            var status: c_int = 0;
+            while (true) {
+                const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
+                switch (errno(rc)) {
+                    .SUCCESS => return Maybe(WaitPidResult){
+                        .result = .{
+                            .pid = @as(pid_t, @intCast(rc)),
+                            .status = @as(u32, @bitCast(status)),
+                        },
+                    },
+                    .INTR => continue,
 
-                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                    else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                }
             }
         }
     }
 
     /// Same as waitpid, but also returns resource usage information.
-    pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.os.rusage) Maybe(WaitPidResult) {
+    pub fn wait4(pid: pid_t, flags: u32, usage: ?*Rusage) Maybe(WaitPidResult) {
         const Status = c_int;
         var status: Status = 0;
+        if(Environment.isWindows) {
+            const result = waitpid(pid, flags);
+            if(usage) |info| {
+                //rusage requested so we try to add some info
+                var usage_info: Rusage = .{ .utime = .{}, .stime = .{}};
+                const process: *anyopaque = @ptrFromInt(@as(usize, @intCast(pid)));
+                const WinTime = std.os.windows.FILETIME;
+                var starttime: WinTime = undefined;
+                var exittime: WinTime = undefined;
+                var kerneltime: WinTime = undefined;
+                var usertime: WinTime = undefined;
+                // We at least get process times
+                if(std.os.windows.kernel32.GetProcessTimes(process, &starttime, &exittime, &kerneltime, &usertime) != 0) {
+                    var temp: std.os.windows.ULARGE_INTEGER = undefined;
+                    @memcpy(std.mem.asBytes(&temp), std.mem.asBytes(&kerneltime));   
+                    if(temp > 0) {
+                        usage_info.stime.tv_sec = @intCast(temp / 10000000);
+                        usage_info.stime.tv_usec = @intCast(temp % 10000000);
+                    }
+                    @memcpy(std.mem.asBytes(&temp), std.mem.asBytes(&usertime));
+                    if(temp > 0) {
+                        usage_info.utime.tv_sec = @intCast(temp / 10000000);
+                        usage_info.utime.tv_usec = @intCast(temp % 10000000);
+                    }
+                }
+                info.* = usage_info;
+            }
+            return result;
+        }
         while (true) {
             const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), usage);
             switch (errno(rc)) {

@@ -6,6 +6,9 @@ const Environment = bun.Environment;
 const std = @import("std");
 const uv = bun.windows.libuv;
 pub const Loop = uv.Loop;
+const FileSink = JSC.WebCore.FileSink;
+const FIFO = JSC.WebCore.FIFO;
+const Subprocess = JSC.Subprocess;
 
 pub const KeepAlive = struct {
     // handle.init zeroes the memory
@@ -133,7 +136,7 @@ pub const FilePoll = struct {
     owner: Owner = undefined,
     flags: Flags.Set = Flags.Set{},
     next_to_free: ?*FilePoll = null,
-
+    handle: ?uv.uv_poll_t,
     pub const Flags = Posix.FilePoll.Flags;
     pub const Owner = Posix.FilePoll.Owner;
 
@@ -202,16 +205,112 @@ pub const FilePoll = struct {
     }
 
     pub const deinitForceUnregister = deinit;
+    fn uvEventPoll(handle: *uv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
+        const data = handle.data orelse return;
+        const this: *FilePoll = @ptrCast(@alignCast(data));
 
-    pub fn unregister(this: *FilePoll, loop: *Loop) bool {
-        _ = loop;
+        if(this.flags.contains(.one_shot)) {
+            _ = uv.uv_poll_stop(handle);
+        }
+
+        if(status != 0) {
+            this.updateFlags(Flags.fromLibUVEvent(uv.UV_DISCONNECT));
+        } else {
+            this.updateFlags(Flags.fromLibUVEvent(events));
+        }
+         
+        this.onUpdate(0);
+    }
+    
+    pub fn onUpdate(poll: *FilePoll, size_or_offset: i64) void {
+        if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
+            poll.flags.insert(.needs_rearm);
+        }
+
+        var ptr = poll.owner;
+        switch (ptr.tag()) {
+            @field(Owner.Tag, "FIFO") => {
+                log("onUpdate libuv (fd: {d}) FIFO", .{poll.fd});
+                ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
+            },
+            @field(Owner.Tag, "Subprocess") => {
+                log("onUpdate libuv (fd: {d}) Subprocess", .{poll.fd});
+                var loader = ptr.as(JSC.Subprocess);
+
+                loader.onExitNotificationTask();
+            },
+            @field(Owner.Tag, "FileSink") => {
+                log("onUpdate libuv (fd: {d}) FileSink", .{poll.fd});
+                var loader = ptr.as(JSC.WebCore.FileSink);
+                loader.onPoll(size_or_offset, 0);
+            },
+
+            else => {
+                log("onUpdate libuv (fd: {d}) disconnected?", .{poll.fd});
+            },
+        }
+    }
+    fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
+        var flags = poll.flags;
+        flags.remove(.readable);
+        flags.remove(.writable);
+        flags.remove(.process);
+        flags.remove(.machport);
+        flags.remove(.eof);
+        flags.remove(.hup);
+
+        flags.setUnion(updated);
+        poll.flags = flags;
+    }
+    pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
+        std.debug.assert(this.fd != bun.invalid_fd);
+
+        const system_fd = bun.FDImpl.decode(this.fd).system();
+        this.handle = std.mem.zeroes(uv.uv_poll_t);
+        if (one_shot) {
+            this.flags.insert(.one_shot);
+        }
+
+        const handle = &(this.handle.?);
+        if(uv.uv_poll_init_socket(loop, handle, system_fd).errno()) |err| {
+            if (JSC.Maybe(void).errnoSys(err, .epoll_ctl)) |errno| {
+                return errno;
+            }
+        }
+        handle.data = this;
+        const events: c_int = switch (flag) {
+            .process,
+            .readable,
+            => uv.UV_READABLE | uv.UV_DISCONNECT,
+            .writable => uv.UV_WRITABLE | uv.UV_DISCONNECT,
+            else => unreachable,
+        };
+        if(uv.uv_poll_start(handle, events, FilePoll.uvEventPoll).errno()) |err| {
+            if (JSC.Maybe(void).errnoSys(err, .epoll_ctl)) |errno| {
+                return errno;
+            }
+        }
+        this.flags.insert(.was_ever_registered);
+        this.flags.insert(switch (flag) {
+            .process, .readable => .poll_readable,
+            .writable => .poll_writable,
+            else => unreachable,
+        });
+        this.flags.remove(.needs_rearm);
+        return JSC.Maybe(void).success;
+    }
+    pub fn unregister(this: *FilePoll) bool {
         uv.uv_unref(@ptrFromInt(this.fd));
+        if(this.handle != null) {
+            return uv.uv_poll_stop(&this.handle.?).errno() == null;
+        }
         return true;
     }
 
     fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *Loop, polls: *FilePoll.Store) void {
         if (this.isRegistered()) {
-            _ = this.unregister(loop);
+            _ = loop;
+            _ = this.unregister();
         }
 
         const was_ever_registered = this.flags.contains(.was_ever_registered);

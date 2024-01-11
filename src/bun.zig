@@ -1195,7 +1195,14 @@ pub fn ensureNonBlocking(fd: anytype) void {
 const global_scope_log = Output.scoped(.bun, false);
 pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
+        const handle = FDImpl.decode(fd).system();
+        std.os.windows.WaitForSingleObject(handle, 0) catch |err| {
+            return switch(err) {
+               error.WaitTimeOut, error.WaitAbandoned => return PollFlag.not_ready,
+               else => return PollFlag.hup,
+            };
+        };
+        return PollFlag.ready;
     }
 
     var polls = [_]std.os.pollfd{
@@ -1219,7 +1226,16 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
+        const handle = FDImpl.decode(fd).system();
+        // we can only know if is writable using overlapped and GetOverlappedResult, we say is not read so we can trigger watch and use uv to poll the state for us
+        // we can at least know if is disconnected or busy here using a shortish timeout
+        std.os.windows.WaitForSingleObject(handle, 100) catch |err| {
+            return switch(err) {
+               error.WaitTimeOut, error.WaitAbandoned => return PollFlag.not_ready,
+               else => return PollFlag.hup,
+            };
+        };
+        return PollFlag.not_ready;
     }
 
     var polls = [_]std.os.pollfd{
@@ -2612,7 +2628,7 @@ pub const posix = struct {
 
     pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 };
-
+pub const Rusage = @import("./bun.js/api/bun/spawn.zig").Rusage;
 pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;

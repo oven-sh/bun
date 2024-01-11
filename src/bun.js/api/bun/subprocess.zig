@@ -22,32 +22,7 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const PosixSpawn = bun.posix.spawn;
 
-const win_rusage = struct {
-    utime: struct {
-        tv_sec: u0 = 0,
-        tv_usec: u0 = 0,
-    },
-    stime: struct {
-        tv_sec: u0 = 0,
-        tv_usec: u0 = 0,
-    },
-    maxrss: u0 = 0,
-    ixrss: u0 = 0,
-    idrss: u0 = 0,
-    isrss: u0 = 0,
-    minflt: u0 = 0,
-    majflt: u0 = 0,
-    nswap: u0 = 0,
-    inblock: u0 = 0,
-    oublock: u0 = 0,
-    msgsnd: u0 = 0,
-    msgrcv: u0 = 0,
-    nsignals: u0 = 0,
-    nvcsw: u0 = 0,
-    nivcsw: u0 = 0,
-};
-
-const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
+const Rusage = bun.Rusage;
 
 pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
@@ -181,7 +156,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
-    pid_rusage: if (Environment.isWindows) ?win_rusage else ?Rusage = null,
+    pid_rusage: ?Rusage = null,
 
     pub const Flags = packed struct(u3) {
         is_sync: bool = false,
@@ -2216,7 +2191,7 @@ pub const Subprocess = struct {
         this_jsvalue: JSC.JSValue,
     ) void {
         var rusage_result: Rusage = std.mem.zeroes(Rusage);
-        this.onWaitPid(sync, this_jsvalue, PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result), rusage_result);
+        this.onWaitPid(sync, this_jsvalue, PosixSpawn.wait4(if(Environment.isWindows) uv.uv_process_get_pid(&this.pid) else this.pid, if (Environment.isWindows or sync) 0 else std.os.W.NOHANG, &rusage_result), rusage_result);
     }
 
     pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: Rusage) void {

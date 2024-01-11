@@ -1219,7 +1219,7 @@ const union_unnamed_423 = extern union {
     reserved: [4]?*anyopaque,
 };
 pub const uv_poll_t = struct_uv_poll_s;
-pub const uv_poll_cb = ?*const fn ([*c]uv_poll_t, c_int, c_int) callconv(.C) void;
+pub const uv_poll_cb = ?*const fn (*uv_poll_t, c_int, c_int) callconv(.C) void;
 pub const struct_uv_poll_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1926,9 +1926,9 @@ pub const UV_DISCONNECT: c_int = 4;
 pub const UV_PRIORITIZED: c_int = 8;
 pub const enum_uv_poll_event = c_uint;
 pub extern fn uv_poll_init(loop: *uv_loop_t, handle: *uv_poll_t, fd: c_int) c_int;
-pub extern fn uv_poll_init_socket(loop: *uv_loop_t, handle: *uv_poll_t, socket: uv_os_sock_t) c_int;
-pub extern fn uv_poll_start(handle: *uv_poll_t, events: c_int, cb: uv_poll_cb) c_int;
-pub extern fn uv_poll_stop(handle: *uv_poll_t) c_int;
+pub extern fn uv_poll_init_socket(loop: *uv_loop_t, handle: *uv_poll_t, socket: uv_os_sock_t) ReturnCode;
+pub extern fn uv_poll_start(handle: *uv_poll_t, events: c_int, cb: uv_poll_cb) ReturnCode;
+pub extern fn uv_poll_stop(handle: *uv_poll_t) ReturnCode;
 pub extern fn uv_prepare_init(*uv_loop_t, prepare: *uv_prepare_t) c_int;
 pub extern fn uv_prepare_start(prepare: *uv_prepare_t, cb: uv_prepare_cb) c_int;
 pub extern fn uv_prepare_stop(prepare: *uv_prepare_t) c_int;

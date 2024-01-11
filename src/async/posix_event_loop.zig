@@ -6,7 +6,7 @@ const Environment = bun.Environment;
 const std = @import("std");
 
 pub const Loop = uws.Loop;
-
+const uv = bun.windows.libuv;
 /// Track if an object whose file descriptor is being watched should keep the event loop alive.
 /// This is not reference counted. It only tracks active or inactive.
 pub const KeepAlive = struct {
@@ -371,7 +371,23 @@ pub const FilePoll = struct {
             }
             return flags;
         }
-
+        pub fn fromLibUVEvent(events: c_int) Flags.Set {
+            var flags = Flags.Set{};
+            if (events & uv.UV_READABLE != 0) {
+                flags.insert(Flags.readable);
+                log("readable", .{});
+            }
+            if (events & uv.UV_WRITABLE != 0) {
+                flags.insert(Flags.writable);
+                log("writable", .{});
+            }
+            if (events & uv.UV_DISCONNECT != 0) {
+                flags.insert(Flags.hup);
+                flags.insert(Flags.eof);
+                log("hup", .{});
+            }
+            return flags;
+        }
         pub fn fromEpollEvent(epoll: std.os.linux.epoll_event) Flags.Set {
             var flags = Flags.Set{};
             if (epoll.events & std.os.linux.EPOLL.IN != 0) {

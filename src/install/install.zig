@@ -2815,7 +2815,7 @@ pub const PackageManager = struct {
             if (!parsed.valid or parsed.wildcard != .none) continue;
             // not handling OOM
             // TODO: wildcard
-            var version = parsed.version.fill();
+            var version = parsed.version.min();
             const total = version.tag.build.len() + version.tag.pre.len();
             if (total > 0) {
                 tags_buf.ensureUnusedCapacity(total) catch unreachable;
@@ -6223,7 +6223,7 @@ pub const PackageManager = struct {
                 const sliced_version = SlicedString.init(version_string, version_string);
                 const result = Semver.Version.parse(sliced_version);
                 if (result.valid and result.wildcard == .none) {
-                    try workspaces.put(entry.name, result.version.fill());
+                    try workspaces.put(entry.name, result.version.min());
                     continue;
                 }
             }

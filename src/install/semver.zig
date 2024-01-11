@@ -666,11 +666,20 @@ pub const Version = extern struct {
         patch: ?u32 = null,
         tag: Tag = .{},
 
-        pub fn fill(this: Partial) Version {
+        pub fn min(this: Partial) Version {
             return .{
                 .major = this.major orelse 0,
                 .minor = this.minor orelse 0,
                 .patch = this.patch orelse 0,
+                .tag = this.tag,
+            };
+        }
+
+        pub fn max(this: Partial) Version {
+            return .{
+                .major = this.major orelse std.math.maxInt(u32),
+                .minor = this.minor orelse std.math.maxInt(u32),
+                .patch = this.patch orelse std.math.maxInt(u32),
                 .tag = this.tag,
             };
         }
@@ -1232,7 +1241,7 @@ pub const Version = extern struct {
         return result;
     }
 
-    fn parseVersionNumber(input: string) u32 {
+    fn parseVersionNumber(input: string) ?u32 {
         // max decimal u32 is 4294967295
         var bytes: [10]u8 = undefined;
         var byte_i: u8 = 0;
@@ -1241,10 +1250,10 @@ pub const Version = extern struct {
 
         for (input) |char| {
             switch (char) {
-                'X', 'x', '*' => return 0,
+                'X', 'x', '*' => return null,
                 '0'...'9' => {
                     // out of bounds
-                    if (byte_i + 1 > bytes.len) return 0;
+                    if (byte_i + 1 > bytes.len) return null;
                     bytes[byte_i] = char;
                     byte_i += 1;
                 },
@@ -1254,8 +1263,8 @@ pub const Version = extern struct {
             }
         }
 
-        // If there are no numbers, it's 0.
-        if (byte_i == 0) return 0;
+        // If there are no numbers
+        if (byte_i == 0) return null;
 
         if (comptime Environment.isDebug) {
             return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
@@ -1738,17 +1747,17 @@ pub const Query = struct {
                 .none => unreachable,
                 .version => {
                     if (this.wildcard != Wildcard.none) {
-                        return Range.initWildcard(version.fill(), this.wildcard);
+                        return Range.initWildcard(version.min(), this.wildcard);
                     }
 
-                    return .{ .left = .{ .op = .eql, .version = version.fill() } };
+                    return .{ .left = .{ .op = .eql, .version = version.min() } };
                 },
                 else => {},
             }
 
             return switch (this.wildcard) {
                 .major => .{
-                    .left = .{ .op = .gte, .version = version.fill() },
+                    .left = .{ .op = .gte, .version = version.min() },
                     .right = .{
                         .op = .lte,
                         .version = .{
@@ -1857,7 +1866,7 @@ pub const Query = struct {
                             .lte => .lte,
                             else => unreachable,
                         },
-                        .version = version.fill(),
+                        .version = version.min(),
                     },
                 },
             };
@@ -1981,7 +1990,7 @@ pub const Query = struct {
 
             if (!skip_round) {
                 const parse_result = Version.parse(sliced.sub(input[i..]));
-                const version = parse_result.version.fill();
+                const version = parse_result.version.min();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
@@ -2019,7 +2028,7 @@ pub const Query = struct {
 
                 if (hyphenate) {
                     const second_parsed = Version.parse(sliced.sub(input[i..]));
-                    var second_version = second_parsed.version.fill();
+                    var second_version = second_parsed.version.min();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
                     const range: Range = brk: {
@@ -2177,8 +2186,8 @@ pub const SemverObject = struct {
             return .zero;
         }
 
-        const left_version = left_result.version.fill();
-        const right_version = right_result.version.fill();
+        const left_version = left_result.version.max();
+        const right_version = right_result.version.max();
 
         return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
             .eq => JSC.jsNumber(0),
@@ -2221,7 +2230,7 @@ pub const SemverObject = struct {
             return .false;
         }
 
-        const left_version = left_result.version.fill();
+        const left_version = left_result.version.min();
 
         const right_group = Query.parse(
             allocator,
@@ -2252,7 +2261,7 @@ const expect = if (Environment.isTest) struct {
             SlicedString.init(input, input),
         ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 
-        return list.satisfies(parsed.version.fill());
+        return list.satisfies(parsed.version.min());
     }
 
     pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
@@ -2318,7 +2327,7 @@ const expect = if (Environment.isTest) struct {
         defer counter += 1;
 
         var result = Version.parse(SlicedString.init(input, input));
-        if (!v.eql(result.version.fill())) {
+        if (!v.eql(result.version.min())) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,
                 v.major,

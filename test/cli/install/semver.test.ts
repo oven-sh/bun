@@ -105,6 +105,24 @@ describe("Bun.semver.order()", () => {
     }
   });
 
+  // not supported by semver, but supported by Bun
+  test.each([
+    ["0", "0.0"],
+    ["1", "1.0"],
+    ["1.2", "1.2.0"],
+    ["1.x", "1.0.x"],
+    ["1.x.x", "1.0.x"],
+    ["2.x", "1.x"],
+    ["2.x", "2.1"],
+    ["2", "1"],
+    ["4294967295.4294967295.x", "4294967295.4294967295.4294967294"],
+  ])('loose compare("%s", "%s")', (left, right) => {
+    expect(order(left, right)).toBe(1);
+    expect(order(right, left)).toBe(-1);
+    expect(order(left, left)).toBe(0);
+    expect(order(right, right)).toBe(0);
+  });
+
   test("equality", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/equality.js#L3
     var tests = [

@@ -22,7 +22,7 @@ const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const ci = !!process.env["GITHUB_ACTION"];
-const enableANSIColors = !ci;
+const enableProgressBar = !ci;
 
 function defaultConcurrency() {
   // Concurrency causes more flaky tests, only enable it by default on windows
@@ -193,7 +193,7 @@ async function runTest(path) {
 
   const duration = (Date.now() - start) / 1000;
 
-  if (run_concurrency !== 1 && enableANSIColors) {
+  if (run_concurrency !== 1 && enableProgressBar) {
     // clear line
     process.stdout.write("\x1b[2K\r");
   }
@@ -204,7 +204,7 @@ async function runTest(path) {
     } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
-  if (run_concurrency !== 1 && enableANSIColors) {
+  if (run_concurrency !== 1 && enableProgressBar) {
     writeProgressBar();
   }
 

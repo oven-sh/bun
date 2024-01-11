@@ -707,7 +707,7 @@ pub const PathWatcher = struct {
         if (comptime Environment.isMac) {
             if (!path.is_file) {
                 var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved_path_temp = std.os.getFdPath(path.fd.int(), &buffer) catch |err| {
+                const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;
                 };

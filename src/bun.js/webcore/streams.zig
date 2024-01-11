@@ -4236,9 +4236,9 @@ pub const File = struct {
         };
 
         if (comptime Environment.isPosix) {
-            if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.int()))) {
+            if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast()))) {
                 var termios = std.mem.zeroes(std.os.termios);
-                _ = std.c.tcgetattr(fd.int(), &termios);
+                _ = std.c.tcgetattr(fd.cast(), &termios);
                 bun.C.cfmakeraw(&termios);
                 file.is_atty = true;
             }

@@ -6463,7 +6463,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        const dir = std.fs.Dir{ .fd = fd.int() };
+        const dir = fd.asDir();
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
         while (switch (entry) {

@@ -3367,7 +3367,7 @@ pub const Blob = struct {
                         this.max_length > bun.C.preallocate_length and
                         this.max_length != Blob.max_size)
                     {
-                        bun.C.preallocate_file(this.destination_fd.int(), 0, this.max_length) catch {};
+                        bun.C.preallocate_file(this.destination_fd.cast(), 0, this.max_length) catch {};
                     }
                 }
 
@@ -3420,7 +3420,7 @@ pub const Blob = struct {
                         return;
                     };
                     if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
-                        _ = darwin.ftruncate(this.destination_fd.int(), @as(std.os.off_t, @intCast(this.max_length)));
+                        _ = darwin.ftruncate(this.destination_fd.cast(), @as(std.os.off_t, @intCast(this.max_length)));
                     }
 
                     this.doClose();

@@ -1836,7 +1836,7 @@ var needs_proc_self_workaround: bool = false;
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
 fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", 0, 0);
+    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", std.os.O.DIRECTORY, 0);
     var needs_chdir = false;
     defer {
         if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
@@ -1876,7 +1876,18 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
 
-    if (comptime !Environment.isLinux) {
+    if (comptime Environment.allow_assert) {
+        // We need a way to test that the workaround is working
+        // but we don't want to do this check in a release build
+        const ProcSelfWorkAroundForDebugging = struct {
+            pub var has_checked = false;
+        };
+
+        if (!ProcSelfWorkAroundForDebugging.has_checked) {
+            ProcSelfWorkAroundForDebugging.has_checked = true;
+            needs_proc_self_workaround = strings.eql(getenvZ("BUN_NEEDS_PROC_SELF_WORKAROUND") orelse "0", "1");
+        }
+    } else if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd, buf);
     }
 
@@ -2533,7 +2544,9 @@ pub inline fn socketcast(fd: anytype) std.os.socket_t {
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)
-    // TODO: i have no idea what this value should be
+    // On Windows the maximum length, in bytes, of the string returned in the buffer pointed to by the name parameter is dependent on the namespace provider, but this string must be 256 bytes or less.
+    // So if a buffer of 256 bytes is passed in the name parameter and the namelen parameter is set to 256, the buffer size will always be adequate.
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-gethostname
     256
 else
     std.os.HOST_NAME_MAX;

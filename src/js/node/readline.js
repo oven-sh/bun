@@ -1432,7 +1432,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   // Backwards compat; check the isTTY prop of the output stream
   //  when `terminal` was not specified
-  if (terminal === undefined && !(output === null || output === undefined)) {
+  if (terminal === undefined && !(output == null)) {
     terminal = !!output.isTTY;
   }
 
@@ -1466,10 +1466,10 @@ function InterfaceConstructor(input, output, completer, terminal) {
   input.on("error", this[kOnError]);
 
   if (!this.terminal) {
+    this[kDecoder] = new StringDecoder("utf8");
     input.on("data", this[kOnData]);
     input.on("end", this[kOnEnd]);
     this.once("close", this[kOnSelfCloseWithoutTerminal]);
-    this[kDecoder] = new StringDecoder("utf8");
   } else {
     emitKeypressEvents(input, this);
 

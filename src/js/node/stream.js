@@ -42,7 +42,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray(value)) ||
+    (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
@@ -60,8 +60,6 @@ const validateObject = (value, name, options = null) => {
 function validateString(value, name) {
   if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
-
-var ArrayIsArray = Array.isArray;
 
 //------------------------------------------------------------------------------
 // Node error polyfills
@@ -716,14 +714,14 @@ var require_validators = __commonJS({
       const nullable = useDefaultOptions ? false : options.nullable;
       if (
         (!nullable && value === null) ||
-        (!allowArray && ArrayIsArray(value)) ||
+        (!allowArray && $isJSArray(value)) ||
         (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
       ) {
         throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
       }
     });
     var validateArray = hideStackFrames((value, name, minLength = 0) => {
-      if (!ArrayIsArray(value)) {
+      if (!$isJSArray(value)) {
         throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
       }
       if (value.length < minLength) {
@@ -2064,7 +2062,7 @@ var require_legacy = __commonJS({
     function prependListener(emitter, event, fn) {
       if (typeof emitter.prependListener === "function") return emitter.prependListener(event, fn);
       if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);
-      else if (ArrayIsArray(emitter._events[event])) emitter._events[event].unshift(fn);
+      else if ($isJSArray(emitter._events[event])) emitter._events[event].unshift(fn);
       else emitter._events[event] = [fn, emitter._events[event]];
     }
     module.exports = {
@@ -2804,6 +2802,7 @@ var require_readable = __commonJS({
         }
       }
 
+      $debug("length", state.length, state.ended, nOrig, n);
       if (state.length === 0) {
         // If we have nothing in the buffer, then we want to know
         // as soon as we *do* get something into the buffer.
@@ -4047,7 +4046,6 @@ var require_duplexify = __commonJS({
     } = require_errors();
     var { destroyer } = require_destroy();
     var Duplex = require_duplex();
-    var Readable = require_readable();
     var { createDeferredPromise } = require_util();
     var from = require_from();
     var isBlob =
@@ -4383,8 +4381,6 @@ var require_duplex = __commonJS({
     var { ObjectDefineProperties, ObjectGetOwnPropertyDescriptor, ObjectKeys, ObjectSetPrototypeOf } =
       require_primordials();
 
-    var Readable = require_readable();
-
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
       Readable.$call(this, options);
@@ -4470,7 +4466,6 @@ var require_transform = __commonJS({
     "use strict";
     var { ObjectSetPrototypeOf, Symbol: Symbol2 } = require_primordials();
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
-    var Duplex = require_duplex();
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
       Duplex.$call(this, options);
@@ -4593,7 +4588,6 @@ var require_pipeline = __commonJS({
     var eos = require_end_of_stream();
     var { once } = require_util();
     var destroyImpl = require_destroy();
-    var Duplex = require_duplex();
     var {
       aggregateTwoErrors,
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE, ERR_MISSING_ARGS, ERR_STREAM_DESTROYED },
@@ -4602,7 +4596,6 @@ var require_pipeline = __commonJS({
     var { validateFunction, validateAbortSignal } = require_validators();
     var { isIterable, isReadable, isReadableNodeStream, isNodeStream } = require_utils();
     var PassThrough;
-    var Readable;
     function destroyer(stream, reading, writing) {
       let finished = false;
       stream.on("close", () => {
@@ -4640,9 +4633,6 @@ var require_pipeline = __commonJS({
       throw new ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
     }
     async function* fromReadable(val) {
-      if (!Readable) {
-        Readable = require_readable();
-      }
       yield* Readable.prototype[SymbolAsyncIterator].$call(val);
     }
     async function pump(iterable, writable, finish, { end }) {
@@ -4705,7 +4695,7 @@ var require_pipeline = __commonJS({
       return pipelineImpl(streams, once(popCallback(streams)));
     }
     function pipelineImpl(streams, callback, opts) {
-      if (streams.length === 1 && ArrayIsArray(streams[0])) {
+      if (streams.length === 1 && $isJSArray(streams[0])) {
         streams = streams[0];
       }
       if (streams.length < 2) {
@@ -5471,7 +5461,9 @@ function getNativeReadableStream(Readable, stream, options) {
 }
 /** --- Bun native stream wrapper ---  */
 
+var Readable = require_readable();
 var Writable = require_writable();
+var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
 const _fileSink = Symbol("fileSink");

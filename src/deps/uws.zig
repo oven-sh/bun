@@ -443,6 +443,28 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return ctx;
         }
 
+        pub fn fromFd(
+            ctx: *SocketContext,
+            handle: bun.FileDescriptor,
+            comptime This: type,
+            this: *This,
+            comptime socket_field_name: ?[]const u8,
+        ) ?ThisSocket {
+            const socket_ = ThisSocket{ .socket = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null };
+
+            const holder = socket_.ext(*anyopaque) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                return null;
+            };
+            holder.* = this;
+
+            if (comptime socket_field_name) |field| {
+                @field(this, field) = socket_;
+            }
+
+            return socket_;
+        }
+
         pub fn connectUnixPtr(
             path: []const u8,
             socket_ctx: *SocketContext,
@@ -2344,7 +2366,7 @@ pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);
-pub const LIBUS_SOCKET_DESCRIPTOR = i32;
+pub const LIBUS_SOCKET_DESCRIPTOR = if (Environment.isWindows) std.os.socket_t else i32;
 
 pub const _COMPRESSOR_MASK: i32 = 255;
 pub const _DECOMPRESSOR_MASK: i32 = 3840;
@@ -2564,18 +2586,12 @@ extern fn us_socket_pair(
 extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
-    fds: LIBUS_SOCKET_DESCRIPTOR,
+    fd: LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
 pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
     return SocketTCP{
         .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
-    };
-}
-
-pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
-    return SocketTCP{
-        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
     };
 }
 

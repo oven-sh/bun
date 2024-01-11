@@ -266,7 +266,7 @@ pub const FilePoll = struct {
         std.debug.assert(this.fd != bun.invalid_fd);
 
         const system_fd = bun.FDImpl.decode(this.fd).system();
-        log("register {d}", .{ system_fd });
+        log("register {d}", .{system_fd});
 
         this.handle = std.mem.zeroes(uv.uv_poll_t);
         if (one_shot) {

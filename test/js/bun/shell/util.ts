@@ -21,3 +21,9 @@ export const redirect = (opts?: Partial<typeof defaultRedirect>): typeof default
         ...defaultRedirect,
         ...opts,
       };
+
+export const sortedShellOutput = (output: string): string[] =>
+  output
+    .split("\n")
+    .filter(s => s.length > 0)
+    .sort();

@@ -93,9 +93,14 @@ export function tempDirWithFiles(basename: string, files: Record<string, string 
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
     if (typeof contents === "object") {
-      for (const [_name, _contents] of Object.entries(contents)) {
-        fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
-        fs.writeFileSync(path.join(dir, name, _name), _contents);
+      const entries = Object.entries(contents);
+      if (entries.length == 0) {
+        fs.mkdirSync(path.join(dir, name), { recursive: true });
+      } else {
+        for (const [_name, _contents] of entries) {
+          fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
+          fs.writeFileSync(path.join(dir, name, _name), _contents);
+        }
       }
       continue;
     }

@@ -274,10 +274,10 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         m_keys.resize(0);
         m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
         for (auto& header : m_headers->m_headers)
-            m_keys.uncheckedAppend(header.asciiLowerCaseName());
+            m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
         std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
         if (hasSetCookie)
-            m_keys.uncheckedAppend(String());
+            m_keys.unsafeAppendWithoutCapacityCheck(String());
 
         m_currentIndex += m_cookieIndex;
         if (hasSetCookie) {

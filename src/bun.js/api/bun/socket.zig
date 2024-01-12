@@ -19,14 +19,6 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 
-fn normalizeListeningHost(host: [:0]const u8) ?[*:0]const u8 {
-    if (host.len == 0 or strings.eqlComptime(host, "0.0.0.0")) {
-        return null;
-    }
-
-    return host.ptr;
-}
-
 // const Corker = struct {
 //     ptr: ?*[16384]u8 = null,
 //     holder: ?*anyopaque = null,
@@ -369,6 +361,12 @@ pub const SocketConfig = struct {
         }
 
         hostname_or_unix: {
+            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+                if (fd_.isNumber()) {
+                    break :hostname_or_unix;
+                }
+            }
+
             if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
                 if (!unix_socket.isString()) {
                     exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
@@ -435,7 +433,7 @@ pub const SocketConfig = struct {
             return null;
         }
 
-        const handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
+        var handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
             hostname_or_unix.deinit();
             return null;
         };
@@ -443,6 +441,8 @@ pub const SocketConfig = struct {
         if (opts.getTruthy(globalObject, "data")) |default_data_value| {
             default_data = default_data_value;
         }
+
+        handlers.protect();
 
         return SocketConfig{
             .hostname_or_unix = hostname_or_unix,
@@ -495,6 +495,7 @@ pub const Listener = struct {
             host: []const u8,
             port: u16,
         },
+        fd: bun.FileDescriptor,
 
         pub fn clone(this: UnixOrHost) UnixOrHost {
             switch (this) {
@@ -504,8 +505,14 @@ pub const Listener = struct {
                     };
                 },
                 .host => |h| {
-                    return .{ .host = .{ .host = (bun.default_allocator.dupe(u8, h.host) catch unreachable), .port = this.host.port } };
+                    return .{
+                        .host = .{
+                            .host = (bun.default_allocator.dupe(u8, h.host) catch unreachable),
+                            .port = this.host.port,
+                        },
+                    };
                 },
+                .fd => |f| return .{ .fd = f },
             }
         }
 
@@ -517,6 +524,7 @@ pub const Listener = struct {
                 .host => |h| {
                     bun.default_allocator.free(h.host);
                 },
+                .fd => {}, // this is an integer
             }
         }
     };
@@ -547,7 +555,7 @@ pub const Listener = struct {
             return .zero;
         };
 
-        var prev_handlers = this.handlers;
+        var prev_handlers = &this.handlers;
         prev_handlers.unprotect();
         this.handlers = handlers; // TODO: this is a memory leak
         this.handlers.protect();
@@ -555,10 +563,7 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn listen(
-        globalObject: *JSC.JSGlobalObject,
-        opts: JSValue,
-    ) JSValue {
+    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) JSValue {
         log("listen", .{});
         var exception_ = [1]JSC.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_;
@@ -672,7 +677,7 @@ pub const Listener = struct {
                     const socket = uws.us_socket_context_listen(
                         @intFromBool(ssl_enabled),
                         socket_context,
-                        normalizeListeningHost(host),
+                        if (host.len == 0) null else host.ptr,
                         c.port,
                         socket_flags,
                         8,
@@ -687,6 +692,10 @@ pub const Listener = struct {
                     const host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
+                },
+                .fd => {
+                    // don't call listen() on an fd
+                    return .zero;
                 },
             }
         } orelse {
@@ -837,6 +846,7 @@ pub const Listener = struct {
         this.poll_ref.unref(this.handlers.vm);
         std.debug.assert(this.listener == null);
         std.debug.assert(this.handlers.active_connections == 0);
+        this.handlers.unprotect();
 
         if (this.socket_context) |ctx| {
             ctx.deinit(this.ssl);
@@ -866,7 +876,6 @@ pub const Listener = struct {
         if (this.connection != .host) {
             return JSValue.jsUndefined();
         }
-
         return ZigString.init(this.connection.host.host).withEncoding().toValueGC(globalObject);
     }
 
@@ -874,7 +883,6 @@ pub const Listener = struct {
         if (this.connection != .host) {
             return JSValue.jsUndefined();
         }
-
         return JSValue.jsNumber(this.connection.host.port);
     }
 
@@ -925,8 +933,6 @@ pub const Listener = struct {
         const ssl_enabled = ssl != null;
         defer if (ssl != null) ssl.?.deinit();
 
-        handlers.protect();
-
         const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
 
         globalObject.bunVM().eventLoop().ensureWaker();
@@ -938,13 +944,21 @@ pub const Listener = struct {
                 .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
             };
             exception.* = err.toErrorInstance(globalObject).asObjectRef();
+            handlers.unprotect();
             return .zero;
         };
 
-        const connection: Listener.UnixOrHost = if (port) |port_| .{
-            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
-        } else .{
-            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
+        const connection: Listener.UnixOrHost = blk: {
+            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+                if (fd_.isNumber()) {
+                    const fd = fd_.asFileDescriptor();
+                    break :blk .{ .fd = fd };
+                }
+            }
+            if (port) |_| {
+                break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port.? } };
+            }
+            break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice() };
         };
 
         if (ssl_enabled) {
@@ -1145,23 +1159,27 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
                 .host => |c| {
-                    _ = @This().Socket.connectPtr(
+                    _ = This.Socket.connectPtr(
                         normalizeHost(c.host),
                         c.port,
                         socket_ctx,
-                        @This(),
+                        This,
                         this,
                         "socket",
                     ) orelse return error.ConnectionFailed;
                 },
                 .unix => |u| {
-                    _ = @This().Socket.connectUnixPtr(
+                    _ = This.Socket.connectUnixPtr(
                         u,
                         socket_ctx,
-                        @This(),
+                        This,
                         this,
                         "socket",
                     ) orelse return error.ConnectionFailed;
+                },
+                .fd => |f| {
+                    const socket = This.Socket.fromFd(socket_ctx, f, This, this, "socket") orelse return error.ConnectionFailed;
+                    this.onOpen(socket);
                 },
             }
         }
@@ -2073,7 +2091,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             var exception_ref = [_]JSC.C.JSValueRef{null};
             const exception: JSC.C.ExceptionRef = &exception_ref;
-            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg, exception)) |sb| {
+            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
+                defer sb.deinit();
                 const session_slice = sb.slice();
                 const ssl_ptr = this.socket.ssl();
                 var tmp = @as([*c]const u8, @ptrCast(session_slice.ptr));
@@ -2205,7 +2224,8 @@ fn NewSocket(comptime ssl: bool) type {
 
                 var exception_ref = [_]JSC.C.JSValueRef{null};
                 const exception: JSC.C.ExceptionRef = &exception_ref;
-                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg, exception)) |sb| {
+                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
+                    defer sb.deinit();
                     const context_slice = sb.slice();
 
                     const buffer_size = @as(usize, @intCast(length));

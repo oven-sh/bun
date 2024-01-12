@@ -42,13 +42,12 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
-            };
+            });
             var promise = JSC.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.asValue(globalThis));
             this.ref.ref(this.event_loop.virtual_machine);
@@ -80,7 +79,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.allocator.destroy(this);
+            bun.destroy(this);
         }
     };
 }
@@ -102,15 +101,14 @@ pub fn WorkTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
             var vm = globalThis.bunVM();
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
                 .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
-            };
+            });
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
@@ -146,10 +144,9 @@ pub fn WorkTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            var allocator = this.allocator;
             this.ref.unref(this.event_loop.virtual_machine);
 
-            allocator.destroy(this);
+            bun.destroyWithAlloc(this.allocator, this);
         }
     };
 }
@@ -339,6 +336,7 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
+const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -398,6 +396,7 @@ pub const Task = TaggedPointerUnion(.{
     Lchown,
     Unlink,
     WaitPidResultTask,
+    TimerReference,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -623,6 +622,18 @@ pub const EventLoop = struct {
     forever_timer: ?*uws.Timer = null,
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
+
+    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
+
+    pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
+        return this.timer_reference_pool orelse brk: {
+            const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
+            _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);
+            this.timer_reference_pool = _pool;
+            break :brk _pool;
+        };
+    }
+
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
 
@@ -919,6 +930,11 @@ pub const EventLoop = struct {
                     var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                    var any: *TimerReference = task.get(TimerReference).?;
+                    any.runFromJSThread();
+                },
+
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else {
@@ -1299,6 +1315,18 @@ pub const EventLoop = struct {
         }
 
         this.concurrent_tasks.push(task);
+        this.wakeup();
+    }
+
+    pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.Batch) void {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            if (this.virtual_machine.has_terminated) {
+                @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
+            }
+        }
+
+        this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
         this.wakeup();
     }
 };

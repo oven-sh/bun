@@ -435,7 +435,6 @@ pub const TypeScript = struct {
             .t_greater_than_greater_than_equals,
             .t_greater_than_greater_than_greater_than,
             .t_greater_than_greater_than_greater_than_equals,
-            .t_end_of_file,
             => false,
 
             // We favor the type argument list interpretation when it is immediately followed by
@@ -1047,7 +1046,7 @@ pub const ImportScanner = struct {
                         // for side effects.
                         //
                         // This culling is important for correctness when parsing TypeScript
-                        // because a) the TypeScript compiler does ths and we want to match it
+                        // because a) the TypeScript compiler does this and we want to match it
                         // and b) this may be a fake module that only exists in the type system
                         // and doesn't actually exist in reality.
                         //
@@ -2882,7 +2881,7 @@ pub const Parser = struct {
 
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
-        // So we don't have a good way to distuingish between a type-only import and not.
+        // So we don't have a good way to distinguish between a type-only import and not.
         if (comptime ParserType.parser_features.typescript) {
             p.parse_pass_symbol_uses = &scan_pass.used_symbols;
         }
@@ -3710,7 +3709,7 @@ pub const Parser = struct {
                     var notes = ListManaged(logger.Data).init(p.allocator);
 
                     try notes.append(logger.Data{
-                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{strings.QuotedFormatter{ .text = record.path.text }}),
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
                     });
 
                     if (uses_module_ref) {
@@ -4257,7 +4256,7 @@ const ParserFeatures = struct {
 
     // *** How React Fast Refresh works ***
     //
-    //  Implmenetations:
+    //  Implementations:
     //   [0]: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js
     //   [1]: https://github.com/swc-project/swc/blob/master/ecmascript/transforms/react/src/refresh/mod.rs
     //
@@ -6720,7 +6719,7 @@ fn NewParser_(
 
             if (comptime !Environment.isRelease) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
-                // where the pushed scopes are mistmatched between the first and second passes
+                // where the pushed scopes are mismatched between the first and second passes
                 if (p.scopes_in_order.items.len > 0) {
                     var last_i = p.scopes_in_order.items.len - 1;
                     while (p.scopes_in_order.items[last_i] == null and last_i > 0) {
@@ -9158,7 +9157,7 @@ fn NewParser_(
                                             try p.lexer.next();
                                             if (p.lexer.has_newline_before) {
                                                 try p.log.addErrorFmt(p.source, type_range.end(), p.allocator, "Unexpected newline after \"type\"", .{});
-                                                return error.SynaxError;
+                                                return error.SyntaxError;
                                             }
                                             var skipper = ParseStatementOptions{ .is_module_scope = opts.is_module_scope, .is_export = true };
                                             try p.skipTypeScriptTypeStmt(&skipper);
@@ -11605,7 +11604,7 @@ fn NewParser_(
                 .with_statement => "With statements",
                 .delete_bare_name => "\"delete\" of a bare identifier",
                 .for_in_var_init => "Variable initializers within for-in loops",
-                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail}),
+                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name \"{s}\"", .{detail}),
                 .reserved_word => try std.fmt.allocPrint(p.allocator, "\"{s}\" is a reserved word and", .{detail}),
                 .legacy_octal_literal => "Legacy octal literals",
                 .legacy_octal_escape => "Legacy octal escape sequences",
@@ -11642,7 +11641,7 @@ fn NewParser_(
                 notes[0] = logger.rangeData(p.source, where, why);
                 try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), notes);
             } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with esm due to strict mode", .{text}));
+                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with the ESM output format due to strict mode", .{text}));
             }
         }
 
@@ -11952,7 +11951,7 @@ fn NewParser_(
             return obj;
         }
 
-        // mmmm memmory allocation
+        // mmmm memory allocation
         pub inline fn m(self: *P, kind: anytype) *@TypeOf(kind) {
             return self.mm(@TypeOf(kind), kind);
         }
@@ -12489,14 +12488,14 @@ fn NewParser_(
                                 switch (keyword) {
                                     .p_get => {
                                         if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_get) {
-                                            // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             return try p.parseProperty(.get, opts, null);
                                         }
                                     },
 
                                     .p_set => {
                                         if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_set) {
-                                            // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             return try p.parseProperty(.set, opts, null);
                                         }
                                     },
@@ -12505,7 +12504,7 @@ fn NewParser_(
                                             opts.is_async = true;
                                             opts.async_range = name_range;
 
-                                            // p.markSyntaxFeautre(ObjectAccessors, name_range)
+                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             return try p.parseProperty(kind, opts, null);
                                         }
                                     },
@@ -15858,7 +15857,7 @@ fn NewParser_(
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
                                     }
 
-                                    // this ordering incase someone wants ot use a macro in a node_module conditionally
+                                    // this ordering incase someone wants to use a macro in a node_module conditionally
                                     if (p.options.features.no_macros) {
                                         p.log.addError(p.source, tag.loc, "Macros are disabled") catch unreachable;
                                         return p.newExpr(E.Undefined{}, e_.tag.?.loc);
@@ -16529,6 +16528,7 @@ fn NewParser_(
                         .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call == expr.data.e_call and p.then_catch_chain.has_catch,
                     };
 
+                    const target_was_identifier_before_visit = e_.target.data == .e_identifier;
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
@@ -16538,6 +16538,38 @@ fn NewParser_(
                     switch (e_.target.data) {
                         .e_identifier => |ident| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+
+                            // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
+                            // become "eval(x)" after we visit the target due to dead code elimination,
+                            // but that doesn't mean it should become a direct eval.
+                            //
+                            // Note that "eval?.(x)" is considered an indirect eval. There was debate
+                            // about this after everyone implemented it as a direct eval, but the
+                            // language committee said it was indirect and everyone had to change it:
+                            // https://github.com/tc39/ecma262/issues/2062.
+                            if (e_.optional_chain == null and
+                                target_was_identifier_before_visit and
+                                strings.eqlComptime(
+                                p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
+                                "eval",
+                            )) {
+                                e_.is_direct_eval = true;
+
+                                // Pessimistically assume that if this looks like a CommonJS module
+                                // (e.g. no "export" keywords), a direct call to "eval" means that
+                                // code could potentially access "module" or "exports".
+                                if (p.options.bundle and !p.is_file_considered_to_have_esm_exports) {
+                                    p.recordUsage(p.module_ref);
+                                    p.recordUsage(p.exports_ref);
+                                }
+
+                                var scope_iter: ?*js_ast.Scope = p.current_scope;
+                                while (scope_iter) |scope| : (scope_iter = scope.parent) {
+                                    scope.contains_direct_eval = true;
+                                }
+
+                                // TODO: Log a build note for this like esbuild does
+                            }
                         },
                         .e_dot => |dot| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
@@ -17671,12 +17703,12 @@ fn NewParser_(
                                     const value = SideEffects.simpifyUnusedExpr(p, visited_value) orelse visited_value;
 
                                     // We are doing `module.exports = { ... }`
-                                    // lets rewrite it to a series of what will become export assignemnts
+                                    // lets rewrite it to a series of what will become export assignments
                                     const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
-                                            std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(key)}) catch unreachable,
+                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
                                         ) catch unreachable;
                                         p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                         named_export_entry.value_ptr.* = .{
@@ -17782,7 +17814,7 @@ fn NewParser_(
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
                                         .other,
-                                        std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
+                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                     ) catch unreachable;
                                     p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                     named_export_entry.value_ptr.* = .{
@@ -21032,7 +21064,7 @@ fn NewParser_(
                                 prev_stmt.data.s_local.decls.len == 1 and
                                 s_expr.value.data.e_binary.op == .bin_assign and
                                 // we can only do this with var because var is hoisted
-                                // the statment we are merging into may use the statement before its defined.
+                                // the statement we are merging into may use the statement before its defined.
                                 prev_stmt.data.s_local.kind == .k_var)
                             {
                                 var prev_local = prev_stmt.data.s_local;

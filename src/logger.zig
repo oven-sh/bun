@@ -1115,6 +1115,16 @@ pub const Log = struct {
         });
     }
 
+    pub fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) !void {
+        @setCold(true);
+        log.warnings += 1;
+        try log.addMsg(.{
+            .kind = .warn,
+            .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .notes = notes,
+        });
+    }
+
     pub fn addRangeErrorFmtWithNote(
         log: *Log,
         source: ?*const Source,
@@ -1318,7 +1328,7 @@ pub const Source = struct {
 
     index: Index = Index.source(0),
 
-    pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
+    pub fn fmtIdentifier(this: *const Source) bun.fmt.FormatValidIdentifier {
         return this.path.name.fmtIdentifier();
     }
 

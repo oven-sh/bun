@@ -329,7 +329,9 @@ void JSTextEncoder::finishCreation(VM& vm)
 
 JSObject* JSTextEncoder::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSTextEncoderPrototype::create(vm, &globalObject, JSTextEncoderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSTextEncoderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSTextEncoderPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSTextEncoder::prototype(VM& vm, JSDOMGlobalObject& globalObject)

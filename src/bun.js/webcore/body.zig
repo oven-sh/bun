@@ -184,7 +184,7 @@ pub const Body = struct {
                                 }
 
                                 break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
-                                    .Multipart => |multipart| bun.String.init(multipart).toJSConst(globalThis),
+                                    .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
                                     .URLEncoded => JSC.JSValue.jsUndefined(),
                                 });
                             },
@@ -539,25 +539,31 @@ pub const Body = struct {
             value.ensureStillAlive();
 
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
+                if (readable.isDisturbed(globalThis)) {
+                    globalThis.throw("ReadableStream has already been used", .{});
+                    return null;
+                }
+
                 switch (readable.ptr) {
                     .Blob => |blob| {
+                        readable.forceDetach(globalThis);
+
                         const result: Value = .{
                             .Blob = Blob.initWithStore(blob.store, globalThis),
                         };
                         blob.store.ref();
 
-                        readable.done();
-
                         if (!blob.done) {
                             blob.done = true;
                             blob.deinit();
                         }
+
                         return result;
                     },
                     else => {},
                 }
 
-                return Body.Value.fromReadableStream(readable, globalThis);
+                return Body.Value.fromReadableStreamWithoutLockCheck(readable, globalThis);
             }
 
             return Body.Value{
@@ -573,11 +579,7 @@ pub const Body = struct {
             };
         }
 
-        pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            if (readable.isLocked(globalThis)) {
-                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
-            }
-
+        pub fn fromReadableStreamWithoutLockCheck(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
             readable.value.protect();
             return .{
                 .Locked = .{
@@ -585,6 +587,14 @@ pub const Body = struct {
                     .global = globalThis,
                 },
             };
+        }
+
+        pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
+            if (readable.isLocked(globalThis)) {
+                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
+            }
+
+            return fromReadableStreamWithoutLockCheck(readable, globalThis);
         }
 
         pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
@@ -649,8 +659,7 @@ pub const Body = struct {
                             async_form_data.toJS(global, blob.slice(), promise);
                         },
                         else => {
-                            var ptr = bun.default_allocator.create(Blob) catch unreachable;
-                            ptr.* = new.use();
+                            var ptr = bun.new(Blob, new.use());
                             ptr.allocator = bun.default_allocator;
                             promise.resolve(global, ptr.toJS(global));
                         },
@@ -966,9 +975,21 @@ pub fn BodyMixin(comptime Type: type) type {
 
         pub fn getBodyUsed(
             this: *Type,
-            _: *JSC.JSGlobalObject,
+            globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
-            return JSValue.jsBoolean(this.getBodyValue().* == .Used);
+            return JSValue.jsBoolean(
+                switch (this.getBodyValue().*) {
+                    .Used => true,
+                    .Locked => |*pending| brk: {
+                        if (pending.readable) |*stream| {
+                            break :brk stream.isDisturbed(globalObject);
+                        }
+
+                        break :brk false;
+                    },
+                    else => false,
+                },
+            );
         }
 
         pub fn getJSON(
@@ -1107,8 +1128,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.use();
-            var ptr = getAllocator(globalObject).create(Blob) catch unreachable;
-            ptr.* = blob;
+            var ptr = bun.new(Blob, blob);
             blob.allocator = getAllocator(globalObject);
 
             if (blob.content_type.len == 0 and blob.store != null) {

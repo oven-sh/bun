@@ -304,8 +304,8 @@ pub export fn Bun__Process__send(
     }
 }
 
-pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, input_ptr: [*]const u8, input_len: usize) bool {
-    return strings.eql(globalObject.bunVM().main, input_ptr[0..input_len]);
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
+    return str.eqlUTF8(globalObject.bunVM().main);
 }
 
 pub export fn Bun__Process__disconnect(
@@ -762,7 +762,7 @@ pub const VirtualMachine = struct {
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
             if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
-                this.initIPCInstance(fd);
+                this.initIPCInstance(bun.toFD(fd));
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
             }
@@ -1255,6 +1255,8 @@ pub const VirtualMachine = struct {
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
 
+    pub var is_smol_mode = false;
+
     pub fn init(opts: Options) !*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
@@ -1342,6 +1344,9 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.smol = opts.smol;
+
+        if (opts.smol)
+            is_smol_mode = opts.smol;
 
         if (source_code_printer == null) {
             const writer = try js_printer.BufferWriter.init(allocator);
@@ -1708,7 +1713,7 @@ pub const VirtualMachine = struct {
                     source_to_use,
                     normalized_specifier,
                     if (is_esm) .stmt else .require,
-                    .read_only,
+                    if (jsc_vm.standalone_module_graph == null) .read_only else .disable,
                 )) {
                     .success => |r| r,
                     .failure => |e| e,
@@ -2086,7 +2091,7 @@ pub const VirtualMachine = struct {
                 this.bundler.fs.top_level_dir,
                 normalizeSource(preload),
                 .stmt,
-                .read_only,
+                if (this.standalone_module_graph == null) .read_only else .disable,
             )) {
                 .success => |r| r,
                 .failure => |e| {
@@ -2878,7 +2883,7 @@ pub const VirtualMachine = struct {
         const show = Show{
             .system_code = !exception.system_code.eql(name) and !exception.system_code.isEmpty(),
             .syscall = !exception.syscall.isEmpty(),
-            .errno = exception.errno < 0,
+            .errno = exception.errno != 0,
             .path = !exception.path.isEmpty(),
             .fd = exception.fd != -1,
         };
@@ -3042,7 +3047,7 @@ pub const VirtualMachine = struct {
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
         if (Environment.isWindows) {
             Output.warn("IPC is not supported on Windows", .{});
             return;
@@ -3051,18 +3056,15 @@ pub const VirtualMachine = struct {
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        const socket = uws.newSocketFromFd(context, @sizeOf(*IPCInstance), fd) orelse {
-            uws.us_socket_context_free(0, context);
-            Output.warn("Failed to initialize IPC connection to parent", .{});
-            return;
-        };
-
         var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
         instance.* = .{
             .globalThis = this.global,
             .uws_context = context,
-            .ipc = .{ .socket = socket },
+            .ipc = undefined,
         };
+        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        instance.ipc = .{ .socket = socket };
+
         const ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
         this.ipc = instance;
@@ -3388,13 +3390,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
-                                            file_ent.entry.cache.fd = 0;
+                                            file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
                                             file_hash = @This().Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
-                                                    if (file_descriptors[entry_id] != 0) {
+                                                    if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
                                                             current_task.append(@as(u32, @truncate(entry_id)));
                                                             ctx.removeAtIndex(

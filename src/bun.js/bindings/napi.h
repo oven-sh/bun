@@ -101,6 +101,8 @@ public:
     ~NapiRef()
     {
         strongRef.clear();
+        // The weak ref can lead to calling the destructor
+        // so we must first clear the weak ref before we call the finalizer
         weakValueRef.clear();
     }
 
@@ -239,5 +241,7 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
+
+Structure* createNAPIFunctionStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
 }

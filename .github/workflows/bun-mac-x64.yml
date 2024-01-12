@@ -15,6 +15,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
@@ -25,6 +26,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
@@ -109,7 +111,7 @@ jobs:
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
-            runner: macos-12
+            runner: macos-12-large
             artifact: bun-obj-darwin-x64
     steps:
       - uses: actions/checkout@v4
@@ -183,7 +185,7 @@ jobs:
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
-            runner: macos-12
+            runner: macos-12-large
             artifact: bun-obj-darwin-x64
     steps:
       - uses: actions/checkout@v4
@@ -255,9 +257,8 @@ jobs:
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             package: bun-darwin-x64
-            runner: macos-12
+            runner: macos-12-large
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-macos-amd64-lto.tar.gz"
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
@@ -388,7 +389,7 @@ jobs:
       matrix:
         include:
           - tag: bun-darwin-x64
-            runner: macos-12
+            runner: macos-12-large
     steps:
       - id: checkout
         name: Checkout

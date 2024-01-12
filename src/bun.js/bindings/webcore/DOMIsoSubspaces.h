@@ -45,6 +45,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
+    std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
+
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -669,18 +671,18 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForIntersectionObserverEntry;
     // std::unique_ptr<IsoSubspace> m_subspaceForLocation;
     // std::unique_ptr<IsoSubspace> m_subspaceForNavigator;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformance;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceEntry;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMark;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMeasure;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformance;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceEntry;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMark;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMeasure;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceNavigation;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceNavigationTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserver;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserverEntryList;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserver;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserverEntryList;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformancePaintTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceResourceTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceServerTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceTiming;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForRemoteDOMWindow;
     // std::unique_ptr<IsoSubspace> m_subspaceForResizeObserver;
     // std::unique_ptr<IsoSubspace> m_subspaceForResizeObserverEntry;

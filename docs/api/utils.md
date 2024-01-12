@@ -378,10 +378,10 @@ Decompresses a `Uint8Array` using zlib's GUNZIP algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
-const compressed = Bun.gunzipSync(buf);
+const compressed = Bun.gzipSync(buf);
 
 const dec = new TextDecoder();
-const uncompressed = Bun.inflateSync(compressed);
+const uncompressed = Bun.gunzipSync(compressed);
 dec.decode(uncompressed);
 // => "hellohellohello..."
 ```

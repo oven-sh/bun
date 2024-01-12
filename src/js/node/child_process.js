@@ -571,18 +571,22 @@ function spawnSync(file, args, options) {
     }
   }
 
-  const { stdout, stderr, success, exitCode } = Bun.spawnSync({
+  const {
+    stdout = null,
+    stderr = null,
+    success,
+    exitCode,
+  } = Bun.spawnSync({
     cmd: options.args,
     env: options.env || undefined,
     cwd: options.cwd || undefined,
-    stdin: bunStdio[0],
-    stdout: bunStdio[1],
-    stderr: bunStdio[2],
+    stdio: bunStdio,
   });
 
   const result = {
     signal: null,
     status: exitCode,
+    // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
   };
 
@@ -1101,7 +1105,7 @@ class ChildProcess extends EventEmitter {
   #stdioOptions;
 
   #createStdioObject() {
-    let result = {};
+    let result = new Array(this.#stdioOptions.length);
     for (let i = 0; i < this.#stdioOptions.length; i++) {
       const element = this.#stdioOptions[i];
       if (element !== "pipe") {
@@ -1123,7 +1127,7 @@ class ChildProcess extends EventEmitter {
           continue;
       }
     }
-    return ObjectCreate.$call(null, result);
+    return result;
   }
 
   get stdin() {
@@ -1327,16 +1331,22 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item) {
+function nodeToBun(item, index) {
+  // If not defined, use the default.
+  // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
+  if (item == null) {
+    return index > 3 ? "ignore" : "pipe";
+  }
   // If inherit and we are referencing stdin/stdout/stderr index,
   // we can get the fd from the ReadStream for the corresponding stdio
   if (typeof item === "number") {
     return item;
-  } else {
-    const result = nodeToBunLookup[item];
-    if (result === undefined) throw new Error(`Invalid stdio option "${item}"`);
-    return result;
   }
+  const result = nodeToBunLookup[item];
+  if (result === undefined) {
+    throw new Error(`Invalid stdio option "${item}"`);
+  }
+  return result;
 }
 
 function fdToStdioName(fd) {
@@ -1376,7 +1386,7 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(item => nodeToBun(item));
+  const bunStdio = normalizedStdio.map(nodeToBun);
   return bunStdio;
 }
 

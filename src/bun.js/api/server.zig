@@ -5368,7 +5368,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             const fmt = switch (this.config.address) {
-                .unix => |unix| strings.URLFormatter{
+                .unix => |unix| bun.fmt.URLFormatter{
                     .proto = .unix,
                     .hostname = bun.sliceTo(@constCast(unix), 0),
                 },
@@ -5377,7 +5377,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     if (this.listener) |listener| {
                         port = @intCast(listener.getLocalPort());
                     }
-                    break :blk strings.URLFormatter{
+                    break :blk bun.fmt.URLFormatter{
                         .proto = if (comptime ssl_enabled_) .https else .http,
                         .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
                         .port = port,
@@ -5638,7 +5638,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     },
                     .unix => |unix| {
                         error_instance = (JSC.SystemError{
-                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
                             .code = bun.String.static("EADDRINUSE"),
                             .syscall = bun.String.static("listen"),
                         }).toErrorInstance(this.globalThis);

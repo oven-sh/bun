@@ -4252,7 +4252,7 @@ pub const NodeFS = struct {
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSlice = if (!Environment.isWindows)
+        const path: bun.OSPathSliceZ = if (!Environment.isWindows)
             args.path.osPath(&buf)
         else brk: {
             // TODO(@paperdave): clean this up a lot.
@@ -4273,15 +4273,15 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn _isSep(char: std.meta.Child(bun.OSPathSlice)) bool {
+    pub fn _isSep(char: bun.OSPathChar) bool {
         return if (Environment.isWindows)
             char == '/' or char == '\\'
         else
             char == '/';
     }
 
-    pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSlice, mode: Mode, comptime return_path: bool) Maybe(Return.Mkdir) {
-        const Char = std.meta.Child(bun.OSPathSlice);
+    pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSliceZ, mode: Mode, comptime return_path: bool) Maybe(Return.Mkdir) {
+        const Char = bun.OSPathChar;
         const len = @as(u16, @truncate(path.len));
 
         // First, attempt to create the desired directory
@@ -4628,7 +4628,7 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = fd.asDir();
-        var iterator = DirIterator.iterate(dir);
+        var iterator = DirIterator.iterate(dir, .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4724,7 +4724,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.asDir());
+        var iterator = DirIterator.iterate(fd.asDir(), .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4867,7 +4867,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.asDir());
+            var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -5750,7 +5750,7 @@ pub const NodeFS = struct {
         }
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
@@ -5849,7 +5849,7 @@ pub const NodeFS = struct {
         }
 
         const watcher = args.createFSWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
@@ -6008,18 +6008,7 @@ pub const NodeFS = struct {
 
         var iterator = iterator: {
             const dir = fd.asDir();
-            if (Environment.isWindows) {
-                // iterate directly over [:0]const u16 instead of converting to utf8
-                break :iterator DirIterator.IteratorW{
-                    .dir = dir,
-                    .index = 0,
-                    .end_index = 0,
-                    .first = true,
-                    .buf = undefined,
-                    .name_data = undefined,
-                };
-            }
-            break :iterator DirIterator.iterate(dir);
+            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
         };
         var entry = iterator.next();
         while (switch (entry) {
@@ -6028,23 +6017,23 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
-            const name_slice = if (Environment.isWindows) current.name else current.name.slice();
+            const name_slice = current.name.slice();
 
-            @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], name_slice);
+            @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + name_slice.len], name_slice);
             src_buf[src_dir_len] = std.fs.path.sep;
-            src_buf[src_dir_len + 1 + current.name.len] = 0;
+            src_buf[src_dir_len + 1 + name_slice.len] = 0;
 
-            @memcpy(dest_buf[dest_dir_len + 1 .. dest_dir_len + 1 + current.name.len], name_slice);
+            @memcpy(dest_buf[dest_dir_len + 1 .. dest_dir_len + 1 + name_slice.len], name_slice);
             dest_buf[dest_dir_len] = std.fs.path.sep;
-            dest_buf[dest_dir_len + 1 + current.name.len] = 0;
+            dest_buf[dest_dir_len + 1 + name_slice.len] = 0;
 
             switch (current.kind) {
                 .directory => {
                     const r = this._cpSync(
                         src_buf,
-                        src_dir_len + 1 + current.name.len,
+                        src_dir_len + @as(PathString.PathInt, @intCast(1 + name_slice.len)),
                         dest_buf,
-                        dest_dir_len + 1 + current.name.len,
+                        dest_dir_len + @as(PathString.PathInt, @intCast(1 + name_slice.len)),
                         args,
                     );
                     switch (r) {
@@ -6054,8 +6043,8 @@ pub const NodeFS = struct {
                 },
                 else => {
                     const r = this._copySingleFileSync(
-                        src_buf[0 .. src_dir_len + 1 + current.name.len :0],
-                        dest_buf[0 .. dest_dir_len + 1 + current.name.len :0],
+                        src_buf[0 .. src_dir_len + 1 + name_slice.len :0],
+                        dest_buf[0 .. dest_dir_len + 1 + name_slice.len :0],
                         @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                         null,
                     );
@@ -6077,8 +6066,8 @@ pub const NodeFS = struct {
     /// This is `copyFile`, but it copies symlinks as-is
     pub fn _copySingleFileSync(
         this: *NodeFS,
-        src: bun.OSPathSlice,
-        dest: bun.OSPathSlice,
+        src: bun.OSPathSliceZ,
+        dest: bun.OSPathSliceZ,
         mode: Constants.Copyfile,
         /// Stat on posix, file attributes on windows
         reuse_stat: ?if (Environment.isWindows) windows.DWORD else std.os.Stat,
@@ -6464,7 +6453,7 @@ pub const NodeFS = struct {
         }
 
         const dir = fd.asDir();
-        var iterator = DirIterator.iterate(dir);
+        var iterator = DirIterator.iterate(dir, .u8);
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {

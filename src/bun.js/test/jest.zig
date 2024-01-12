@@ -654,7 +654,7 @@ pub const TestScope = struct {
             vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
-        debug("test({})", .{strings.QuotedFormatter{ .text = this.label }});
+        debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
@@ -1080,7 +1080,7 @@ pub const DescribeScope = struct {
         defer callback.unprotect();
         this.push();
         defer this.pop();
-        debug("describe({})", .{strings.QuotedFormatter{ .text = this.label }});
+        debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         if (callback == .zero) {
             this.runTests(globalObject);

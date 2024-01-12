@@ -18,7 +18,7 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const errno = os.errno;
-const mode_t = C.mode_t;
+const mode_t = bun.Mode;
 // TODO: this is wrong on Windows
 const libc_stat = bun.Stat;
 
@@ -160,6 +160,10 @@ pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    if (comptime Environment.isWindows) {
+        @panic("TODO windows");
+    }
+
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
 
     // Attempt to delete incase it already existed.
@@ -186,18 +190,15 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     }
 }
 
-pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
-    if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
-    }
-    return switch (mode & os.S.IFMT) {
-        os.S.IFBLK => std.fs.File.Kind.block_device,
-        os.S.IFCHR => std.fs.File.Kind.character_device,
-        os.S.IFDIR => std.fs.File.Kind.directory,
-        os.S.IFIFO => std.fs.File.Kind.named_pipe,
-        os.S.IFLNK => std.fs.File.Kind.sym_link,
-        os.S.IFREG => std.fs.File.Kind.file,
-        os.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
+pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
+    return switch (mode & bun.S.IFMT) {
+        bun.S.IFBLK => std.fs.File.Kind.block_device,
+        bun.S.IFCHR => std.fs.File.Kind.character_device,
+        bun.S.IFDIR => std.fs.File.Kind.directory,
+        bun.S.IFIFO => std.fs.File.Kind.named_pipe,
+        bun.S.IFLNK => std.fs.File.Kind.sym_link,
+        bun.S.IFREG => std.fs.File.Kind.file,
+        bun.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
         else => .unknown,
     };
 }

@@ -1995,6 +1995,9 @@ pub const OutputFile = struct {
             Fs.FileSystem.setMaxFd(fd_out);
             Fs.FileSystem.setMaxFd(fd_in);
             do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
+
+            // use paths instead of bun.getFdPathW()
+            @panic("TODO windows");
         }
 
         defer {

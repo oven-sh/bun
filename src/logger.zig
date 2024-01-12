@@ -1328,7 +1328,7 @@ pub const Source = struct {
 
     index: Index = Index.source(0),
 
-    pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
+    pub fn fmtIdentifier(this: *const Source) bun.fmt.FormatValidIdentifier {
         return this.path.name.fmtIdentifier();
     }
 

@@ -91,7 +91,7 @@ fn buildRequestBody(
         host_.deinit();
     }
 
-    const host_fmt = strings.HostFormatter{
+    const host_fmt = bun.fmt.HostFormatter{
         .is_https = is_https,
         .host = host_.slice(),
         .port = port,

@@ -54,11 +54,14 @@ pub fn initializeStore() void {
     js_ast.Stmt.Data.Store.create(default_allocator);
 }
 
-const skip_dirs = &[_]string{ "node_modules", ".git" };
-const skip_files = &[_]string{
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
+const skip_dirs = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("node_modules"),
+    bun.OSPathLiteral(".git"),
+};
+const skip_files = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("package-lock.json"),
+    bun.OSPathLiteral("yarn.lock"),
+    bun.OSPathLiteral("pnpm-lock.yaml"),
 };
 
 const never_conflict = &[_]string{
@@ -480,35 +483,37 @@ pub const CreateCommand = struct {
                         while (try walker.next()) |entry| {
                             if (entry.kind != .file) continue;
 
-                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                                if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                                    destination_dir_.makePath(entry_dirname) catch {};
+                            const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
+                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                    bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                                break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
                                     node_.end();
 
                                     progress_.refresh();
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                                     Global.exit(1);
                                 };
                             };
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
+                            var infile = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             if (comptime Environment.isPosix) {
                                 // Assumption: you only really care about making sure something that was executable is still executable
                                 const stat = infile.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, stat.mode);
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             } else {
                                 @panic("TODO on Windows");
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                                 Global.exit(1);
                             };
                         }
@@ -1755,7 +1760,7 @@ pub const Example = struct {
                         switch (entry.kind) {
                             .directory => {
                                 inline for (skip_dirs) |skip_dir| {
-                                    if (strings.eqlComptime(entry.name, skip_dir)) {
+                                    if (strings.eqlComptime(entry.name, comptime bun.pathLiteral(skip_dir))) {
                                         continue :loop;
                                     }
                                 }

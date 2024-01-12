@@ -15,6 +15,9 @@ const Semver = @import("./semver.zig");
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const Environment = bun.Environment;
+
 const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
@@ -149,9 +152,9 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var final_path_buf: bun.PathBuffer = undefined;
+threadlocal var folder_name_buf: bun.PathBuffer = undefined;
+threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
@@ -279,18 +282,49 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     // Now that we've extracted the archive, we rename.
-    switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
-        .err => |err| {
+    if (comptime Environment.isWindows) {
+        // TODO(dylan-conway) make this less painful
+        var from_buf: bun.PathBuffer = undefined;
+        const tmpdir_path = try bun.getFdPath(tmpdir.fd, &from_buf);
+        const from_path = Path.joinAbsStringZ(tmpdir_path, &.{bun.sliceTo(tmpname, 0)}, .auto);
+
+        var to_buf: bun.PathBuffer = undefined;
+        const cache_dir_path = try bun.getFdPath(cache_dir.fd, &to_buf);
+        const to_path = Path.joinAbsStringBufZ(cache_dir_path, &to_buf, &.{folder_name}, .auto);
+
+        var from_path_buf_w: bun.WPathBuffer = undefined;
+        const from_path_w = bun.strings.toWPath(&from_path_buf_w, from_path);
+        var to_path_buf_w: bun.WPathBuffer = undefined;
+        const to_path_w = bun.strings.toWPath(&to_path_buf_w, to_path);
+
+        if (bun.windows.MoveFileExW(
+            from_path_w,
+            to_path_w,
+            bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH,
+        ) == bun.windows.FALSE) {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
                 this.package_manager.allocator,
-                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                .{ name, err, tmpname, folder_name },
+                "moving \"{s}\" to cache dir failed:  From: {s}\n    To: {s}",
+                .{ name, tmpname, folder_name },
             ) catch unreachable;
             return error.InstallFailed;
-        },
-        .result => {},
+        }
+    } else {
+        switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
+            .err => |err| {
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.package_manager.allocator,
+                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                    .{ name, err, tmpname, folder_name },
+                ) catch unreachable;
+                return error.InstallFailed;
+            },
+            .result => {},
+        }
     }
 
     // We return a resolved absolute absolute file path to the cache dir.

@@ -695,7 +695,7 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
                 const result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                this.fd = bun.toFD(result);
+                this.fd = bun.toLibUVOwnedFD(result);
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
@@ -712,7 +712,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ strings.fmtUTF16(existing), strings.fmtUTF16(new) });
+                    debug("moveFileExW({s}, {s})", .{ bun.fmt.fmtUTF16(existing), bun.fmt.fmtUTF16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -1440,8 +1440,8 @@ pub const PathName = struct {
         return this.dir;
     }
 
-    pub fn fmtIdentifier(self: *const PathName) strings.FormatValidIdentifier {
-        return strings.fmtIdentifier(self.nonUniqueNameStringBase());
+    pub fn fmtIdentifier(self: *const PathName) bun.fmt.FormatValidIdentifier {
+        return bun.fmt.fmtIdentifier(self.nonUniqueNameStringBase());
     }
 
     // For readability, the names of certain automatically-generated symbols are

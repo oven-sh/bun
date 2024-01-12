@@ -101,8 +101,8 @@ pub const URL = struct {
         return "localhost";
     }
 
-    pub fn displayHost(this: *const URL) strings.HostFormatter {
-        return strings.HostFormatter{
+    pub fn displayHost(this: *const URL) bun.fmt.HostFormatter {
+        return bun.fmt.HostFormatter{
             .host = if (this.host.len > 0) this.host else this.displayHostname(),
             .port = if (this.port.len > 0) this.getPort() else null,
             .is_https = this.isHTTPS(),

@@ -4,6 +4,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const Schema = bun.Schema.Api;
+const strings = bun.strings;
 
 const Environment = bun.Environment;
 
@@ -329,11 +330,27 @@ pub const StandaloneModuleGraph = struct {
             };
 
             defer _ = Syscall.close(self_fd);
-            bun.copyFile(bun.fdcast(self_fd), bun.fdcast(fd)) catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                cleanup(zname, fd);
-                Global.exit(1);
-            };
+
+            if (comptime Environment.isWindows) {
+                var in_buf: bun.WPathBuffer = undefined;
+                strings.copyU8IntoU16(&in_buf, self_exeZ);
+                const in = in_buf[0..self_exe.len :0];
+                var out_buf: bun.WPathBuffer = undefined;
+                strings.copyU8IntoU16(&out_buf, zname);
+                const out = out_buf[0..zname.len :0];
+
+                bun.copyFile(in, out) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                    cleanup(zname, fd);
+                    Global.exit(1);
+                };
+            } else {
+                bun.copyFile(bun.fdcast(self_fd), bun.fdcast(fd)) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                    cleanup(zname, fd);
+                    Global.exit(1);
+                };
+            }
             break :brk fd;
         };
 

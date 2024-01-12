@@ -23,8 +23,8 @@
 
 "use strict";
 
+let toASCII;
 const { URL, URLSearchParams } = globalThis;
-const { toASCII } = require("node:punycode");
 
 function Url() {
   this.protocol = null;
@@ -316,7 +316,7 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
        * have non-ASCII characters, i.e. it doesn't matter if
        * you call it with a domain that already is ASCII-only.
        */
-      this.hostname = toASCII(this.hostname);
+      this.hostname = (toASCII ??= require("node:punycode").toASCII)(this.hostname);
     }
 
     var p = this.port ? ":" + this.port : "";

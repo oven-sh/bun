@@ -6044,9 +6044,6 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
-        if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Windows support for bun install is not implemented yet");
-        }
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
 
@@ -7284,10 +7281,6 @@ pub const PackageManager = struct {
         comptime op: Lockfile.Package.Diff.Op,
         comptime subcommand: Subcommand,
     ) !void {
-        if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Windows support for bun install is not implemented yet");
-        }
-
         var manager = init(ctx, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (op) {

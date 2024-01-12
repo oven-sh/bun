@@ -381,7 +381,8 @@ if (failing_tests.length) {
       report += `${reason}\n\n`;
     }
     report += "```\n";
-    report += output.replace(/\x1b\[[0-9;]*m/g, "");
+    report += output.replace(/\x1b\[[0-9;]*m/g, "")
+      .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "")
     report += "```\n\n";
   }
 }

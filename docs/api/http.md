@@ -108,6 +108,7 @@ server.stop();
 
 Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
 
+*Note*: The ```tls``` object must come **before** the ```fetch()``` to prevent TypeError
 ```ts-diff
   Bun.serve({
 +   tls: {

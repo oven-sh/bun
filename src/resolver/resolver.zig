@@ -3975,9 +3975,9 @@ pub const Resolver = struct {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 
                     if (err == error.ENOENT or err == error.FileNotFound) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.strings.QuotedFormatter{ .text = pretty }}) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.strings.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
@@ -3992,7 +3992,7 @@ pub const Resolver = struct {
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.STDIN_FD) catch |err| {
                             r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
                                 @errorName(err),
-                                strings.QuotedFormatter{
+                                bun.fmt.QuotedFormatter{
                                     .text = abs_path,
                                 },
                             }) catch {};

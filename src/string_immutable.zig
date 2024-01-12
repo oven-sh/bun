@@ -25,6 +25,7 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 pub fn w(comptime str: []const u8) [:0]const u16 {
+    if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
     comptime var output: [str.len + 1]u16 = undefined;
 
     for (str, 0..) |c, i| {
@@ -205,78 +206,6 @@ pub fn indexOfCharNeg(self: string, char: u8) i32 {
     }
     return -1;
 }
-
-/// Format a string to an ECMAScript identifier.
-/// Unlike the string_mutable.zig version, this always allocate/copy
-pub fn fmtIdentifier(name: string) FormatValidIdentifier {
-    return FormatValidIdentifier{ .name = name };
-}
-
-/// Format a string to an ECMAScript identifier.
-/// Different implementation than string_mutable because string_mutable may avoid allocating
-/// This will always allocate
-pub const FormatValidIdentifier = struct {
-    name: string,
-    pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var iterator = strings.CodepointIterator.init(self.name);
-        var cursor = strings.CodepointIterator.Cursor{};
-
-        var has_needed_gap = false;
-        var needs_gap = false;
-        var start_i: usize = 0;
-
-        if (!iterator.next(&cursor)) {
-            try writer.writeAll("_");
-            return;
-        }
-
-        // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
-        if (!needs_gap) {
-            // Are there any non-alphanumeric chars at all?
-            while (iterator.next(&cursor)) {
-                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
-                    needs_gap = true;
-                    start_i = cursor.i;
-                    break;
-                }
-            }
-        }
-
-        if (needs_gap) {
-            needs_gap = false;
-            if (start_i > 0) try writer.writeAll(self.name[0..start_i]);
-            var slice = self.name[start_i..];
-            iterator = strings.CodepointIterator.init(slice);
-            cursor = strings.CodepointIterator.Cursor{};
-
-            while (iterator.next(&cursor)) {
-                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
-                    if (needs_gap) {
-                        try writer.writeAll("_");
-                        needs_gap = false;
-                        has_needed_gap = true;
-                    }
-                    try writer.writeAll(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
-                } else if (!needs_gap) {
-                    needs_gap = true;
-                    // skip the code point, replace it with a single _
-                }
-            }
-
-            // If it ends with an emoji
-            if (needs_gap) {
-                try writer.writeAll("_");
-                needs_gap = false;
-                has_needed_gap = true;
-            }
-
-            return;
-        }
-
-        try writer.writeAll(self.name);
-    }
-};
 
 pub fn indexOfSigned(self: string, str: string) i32 {
     const i = std.mem.indexOf(u8, self, str) orelse return -1;
@@ -767,82 +696,6 @@ pub fn endsWithAny(self: string, str: string) bool {
 
     return false;
 }
-
-// Formats a string to be safe to output in a Github action.
-// - Encodes "\n" as "%0A" to support multi-line strings.
-//   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
-// - Strips ANSI output as it will appear malformed.
-pub fn githubActionWriter(writer: anytype, self: string) !void {
-    var offset: usize = 0;
-    const end = @as(u32, @truncate(self.len));
-    while (offset < end) {
-        if (indexOfNewlineOrNonASCIIOrANSI(self, @as(u32, @truncate(offset)))) |i| {
-            const byte = self[i];
-            if (byte > 0x7F) {
-                offset += @max(wtf8ByteSequenceLength(byte), 1);
-                continue;
-            }
-            if (i > 0) {
-                try writer.writeAll(self[offset..i]);
-            }
-            var n: usize = 1;
-            if (byte == '\n') {
-                try writer.writeAll("%0A");
-            } else if (i + 1 < end) {
-                const next = self[i + 1];
-                if (byte == '\r' and next == '\n') {
-                    n += 1;
-                    try writer.writeAll("%0A");
-                } else if (byte == '\x1b' and next == '[') {
-                    n += 1;
-                    if (i + 2 < end) {
-                        const remain = self[(i + 2)..@min(i + 5, end)];
-                        if (indexOfChar(remain, 'm')) |j| {
-                            n += j + 1;
-                        }
-                    }
-                }
-            }
-            offset = i + n;
-        } else {
-            try writer.writeAll(self[offset..end]);
-            break;
-        }
-    }
-}
-
-pub const GithubActionFormatter = struct {
-    text: string,
-
-    pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try githubActionWriter(writer, this.text);
-    }
-};
-
-pub fn githubAction(self: string) strings.GithubActionFormatter {
-    return GithubActionFormatter{
-        .text = self,
-    };
-}
-
-pub fn quotedWriter(writer: anytype, self: string) !void {
-    const remain = self;
-    if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
-        try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
-    } else {
-        try writer.writeAll("\"");
-        try writer.writeAll(self);
-        try writer.writeAll("\"");
-    }
-}
-
-pub const QuotedFormatter = struct {
-    text: []const u8,
-
-    pub fn format(this: QuotedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try strings.quotedWriter(writer, this.text);
-    }
-};
 
 pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
     var count: usize = 0;
@@ -3446,6 +3299,15 @@ pub fn isValidUTF8(slice: []const u8) bool {
 }
 
 pub fn isAllASCII(slice: []const u8) bool {
+    if (@inComptime()) {
+        for (slice) |char| {
+            if (char > 127) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);
 
@@ -3483,15 +3345,6 @@ pub fn isAllASCII(slice: []const u8) bool {
         }
     }
 
-    return true;
-}
-
-pub fn isAllASCIISimple(comptime slice: []const u8) bool {
-    for (slice) |char| {
-        if (char > 127) {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -4418,106 +4271,10 @@ test "firstNonASCII16" {
     }
 }
 
-const SharedTempBuffer = [32 * 1024]u8;
-fn getSharedBuffer() []u8 {
-    return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
-        shared_temp_buffer_ptr = bun.default_allocator.create(SharedTempBuffer) catch unreachable;
-        break :brk shared_temp_buffer_ptr.?;
-    });
-}
-threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
-
-pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
-    var chunk = getSharedBuffer();
-
-    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
-    shared_temp_buffer_ptr = null;
-    defer {
-        if (shared_temp_buffer_ptr) |existing| {
-            if (existing != chunk.ptr) {
-                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
-            }
-        } else {
-            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
-        }
-    }
-
-    var slice = slice_;
-
-    while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
-        if (result.read == 0 or result.written == 0)
-            break;
-        try writer.writeAll(chunk[0..result.written]);
-        slice = slice[result.read..];
-    }
-}
-
-pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
-    return formatUTF16Type([]align(1) const u16, slice_, writer);
-}
-
-pub const FormatUTF16 = struct {
-    buf: []const u16,
-    pub fn format(self: @This(), comptime _: []const u8, opts: anytype, writer: anytype) !void {
-        _ = opts;
-        try formatUTF16Type([]const u16, self.buf, writer);
-    }
-};
-
-pub const FormatUTF8 = struct {
-    buf: []const u8,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-        try writer.writeAll(self.buf);
-    }
-};
-
-pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
-    return FormatUTF16{ .buf = buf };
-}
-
-pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
-
-pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
-    return FormatOSPath{ .buf = buf };
-}
-
-pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
-    var chunk = getSharedBuffer();
-    var slice = slice_;
-
-    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
-    shared_temp_buffer_ptr = null;
-    defer {
-        if (shared_temp_buffer_ptr) |existing| {
-            if (existing != chunk.ptr) {
-                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
-            }
-        } else {
-            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
-        }
-    }
-
-    while (strings.firstNonASCII(slice)) |i| {
-        if (i > 0) {
-            try writer.writeAll(slice[0..i]);
-            slice = slice[i..];
-        }
-        const result = strings.copyLatin1IntoUTF8(chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
-        if (result.read == 0 or result.written == 0)
-            break;
-        try writer.writeAll(chunk[0..result.written]);
-        slice = slice[result.read..];
-    }
-
-    if (slice.len > 0)
-        try writer.writeAll(slice); // write the remaining bytes
-}
-
 test "print UTF16" {
     var err = std.io.getStdErr();
     const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
-    try formatUTF16(utf16, err.writer());
+    try bun.fmt.str.formatUTF16(utf16, err.writer());
     // std.unicode.fmtUtf16le(utf16le: []const u16)
 }
 
@@ -5361,71 +5118,6 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
-
-pub const HostFormatter = struct {
-    host: string,
-    port: ?u16 = null,
-    is_https: bool = false,
-
-    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (strings.indexOfChar(formatter.host, ':') != null) {
-            try writer.writeAll(formatter.host);
-            return;
-        }
-
-        try writer.writeAll(formatter.host);
-
-        const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
-            (!formatter.is_https and formatter.port == 80);
-        if (!is_port_optional) {
-            try writer.print(":{d}", .{formatter.port.?});
-            return;
-        }
-    }
-};
-
-const Proto = enum {
-    http,
-    https,
-    unix,
-};
-
-pub const URLFormatter = struct {
-    proto: Proto = .http,
-    hostname: ?string = null,
-    port: ?u16 = null,
-
-    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("{s}://", .{switch (this.proto) {
-            .http => "http",
-            .https => "https",
-            .unix => "unix",
-        }});
-
-        if (this.hostname) |hostname| {
-            const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
-            if (needs_brackets) {
-                try writer.print("[{s}]", .{hostname});
-            } else {
-                try writer.writeAll(hostname);
-            }
-        } else {
-            try writer.writeAll("localhost");
-        }
-
-        if (this.proto == .unix) {
-            return;
-        }
-
-        const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or
-            (this.proto == .http and this.port == 80);
-        if (is_port_optional) {
-            try writer.writeAll("/");
-        } else {
-            try writer.print(":{d}/", .{this.port.?});
-        }
-    }
-};
 
 pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,

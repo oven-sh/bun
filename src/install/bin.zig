@@ -13,6 +13,7 @@ const Fs = @import("../fs.zig");
 const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
+const string = bun.string;
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -327,13 +328,10 @@ pub const Bin = extern struct {
 
         fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
             // we use fchmodat to avoid any issues with current working directory
-            _ = C.fchmodat(folder, target, umask | 0o777, 0);
+            _ = C.fchmodat(folder, target, @intCast(umask | 0o777), 0);
         }
 
-        fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
-            if (comptime Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
+        fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             const node_modules = this.package_installed_node_modules.asDir();
             std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
@@ -359,6 +357,9 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
             var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var from_remain: []u8 = &target_buf;
@@ -369,7 +370,7 @@ pub const Bin = extern struct {
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
                     if (realpath_err == error.FileNotFound) {
                         if (comptime Environment.isWindows) {
-                            std.os.mkdiratW(root_dir.fd, bun.strings.w(".bin"), 0) catch |err| {
+                            std.os.mkdiratW(root_dir.fd, comptime bun.OSPathLiteral(".bin"), 0) catch |err| {
                                 this.err = err;
                                 return;
                             };
@@ -427,11 +428,6 @@ pub const Bin = extern struct {
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
 
-            if (comptime Environment.isWindows) {
-                // TODO: Bin.Linker.link() needs to be updated to generate .cmd files on Windows
-                @panic("TODO on Windows");
-            }
-
             switch (this.bin.tag) {
                 .none => {
                     if (comptime Environment.isDebug) {
@@ -459,7 +455,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSimlinkAndPermissions(target_path, dest_path);
+                    this.setSymlinkAndPermissions(target_path, dest_path);
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
@@ -479,13 +475,14 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSimlinkAndPermissions(target_path, dest_path);
+                    this.setSymlinkAndPermissions(target_path, dest_path);
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
                     const end = this.bin.value.map.len + extern_string_i;
                     const _from_remain = from_remain;
                     const _remain = remain;
+
                     while (extern_string_i < end) : (extern_string_i += 2) {
                         from_remain = _from_remain;
                         remain = _remain;
@@ -509,7 +506,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        this.setSimlinkAndPermissions(target_path, dest_path);
+                        this.setSymlinkAndPermissions(target_path, dest_path);
                     }
                 },
                 .dir => {
@@ -558,7 +555,7 @@ pub const Bin = extern struct {
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
-                                this.setSimlinkAndPermissions(from_path, to_path);
+                                this.setSymlinkAndPermissions(from_path, to_path);
                             },
                             else => {},
                         }

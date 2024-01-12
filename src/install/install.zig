@@ -2852,7 +2852,7 @@ pub const PackageManager = struct {
             if (!parsed.valid or parsed.wildcard != .none) continue;
             // not handling OOM
             // TODO: wildcard
-            var version = parsed.version.fill();
+            var version = parsed.version.min();
             const total = version.tag.build.len() + version.tag.pre.len();
             if (total > 0) {
                 tags_buf.ensureUnusedCapacity(total) catch unreachable;
@@ -6257,7 +6257,7 @@ pub const PackageManager = struct {
                 const sliced_version = SlicedString.init(version_string, version_string);
                 const result = Semver.Version.parse(sliced_version);
                 if (result.valid and result.wildcard == .none) {
-                    try workspaces.put(entry.name, result.version.fill());
+                    try workspaces.put(entry.name, result.version.min());
                     continue;
                 }
             }
@@ -7482,11 +7482,6 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (!any_changes) {
-                    Output.prettyErrorln("\n<red>error<r><d>:<r> \"<b>{s}<r>\" is not in a package.json file", .{updates[0].name});
-                    Global.exit(1);
-                    return;
-                }
                 manager.to_remove = updates;
             },
             .link, .add => {
@@ -7587,6 +7582,11 @@ pub const PackageManager = struct {
             manager.root_package_json_file.close();
 
             if (op == .remove) {
+                if (!any_changes) {
+                    Global.exit(0);
+                    return;
+                }
+
                 var cwd = std.fs.cwd();
                 // This is not exactly correct
                 var node_modules_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

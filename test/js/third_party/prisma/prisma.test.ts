@@ -20,6 +20,10 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
   let Client: typeof PrismaClient;
 
   try {
+    if(type !== 'sqlite' && !process.env[`TLS_${type.toUpperCase()}_DATABASE_URL`]) {
+      throw new Error(`$TLS_${type.toUpperCase()}_DATABASE_URL is not set`);
+    }
+
     Client = await generateClient(type);
   } catch (err: any) {
     console.warn(`Skipping ${type} tests, failed to generate/migrate`, err.message);

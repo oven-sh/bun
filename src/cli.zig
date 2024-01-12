@@ -330,19 +330,17 @@ pub const Arguments = struct {
             return;
         }
         defer ctx.debug.loaded_bunfig = true;
-        var config_path: [:0]u8 = undefined;
-        if (config_path_[0] == '/') {
+
+        const config_path = if (config_path_[0] == '/') blk: {
             @memcpy(config_buf[0..config_path_.len], config_path_);
             config_buf[config_path_.len] = 0;
-            config_path = config_buf[0..config_path_.len :0];
-        } else {
+            break :blk config_buf[0..config_path_.len :0];
+        } else blk: {
             if (ctx.args.absolute_working_dir == null) {
                 var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
-
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
-
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,
@@ -351,8 +349,8 @@ pub const Arguments = struct {
                 .auto,
             );
             config_buf[config_path_.len] = 0;
-            config_path = config_buf[0..config_path_.len :0];
-        }
+            break :blk config_buf[0..config_path_.len :0];
+        };
 
         try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
     }
@@ -402,19 +400,14 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
-            cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
-                break :brk try allocator.dupe(u8, out);
+        const cwd = if (args.option("--cwd")) |cwd_| brk: {
+            var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const out = std.os.realpath(cwd_, &outbuf) catch |err| {
+                Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                Global.exit(1);
             };
-        } else {
-            cwd = try bun.getcwdAlloc(allocator);
-        }
+            break :brk try allocator.dupe(u8, out);
+        } else try bun.getcwdAlloc(allocator);
 
         if (cmd == .TestCommand) {
             if (args.option("--timeout")) |timeout_ms| {

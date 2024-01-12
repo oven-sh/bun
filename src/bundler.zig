@@ -963,18 +963,15 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                var file: std.fs.File = undefined;
-
-                if (Outstream == std.fs.Dir) {
-                    const output_dir = outstream;
-
-                    if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                        try output_dir.makePath(dirname);
-                    }
-                    file = try output_dir.createFile(file_path.pretty, .{});
-                } else {
-                    file = outstream;
-                }
+                var file = switch (Outstream) {
+                    std.fs.Dir => blk: {
+                        if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                            try outstream.makePath(dirname);
+                        }
+                        break :blk try outstream.createFile(file_path.pretty, .{});
+                    },
+                    else => outstream,
+                };
 
                 const CSSBuildContext = struct {
                     origin: URL,

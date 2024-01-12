@@ -166,11 +166,9 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else undefined;
-
-        if (_file_handle == null) {
+        var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else blk: {
             if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd.int() > 0) {
-                file_handle = std.fs.Dir.openFile(dirname_fd.asDir(), std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
+                break :blk std.fs.Dir.openFile(dirname_fd.asDir(), std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {
                             const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
@@ -184,9 +182,9 @@ pub const Fs = struct {
                     }
                 };
             } else {
-                file_handle = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
+                break :blk try std.fs.cwd().openFile(path, .{ .mode = .read_only });
             }
-        }
+        };
 
         debug("openat({d}, {s}) = {d}", .{ dirname_fd, path, file_handle.handle });
 

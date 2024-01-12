@@ -1106,12 +1106,7 @@ fn writeProxyConnect(
     writer: Writer,
     client: *HTTPClient,
 ) !void {
-    var port: []const u8 = undefined;
-    if (client.url.getPort()) |_| {
-        port = client.url.port;
-    } else {
-        port = if (client.url.isHTTPS()) "443" else "80";
-    }
+    const port = if (client.url.getPort()) |_| client.url.port else if (client.url.isHTTPS()) "443" else "80";
     _ = writer.write("CONNECT ") catch 0;
     _ = writer.write(client.url.hostname) catch 0;
     _ = writer.write(":") catch 0;
@@ -1140,13 +1135,7 @@ fn writeProxyRequest(
     request: picohttp.Request,
     client: *HTTPClient,
 ) !void {
-    var port: []const u8 = undefined;
-    if (client.url.getPort()) |_| {
-        port = client.url.port;
-    } else {
-        port = if (client.url.isHTTPS()) "443" else "80";
-    }
-
+    const port = if (client.url.getPort()) |_| client.url.port else if (client.url.isHTTPS()) "443" else "80";
     _ = writer.write(request.method) catch 0;
     // will always be http:// here, https:// needs CONNECT tunnel
     _ = writer.write(" http://") catch 0;

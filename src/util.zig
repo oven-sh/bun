@@ -16,12 +16,7 @@ pub fn fromEntries(
     comptime EntryType: type,
     entries: EntryType,
 ) !Map {
-    var map: Map = undefined;
-    if (@hasField(Map, "allocator")) {
-        map = Map.init(allocator);
-    } else {
-        map = Map{};
-    }
+    var map = if (@hasField(Map, "allocator")) Map.init(allocator) else Map{};
 
     if (comptime bun.trait.isIndexable(EntryType)) {
         if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
@@ -88,12 +83,7 @@ pub fn fromMapLike(
     allocator: std.mem.Allocator,
     entries: anytype,
 ) !Map {
-    var map: Map = undefined;
-    if (comptime @hasField(Map, "allocator")) {
-        map = Map.init(allocator);
-    } else {
-        map = Map{};
-    }
+    var map = if (@hasField(Map, "allocator")) Map.init(allocator) else Map{};
 
     try map.ensureUnusedCapacity(entries.count());
 

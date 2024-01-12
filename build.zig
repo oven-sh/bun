@@ -132,8 +132,6 @@ const BunBuildOptions = struct {
 // relative to the prefix
 var output_dir: []const u8 = "";
 
-var optimize: std.builtin.OptimizeMode = .Debug;
-
 const Build = std.Build;
 const CrossTarget = std.zig.CrossTarget;
 const OptimizeMode = std.builtin.OptimizeMode;
@@ -180,7 +178,7 @@ pub fn build_(b: *Build) !void {
     var target = b.standardTargetOptions(.{});
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    optimize = b.standardOptimizeOption(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
     var generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "";
 

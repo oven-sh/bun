@@ -81,6 +81,8 @@ pub const StateKind = enum(u8) {
     expansion,
 };
 
+pub const CopyOnWriteMap = struct {};
+
 pub const IO = struct {
     stdin: Kind = .{ .std = .{} },
     stdout: Kind = .{ .std = .{} },
@@ -181,32 +183,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         /// Root ast node
         script: *ast.Script,
 
-        io: IO = .{},
-
-        /// FIXME These should be nullable, because buffered output can be optional
-        /// These MUST use the `bun.default_allocator` Allocator
-        buffered_stdout: bun.ByteList = .{},
-        buffered_stderr: bun.ByteList = .{},
-
-        /// Shell env for expansion by the shell
-        shell_env: std.StringArrayHashMap([:0]const u8),
-        /// Local environment variables to be given to a subprocess
-        cmd_local_env: std.StringArrayHashMap([:0]const u8),
-        /// Exported environment variables available to all subprocesses. This excludes system ones,
-        /// just contains ones set by this shell script.
-        export_env: std.StringArrayHashMap([:0]const u8),
-
         /// JS objects used as input for the shell script
         /// This should be allocated using the arena
         jsobjs: []JSValue,
 
-        /// The current working directory of the shell
-        __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
-        prev_cwd: [:0]const u8,
-        __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
-        cwd: [:0]const u8,
-        // FIXME TODO deinit
-        cwd_fd: bun.FileDescriptor,
+        root_shell: ShellState,
 
         resolve: JSValue = .undefined,
         reject: JSValue = .undefined,
@@ -215,6 +196,99 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         started: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
 
         done: ?*bool = null,
+
+        pub const ShellState = struct {
+            io: IO = .{},
+
+            /// FIXME These should be nullable, because buffered output can be optional
+            /// These MUST use the `bun.default_allocator` Allocator
+            buffered_stdout: bun.ByteList = .{},
+            buffered_stderr: bun.ByteList = .{},
+
+            /// TODO Performance optimization: make these env maps copy-on-write
+            /// Shell env for expansion by the shell
+            shell_env: std.StringArrayHashMap([:0]const u8),
+            /// Local environment variables to be given to a subprocess
+            cmd_local_env: std.StringArrayHashMap([:0]const u8),
+            /// Exported environment variables available to all subprocesses. This includes system ones.
+            export_env: std.StringArrayHashMap([:0]const u8),
+
+            /// The current working directory of the shell
+            __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
+            prev_cwd: [:0]const u8,
+            __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
+            cwd: [:0]const u8,
+            // FIXME TODO deinit
+            cwd_fd: bun.FileDescriptor,
+
+            pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: []const u8, value_: [:0]const u8, assign_ctx: AssignCtx) void {
+                const value = interp.arena.allocator().dupeZ(u8, value_) catch |e| OOM(e);
+                (switch (assign_ctx) {
+                    .cmd => this.cmd_local_env.put(label, value),
+                    .shell => this.shell_env.put(label, value),
+                    .exported => this.export_env.put(label, value),
+                }) catch |e| OOM(e);
+            }
+
+            pub fn changePrevCwd(self: *ShellState, interp: *ThisInterpreter) Maybe(void) {
+                return self.changeCwd(interp, self.prev_cwd);
+            }
+
+            pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: [:0]const u8) Maybe(void) {
+                const new_cwd: [:0]const u8 = brk: {
+                    if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
+
+                    const existing_cwd = this.cwd;
+                    const cwd_str = ResolvePath.joinZ(&[_][]const u8{
+                        existing_cwd,
+                        new_cwd_,
+                    }, .auto);
+
+                    break :brk cwd_str;
+                };
+
+                const new_cwd_fd = switch (Syscall.openat(
+                    this.cwd_fd,
+                    new_cwd,
+                    std.os.O.DIRECTORY | std.os.O.RDONLY,
+                    0,
+                )) {
+                    .result => |fd| fd,
+                    .err => |err| {
+                        return Maybe(void).initErr(err);
+                    },
+                };
+                _ = Syscall.close2(this.cwd_fd);
+
+                var prev_cwd_buf = brk: {
+                    if (this.__prevcwd_pathbuf) |prev| break :brk prev;
+                    break :brk interp.allocator.alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
+                };
+
+                std.mem.copyForwards(u8, prev_cwd_buf[0..this.cwd.len], this.cwd[0..this.cwd.len]);
+                prev_cwd_buf[this.cwd.len] = 0;
+                this.prev_cwd = prev_cwd_buf[0..this.cwd.len :0];
+
+                std.mem.copyForwards(u8, this.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
+                this.__cwd_pathbuf[new_cwd.len] = 0;
+                this.cwd = new_cwd;
+
+                this.cwd_fd = new_cwd_fd;
+
+                return Maybe(void).success;
+            }
+
+            pub fn getHomedir(self: *ShellState) [:0]const u8 {
+                if (comptime bun.Environment.isWindows) {
+                    if (self.export_env.get("USERPROFILE")) |env|
+                        return env;
+                } else {
+                    if (self.export_env.get("HOME")) |env|
+                        return env;
+                }
+                return "unknown";
+            }
+        };
 
         pub usingnamespace JSC.Codegen.JSShellInterpreter;
 
@@ -386,33 +460,33 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 },
             };
 
-            const shellio: IO = if (comptime EventLoopKind == .js)
-                .{
-                    .stdout = .{ .std = .{ .captured = &interpreter.buffered_stdout } },
-                    .stderr = .{ .std = .{ .captured = &interpreter.buffered_stderr } },
-                }
-            else
-                .{};
-
             interpreter.* = .{
                 .global = global,
-
-                .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
-                .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
-                .export_env = export_env,
 
                 .script = script,
                 .allocator = allocator,
                 .jsobjs = jsobjs,
-                .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
-                .cwd = pathbuf[0..cwd.len :0],
-                .prev_cwd = pathbuf[0..cwd.len :0],
-                .cwd_fd = cwd_fd,
 
                 .arena = arena.*,
 
-                .io = shellio,
+                .root_shell = ShellState{
+                    .io = .{},
+
+                    .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+                    .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+                    .export_env = export_env,
+
+                    .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
+                    .cwd = pathbuf[0..cwd.len :0],
+                    .prev_cwd = pathbuf[0..cwd.len :0],
+                    .cwd_fd = cwd_fd,
+                },
             };
+
+            if (comptime EventLoopKind == .js) {
+                interpreter.root_shell.io.stdout = .{ .std = .{ .captured = &interpreter.root_shell.buffered_stdout } };
+                interpreter.root_shell.io.stderr = .{ .std = .{ .captured = &interpreter.root_shell.buffered_stderr } };
+            }
 
             return interpreter;
         }
@@ -446,7 +520,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         }
 
         pub fn run(this: *ThisInterpreter) !void {
-            var root = Script.init(this, this.script, this.io) catch bun.outOfMemory();
+            var root = Script.init(this, &this.root_shell, this.script, this.root_shell.io) catch bun.outOfMemory();
             this.started.store(true, .SeqCst);
             try root.start();
         }
@@ -456,7 +530,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             _ = globalThis;
             incrPendingActivityFlag(&this.has_pending_activity);
-            var root = Script.init(this, this.script, this.io) catch bun.outOfMemory();
+            var root = Script.init(this, &this.root_shell, this.script, this.root_shell.io) catch bun.outOfMemory();
             this.started.store(true, .SeqCst);
             try root.start();
             return .undefined;
@@ -545,7 +619,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             _ = globalThis; // autofix
             _ = callframe; // autofix
 
-            const stdout = this.ioToJSValue(&this.buffered_stdout);
+            const stdout = this.ioToJSValue(&this.root_shell.buffered_stdout);
             return stdout;
         }
 
@@ -557,7 +631,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             _ = globalThis; // autofix
             _ = callframe; // autofix
 
-            const stdout = this.ioToJSValue(&this.buffered_stderr);
+            const stdout = this.ioToJSValue(&this.root_shell.buffered_stderr);
             return stdout;
         }
 
@@ -565,74 +639,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             this: *ThisInterpreter,
         ) callconv(.C) void {
             this.deinit();
-        }
-
-        pub fn assignVar(this: *ThisInterpreter, label: []const u8, value_: [:0]const u8, assign_ctx: AssignCtx) void {
-            const value = this.arena.allocator().dupeZ(u8, value_) catch |e| OOM(e);
-            (switch (assign_ctx) {
-                .cmd => this.cmd_local_env.put(label, value),
-                .shell => this.shell_env.put(label, value),
-                .exported => this.export_env.put(label, value),
-            }) catch |e| OOM(e);
-        }
-
-        pub fn changePrevCwd(self: *ThisInterpreter) Maybe(void) {
-            return self.changeCwd(self.prev_cwd);
-        }
-
-        pub fn changeCwd(self: *ThisInterpreter, new_cwd_: [:0]const u8) Maybe(void) {
-            const new_cwd: [:0]const u8 = brk: {
-                if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
-
-                const existing_cwd = self.cwd;
-                const cwd_str = ResolvePath.joinZ(&[_][]const u8{
-                    existing_cwd,
-                    new_cwd_,
-                }, .auto);
-
-                break :brk cwd_str;
-            };
-
-            const new_cwd_fd = switch (Syscall.openat(
-                self.cwd_fd,
-                new_cwd,
-                std.os.O.DIRECTORY | std.os.O.RDONLY,
-                0,
-            )) {
-                .result => |fd| fd,
-                .err => |err| {
-                    return Maybe(void).initErr(err);
-                },
-            };
-            _ = Syscall.close2(self.cwd_fd);
-
-            var prev_cwd_buf = brk: {
-                if (self.__prevcwd_pathbuf) |prev| break :brk prev;
-                break :brk self.allocator.alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
-            };
-
-            std.mem.copyForwards(u8, prev_cwd_buf[0..self.cwd.len], self.cwd[0..self.cwd.len]);
-            prev_cwd_buf[self.cwd.len] = 0;
-            self.prev_cwd = prev_cwd_buf[0..self.cwd.len :0];
-
-            std.mem.copyForwards(u8, self.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
-            self.__cwd_pathbuf[new_cwd.len] = 0;
-            self.cwd = new_cwd;
-
-            self.cwd_fd = new_cwd_fd;
-
-            return Maybe(void).success;
-        }
-
-        pub fn getHomedir(self: *ThisInterpreter) [:0]const u8 {
-            if (comptime bun.Environment.isWindows) {
-                if (self.export_env.get("USERPROFILE")) |env|
-                    return env;
-            } else {
-                if (self.export_env.get("HOME")) |env|
-                    return env;
-            }
-            return "unknown";
         }
 
         pub fn hasPendingActivity(this: *ThisInterpreter) callconv(.C) bool {
@@ -734,6 +740,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn init(
                 interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
                 expansion: *Expansion,
                 node: *const ast.Atom,
                 parent: ParentPtr,
@@ -741,7 +748,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             ) void {
                 expansion.* = .{
                     .node = node,
-                    .base = .{ .kind = .expansion, .interpreter = interpreter },
+                    .base = .{
+                        .kind = .expansion,
+                        .interpreter = interpreter,
+                        .shell = shell_state,
+                    },
                     .parent = parent,
 
                     .word_idx = 0,
@@ -895,7 +906,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         if (is_cmd_subst) {
                             var io: IO = .{};
                             io.stdout = .pipe;
-                            var cmd = Cmd.init(this.base.interpreter, &simp.cmd_subst.cmd, Cmd.ParentPtr.init(this), io);
+                            var cmd = Cmd.init(this.base.interpreter, this.base.shell, &simp.cmd_subst.cmd, Cmd.ParentPtr.init(this), io);
                             this.child_state = .{
                                 .cmd_subst = .{
                                     .cmd = cmd,
@@ -913,7 +924,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             if (is_cmd_subst) {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
-                                var cmd = Cmd.init(this.base.interpreter, &simple_atom.cmd_subst.cmd, Cmd.ParentPtr.init(this), io);
+                                var cmd = Cmd.init(this.base.interpreter, this.base.shell, &simple_atom.cmd_subst.cmd, Cmd.ParentPtr.init(this), io);
                                 this.child_state = .{
                                     .cmd_subst = .{
                                         .cmd = cmd,
@@ -1060,8 +1071,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             fn expandVar(this: *const Expansion, label: []const u8) [:0]const u8 {
-                const value = this.base.interpreter.shell_env.get(label) orelse brk: {
-                    break :brk this.base.interpreter.export_env.get(label) orelse return "";
+                const value = this.base.shell.shell_env.get(label) orelse brk: {
+                    break :brk this.base.shell.export_env.get(label) orelse return "";
                 };
                 return value;
             }
@@ -1237,6 +1248,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         pub const State = struct {
             kind: StateKind,
             interpreter: *ThisInterpreter,
+            shell: *ShellState,
         };
 
         pub const Script = struct {
@@ -1260,11 +1272,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             };
 
-            fn init(interpreter: *ThisInterpreter, node: *const ast.Script, io: IO) !*Script {
+            fn init(
+                interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
+                node: *const ast.Script,
+                io: IO,
+            ) !*Script {
                 const script = try interpreter.allocator.create(Script);
                 errdefer interpreter.allocator.destroy(script);
                 script.* = .{
-                    .base = .{ .kind = .script, .interpreter = interpreter },
+                    .base = .{ .kind = .script, .interpreter = interpreter, .shell = shell_state },
                     .node = node,
                     .io = io,
                 };
@@ -1283,7 +1300,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         if (this.state.normal.idx >= this.node.stmts.len) return;
                         const stmt_node = &this.node.stmts[this.state.normal.idx];
                         this.state.normal.idx += 1;
-                        var stmt = Stmt.init(this.base.interpreter, stmt_node, this, this.io) catch bun.outOfMemory();
+                        var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, this.io) catch bun.outOfMemory();
                         stmt.start() catch bun.outOfMemory();
                         return;
                     },
@@ -1343,9 +1360,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return this.next();
             }
 
-            pub fn init(this: *Assigns, interpreter: *ThisInterpreter, node: []const ast.Assign, ctx: AssignCtx, parent: ParentPtr) void {
+            pub fn init(
+                this: *Assigns,
+                interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
+                node: []const ast.Assign,
+                ctx: AssignCtx,
+                parent: ParentPtr,
+            ) void {
                 this.* = .{
-                    .base = .{ .kind = .assign, .interpreter = interpreter },
+                    .base = .{ .kind = .assign, .interpreter = interpreter, .shell = shell_state },
                     .node = node,
                     .parent = parent,
                     .state = .idle,
@@ -1371,6 +1395,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                             Expansion.init(
                                 this.base.interpreter,
+                                this.base.shell,
                                 &this.state.expanding.expansion,
                                 &this.node[this.state.expanding.idx].value,
                                 Expansion.ParentPtr.init(this),
@@ -1398,7 +1423,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     if (expanding.current_expansion_result.items.len == 1) {
                         const value = expanding.current_expansion_result.items[0];
-                        this.base.interpreter.assignVar(label, value, this.ctx);
+                        this.base.shell.assignVar(this.base.interpreter, label, value, this.ctx);
                     } else {
                         const size = brk: {
                             var total: usize = 0;
@@ -1418,7 +1443,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             break :brk merged;
                         };
 
-                        this.base.interpreter.assignVar(label, value, this.ctx);
+                        this.base.shell.assignVar(this.base.interpreter, label, value, this.ctx);
                     }
 
                     for (expanding.current_expansion_result.items) |slice| {
@@ -1459,12 +1484,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn init(
                 interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
                 node: *const ast.Stmt,
                 parent: *Script,
                 io: IO,
             ) !*Stmt {
                 var script = try interpreter.allocator.create(Stmt);
-                script.base = .{ .kind = .stmt, .interpreter = interpreter };
+                script.base = .{ .kind = .stmt, .interpreter = interpreter, .shell = shell_state };
                 script.node = node;
                 script.parent = parent;
                 script.idx = 0;
@@ -1494,23 +1520,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const child = &this.node.exprs[this.idx];
                 switch (child.*) {
                     .cond => {
-                        const cond = Cond.init(this.base.interpreter, child.cond, Cond.ParentPtr.init(this), this.io);
+                        const cond = Cond.init(this.base.interpreter, this.base.shell, child.cond, Cond.ParentPtr.init(this), this.io);
                         this.currently_executing = ChildPtr.init(cond);
                         cond.start();
                     },
                     .cmd => {
-                        const cmd = Cmd.init(this.base.interpreter, child.cmd, Cmd.ParentPtr.init(this), this.io);
+                        const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io);
                         this.currently_executing = ChildPtr.init(cmd);
                         cmd.start();
                     },
                     .pipeline => {
-                        const pipeline = Pipeline.init(this.base.interpreter, child.pipeline, Pipeline.ParentPtr.init(this), this.io);
+                        const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, child.pipeline, Pipeline.ParentPtr.init(this), this.io);
                         this.currently_executing = ChildPtr.init(pipeline);
                         pipeline.start();
                     },
                     .assign => |assigns| {
                         var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-                        assign_machine.init(this.base.interpreter, assigns, .shell, Assigns.ParentPtr.init(this));
+                        assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this));
                         assign_machine.start();
                     },
                     .subshell => {
@@ -1564,6 +1590,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn init(
                 interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
                 node: *const ast.Conditional,
                 parent: ParentPtr,
                 io: IO,
@@ -1573,7 +1600,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     @panic("Ruh roh");
                 };
                 cond.node = node;
-                cond.base = .{ .kind = .cond, .interpreter = interpreter };
+                cond.base = .{ .kind = .cond, .interpreter = interpreter, .shell = shell_state };
                 cond.parent = parent;
                 cond.io = io;
                 cond.left = null;
@@ -1607,15 +1634,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const node = if (left) &this.node.left else &this.node.right;
                 switch (node.*) {
                     .cmd => {
-                        const cmd = Cmd.init(this.base.interpreter, node.cmd, Cmd.ParentPtr.init(this), this.io);
+                        const cmd = Cmd.init(this.base.interpreter, this.base.shell, node.cmd, Cmd.ParentPtr.init(this), this.io);
                         return ChildPtr.init(cmd);
                     },
                     .cond => {
-                        const cond = Cond.init(this.base.interpreter, node.cond, Cond.ParentPtr.init(this), this.io);
+                        const cond = Cond.init(this.base.interpreter, this.base.shell, node.cond, Cond.ParentPtr.init(this), this.io);
                         return ChildPtr.init(cond);
                     },
                     .pipeline => {
-                        const pipeline = Pipeline.init(this.base.interpreter, node.pipeline, Pipeline.ParentPtr.init(this), this.io);
+                        const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, node.pipeline, Pipeline.ParentPtr.init(this), this.io);
                         return ChildPtr.init(pipeline);
                     },
                     .assign => return null,
@@ -1696,6 +1723,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn init(
                 interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
                 node: *const ast.Pipeline,
                 parent: ParentPtr,
                 io: IO,
@@ -1704,7 +1732,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     std.debug.print("Ruh roh: {any}\n", .{err});
                     @panic("Ruh roh");
                 };
-                pipeline.base = .{ .kind = .pipeline, .interpreter = interpreter };
+                pipeline.base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state };
                 pipeline.node = node;
                 pipeline.parent = parent;
                 pipeline.exited_count = 0;
@@ -1745,7 +1773,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
                             cmd_io.stdin = stdin;
                             cmd_io.stdout = stdout;
-                            pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
+                            pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, shell_state, item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
                             i += 1;
                         },
                         // in a pipeline assignments have no effect
@@ -2011,7 +2039,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub fn writeFailingError(this: *Cmd, buf: []const u8, exit_code: u8) void {
                 _ = exit_code; // autofix
 
-                switch (this.base.interpreter.io.stderr) {
+                switch (this.base.shell.io.stderr) {
                     .std => |val| {
                         this.state = .{ .waiting_write_err = BufferedWriter{
                             .fd = bun.STDERR_FD,
@@ -2036,13 +2064,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return;
             }
 
-            pub fn init(interpreter: *ThisInterpreter, node: *const ast.Cmd, parent: ParentPtr, io: IO) *Cmd {
+            pub fn init(
+                interpreter: *ThisInterpreter,
+                shell_state: *ShellState,
+                node: *const ast.Cmd,
+                parent: ParentPtr,
+                io: IO,
+            ) *Cmd {
                 var cmd = interpreter.allocator.create(Cmd) catch |err| {
                     std.debug.print("Ruh roh: {any}\n", .{err});
                     @panic("Ruh roh");
                 };
                 cmd.* = .{
-                    .base = .{ .kind = .cmd, .interpreter = interpreter },
+                    .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
                     .node = node,
                     .parent = parent,
 
@@ -2062,7 +2096,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     switch (this.state) {
                         .idle => {
                             this.state = .{ .expanding_assigns = undefined };
-                            Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.node.assigns, .cmd, Assigns.ParentPtr.init(this));
+                            Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this));
                             this.state.expanding_assigns.start();
                             return; // yield execution
                         },
@@ -2078,6 +2112,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                             Expansion.init(
                                 this.base.interpreter,
+                                this.base.shell,
                                 &this.state.expanding_args.expansion,
                                 &this.node.name_and_args[this.state.expanding_args.idx],
                                 Expansion.ParentPtr.init(this),
@@ -2164,7 +2199,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
                 spawn_args.cmd_parent = this;
-                spawn_args.cwd = this.base.interpreter.cwd;
+                spawn_args.cwd = this.base.shell.cwd;
 
                 const args = args: {
                     this.args.append(null) catch bun.outOfMemory();
@@ -2185,7 +2220,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     const first_arg_len = std.mem.len(first_arg);
 
                     if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
-                        const cwd = switch (Syscall.dup(this.base.interpreter.cwd_fd)) {
+                        const cwd = switch (Syscall.dup(this.base.shell.cwd_fd)) {
                             .err => |e| {
                                 var buf = std.ArrayList(u8).init(arena_allocator);
                                 const writer = buf.writer();
@@ -2202,8 +2237,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             arena,
                             this.node,
                             &this.args,
-                            this.base.interpreter.export_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
-                            this.base.interpreter.cmd_local_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
+                            this.base.shell.export_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
+                            this.base.shell.cmd_local_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
                             cwd,
                             &this.io,
                             false,
@@ -2241,9 +2276,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 // Fill the env from the export end and cmd local env
                 {
-                    var env_iter = this.base.interpreter.export_env.iterator();
+                    var env_iter = this.base.shell.export_env.iterator();
                     spawn_args.fillEnv(&env_iter, false);
-                    env_iter = this.base.interpreter.cmd_local_env.iterator();
+                    env_iter = this.base.shell.cmd_local_env.iterator();
                     spawn_args.fillEnv(&env_iter, false);
                 }
 
@@ -2362,7 +2397,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
             pub fn deinit(this: *Cmd) void {
                 log("cmd deinit {x}", .{@intFromPtr(this)});
-                this.base.interpreter.cmd_local_env.clearRetainingCapacity();
+                this.base.shell.cmd_local_env.clearRetainingCapacity();
                 // if (this.exit_code != null) {
                 //     if (this.cmd) |cmd| {
                 //         _ = cmd.tryKill(9);
@@ -2864,7 +2899,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 const io: *BuiltinIO = &@field(this, @tagName(io_kind));
                 return switch (io.*) {
-                    .captured => if (comptime io_kind == .stdout) &this.parentCmd().base.interpreter.buffered_stdout else &this.parentCmd().base.interpreter.buffered_stderr,
+                    .captured => if (comptime io_kind == .stdout) &this.parentCmd().base.shell.buffered_stdout else &this.parentCmd().base.shell.buffered_stderr,
                     else => null,
                 };
             }
@@ -3071,13 +3106,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const buf = this.bltn.fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
                                 return this.writeOutput(.stderr, buf);
                             }
-                            this.bltn.parentCmd().base.interpreter.assignVar(arg, "", .exported);
+                            this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, arg, "", .exported);
                             continue;
                         };
 
                         const label = arg[0..eqsign_idx];
                         const value = arg_sentinel[eqsign_idx + 1 .. :0];
-                        this.bltn.parentCmd().base.interpreter.assignVar(label, value, .exported);
+                        this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, label, value, .exported);
                     }
 
                     this.bltn.done(0);
@@ -3217,11 +3252,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     if (!this.bltn.stdout.needsIO()) {
                         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
+                        const PATH = this.bltn.parentCmd().base.shell.export_env.get("PATH") orelse "";
                         var had_not_found = false;
                         for (args) |arg_raw| {
                             const arg = arg_raw[0..std.mem.len(arg_raw)];
-                            const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                            const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.shell.cwd, arg) orelse {
                                 had_not_found = true;
                                 const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                                 switch (this.bltn.writeNoIO(.stdout, buf)) {
@@ -3263,9 +3298,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     const arg = arg_raw[0..std.mem.len(arg_raw)];
 
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const PATH = this.bltn.parentCmd().base.interpreter.export_env.get("PATH") orelse "";
+                    const PATH = this.bltn.parentCmd().base.shell.export_env.get("PATH") orelse "";
 
-                    const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.interpreter.cwd, arg) orelse {
+                    const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.shell.cwd, arg) orelse {
                         const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
                         multiargs.had_not_found = true;
                         multiargs.state = .{
@@ -3372,22 +3407,22 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     const first_arg = args[0][0..std.mem.len(args[0]) :0];
                     switch (first_arg[0]) {
                         '-' => {
-                            switch (this.bltn.parentCmd().base.interpreter.changePrevCwd()) {
+                            switch (this.bltn.parentCmd().base.shell.changePrevCwd(this.bltn.parentCmd().base.interpreter)) {
                                 .result => {},
                                 .err => |err| {
-                                    return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.interpreter.prev_cwd);
+                                    return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prev_cwd);
                                 },
                             }
                         },
                         '~' => {
-                            const homedir = this.bltn.parentCmd().base.interpreter.getHomedir();
-                            switch (this.bltn.parentCmd().base.interpreter.changeCwd(homedir)) {
+                            const homedir = this.bltn.parentCmd().base.shell.getHomedir();
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir)) {
                                 .result => {},
                                 .err => |err| return this.handleChangeCwdErr(err, homedir),
                             }
                         },
                         else => {
-                            switch (this.bltn.parentCmd().base.interpreter.changeCwd(first_arg)) {
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, first_arg)) {
                                 .result => {},
                                 .err => |err| return this.handleChangeCwdErr(err, first_arg),
                             }
@@ -3498,7 +3533,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         return Maybe(void).success;
                     }
 
-                    const cwd_str = this.bltn.parentCmd().base.interpreter.cwd;
+                    const cwd_str = this.bltn.parentCmd().base.shell.cwd;
                     const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{cwd_str[0..cwd_str.len]});
                     if (this.bltn.stdout.needsIO()) {
                         this.state = .{
@@ -4592,7 +4627,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     .check_target = .{
                                         .task = ShellMvCheckTargetTask{
                                             .mv = this,
-                                            .cwd = this.bltn.parentCmd().base.interpreter.cwd_fd,
+                                            .cwd = this.bltn.parentCmd().base.shell.cwd_fd,
                                             .target = this.args.target,
                                             .task = .{
                                                 // .event_loop = JSC.VirtualMachine.get().eventLoop(),
@@ -4648,7 +4683,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 };
 
                                 this.args.target_fd = maybe_fd;
-                                const cwd_fd = this.bltn.parentCmd().base.interpreter.cwd_fd;
+                                const cwd_fd = this.bltn.parentCmd().base.shell.cwd_fd;
                                 const tasks = this.bltn.arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
                                 // Initialize tasks
                                 {

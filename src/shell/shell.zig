@@ -509,6 +509,25 @@ pub const Parser = struct {
         };
     }
 
+    pub fn make_subparser(this: *Parser) !Parser {
+        const subparser = .{
+            .strpool = this.strpool,
+            .tokens = this.tokens,
+            .alloc = this.alloc,
+            .jsobjs = this.jsobjs,
+            .current = this.current,
+            // We replace the old Parser's struct with the updated error list
+            // when this subparser is done
+            .errors = this.errors,
+        };
+        return subparser;
+    }
+
+    pub fn continue_from_subparser(this: *Parser, subparser: *Parser) void {
+        this.current = subparser.current;
+        this.errors = subparser.errors;
+    }
+
     pub fn parse(self: *Parser) !AST.Script {
         // Check for subshell syntax which is not supported rn
         for (self.tokens) |tok| {

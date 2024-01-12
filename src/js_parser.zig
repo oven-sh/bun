@@ -4972,6 +4972,18 @@ fn NewParser_(
         }
 
         pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
+            if (!p.options.features.allow_runtime) {
+                const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
+                args[0] = arg;
+                return p.newExpr(
+                    E.Call{
+                        .target = p.valueForRequire(arg.loc),
+                        .args = ExprNodeList.init(args),
+                    },
+                    arg.loc,
+                );
+            }
+
             switch (arg.data) {
                 .e_string => |str| {
                     // Ignore calls to require() if the control flow is provably dead here.
@@ -5337,7 +5349,7 @@ fn NewParser_(
         }
 
         fn computeCharacterFrequency(p: *P) ?js_ast.CharFreq {
-            if (!p.options.features.minify_identifiers or (p.options.bundle and p.source.index.isRuntime())) {
+            if (!p.options.features.minify_identifiers or p.isSourceRuntime()) {
                 return null;
             }
 
@@ -15520,7 +15532,8 @@ fn NewParser_(
                         if (p.require_ref.eql(e_.ref) and !p.isSourceRuntime()) {
                             // mark a reference to __require only if this is not about to be used for a call target
                             if (!(p.call_target == .e_identifier and
-                                expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref)))
+                                expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref)) and
+                                p.options.features.allow_runtime)
                             {
                                 p.recordUsageOfRuntimeRequire();
                             }
@@ -16670,7 +16683,9 @@ fn NewParser_(
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
 
-                        p.recordUsageOfRuntimeRequire();
+                        if (p.options.features.allow_runtime) {
+                            p.recordUsageOfRuntimeRequire();
+                        }
 
                         return expr;
                     }
@@ -16833,6 +16848,8 @@ fn NewParser_(
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
             if (!p.options.features.use_import_meta_require) {
+                // This is not to be called when allow_runtime
+                std.debug.assert(p.options.features.allow_runtime);
                 p.ensureRequireSymbol();
                 p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
             }

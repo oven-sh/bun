@@ -1311,6 +1311,7 @@ else()
         ucrt
         userenv
         dbghelp
+        wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     )
 endif()
 

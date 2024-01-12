@@ -220,38 +220,38 @@ pub fn lsxpack_header_mark_val_changed(hdr: ?*lsxpack_header_t) callconv(.C) voi
 }
 pub const struct_lshpack_enc_table_entry = opaque {};
 pub const struct_lshpack_enc_head = extern struct {
-    stqh_first: ?*struct_lshpack_enc_table_entry,
-    stqh_last: [*c]?*struct_lshpack_enc_table_entry,
+    stqh_first: ?*struct_lshpack_enc_table_entry = @import("std").mem.zeroes(?*struct_lshpack_enc_table_entry),
+    stqh_last: [*c]?*struct_lshpack_enc_table_entry = @import("std").mem.zeroes([*c]?*struct_lshpack_enc_table_entry),
 };
 pub const struct_lshpack_double_enc_head = opaque {};
 pub const LSHPACK_ENC_USE_HIST: c_int = 1;
 const enum_unnamed_1 = c_uint;
 pub const struct_lshpack_enc = extern struct {
-    hpe_cur_capacity: c_uint,
-    hpe_max_capacity: c_uint,
-    hpe_next_id: c_uint,
-    hpe_nelem: c_uint,
-    hpe_nbits: c_uint,
-    hpe_all_entries: struct_lshpack_enc_head,
-    hpe_buckets: ?*struct_lshpack_double_enc_head,
-    hpe_hist_buf: [*c]u32,
-    hpe_hist_size: c_uint,
-    hpe_hist_idx: c_uint,
-    hpe_hist_wrapped: c_int,
-    hpe_flags: enum_unnamed_1,
+    hpe_cur_capacity: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_max_capacity: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_next_id: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_nelem: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_nbits: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_all_entries: struct_lshpack_enc_head = @import("std").mem.zeroes(struct_lshpack_enc_head),
+    hpe_buckets: ?*struct_lshpack_double_enc_head = @import("std").mem.zeroes(?*struct_lshpack_double_enc_head),
+    hpe_hist_buf: [*c]u32 = @import("std").mem.zeroes([*c]u32),
+    hpe_hist_size: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_hist_idx: c_uint = @import("std").mem.zeroes(c_uint),
+    hpe_hist_wrapped: c_int = @import("std").mem.zeroes(c_int),
+    hpe_flags: enum_unnamed_1 = @import("std").mem.zeroes(enum_unnamed_1),
 };
 pub const struct_lshpack_arr = extern struct {
-    nalloc: c_uint,
-    nelem: c_uint,
-    off: c_uint,
-    els: [*c]usize,
+    nalloc: c_uint = @import("std").mem.zeroes(c_uint),
+    nelem: c_uint = @import("std").mem.zeroes(c_uint),
+    off: c_uint = @import("std").mem.zeroes(c_uint),
+    els: [*c]usize = @import("std").mem.zeroes([*c]usize),
 };
 pub const struct_lshpack_dec = extern struct {
-    hpd_dyn_table: struct_lshpack_arr,
-    hpd_max_capacity: c_uint,
-    hpd_cur_max_capacity: c_uint,
-    hpd_cur_capacity: c_uint,
-    hpd_state: c_uint,
+    hpd_dyn_table: struct_lshpack_arr = @import("std").mem.zeroes(struct_lshpack_arr),
+    hpd_max_capacity: c_uint = @import("std").mem.zeroes(c_uint),
+    hpd_cur_max_capacity: c_uint = @import("std").mem.zeroes(c_uint),
+    hpd_cur_capacity: c_uint = @import("std").mem.zeroes(c_uint),
+    hpd_state: c_uint = @import("std").mem.zeroes(c_uint),
 };
 pub const LSHPACK_HDR_UNKNOWN: c_int = 0;
 pub const LSHPACK_HDR_AUTHORITY: c_int = 1;
@@ -325,10 +325,17 @@ pub extern fn lshpack_enc_use_hist([*c]struct_lshpack_enc, on: c_int) c_int;
 pub extern fn lshpack_enc_hist_used([*c]const struct_lshpack_enc) c_int;
 pub extern fn lshpack_dec_init([*c]struct_lshpack_dec) void;
 pub extern fn lshpack_dec_cleanup([*c]struct_lshpack_dec) void;
-pub extern fn lshpack_dec_decode(dec: [*c]struct_lshpack_dec, src: *[*]const u8, src_end: [*c]const u8, output: ?*struct_lsxpack_header) c_int;
+pub extern fn lshpack_dec_decode(dec: [*c]struct_lshpack_dec, src: *[*c]const u8, src_end: [*c]const u8, output: ?*struct_lsxpack_header) c_int;
 pub extern fn lshpack_dec_set_max_capacity([*c]struct_lshpack_dec, c_uint) void;
 pub extern fn lshpack_enc_get_stx_tab_id(?*struct_lsxpack_header) c_uint;
-
+pub fn lshpack_decode(dec: [*c]struct_lshpack_dec, src: [*]const u8, src_len: usize, output: ?*struct_lsxpack_header) !usize {
+    var s: [*c]const u8 = src;
+    const rc: c_int = lshpack_dec_decode(dec, &s, s + src_len, output);
+    if (rc != 0) {
+        return error.UnableToDecode;
+    }
+    return @intFromPtr(s) - @intFromPtr(src);
+}
 pub const __INT64_C = @import("std").zig.c_translation.Macros.L_SUFFIX;
 pub const __UINT64_C = @import("std").zig.c_translation.Macros.UL_SUFFIX;
 pub const INT8_MIN = -@as(c_int, 128);

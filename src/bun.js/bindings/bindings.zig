@@ -1604,7 +1604,7 @@ pub const SystemError = extern struct {
     message: String = String.empty,
     path: String = String.empty,
     syscall: String = String.empty,
-    fd: i32 = -1,
+    fd: bun.FileDescriptor = bun.toFD(-1),
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {
@@ -3873,6 +3873,9 @@ pub const JSValue = enum(JSValueReprInt) {
                 if (comptime Number == std.os.fd_t) {
                     return jsNumber(bun.toFD(number));
                 }
+                if (Number == bun.FileDescriptor) {
+                    return jsNumber(number.int());
+                }
 
                 @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
             },
@@ -4854,6 +4857,11 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn asInt32(this: JSValue) i32 {
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
+    }
+
+    pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
+        std.debug.assert(this.isNumber());
+        return bun.FDImpl.fromUV(this.toInt32()).encode();
     }
 
     pub inline fn toU16(this: JSValue) u16 {

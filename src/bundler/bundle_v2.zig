@@ -1474,8 +1474,8 @@ pub const BundleV2 = struct {
                             // unknown at this point:
                             .contents_or_fd = .{
                                 .fd = .{
-                                    .dir = 0,
-                                    .file = 0,
+                                    .dir = .zero,
+                                    .file = .zero,
                                 },
                             },
                             .side_effects = _resolver.SideEffects.has_side_effects,
@@ -2083,7 +2083,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (this.bun_watcher != null) {
-                    if (empty_result.watcher_data.fd > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
+                    if (empty_result.watcher_data.fd.int() > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
                         this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
@@ -2102,7 +2102,7 @@ pub const BundleV2 = struct {
                 {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
-                        if (result.watcher_data.fd > 0 and result.watcher_data.fd != bun.invalid_fd) {
+                        if (result.watcher_data.fd.int() > 0 and result.watcher_data.fd != bun.invalid_fd) {
                             this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
@@ -2344,8 +2344,8 @@ pub const ParseTask = struct {
         },
 
         const WatcherData = struct {
-            fd: bun.StoredFileDescriptorType = 0,
-            dir_fd: bun.StoredFileDescriptorType = 0,
+            fd: bun.StoredFileDescriptorType = .zero,
+            dir_fd: bun.StoredFileDescriptorType = .zero,
             package_json: ?*PackageJSON = null,
         };
 
@@ -2500,7 +2500,7 @@ pub const ParseTask = struct {
                                 allocator,
                                 bundler.fs,
                                 override_pathZ,
-                                0,
+                                .zero,
                                 false,
                                 null,
                             );
@@ -2523,7 +2523,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (task.contents_or_fd.fd.file > 0)
+                    if (task.contents_or_fd.fd.file.int() > 0)
                         task.contents_or_fd.fd.file
                     else
                         null,
@@ -2554,18 +2554,18 @@ pub const ParseTask = struct {
             },
             .contents => |contents| CacheEntry{
                 .contents = contents,
-                .fd = 0,
+                .fd = .zero,
             },
         };
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd > 2 and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd.int() > 2 and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }
 
-        if (!will_close_file_descriptor and entry.fd > 2) task.contents_or_fd = .{
+        if (!will_close_file_descriptor and entry.fd.int() > 2) task.contents_or_fd = .{
             .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,
@@ -2664,8 +2664,8 @@ pub const ParseTask = struct {
                 0,
 
             .watcher_data = .{
-                .fd = if (task.contents_or_fd == .fd and !will_close_file_descriptor) task.contents_or_fd.fd.file else 0,
-                .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else 0,
+                .fd = if (task.contents_or_fd == .fd and !will_close_file_descriptor) task.contents_or_fd.fd.file else .zero,
+                .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else .zero,
             },
         };
     }
@@ -2698,8 +2698,8 @@ pub const ParseTask = struct {
                             .empty = .{
                                 .source_index = this.source_index,
                                 .watcher_data = .{
-                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else 0,
-                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else 0,
+                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else .zero,
+                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else .zero,
                                 },
                             },
                         };
@@ -2711,8 +2711,8 @@ pub const ParseTask = struct {
                             .empty = .{
                                 .source_index = this.source_index,
                                 .watcher_data = .{
-                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else 0,
-                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else 0,
+                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else .zero,
+                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else .zero,
                                 },
                             },
                         };

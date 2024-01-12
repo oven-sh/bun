@@ -148,7 +148,7 @@ pub const Subprocess = struct {
     pid: if (Environment.isWindows) uv.uv_process_t else std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
-    pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
+    pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
 
     stdin: Writable,
     stdout: Readable,
@@ -424,23 +424,23 @@ pub const Subprocess = struct {
             }
         };
 
-        pub fn init(stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
+        pub fn init(stdio: Stdio, fd: bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
                 .pipe => brk: {
                     break :brk .{
                         .pipe = .{
-                            .buffer = BufferedOutput.initWithAllocator(allocator, bun.toFD(fd), max_size),
+                            .buffer = BufferedOutput.initWithAllocator(allocator, fd, max_size),
                         },
                     };
                 },
                 .path => Readable{ .ignore = {} },
-                .blob, .fd => Readable{ .fd = bun.toFD(fd) },
+                .blob, .fd => Readable{ .fd = fd },
                 .memfd => Readable{ .memfd = stdio.memfd },
                 .array_buffer => Readable{
                     .pipe = .{
-                        .buffer = BufferedOutput.initWithSlice(bun.toFD(fd), stdio.array_buffer.slice()),
+                        .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
                     },
                 },
             };
@@ -608,7 +608,7 @@ pub const Subprocess = struct {
                 if (!WaiterThread.shouldUseWaiterThread()) {
                     // should this be handled differently?
                     // this effectively shouldn't happen
-                    if (this.pidfd == bun.invalid_fd) {
+                    if (this.pidfd == bun.invalid_fd.int()) {
                         return .{ .result = {} };
                     }
 
@@ -658,10 +658,10 @@ pub const Subprocess = struct {
 
         const pidfd = this.pidfd;
 
-        this.pidfd = bun.invalid_fd;
+        this.pidfd = bun.invalid_fd.int();
 
-        if (pidfd != bun.invalid_fd) {
-            _ = std.os.close(pidfd);
+        if (pidfd != bun.invalid_fd.int()) {
+            _ = bun.sys.close(bun.toFD(pidfd));
         }
     }
 
@@ -1153,7 +1153,7 @@ pub const Subprocess = struct {
         pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
         pub fn onStart(_: *Writable) void {}
 
-        pub fn init(stdio: Stdio, fd: i32, globalThis: *JSC.JSGlobalObject) !Writable {
+        pub fn init(stdio: Stdio, fd: bun.FileDescriptor, globalThis: *JSC.JSGlobalObject) !Writable {
             switch (stdio) {
                 .pipe => |maybe_readable| {
                     if (Environment.isWindows) @panic("TODO");
@@ -1570,17 +1570,17 @@ pub const Subprocess = struct {
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, bun.posix.STDIN_FD, value, &stdio[bun.posix.STDIN_FD]))
+                        if (!extractStdio(globalThis, 0, value, &stdio[0]))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, bun.posix.STDERR_FD, value, &stdio[bun.posix.STDERR_FD]))
+                        if (!extractStdio(globalThis, 2, value, &stdio[2]))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, bun.posix.STDOUT_FD, value, &stdio[bun.posix.STDOUT_FD]))
+                        if (!extractStdio(globalThis, 1, value, &stdio[1]))
                             return .zero;
                     }
                 }
@@ -1646,9 +1646,9 @@ pub const Subprocess = struct {
             const stderr_pipe = if (stdio[2].isPiped()) stdio[2].makeUVPipe(globalThis) orelse return .zero else undefined;
 
             var uv_stdio = [3]uv.uv_stdio_container_s{
-                stdio[0].setUpChildIoUvSpawn(bun.posix.STDIN_FD, stdin_pipe[0]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdin"),
-                stdio[1].setUpChildIoUvSpawn(bun.posix.STDOUT_FD, stdout_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdout"),
-                stdio[2].setUpChildIoUvSpawn(bun.posix.STDERR_FD, stderr_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stderr"),
+                stdio[0].setUpChildIoUvSpawn(0, stdin_pipe[0]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdin"),
+                stdio[1].setUpChildIoUvSpawn(1, stdout_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdout"),
+                stdio[2].setUpChildIoUvSpawn(2, stderr_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stderr"),
             };
 
             var cwd_resolver = bun.path.PosixToWinNormalizer{};
@@ -1682,13 +1682,13 @@ pub const Subprocess = struct {
                 .globalThis = globalThis,
                 .pid = subprocess.pid,
                 .pidfd = 0,
-                .stdin = Writable.init(stdio[0], stdin_pipe[1], globalThis) catch {
+                .stdin = Writable.init(stdio[0], bun.toFD(stdin_pipe[1]), globalThis) catch {
                     globalThis.throwOutOfMemory();
                     return .zero;
                 },
                 // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = Readable.init(stdio[1], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-                .stderr = Readable.init(stdio[2], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+                .stdout = Readable.init(stdio[1], bun.toFD(stdout_pipe[0]), jsc_vm.allocator, default_max_buffer_size),
+                .stderr = Readable.init(stdio[2], bun.toFD(stderr_pipe[0]), jsc_vm.allocator, default_max_buffer_size),
                 .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
 
                 .ipc_mode = ipc_mode,
@@ -1750,7 +1750,7 @@ pub const Subprocess = struct {
             const resource_usage = subprocess.createResourceUsageObject(globalThis);
             subprocess.finalizeSync();
 
-            const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
+            const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
             sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
             sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
             sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
@@ -1813,6 +1813,7 @@ pub const Subprocess = struct {
             }
         }
 
+        // TODO: move pipe2 to bun.sys so it can return [2]bun.FileDesriptor
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
@@ -1848,6 +1849,7 @@ pub const Subprocess = struct {
 
         for (stdio_pipes.items) |*item| {
             const maybe = blk: {
+                // TODO: move this to bun.sys so it can return [2]bun.FileDesriptor
                 var fds: [2]c_int = undefined;
                 const socket_type = os.SOCK.STREAM;
                 const rc = std.os.system.socketpair(os.AF.UNIX, socket_type, 0, &fds);
@@ -1861,8 +1863,8 @@ pub const Subprocess = struct {
                     .PROTONOSUPPORT => break :blk error.ProtocolNotSupported,
                     else => |err| break :blk std.os.unexpectedErrno(err),
                 }
-                actions.dup2(fds[1], item.fileno) catch |err| break :blk err;
-                actions.close(fds[1]) catch |err| break :blk err;
+                actions.dup2(bun.toFD(fds[1]), bun.toFD(item.fileno)) catch |err| break :blk err;
+                actions.close(bun.toFD(fds[1])) catch |err| break :blk err;
                 item.fd = fds[0];
                 // enable non-block
                 const before = std.c.fcntl(fds[0], os.F.GETFL);
@@ -1913,7 +1915,7 @@ pub const Subprocess = struct {
                 });
                 return .zero;
             };
-            actions.dup2(fds[1], 3) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            actions.dup2(bun.toFD(fds[1]), bun.toFD(3)) catch |err| return globalThis.handleError(err, "in posix_spawn");
         }
 
         env_array.append(allocator, null) catch {
@@ -1925,16 +1927,16 @@ pub const Subprocess = struct {
         const pid = brk: {
             defer {
                 if (stdio[0].isPiped()) {
-                    _ = bun.sys.close(stdin_pipe[0]);
+                    _ = bun.sys.close(bun.toFD(stdin_pipe[0]));
                 }
                 if (stdio[1].isPiped()) {
-                    _ = bun.sys.close(stdout_pipe[1]);
+                    _ = bun.sys.close(bun.toFD(stdout_pipe[1]));
                 }
                 if (stdio[2].isPiped()) {
-                    _ = bun.sys.close(stderr_pipe[1]);
+                    _ = bun.sys.close(bun.toFD(stderr_pipe[1]));
                 }
                 for (stdio_pipes.items) |item| {
-                    _ = bun.sys.close(item.fd + 1);
+                    _ = bun.sys.close(bun.toFD(item.fd + 1));
                 }
             }
 
@@ -2010,14 +2012,14 @@ pub const Subprocess = struct {
             .globalThis = globalThis,
             .pid = pid,
             .pid_rusage = if (has_rusage) rusage_result else null,
-            .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
-            .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+            .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd.int()) else @truncate(pidfd),
+            .stdin = Writable.init(stdio[0], bun.toFD(stdin_pipe[1]), globalThis) catch {
                 globalThis.throwOutOfMemory();
                 return .zero;
             },
             // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-            .stdout = Readable.init(stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-            .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .stdout = Readable.init(stdio[1], bun.toFD(stdout_pipe[0]), jsc_vm.allocator, default_max_buffer_size),
+            .stderr = Readable.init(stdio[2], bun.toFD(stderr_pipe[0]), jsc_vm.allocator, default_max_buffer_size),
             .stdio_pipes = stdio_pipes,
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .ipc_mode = ipc_mode,
@@ -2049,7 +2051,7 @@ pub const Subprocess = struct {
 
         if (comptime !is_sync) {
             if (!WaiterThread.shouldUseWaiterThread()) {
-                const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+                const poll = Async.FilePoll.init(jsc_vm, bun.toFD(watchfd), .{}, Subprocess, subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
                 switch (subprocess.poll.poll_ref.?.register(
                     jsc_vm.event_loop_handle.?,
@@ -2115,7 +2117,7 @@ pub const Subprocess = struct {
         subprocess.closeIO(.stdin);
 
         if (!WaiterThread.shouldUseWaiterThread()) {
-            const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            const poll = Async.FilePoll.init(jsc_vm, bun.toFD(watchfd), .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
@@ -2509,15 +2511,15 @@ pub const Subprocess = struct {
             stdio: @This(),
             actions: *PosixSpawn.Actions,
             pipe_fd: [2]i32,
-            std_fileno: i32,
+            std_fileno: bun.FileDescriptor,
         ) !void {
             switch (stdio) {
                 .array_buffer, .blob, .pipe => {
                     std.debug.assert(!(stdio == .blob and stdio.blob.needsToReadFile()));
-                    const idx: usize = if (std_fileno == 0) 0 else 1;
+                    const idx: usize = if (std_fileno == bun.STDIN_FD) 0 else 1;
 
-                    try actions.dup2(pipe_fd[idx], std_fileno);
-                    try actions.close(pipe_fd[1 - idx]);
+                    try actions.dup2(bun.toFD(pipe_fd[idx]), std_fileno);
+                    try actions.close(bun.toFD(pipe_fd[1 - idx]));
                 },
                 .fd => |fd| {
                     try actions.dup2(fd, std_fileno);
@@ -2656,24 +2658,22 @@ pub const Subprocess = struct {
 
             return true;
         } else if (value.isNumber()) {
-            const fd_ = value.toInt64();
-            if (fd_ < 0) {
+            const fd = value.asFileDescriptor();
+            if (fd.int() < 0) {
                 globalThis.throwInvalidArguments("file descriptor must be a positive integer", .{});
                 return false;
             }
 
-            const fd = @as(bun.FileDescriptor, @intCast(fd_));
-
             switch (bun.FDTag.get(fd)) {
                 .stdin => {
-                    if (i == bun.STDERR_FD or i == bun.STDOUT_FD) {
+                    if (i == 1 or i == 2) {
                         globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
                         return false;
                     }
                 },
 
                 .stdout, .stderr => {
-                    if (i == bun.STDIN_FD) {
+                    if (i == 0) {
                         globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
                         return false;
                     }
@@ -2694,7 +2694,7 @@ pub const Subprocess = struct {
             return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, out_stdio);
         } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
             var req = req_const;
-            if (i == bun.STDIN_FD) {
+            if (i == 0) {
                 if (req.toAnyBlob(globalThis)) |blob| {
                     return extractStdioBlob(globalThis, blob, i, out_stdio);
                 }
@@ -2831,8 +2831,8 @@ pub const Subprocess = struct {
                 const linux = std.os.linux;
                 var mask = std.os.empty_sigset;
                 linux.sigaddset(&mask, std.os.SIG.CHLD);
-                instance.signalfd = try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK);
-                instance.eventfd = try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0);
+                instance.signalfd = bun.toFD(try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK));
+                instance.eventfd = bun.toFD(try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
             }
         }
 
@@ -2875,7 +2875,7 @@ pub const Subprocess = struct {
 
             if (comptime Environment.isLinux) {
                 const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
             }
         }
 
@@ -2890,7 +2890,7 @@ pub const Subprocess = struct {
 
             if (comptime Environment.isLinux) {
                 const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
             }
         }
 
@@ -2911,7 +2911,7 @@ pub const Subprocess = struct {
                 var process = queue[i];
 
                 // this case shouldn't really happen
-                if (process.pid == bun.invalid_fd) {
+                if (process.pid == bun.invalid_fd.int()) {
                     _ = this.queue.orderedRemove(i);
                     _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                     queue = this.queue.items;
@@ -2960,7 +2960,7 @@ pub const Subprocess = struct {
             while (queue.len > 0 and i < queue.len) {
                 var lifecycle_script_subprocess = queue[i];
 
-                if (lifecycle_script_subprocess.pid == bun.invalid_fd) {
+                if (lifecycle_script_subprocess.pid == bun.invalid_fd.int()) {
                     _ = this.lifecycle_script_queue.orderedRemove(i);
                     queue = this.lifecycle_script_queue.items;
                 }
@@ -3008,12 +3008,12 @@ pub const Subprocess = struct {
                 if (comptime Environment.isLinux) {
                     var polls = [_]std.os.pollfd{
                         .{
-                            .fd = @intCast(this.signalfd),
+                            .fd = this.signalfd.cast(),
                             .events = std.os.POLL.IN | std.os.POLL.ERR,
                             .revents = 0,
                         },
                         .{
-                            .fd = @intCast(this.eventfd),
+                            .fd = this.eventfd.cast(),
                             .events = std.os.POLL.IN | std.os.POLL.ERR,
                             .revents = 0,
                         },
@@ -3023,7 +3023,7 @@ pub const Subprocess = struct {
 
                     // Make sure we consume any pending signals
                     var buf: [1024]u8 = undefined;
-                    _ = std.os.read(this.signalfd, &buf) catch 0;
+                    _ = std.os.read(this.signalfd.cast(), &buf) catch 0;
                 } else {
                     var mask = std.os.empty_sigset;
                     var signal: c_int = std.os.SIG.CHLD;

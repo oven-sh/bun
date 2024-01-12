@@ -43,7 +43,7 @@ pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
         if (can_use_ioctl_ficlone()) {
             // We only check once if the ioctl is supported, and cache the result.
             // EXT4 does not support FICLONE.
-            const rc = bun.C.linux.ioctl_ficlone(@intCast(out), @intCast(in));
+            const rc = bun.C.linux.ioctl_ficlone(bun.toFD(out), bun.toFD(in));
             switch (std.os.linux.getErrno(rc)) {
                 .SUCCESS => return,
                 .FBIG => return error.FileTooBig,

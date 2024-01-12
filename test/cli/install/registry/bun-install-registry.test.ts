@@ -978,7 +978,7 @@ describe("hoisting", async () => {
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@1.0.0",
+      " + no-deps@2.0.0",
       " + peer-deps-fixed@1.0.0",
       "",
       " 2 packages installed",

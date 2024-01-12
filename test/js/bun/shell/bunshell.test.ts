@@ -1,7 +1,13 @@
+/**
+ * Portions of these tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) tests, which are developed and maintained by the Deno authors.
+ * Copyright 2018-2023 the Deno authors.
+ *
+ * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
+ */
 import { $ } from "bun";
 import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
 import { join, relative } from "path";
-import { redirect } from "./util";
+import { TestBuilder, redirect } from "./util";
 import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 import {
@@ -315,6 +321,15 @@ ${temp_dir}`
    *
    */
   describe("escaping", () => {});
+});
+
+describe("deno_task", () => {
+  test("boolean logic", async () => {
+    await TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").run();
+    await TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").run();
+    await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
+    await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

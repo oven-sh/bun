@@ -506,7 +506,7 @@ pub const Parser = struct {
 
     fn parse_cond(self: *Parser) !AST.Expr {
         var left = try self.parse_pipeline();
-        while (self.match_any(&.{ .DoubleAmpersand, .DoublePipe })) {
+        while (self.atch_any(&.{ .DoubleAmpersand, .DoublePipe })) {
             const op: AST.Conditional.Op = op: {
                 const previous = @as(TokenTag, self.prev());
                 switch (previous) {

@@ -1611,7 +1611,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 if (this.left == null) {
                     this.left = exit_code;
-                    if (exit_code != 0) {
+                    if ((this.node.op == .And and exit_code != 0) or (this.node.op == .Or and exit_code == 0)) {
                         this.parent.childDone(this, exit_code);
                         return;
                     }

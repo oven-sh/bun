@@ -366,7 +366,7 @@ pub const ZigString = extern struct {
             return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
         }
 
-        if (comptime strings.isAllASCIISimple(other)) {
+        if (comptime strings.isAllASCII(other)) {
             if (this.len != other.len)
                 return false;
 
@@ -616,7 +616,7 @@ pub const ZigString = extern struct {
         pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var bytes = this.text.toSlice(bun.default_allocator);
             defer bytes.deinit();
-            try strings.githubActionWriter(writer, bytes.slice());
+            try bun.fmt.githubActionWriter(writer, bytes.slice());
         }
     };
 
@@ -717,11 +717,11 @@ pub const ZigString = extern struct {
         }
 
         if (self.is16Bit()) {
-            try strings.formatUTF16(self.utf16Slice(), writer);
+            try bun.fmt.formatUTF16(self.utf16Slice(), writer);
             return;
         }
 
-        try strings.formatLatin1(self.slice(), writer);
+        try bun.fmt.formatLatin1(self.slice(), writer);
     }
 
     pub inline fn toRef(slice_: []const u8, global: *JSGlobalObject) C_API.JSValueRef {
@@ -1604,7 +1604,7 @@ pub const SystemError = extern struct {
     message: String = String.empty,
     path: String = String.empty,
     syscall: String = String.empty,
-    fd: i32 = -1,
+    fd: bun.FileDescriptor = bun.toFD(-1),
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {
@@ -2692,7 +2692,7 @@ pub const JSGlobalObject = extern struct {
             var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
             return str.toErrorInstance(this);
         } else {
-            if (comptime strings.isAllASCIISimple(fmt)) {
+            if (comptime strings.isAllASCII(fmt)) {
                 return ZigString.static(fmt).toErrorInstance(this);
             } else {
                 return ZigString.initUTF8(fmt).toErrorInstance(this);
@@ -3873,6 +3873,9 @@ pub const JSValue = enum(JSValueReprInt) {
                 if (comptime Number == std.os.fd_t) {
                     return jsNumber(bun.toFD(number));
                 }
+                if (Number == bun.FileDescriptor) {
+                    return jsNumber(number.int());
+                }
 
                 @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
             },
@@ -4854,6 +4857,11 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn asInt32(this: JSValue) i32 {
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
+    }
+
+    pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
+        std.debug.assert(this.isNumber());
+        return bun.FDImpl.fromUV(this.toInt32()).encode();
     }
 
     pub inline fn toU16(this: JSValue) u16 {

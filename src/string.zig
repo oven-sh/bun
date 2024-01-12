@@ -372,7 +372,7 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFromOSPath(os_path: bun.OSPathSliceWithoutSentinel) String {
+    pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
             []const u8 => create(os_path),
             []const u16 => createUTF16(os_path),

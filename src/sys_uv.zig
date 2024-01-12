@@ -27,7 +27,8 @@ comptime {
 
 pub const log = bun.sys.syslog;
 pub const Error = bun.sys.Error;
-pub const open = bun.sys.open;
+
+// libuv dont suppport openat (https://github.com/libuv/libuv/issues/4167)
 pub const openat = bun.sys.openat;
 pub const getFdPath = bun.sys.getFdPath;
 pub const setFileOffset = bun.sys.setFileOffset;
@@ -35,6 +36,17 @@ pub const openatOSPath = bun.sys.openatOSPath;
 pub const mkdirOSPath = bun.sys.mkdirOSPath;
 
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
+
+pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    var req: uv.fs_t = uv.fs_t.uninitialized;
+    defer req.deinit();
+    const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
+    log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc.value });
+    return if (rc.errno()) |errno|
+        .{ .err = .{ .errno = errno, .syscall = .open } }
+    else
+        .{ .result = bun.toFD(@as(i32, @intCast(req.result.value))) };
+}
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     var req: uv.fs_t = uv.fs_t.uninitialized;

@@ -526,9 +526,9 @@ pub const Tree = struct {
     }
 
     // This function does one of three things:
-    // - de-duplicate (skip) the package
-    // - move the package to the top directory
-    // - leave the package at the same (relative) directory
+    // 1 (return hoisted) - de-duplicate (skip) the package
+    // 2 (return id) - move the package to the top directory
+    // 3 (return dependency_loop) - leave the package at the same (relative) directory
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
@@ -543,7 +543,7 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id) {
+            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -556,9 +556,9 @@ pub const Tree = struct {
                     return error.DependencyLoop;
                 }
                 // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop;
+                return dependency_loop; // 3
             }
-            return hoisted;
+            return hoisted; // 1
         }
 
         if (this.parent < error_id) {
@@ -571,10 +571,10 @@ pub const Tree = struct {
                 trees,
                 builder,
             ) catch unreachable;
-            if (!as_defined or id != dependency_loop) return id;
+            if (!as_defined or id != dependency_loop) return id; // 1 or 2
         }
 
-        return this.id;
+        return this.id; // 2
     }
 };
 
@@ -1068,7 +1068,7 @@ pub const Printer = struct {
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
-                    strings.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
+                    bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
             },
@@ -1645,7 +1645,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                 .file = .{
                     .fd = bun.toFD(file.handle),
                 },
-                .dirfd = if (!Environment.isWindows) bun.invalid_fd else @panic("TODO"),
+                .dirfd = bun.invalid_fd,
                 .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.from(bytes.items, bun.default_allocator) } },
             },
             .sync,
@@ -1659,15 +1659,14 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         }
     }
 
-    if (comptime Environment.isWindows) {
-        // TODO: make this executable
-        @panic("TODO on Windows");
-    } else {
-        _ = C.fchmod(
-            tmpfile.fd,
-            // chmod 777
-            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
+    // chmod 777
+    switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
+        .err => |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
+            Global.crash();
+        },
+        .result => {},
     }
 
     tmpfile.promoteToCWD(tmpname, filename) catch |err| {
@@ -3829,7 +3828,7 @@ pub const Package = extern struct {
                         .auto,
                     );
 
-                    if (entry.cache.fd == 0) {
+                    if (entry.cache.fd == .zero) {
                         entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,

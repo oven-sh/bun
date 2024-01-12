@@ -186,7 +186,7 @@ pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
-    return enable_ansi_colors and !Environment.isWindows;
+    return enable_ansi_colors;
 }
 
 pub fn isGithubAction() bool {

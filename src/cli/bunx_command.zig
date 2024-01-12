@@ -97,7 +97,7 @@ pub const BunxCommand = struct {
                     const bin_dir = try std.os.openat(dir_fd, dir_name, std.os.O.RDONLY, 0);
                     defer std.os.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir };
-                    var iterator = @import("../bun.js/node/dir_iterator.zig").iterate(dir);
+                    var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {

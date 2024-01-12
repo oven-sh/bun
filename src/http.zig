@@ -115,6 +115,16 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
+pub fn canUseBrotli() bool {
+    if (Environment.isMac) {
+        if (bun.CompressionFramework.isAvailable()) {
+            return true;
+        }
+    }
+
+    return bun.brotli.hasBrotli();
+}
+
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -138,7 +148,7 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd(), this.fd, &signed_offset, this.remain);
+                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
             const errcode = std.os.linux.getErrno(val);
@@ -152,13 +162,24 @@ pub const Sendfile = struct {
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
+        } else if (Environment.isWindows) {
+            const win = std.os.windows;
+            const uv = bun.windows.libuv;
+            const wsocket = bun.socketcast(socket.fd());
+            const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
+            if (win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
+                return .{ .done = {} };
+            }
+            this.offset += this.remain;
+            this.remain = 0;
+            const errorno = win.ws2_32.WSAGetLastError();
+            return .{ .err = bun.errnoToZigErr(errorno) };
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(
-                this.fd,
-                socket.fd(),
-
+                this.fd.cast(),
+                socket.fd().cast(),
                 signed_offset,
                 &sbytes,
                 null,

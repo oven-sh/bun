@@ -41,7 +41,7 @@ pub const FolderResolution = union(Tag) {
             }
 
             if (this.quoted) {
-                const quoted = strings.QuotedFormatter{
+                const quoted = bun.fmt.QuotedFormatter{
                     .text = paths.rel,
                 };
                 try quoted.format(fmt, opts, writer);

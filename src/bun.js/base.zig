@@ -168,7 +168,7 @@ pub fn createError(
 ) JSC.JSValue {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
-        if (comptime !strings.isAllASCIISimple(fmt)) {
+        if (comptime !strings.isAllASCII(fmt)) {
             zig_str.markUTF16();
         }
 

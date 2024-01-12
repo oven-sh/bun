@@ -6,7 +6,7 @@ import * as Module from "node:module";
 import { join } from "node:path";
 import sync from "./require-json.json";
 
-const { path, dir } = import.meta;
+const { path, dir, dirname, filename } = import.meta;
 
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
@@ -188,6 +188,14 @@ it("import.meta.require (javascript, live bindings)", () => {
 
 it("import.meta.dir", () => {
   expect(dir.endsWith("/bun/test/js/bun/resolve")).toBe(true);
+});
+
+it("import.meta.dirname", () => {
+  expect(dirname).toBe(dir);
+});
+
+it("import.meta.filename", () => {
+  expect(filename).toBe(import.meta.path);
 });
 
 it("import.meta.path", () => {

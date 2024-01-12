@@ -162,7 +162,7 @@ it("should remove existing package", async () => {
   );
 });
 
-it("should reject missing package", async () => {
+it("should not reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -188,7 +188,7 @@ it("should reject missing package", async () => {
   });
   expect(await addExited).toBe(0);
 
-  const { stdout, stderr, exited } = spawn({
+  const { exited: rmExited } = spawn({
     cmd: [bunExe(), "remove", "pkg2"],
     cwd: package_dir,
     stdout: null,
@@ -196,18 +196,7 @@ it("should reject missing package", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await exited).toBe(1);
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out).toEqual("");
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun remove",
-    "",
-    `error: "pkg2" is not in a package.json file`,
-    "",
-  ]);
+  expect(await rmExited).toBe(0);
 });
 
 it("should not affect if package is not installed", async () => {

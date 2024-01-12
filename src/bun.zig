@@ -1799,7 +1799,7 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
         }
         return decoded.uv();
     } else {
-        return @intCast(fd);
+        return fd.cast();
     }
 }
 

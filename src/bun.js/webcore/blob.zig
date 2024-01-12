@@ -2330,16 +2330,17 @@ pub const Blob = struct {
 
             req: libuv.fs_t = libuv.fs_t.uninitialized,
 
-            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *Handler) void {
+            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
                 var this = bun.new(ReadFileUV, .{
                     .loop = loop,
                     .file_store = store.data.file,
                     .store = store,
                     .offset = off,
                     .max_length = max_len,
-                    .on_complete_data = @ptrCast(handler),
+                    .on_complete_data = handler,
                     .on_complete_fn = @ptrCast(&Handler.run),
                 });
+                store.ref();
                 this.getFd(onFileOpen);
             }
 
@@ -4361,7 +4362,8 @@ pub const Blob = struct {
 
     pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
         if (Environment.isWindows) {
-            @panic("todo");
+            const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
+            return Store.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
         }
         const file_read = Store.ReadFile.createWithCtx(
             bun.default_allocator,

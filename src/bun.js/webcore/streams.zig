@@ -52,9 +52,12 @@ pub const ReadableStream = struct {
 
     pub const Strong = struct {
         held: JSC.Strong = .{},
-        globalThis: ?*JSGlobalObject = null,
 
-        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) !Strong {
+        pub fn globalThis(this: *const Strong) ?*JSGlobalObject {
+            return this.held.globalThis;
+        }
+
+        pub fn init(this: ReadableStream, global: *JSGlobalObject) !Strong {
             switch (this.ptr) {
                 .Blob => |stream| {
                     try stream.parent().incrementCount();
@@ -68,15 +71,14 @@ pub const ReadableStream = struct {
                 else => {},
             }
             return .{
-                .globalThis = globalThis,
-                .held = JSC.Strong.create(this.value, globalThis),
+                .held = JSC.Strong.create(this.value, global),
             };
         }
 
         pub fn get(this: *Strong) ?ReadableStream {
-            if (this.globalThis) |globalThis| {
+            if (this.globalThis()) |global| {
                 if (this.held.get()) |value| {
-                    return ReadableStream.fromJS(value, globalThis);
+                    return ReadableStream.fromJS(value, global);
                 }
             }
             return null;
@@ -85,8 +87,7 @@ pub const ReadableStream = struct {
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
                 // decrement the ref count and if it's zero we auto detach
-                readable.detachIfPossible(this.globalThis.?);
-                this.globalThis = null;
+                readable.detachIfPossible(this.globalThis().?);
             }
             this.held.deinit();
         }
@@ -96,10 +97,25 @@ pub const ReadableStream = struct {
         return this.value;
     }
 
+    pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) void {
+        if (ReadableStream.fromJS(this.value, globalThis)) |stream| {
+            this.* = stream;
+        } else {
+            this.value.unprotect();
+            this.* = .{ .ptr = .{ .Invalid = {} }, .value = .zero };
+        }
+    }
+
     pub fn toAnyBlob(
         stream: *ReadableStream,
         globalThis: *JSC.JSGlobalObject,
     ) ?JSC.WebCore.AnyBlob {
+        if (stream.isDisturbed(globalThis)) {
+            return null;
+        }
+
+        stream.reloadTag(globalThis);
+
         switch (stream.ptr) {
             .Blob => |blobby| {
                 var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
@@ -147,14 +163,19 @@ pub const ReadableStream = struct {
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
+        this.value.unprotect();
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
+        this.value.unprotect();
+    }
+
+    pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
+        ReadableStream__detach(this.value, globalObject);
+        this.value.unprotect();
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -171,8 +192,8 @@ pub const ReadableStream = struct {
         };
 
         if (ref_count == 0) {
-            this.value.unprotect();
             ReadableStream__detach(this.value, globalThis);
+            this.value.unprotect();
         }
     }
 

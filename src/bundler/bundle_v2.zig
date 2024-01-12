@@ -3170,8 +3170,7 @@ const LinkerGraph = struct {
         name: []const u8,
         count: u32,
     ) !void {
-        // if (count == 0)
-
+        if (count == 0) return;
         debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
         const ref = graph.runtimeFunction(name);
@@ -5047,8 +5046,8 @@ const LinkerContext = struct {
                                     // - The "default" and "__esModule" exports must not be accessed
                                     //
                                     if (kind != .require and
-                                        false // TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
-                                    (kind != .stmt or
+                                        false and // TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
+                                        (kind != .stmt or
                                         record.contains_import_star or
                                         record.contains_default_alias or
                                         record.contains_es_module_alias))

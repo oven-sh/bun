@@ -16845,11 +16845,13 @@ fn NewParser_(
             return expr;
         }
 
+        /// This is only allowed to be called if allow_runtime is true
+        /// If --target=bun, this does nothing.
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
             if (!p.options.features.use_import_meta_require) {
-                // This is not to be called when allow_runtime
                 std.debug.assert(p.options.features.allow_runtime);
+
                 p.ensureRequireSymbol();
                 p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
             }

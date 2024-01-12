@@ -265,7 +265,6 @@ pub const RunCommand = struct {
 
     pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
-        ctx: Command.Context,
         original_script: string,
         name: string,
         cwd: string,
@@ -316,16 +315,6 @@ pub const RunCommand = struct {
         }
 
         var child_process = std.ChildProcess.init(&argv, allocator);
-
-        if (comptime Environment.isWindows) {
-            if (ctx.debug.run_in_bun) {
-                try env.map.putAllocKeyAndValue(
-                    env.map.map.allocator,
-                    "BUN_RUN_WINDOWS_BINARY_WITH_BUN",
-                    if (comptime Environment.isDebug) "bun-debug.exe" else "bun.exe",
-                );
-            }
-        }
 
         var buf_map = try env.map.cloneToEnvMap(allocator);
 
@@ -407,16 +396,6 @@ pub const RunCommand = struct {
         }
 
         var child_process = std.ChildProcess.init(argv, ctx.allocator);
-
-        if (comptime Environment.isWindows) {
-            if (ctx.debug.run_in_bun) {
-                try env.map.putAllocKeyAndValue(
-                    env.map.map.allocator,
-                    "BUN_RUN_WINDOWS_BINARY_WITH_BUN",
-                    if (comptime Environment.isDebug) "bun-debug.exe" else "bun.exe",
-                );
-            }
-        }
 
         var buf_map = try env.map.cloneToEnvMap(ctx.allocator);
         child_process.cwd = cwd;
@@ -1198,7 +1177,6 @@ pub const RunCommand = struct {
                             if (scripts.get(temp_script_buffer[1..])) |prescript| {
                                 if (!try runPackageScriptForeground(
                                     ctx.allocator,
-                                    ctx,
                                     prescript,
                                     temp_script_buffer[1..],
                                     this_bundler.fs.top_level_dir,
@@ -1212,7 +1190,6 @@ pub const RunCommand = struct {
 
                             if (!try runPackageScriptForeground(
                                 ctx.allocator,
-                                ctx,
                                 script_content,
                                 script_name_to_search,
                                 this_bundler.fs.top_level_dir,
@@ -1226,7 +1203,6 @@ pub const RunCommand = struct {
                             if (scripts.get(temp_script_buffer)) |postscript| {
                                 if (!try runPackageScriptForeground(
                                     ctx.allocator,
-                                    ctx,
                                     postscript,
                                     temp_script_buffer,
                                     this_bundler.fs.top_level_dir,

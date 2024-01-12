@@ -1142,7 +1142,6 @@ pub const Version = extern struct {
                     }
 
                     part_start_i = i;
-                    // i += 1;
                     while (i < input.len and switch (input[i]) {
                         ' ' => true,
                         else => false,

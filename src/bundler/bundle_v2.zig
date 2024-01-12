@@ -2928,7 +2928,7 @@ pub const JSMeta = struct {
 
     flags: Flags = .{},
 
-    pub const Flags = struct {
+    pub const Flags = packed struct {
         /// This is true if this file is affected by top-level await, either by having
         /// a top-level await inside this file or by having an import/export statement
         /// that transitively imports such a file. It is forbidden to call "require()"
@@ -5011,9 +5011,7 @@ const LinkerContext = struct {
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
                             // This is an external import. Check if it will be a "require()" call.
-                            if (kind == .require or !output_format.keepES6ImportExportSyntax()
-                            // or (kind == .dynamic and TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport))
-                            ) {
+                            if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
                                 if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
                                     // If the CommonJS module was converted to ESM
                                     // and the developer `import("cjs_module")`, then
@@ -5049,7 +5047,8 @@ const LinkerContext = struct {
                                     // - The "default" and "__esModule" exports must not be accessed
                                     //
                                     if (kind != .require and
-                                        (kind != .stmt or
+                                        false // TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
+                                    (kind != .stmt or
                                         record.contains_import_star or
                                         record.contains_default_alias or
                                         record.contains_es_module_alias))

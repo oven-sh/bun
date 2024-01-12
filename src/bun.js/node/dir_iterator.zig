@@ -63,7 +63,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-            const next = switch (builtin.os.tag) {
+            pub const next = switch (builtin.os.tag) {
                 .macos, .ios => nextDarwin,
                 // .freebsd, .netbsd, .dragonfly, .openbsd => nextBsd,
                 // .solaris => nextSolaris,

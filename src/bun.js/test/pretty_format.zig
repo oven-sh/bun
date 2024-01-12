@@ -2070,7 +2070,7 @@ pub const JestPrettyFormat = struct {
             this.quote_strings = original_quote_strings;
         } else if (value.as(expect.ExpectCustomAsymmetricMatcher)) |instance| {
             const printed = instance.customPrint(value, this.globalThis, writer_, true) catch unreachable;
-            if (!printed) { // default print (non-overriden by user)
+            if (!printed) { // default print (non-overridden by user)
                 const flags = instance.flags;
                 const args_value = expect.ExpectCustomAsymmetricMatcher.capturedArgsGetCached(value) orelse return true;
                 const matcher_fn = expect.ExpectCustomAsymmetricMatcher.matcherFnGetCached(value) orelse return true;

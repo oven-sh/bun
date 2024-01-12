@@ -44,7 +44,7 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
 ///
 /// bun.FileDescriptor is the bitcast of this struct, which is essentially a tagged pointer.
 ///
-/// You can aquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
+/// You can acquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
 ///
 /// On Windows builds we have two kinds of file descriptors:
 /// - system: A "std.os.windows.HANDLE" that windows APIs can interact with.

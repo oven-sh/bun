@@ -2404,7 +2404,7 @@ pub const Process = struct {
         const vm = globalObject.bunVM();
 
         if (vm.worker) |worker| {
-            // was explicitly overriden for the worker?
+            // was explicitly overridden for the worker?
             if (worker.execArgv) |execArgv| {
                 const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
                 for (0..execArgv.len) |i| {

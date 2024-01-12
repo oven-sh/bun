@@ -3709,7 +3709,7 @@ pub const Parser = struct {
                     var notes = ListManaged(logger.Data).init(p.allocator);
 
                     try notes.append(logger.Data{
-                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{strings.QuotedFormatter{ .text = record.path.text }}),
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
                     });
 
                     if (uses_module_ref) {
@@ -17708,7 +17708,7 @@ fn NewParser_(
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
-                                            std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(key)}) catch unreachable,
+                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
                                         ) catch unreachable;
                                         p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                         named_export_entry.value_ptr.* = .{
@@ -17814,7 +17814,7 @@ fn NewParser_(
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
                                         .other,
-                                        std.fmt.allocPrint(p.allocator, "${any}", .{strings.fmtIdentifier(name)}) catch unreachable,
+                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                     ) catch unreachable;
                                     p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
                                     named_export_entry.value_ptr.* = .{

@@ -325,7 +325,7 @@ const NetworkTask = struct {
             if (tmp.tag == .Dead) {
                 const msg = .{
                     .fmt = "Failed to join registry {} and package {} URLs",
-                    .args = .{ strings.QuotedFormatter{ .text = scope.url.href }, strings.QuotedFormatter{ .text = name } },
+                    .args = .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                 };
 
                 if (warn_on_error)
@@ -1110,8 +1110,8 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{},
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1226,8 +1226,8 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{},
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1240,41 +1240,68 @@ const PackageInstall = struct {
                 progress_: *Progress,
             ) !u32 {
                 var real_file_count: u32 = 0;
+
+                var in_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+                var out_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
                     real_file_count += 1;
 
-                    var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                        if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                            destination_dir_.makePath(entry_dirname) catch {};
+                    const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
+
+                    var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                        if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                            bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                         }
-                        break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                        break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                             Global.crash();
                         };
                     };
                     defer outfile.close();
 
-                    var in_file = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                    const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
+
+                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                     defer in_file.close();
 
-                    if (comptime Environment.isPosix) {
-                        const stat = in_file.stat() catch continue;
-                        _ = C.fchmod(outfile.handle, stat.mode);
+                    if (comptime Environment.isWindows) {
+                        const in_path = bun.getFdPathW(in_file.handle, &in_buf) catch unreachable;
+                        in_buf[in_path.len] = 0;
+                        const in = in_buf[0..in_path.len :0];
+
+                        const out_path = bun.getFdPathW(outfile.handle, &out_buf) catch unreachable;
+                        out_buf[out_path.len] = 0;
+                        const out = out_buf[0..out_path.len :0];
+
+                        bun.copyFile(in, out) catch |err| {
+                            progress_.root.end();
+
+                            progress_.refresh();
+
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Global.crash();
+                        };
+                    } else {
+                        if (comptime Environment.isPosix) {
+                            const stat = in_file.stat() catch continue;
+                            _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                        }
+
+                        bun.copyFile(in_file.handle, outfile.handle) catch |err| {
+                            progress_.root.end();
+
+                            progress_.refresh();
+
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Global.crash();
+                        };
                     }
-
-                    bun.copyFile(in_file.handle, outfile.handle) catch |err| {
-                        progress_.root.end();
-
-                        progress_.refresh();
-
-                        Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                        Global.crash();
-                    };
                 }
 
                 return real_file_count;
@@ -1306,34 +1333,54 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{"node_modules"},
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{bun.OSPathLiteral("node_modules")},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer walker_.deinit();
 
-        var buf: if (Environment.isWindows) [2048]u16 else [0]u16 = undefined;
-        var buf2: if (Environment.isWindows) [2048]u16 else [0]u16 = undefined;
+        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
+        defer subdir.close();
+
+        var buf: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
+        var buf2: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {
-            buf[0] = '\\';
-            buf[1] = '\\';
-            buf[2] = '?';
-            buf[3] = '\\';
+            var fd_path_buf: bun.PathBuffer = undefined;
 
-            strings.copyU8IntoU16(buf[3..], this.destination_dir_subpath);
-            buf[3 + this.destination_dir_subpath.len] = 0;
+            // buf[0] = '\\';
+            // buf[1] = '\\';
+            // buf[2] = '?';
+            // buf[3] = '\\';
+            // const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
+            // strings.copyU8IntoU16(buf[4..], dest_path);
+            // buf[dest_path.len + 4] = '\\';
+            // to_copy_buf = buf[dest_path.len + 5 ..];
 
-            buf2[0] = '\\';
-            buf2[1] = '\\';
-            buf2[2] = '?';
-            buf2[3] = '\\';
-            strings.copyU8IntoU16(buf2[3..], this.cache_dir_subpath);
+            // buf2[0] = '\\';
+            // buf2[1] = '\\';
+            // buf2[2] = '?';
+            // buf2[3] = '\\';
+            // const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
+            // strings.copyU8IntoU16(buf2[4..], cache_path);
+            // buf2[cache_path.len + 4] = '\\';
+            // to_copy_buf2 = buf2[cache_path.len + 5 ..];
 
-            to_copy_buf = buf[0 .. 4 + this.destination_dir_subpath.len :0];
-            to_copy_buf2 = buf2[0 .. 4 + this.cache_dir_subpath.len :0];
+            // TODO(dylan-conway): find out why //?/ isn't working
+            const dest_path = try bun.getFdPath(subdir.fd, &fd_path_buf);
+            strings.copyU8IntoU16(&buf, dest_path);
+            buf[dest_path.len] = '\\';
+            to_copy_buf = buf[dest_path.len + 1 ..];
+
+            const cache_path = try bun.getFdPath(cached_package_dir.fd, &fd_path_buf);
+            strings.copyU8IntoU16(&buf2, cache_path);
+            buf2[cache_path.len] = '\\';
+            to_copy_buf2 = buf2[cache_path.len + 1 ..];
         }
 
         const FileCopier = struct {
@@ -1349,7 +1396,8 @@ const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            std.os.mkdirat(destination_dir.fd, entry.path, 0o755) catch {};
+                            const mkdirat = if (comptime Environment.isWindows) std.os.mkdiratW else std.os.mkdirat;
+                            mkdirat(destination_dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
                             if (comptime Environment.isWindows) {
@@ -1357,18 +1405,11 @@ const PackageInstall = struct {
                                     return error.NameTooLong;
                                 }
 
-                                // TODO: this copy shouldn't be necessary in the first place.
-                                strings.copyU8IntoU16(
-                                    to_copy_into1,
-                                    entry.path,
-                                );
+                                @memcpy(to_copy_into1[0..entry.path.len], entry.path);
                                 head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
                                 const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
 
-                                strings.copyU8IntoU16(
-                                    to_copy_into2,
-                                    entry.path,
-                                );
+                                @memcpy(to_copy_into2[0..entry.path.len], entry.path);
                                 head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
                                 const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
@@ -1403,12 +1444,6 @@ const PackageInstall = struct {
                 return real_file_count;
             }
         };
-
-        var subdir = this.destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-
-        defer subdir.close();
 
         this.file_count = FileCopier.copy(
             subdir,
@@ -1448,8 +1483,11 @@ const PackageInstall = struct {
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
-            &[_]string{},
-            &[_]string{ "node_modules", ".git" },
+            &[_]bun.OSPathSlice{},
+            &[_]bun.OSPathSlice{
+                bun.OSPathLiteral("node_modules"),
+                bun.OSPathLiteral(".git"),
+            },
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -6005,9 +6043,6 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
-        if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Windows support for bun install is not implemented yet");
-        }
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
 
@@ -7245,10 +7280,6 @@ pub const PackageManager = struct {
         comptime op: Lockfile.Package.Diff.Op,
         comptime subcommand: Subcommand,
     ) !void {
-        if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Windows support for bun install is not implemented yet");
-        }
-
         var manager = init(ctx, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (op) {
@@ -7689,6 +7720,9 @@ pub const PackageManager = struct {
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
             if (comptime Environment.allow_assert) {
                 std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
             }
@@ -7715,6 +7749,9 @@ pub const PackageManager = struct {
         }
 
         pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
                 i -= 1;
@@ -7751,6 +7788,9 @@ pub const PackageManager = struct {
         }
 
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.first().package_name;
                 while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
@@ -8238,7 +8278,7 @@ pub const PackageManager = struct {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         this.node_modules_folder_path.items,
                         &[_]string{ folder_name, "binding.gyp" },
-                        .posix,
+                        .auto,
                     );
 
                     break :brk Syscall.exists(binding_dot_gyp_path);
@@ -8248,7 +8288,7 @@ pub const PackageManager = struct {
                     this.node_modules_folder_path.items,
                     &path_buf_to_use,
                     &[_]string{destination_dir_subpath},
-                    .posix,
+                    .auto,
                 );
 
                 if (scripts.enqueue(
@@ -9316,7 +9356,7 @@ pub const PackageManager = struct {
         const binding_dot_gyp_path = Path.joinAbsStringZ(
             Fs.FileSystem.instance.top_level_dir,
             &[_]string{"binding.gyp"},
-            .posix,
+            .auto,
         );
         if (root.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
@@ -9476,6 +9516,9 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
+        if (comptime Environment.isWindows) {
+            return bun.todo(@src(), {});
+        }
         var any_scripts = false;
         for (list.items) |maybe_item| {
             if (maybe_item != null) {

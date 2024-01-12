@@ -366,7 +366,7 @@ pub const ZigString = extern struct {
             return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
         }
 
-        if (comptime strings.isAllASCIISimple(other)) {
+        if (comptime strings.isAllASCII(other)) {
             if (this.len != other.len)
                 return false;
 
@@ -616,7 +616,7 @@ pub const ZigString = extern struct {
         pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var bytes = this.text.toSlice(bun.default_allocator);
             defer bytes.deinit();
-            try strings.githubActionWriter(writer, bytes.slice());
+            try bun.fmt.githubActionWriter(writer, bytes.slice());
         }
     };
 
@@ -717,11 +717,11 @@ pub const ZigString = extern struct {
         }
 
         if (self.is16Bit()) {
-            try strings.formatUTF16(self.utf16Slice(), writer);
+            try bun.fmt.formatUTF16(self.utf16Slice(), writer);
             return;
         }
 
-        try strings.formatLatin1(self.slice(), writer);
+        try bun.fmt.formatLatin1(self.slice(), writer);
     }
 
     pub inline fn toRef(slice_: []const u8, global: *JSGlobalObject) C_API.JSValueRef {
@@ -2692,7 +2692,7 @@ pub const JSGlobalObject = extern struct {
             var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
             return str.toErrorInstance(this);
         } else {
-            if (comptime strings.isAllASCIISimple(fmt)) {
+            if (comptime strings.isAllASCII(fmt)) {
                 return ZigString.static(fmt).toErrorInstance(this);
             } else {
                 return ZigString.initUTF8(fmt).toErrorInstance(this);

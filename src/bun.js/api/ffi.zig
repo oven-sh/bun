@@ -671,9 +671,7 @@ pub const FFI = struct {
             val.arg_types.clearAndFree(allocator);
 
             if (val.state) |state| {
-                if (comptime !Environment.isWindows) {
-                    TCC.tcc_delete(state);
-                }
+                TCC.tcc_delete(state);
                 val.state = null;
             }
 
@@ -787,9 +785,7 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    if (comptime !Environment.isWindows) {
-                        TCC.tcc_delete(state);
-                    }
+                    TCC.tcc_delete(state);
                     this.state = null;
                 }
             }
@@ -898,9 +894,6 @@ pub const FFI = struct {
             }
 
             pub fn inject(state: *TCC.TCCState) void {
-                if (comptime Environment.isWindows) {
-                    return;
-                }
                 JSC.markBinding(@src());
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
@@ -941,9 +934,6 @@ pub const FFI = struct {
             js_function: JSValue,
             is_threadsafe: bool,
         ) !void {
-            if (comptime Environment.isWindows) {
-                return;
-            }
             JSC.markBinding(@src());
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
@@ -967,9 +957,7 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    if (comptime !Environment.isWindows) {
-                        TCC.tcc_delete(state);
-                    }
+                    TCC.tcc_delete(state);
                     this.state = null;
                 }
             }
@@ -1254,22 +1242,7 @@ pub const FFI = struct {
 
             // -- Generate the FFI function symbol
             try writer.writeAll("\n \n/* --- The Callback Function */\n");
-            try writer.writeAll("/* --- The Callback Function */\n");
-            try this.return_type.typename(writer);
-            try writer.writeAll(" my_callback_function");
-            try writer.writeAll("(");
             var first = true;
-            for (this.arg_types.items, 0..) |arg, i| {
-                if (!first) {
-                    try writer.writeAll(", ");
-                }
-                first = false;
-                try arg.typename(writer);
-                try writer.print(" arg{d}", .{i});
-            }
-            try writer.writeAll(");\n\n");
-
-            first = true;
             try this.return_type.typename(writer);
 
             try writer.writeAll(" my_callback_function");

@@ -407,7 +407,7 @@ if (ci) {
     }
     action.setOutput(
       "regressing_tests",
-      regressions.map(({ path }) => `- [\`${path}\`](${linkToGH(path)})`).join("\n"),
+      regressions.map(({ path }) => `- \`${path}\``).join("\n"),
     );
     action.setOutput("regressing_test_count", regressions.length);
   } else {

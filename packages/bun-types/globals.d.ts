@@ -368,6 +368,12 @@ interface ImportMeta {
    * ```
    */
   readonly main: boolean;
+
+  /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
+  readonly dirname: string;
+
+  /** Alias of `import.meta.path`. Exists for Node.js compatibility */
+  readonly filename: string;
 }
 
 /**

@@ -5269,7 +5269,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
       var ptr = this.#bunNativePtr;
       $debug("ptr @ NativeReadable._read", ptr, this.__id);
-      if (ptr === 0) {
+      if (ptr === 0 || ptr === -1) {
         this.push(null);
         return;
       }

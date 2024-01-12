@@ -245,7 +245,7 @@ pub const BunxCommand = struct {
         else
             update_request.name;
 
-        // fast path: they're actually using this interchangably with `bun run`
+        // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         var this_bundler: bun.Bundler = undefined;
         var ORIGINAL_PATH: string = "";

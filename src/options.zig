@@ -2017,7 +2017,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd != 0)
+                    if (copy.fd.int() != 0)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
                         }
@@ -2453,7 +2453,7 @@ pub const RouteConfig = struct {
     static_dir_handle: ?std.fs.Dir = null,
     static_dir_enabled: bool = false,
     single_page_app_routing: bool = false,
-    single_page_app_fd: StoredFileDescriptorType = 0,
+    single_page_app_fd: StoredFileDescriptorType = .zero,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{

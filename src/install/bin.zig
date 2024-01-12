@@ -334,22 +334,23 @@ pub const Bin = extern struct {
             if (comptime Environment.isWindows) {
                 @panic("TODO on Windows");
             }
-            std.os.symlinkatZ(target_path, this.package_installed_node_modules, dest_path) catch |err| {
+            const node_modules = this.package_installed_node_modules.asDir();
+            std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
                 // Most likely, the symlink was already created by another package
                 if (err == error.PathAlreadyExists) {
-                    setPermissions(this.package_installed_node_modules, dest_path);
+                    setPermissions(node_modules.fd, dest_path);
                     var target_path_trim = target_path;
                     if (strings.hasPrefix(target_path_trim, "../")) {
                         target_path_trim = target_path_trim[3..];
                     }
-                    setPermissions(this.package_installed_node_modules, target_path_trim);
+                    setPermissions(node_modules.fd, target_path_trim);
                     return;
                 }
 
                 this.err = err;
             };
-            setPermissions(this.package_installed_node_modules, dest_path);
+            setPermissions(node_modules.fd, dest_path);
         }
 
         const dot_bin = ".bin" ++ std.fs.path.sep_str;
@@ -578,7 +579,7 @@ pub const Bin = extern struct {
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
-                if (this.global_bin_dir.fd >= bun.invalid_fd) {
+                if (this.global_bin_dir.fd >= bun.invalid_fd.int()) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -595,7 +596,7 @@ pub const Bin = extern struct {
                 remain[0] = std.fs.path.sep;
                 remain = remain[1..];
 
-                this.root_node_modules_folder = this.global_bin_dir.fd;
+                this.root_node_modules_folder = bun.toFD(this.global_bin_dir.fd);
             }
 
             const name = this.package_name.slice();
@@ -623,7 +624,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
+                    std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                 },
                 .named_file => {
                     const name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
@@ -632,7 +633,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
+                    std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -660,7 +661,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
+                        std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                     }
                 },
                 .dir => {
@@ -709,7 +710,7 @@ pub const Bin = extern struct {
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
                                 std.os.unlinkatZ(
-                                    this.root_node_modules_folder,
+                                    this.root_node_modules_folder.cast(),
                                     to_path,
                                     0,
                                 ) catch continue;

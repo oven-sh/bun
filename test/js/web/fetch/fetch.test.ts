@@ -220,10 +220,7 @@ describe("AbortSignal", () => {
         await sleep(1);
         controller.abort();
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow(new DOMException("The operation was aborted."));
   });
 
@@ -246,10 +243,7 @@ describe("AbortSignal", () => {
         await sleep(10);
         controller.abort(new Error("My Reason"));
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow("My Reason");
   });
 
@@ -269,10 +263,7 @@ describe("AbortSignal", () => {
         await sleep(10);
         controller.abort();
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow(new DOMException("The operation was aborted."));
   });
 
@@ -324,7 +315,7 @@ describe("AbortSignal", () => {
     }
 
     try {
-      const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
+      const request = new Request(server.url, { signal });
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
       expect(() => {}).toThrow();
     } catch (ex: any) {
@@ -1259,7 +1250,7 @@ describe("Response", () => {
         },
       });
 
-      var response = await fetch(`http://127.0.0.1:${server.port}`, {
+      var response = await fetch(server.url, {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });

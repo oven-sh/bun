@@ -762,7 +762,7 @@ pub const VirtualMachine = struct {
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
             if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
-                this.initIPCInstance(fd);
+                this.initIPCInstance(bun.toFD(fd));
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
             }
@@ -3047,7 +3047,7 @@ pub const VirtualMachine = struct {
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
         if (Environment.isWindows) {
             Output.warn("IPC is not supported on Windows", .{});
             return;
@@ -3390,13 +3390,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
-                                            file_ent.entry.cache.fd = 0;
+                                            file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
                                             file_hash = @This().Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
-                                                    if (file_descriptors[entry_id] != 0) {
+                                                    if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
                                                             current_task.append(@as(u32, @truncate(entry_id)));
                                                             ctx.removeAtIndex(

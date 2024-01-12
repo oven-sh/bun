@@ -110,14 +110,14 @@ Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.google
 
 ```ts-diff
   Bun.serve({
-    fetch(req) {
-      return new Response("Hello!!!");
-    },
-
 +   tls: {
 +     key: Bun.file("./key.pem"),
 +     cert: Bun.file("./cert.pem"),
-+   }
++   },
+
+    fetch(req) {
+      return new Response("Hello!!!");
+    }
   });
 ```
 
@@ -125,8 +125,6 @@ The `key` and `cert` fields expect the _contents_ of your TLS key and certificat
 
 ```ts
 Bun.serve({
-  fetch() {},
-
   tls: {
     // BunFile
     key: Bun.file("./key.pem"),
@@ -137,6 +135,7 @@ Bun.serve({
     // array of above
     key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")],
   },
+  fetch() {}
 });
 ```
 
@@ -144,14 +143,13 @@ If your private key is encrypted with a passphrase, provide a value for `passphr
 
 ```ts-diff
   Bun.serve({
-    fetch(req) {
-      return new Response("Hello!!!");
-    },
-
     tls: {
       key: Bun.file("./key.pem"),
       cert: Bun.file("./cert.pem"),
 +     passphrase: "my-secret-passphrase",
+    },
+    fetch(req) {
+      return new Response("Hello!!!");
     }
   });
 ```
@@ -160,13 +158,13 @@ Optionally, you can override the trusted CA certificates by passing a value for 
 
 ```ts-diff
   Bun.serve({
-    fetch(req) {
-      return new Response("Hello!!!");
-    },
     tls: {
       key: Bun.file("./key.pem"), // path to TLS key
       cert: Bun.file("./cert.pem"), // path to TLS cert
 +     ca: Bun.file("./ca.pem"), // path to root CA certificate
+    },
+    fetch(req) {
+      return new Response("Hello!!!");
     }
   });
 ```

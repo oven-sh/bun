@@ -543,7 +543,7 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id) {
+            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),

@@ -630,7 +630,7 @@ pub const Archive = struct {
                                 if (comptime Environment.isLinux) {
                                     if (size > 1_000_000) {
                                         C.preallocate_file(
-                                            bun.fdcast(file_handle),
+                                            file_handle.cast(),
                                             0,
                                             entry_size,
                                         ) catch {};

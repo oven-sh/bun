@@ -1027,7 +1027,7 @@ pub const Bundler = struct {
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
-                        file_op.fd = 0;
+                        file_op.fd = .zero;
                     }
                 }
 
@@ -1038,7 +1038,7 @@ pub const Bundler = struct {
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{

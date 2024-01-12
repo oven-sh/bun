@@ -433,7 +433,7 @@ pub const CreateCommand = struct {
                 if (!create_options.skip_package_json) {
                     const plucker = pluckers[0];
 
-                    if (plucker.found and plucker.fd != 0) {
+                    if (plucker.found and plucker.fd != .zero) {
                         node.name = "Updating package.json";
                         progress.refresh();
 

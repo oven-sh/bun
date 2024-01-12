@@ -1562,8 +1562,7 @@ const PackageInstall = struct {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
-                    const fd = @as(bun.FileDescriptor, @intCast(rc));
-                    _ = Syscall.system.close(fd);
+                    _ = Syscall.system.close(@intCast(rc));
                     return false;
                 },
                 else => return true,
@@ -3479,7 +3478,7 @@ pub const PackageManager = struct {
 
         if (comptime Environment.isPosix) {
             _ = C.fchmod(
-                tmpfile.fd,
+                tmpfile.fd.cast(),
                 // chmod 666,
                 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
             );
@@ -6558,12 +6557,12 @@ pub const PackageManager = struct {
             if (package.bin.tag != .none) {
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .package_installed_node_modules = node_modules.fd,
+                    .package_installed_node_modules = bun.toFD(node_modules.fd),
                     .global_bin_path = manager.options.bin_path,
                     .global_bin_dir = manager.options.global_bin_dir,
 
                     // .destination_dir_subpath = destination_dir_subpath,
-                    .root_node_modules_folder = node_modules.fd,
+                    .root_node_modules_folder = bun.toFD(node_modules.fd),
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
@@ -6701,12 +6700,12 @@ pub const PackageManager = struct {
             if (package.bin.tag != .none) {
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .package_installed_node_modules = node_modules.fd,
+                    .package_installed_node_modules = bun.toFD(node_modules.fd),
                     .global_bin_path = manager.options.bin_path,
                     .global_bin_dir = manager.options.global_bin_dir,
 
                     // .destination_dir_subpath = destination_dir_subpath,
-                    .root_node_modules_folder = node_modules.fd,
+                    .root_node_modules_folder = bun.toFD(node_modules.fd),
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,

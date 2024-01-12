@@ -74,8 +74,8 @@ pub const Waker = struct {
         this.has_pending_wake = true;
     }
 
-    pub fn getFd(this: *const Waker) os.fd_t {
-        return this.kq;
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        return bun.toFD(this.kq);
     }
 
     pub fn wait(this: Waker) void {

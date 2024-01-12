@@ -1664,7 +1664,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         @panic("TODO on Windows");
     } else {
         _ = C.fchmod(
-            tmpfile.fd,
+            tmpfile.fd.cast(),
             // chmod 777
             0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
         );
@@ -3829,7 +3829,7 @@ pub const Package = extern struct {
                         .auto,
                     );
 
-                    if (entry.cache.fd == 0) {
+                    if (entry.cache.fd == .zero) {
                         entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,

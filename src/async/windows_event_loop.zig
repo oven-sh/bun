@@ -205,7 +205,7 @@ pub const FilePoll = struct {
 
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
-        uv.uv_unref(@ptrFromInt(this.fd));
+        uv.uv_unref(@ptrFromInt(this.fd.int()));
         return true;
     }
 

@@ -38,7 +38,7 @@ pub const PathWatcherManager = struct {
     has_pending_tasks: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     mutex: Mutex,
     const PathInfo = struct {
-        fd: StoredFileDescriptorType = 0,
+        fd: StoredFileDescriptorType = .zero,
         is_file: bool = true,
         path: [:0]const u8,
         dirname: string,
@@ -92,7 +92,7 @@ pub const PathWatcherManager = struct {
             .iterate = true,
         })) |iterable_dir| {
             const result = PathInfo{
-                .fd = iterable_dir.fd,
+                .fd = bun.toFD(iterable_dir.fd),
                 .is_file = false,
                 .path = cloned_path,
                 .dirname = cloned_path,
@@ -105,7 +105,7 @@ pub const PathWatcherManager = struct {
             if (err == error.NotDir) {
                 const file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
-                    .fd = file.handle,
+                    .fd = bun.toFD(file.handle),
                     .is_file = true,
                     .path = cloned_path,
                     // if is really a file we need to get the dirname
@@ -436,7 +436,7 @@ pub const PathWatcherManager = struct {
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
-            var iter = (std.fs.Dir{ .fd = fd }).iterate();
+            var iter = fd.asDir().iterate();
 
             // now we iterate over all files and directories
             while (try iter.next()) |entry| {
@@ -463,7 +463,7 @@ pub const PathWatcherManager = struct {
 
                 // we need to call this unlocked
                 if (child_path.is_file) {
-                    try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
+                    try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, .zero, null, false);
                 } else {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
@@ -531,7 +531,7 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false);
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
@@ -707,7 +707,7 @@ pub const PathWatcher = struct {
         if (comptime Environment.isMac) {
             if (!path.is_file) {
                 var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const resolved_path_temp = std.os.getFdPath(path.fd, &buffer) catch |err| {
+                const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;
                 };

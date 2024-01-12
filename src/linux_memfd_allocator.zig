@@ -18,7 +18,7 @@ const std = @import("std");
 /// the virtual memory. So we should only really use this for large blobs of
 /// data that we expect to be cloned multiple times. Such as Blob in FormData.
 pub const LinuxMemFdAllocator = struct {
-    fd: bun.FileDescriptor = 0,
+    fd: bun.FileDescriptor = .zero,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     size: usize = 0,
 

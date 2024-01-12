@@ -127,9 +127,8 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.f
     }
 }
 
-// TODO: change types to use `bun.FileDescriptor`
-pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
+pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
@@ -161,7 +160,7 @@ pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
+    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
 
     // Attempt to delete incase it already existed.
     // This fixes ETXTBUSY on Linux
@@ -176,14 +175,14 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     defer _ = bun.sys.close(out_handle);
 
     if (comptime Environment.isLinux) {
-        _ = std.os.linux.fallocate(out_handle, 0, 0, @intCast(stat_.size));
+        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
     }
 
     try bun.copyFile(bun.fdcast(in_handle), bun.fdcast(out_handle));
 
     if (comptime Environment.isPosix) {
-        _ = fchmod(out_handle, stat_.mode);
-        _ = fchown(out_handle, stat_.uid, stat_.gid);
+        _ = fchmod(out_handle.cast(), stat_.mode);
+        _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
     }
 }
 

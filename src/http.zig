@@ -148,7 +148,7 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd(), this.fd, &signed_offset, this.remain);
+                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
             const errcode = std.os.linux.getErrno(val);
@@ -178,9 +178,8 @@ pub const Sendfile = struct {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(
-                this.fd,
-                socket.fd(),
-
+                this.fd.cast(),
+                socket.fd().cast(),
                 signed_offset,
                 &sbytes,
                 null,

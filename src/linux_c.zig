@@ -591,5 +591,5 @@ pub const linux_fs = if (bun.Environment.isLinux) @cImport({
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
-    return std.os.linux.ioctl(@intCast(dest_fd), linux_fs.FICLONE, @intCast(srcfd));
+    return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
 }

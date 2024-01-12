@@ -136,7 +136,7 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -144,7 +144,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
-                        .fd = @intCast(bun.toFD(fd)),
+                        .fd = fd,
                     },
                 },
             };

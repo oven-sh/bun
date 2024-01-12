@@ -166,11 +166,11 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = bun.fdcast(__file) } else undefined;
+        var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else undefined;
 
         if (_file_handle == null) {
-            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd > 0) {
-                file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
+            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd.int() > 0) {
+                file_handle = std.fs.Dir.openFile(dirname_fd.asDir(), std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {
                             const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
@@ -215,7 +215,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else bun.invalid_fd,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) bun.toFD(file_handle.handle) else bun.invalid_fd,
         };
     }
 };

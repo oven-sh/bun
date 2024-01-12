@@ -233,7 +233,6 @@ pub const StandaloneModuleGraph = struct {
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             Global.exit(1);
-            return -1;
         });
 
         const cleanup = struct {
@@ -248,7 +247,6 @@ pub const StandaloneModuleGraph = struct {
             const self_exe = std.fs.selfExePath(&self_buf) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
                 Global.exit(1);
-                return -1;
             };
             self_buf[self_exe.len] = 0;
             const self_exeZ = self_buf[0..self_exe.len :0];
@@ -360,6 +358,7 @@ pub const StandaloneModuleGraph = struct {
         //  file (but this does not change the size of the file).  If data is
         //  later written at this point, subsequent reads of the data in the
         //  gap (a "hole") return null bytes ('\0') until data is actually
+
         //  written into the gap.
         //
         switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
@@ -393,7 +392,7 @@ pub const StandaloneModuleGraph = struct {
         // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
         _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
         if (comptime !Environment.isWindows) {
-            _ = bun.C.fchmod(cloned_executable_fd, 0o777);
+            _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
         }
 
         return cloned_executable_fd;
@@ -404,12 +403,6 @@ pub const StandaloneModuleGraph = struct {
         if (bytes.len == 0) return;
 
         const fd = inject(bytes);
-        if (fd == -1) {
-            // TODO: remove this
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to inject into file", .{});
-            Global.exit(1);
-        }
-
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
@@ -446,9 +439,9 @@ pub const StandaloneModuleGraph = struct {
 
         bun.C.moveFileZWithHandle(
             fd,
-            std.fs.cwd().fd,
+            bun.toFD(std.fs.cwd().fd),
             bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
-            root_dir.fd,
+            bun.toFD(root_dir.fd),
             bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
@@ -470,6 +463,7 @@ pub const StandaloneModuleGraph = struct {
 
         var trailer_bytes: [4096]u8 = undefined;
         std.os.lseek_END(bun.fdcast(self_exe), -4096) catch return null;
+
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
             switch (Syscall.read(self_exe, trailer_bytes[read_amount..])) {
@@ -597,7 +591,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isLinux) {
             if (std.fs.openFileAbsoluteZ("/proc/self/exe", flags)) |easymode| {
-                return easymode.handle;
+                return bun.toFD(easymode.handle);
             } else |_| {
                 if (bun.argv().len > 0) {
                     // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
@@ -608,7 +602,7 @@ pub const StandaloneModuleGraph = struct {
                         "",
                         bun.span(bun.argv()[0]),
                     )) |path| {
-                        return (try std.fs.cwd().openFileZ(path, flags)).handle;
+                        return bun.toFD((try std.fs.cwd().openFileZ(path, flags)).handle);
                     }
                 }
 
@@ -625,7 +619,7 @@ pub const StandaloneModuleGraph = struct {
         const self_exe_path = try std.fs.selfExePath(&buf);
         buf[self_exe_path.len] = 0;
         const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, flags);
-        return file.handle;
+        return @enumFromInt(file.handle);
     }
 };
 

@@ -147,7 +147,7 @@ pub const Waker = struct {
     fd: bun.FileDescriptor,
 
     pub fn init(allocator: std.mem.Allocator) !Waker {
-        return initWithFileDescriptor(allocator, @intCast(try std.os.eventfd(0, 0)));
+        return initWithFileDescriptor(allocator, bun.toFD(try std.os.eventfd(0, 0)));
     }
 
     pub fn getFd(this: *const Waker) bun.FileDescriptor {
@@ -162,13 +162,13 @@ pub const Waker = struct {
 
     pub fn wait(this: Waker) void {
         var bytes: usize = 0;
-        _ = std.os.read(this.fd, @as(*[8]u8, @ptrCast(&bytes))) catch 0;
+        _ = std.os.read(this.fd.cast(), @as(*[8]u8, @ptrCast(&bytes))) catch 0;
     }
 
     pub fn wake(this: *const Waker) void {
         var bytes: usize = 1;
         _ = std.os.write(
-            this.fd,
+            this.fd.cast(),
             @as(*[8]u8, @ptrCast(&bytes)),
         ) catch 0;
     }

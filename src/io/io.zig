@@ -16,7 +16,7 @@ const assert = std.debug.assert;
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
-    epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = 0,
+    epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) .zero else 0,
 
     timers: TimerHeap = .{ .context = {} },
 
@@ -39,13 +39,13 @@ pub const Loop = struct {
                 .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
             };
             if (comptime Environment.isLinux) {
-                loop.epoll_fd = std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor");
+                loop.epoll_fd = bun.toFD(std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
 
                 {
                     var epoll = std.mem.zeroes(std.os.linux.epoll_event);
                     epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
                     epoll.data.ptr = @intFromPtr(&loop);
-                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd, std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd(), &epoll);
+                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
 
                     switch (std.os.linux.getErrno(rc)) {
                         .SUCCESS => {},
@@ -105,7 +105,7 @@ pub const Loop = struct {
                     request.scheduled = false;
                     switch (request.callback(request)) {
                         .readable => |readable| {
-                            switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, @intCast(readable.fd))) {
+                            switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, readable.fd)) {
                                 .err => |err| {
                                     readable.onError(request, err);
                                 },
@@ -115,7 +115,7 @@ pub const Loop = struct {
                             }
                         },
                         .writable => |writable| {
-                            switch (writable.poll.registerForEpoll(writable.tag, this, .poll_writable, true, @intCast(writable.fd))) {
+                            switch (writable.poll.registerForEpoll(writable.tag, this, .poll_writable, true, writable.fd)) {
                                 .err => |err| {
                                     writable.onError(request, err);
                                 },
@@ -125,7 +125,7 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            close.poll.unregisterWithFd(@intCast(this.pollfd()), @intCast(close.fd));
+                            close.poll.unregisterWithFd(this.pollfd(), close.fd);
                             this.active -= 1;
                             close.onDone(close.ctx);
                         },
@@ -176,7 +176,7 @@ pub const Loop = struct {
             var events: [256]EventType = undefined;
 
             const rc = linux.epoll_wait(
-                @intCast(this.pollfd()),
+                this.pollfd().cast(),
                 &events,
                 @intCast(events.len),
                 timeout,
@@ -209,15 +209,15 @@ pub const Loop = struct {
         }
     }
 
-    pub fn pollfd(this: *const Loop) std.os.fd_t {
+    pub fn pollfd(this: *const Loop) bun.FileDescriptor {
         if (comptime Environment.isLinux) {
-            return @intCast(this.epoll_fd);
+            return this.epoll_fd;
         }
 
         return this.waker.getFd();
     }
 
-    pub fn fd(this: *const Loop) std.os.fd_t {
+    pub fn fd(this: *const Loop) bun.FileDescriptor {
         return this.waker.getFd();
     }
 
@@ -335,7 +335,7 @@ pub const Loop = struct {
             };
 
             const rc = os.system.kevent64(
-                this.pollfd(),
+                this.pollfd().cast(),
                 events_list.items.ptr,
                 @intCast(change_count),
                 // The same array may be used for the changelist and eventlist.
@@ -770,7 +770,7 @@ pub const Poll = struct {
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @as(u64, @intCast(fd.int())),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -779,7 +779,7 @@ pub const Poll = struct {
                     .ext = .{ generation_number, 0 },
                 },
                 .writable => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @as(u64, @intCast(fd.int())),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -788,7 +788,7 @@ pub const Poll = struct {
                     .ext = .{ generation_number, 0 },
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @as(u64, @intCast(fd.int())),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -796,7 +796,7 @@ pub const Poll = struct {
                     .flags = std.c.EV_DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @as(u64, @intCast(fd.int())),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -810,11 +810,11 @@ pub const Poll = struct {
         }
     };
 
-    pub fn unregisterWithFd(this: *Poll, watcher_fd: u64, fd: u64) void {
+    pub fn unregisterWithFd(this: *Poll, watcher_fd: bun.FileDescriptor, fd: bun.FileDescriptor) void {
         _ = linux.epoll_ctl(
-            @intCast(watcher_fd),
+            watcher_fd.cast(),
             linux.EPOLL.CTL_DEL,
-            @intCast(fd),
+            fd.cast(),
             null,
         );
         this.flags.remove(.was_ever_registered);
@@ -870,7 +870,7 @@ pub const Poll = struct {
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
@@ -898,9 +898,9 @@ pub const Poll = struct {
             const op: u32 = if (this.flags.contains(.registered) or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
             const ctl = linux.epoll_ctl(
-                watcher_fd,
+                watcher_fd.cast(),
                 op,
-                @intCast(fd),
+                fd.cast(),
                 &event,
             );
             this.flags.insert(.registered);

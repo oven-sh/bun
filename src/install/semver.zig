@@ -1038,7 +1038,7 @@ pub const Version = extern struct {
         wildcard: Query.Token.Wildcard = .none,
         valid: bool = true,
         version: Version.Partial = .{},
-        stopped_at: u32 = 0,
+        len: u32 = 0,
     };
 
     pub fn parse(sliced_string: SlicedString) ParseResult {
@@ -1054,7 +1054,6 @@ pub const Version = extern struct {
             return result;
         }
         var is_done = false;
-        var stopped_at: i32 = 0;
 
         var i: usize = 0;
 
@@ -1080,7 +1079,6 @@ pub const Version = extern struct {
                 break;
             }
 
-            stopped_at = @as(i32, @intCast(i));
             switch (input[i]) {
                 ' ' => {
                     is_done = true;
@@ -1088,7 +1086,9 @@ pub const Version = extern struct {
                 },
                 '|', '^', '#', '&', '%', '!' => {
                     is_done = true;
-                    stopped_at -= 1;
+                    if (i > 0) {
+                        i -= 1;
+                    }
                     break;
                 },
                 '0'...'9' => {
@@ -1142,7 +1142,7 @@ pub const Version = extern struct {
                     }
 
                     part_start_i = i;
-                    i += 1;
+                    // i += 1;
                     while (i < input.len and switch (input[i]) {
                         ' ' => true,
                         else => false,
@@ -1232,7 +1232,7 @@ pub const Version = extern struct {
             }
         }
 
-        result.stopped_at = @as(u32, @intCast(i));
+        result.len = @as(u32, @intCast(i));
 
         if (comptime RawType != void) {
             result.version.raw = sliced_string.sub(input[0..i]).external();
@@ -1996,7 +1996,7 @@ pub const Query = struct {
 
                 token.wildcard = parse_result.wildcard;
 
-                i += parse_result.stopped_at;
+                i += parse_result.len;
                 const rollback = i;
 
                 const maybe_hyphenate = i < input.len and (input[i] == ' ' or input[i] == '-');
@@ -2075,7 +2075,7 @@ pub const Query = struct {
                         try list.andRange(range);
                     }
 
-                    i += second_parsed.stopped_at + 1;
+                    i += second_parsed.len + 1;
                 } else if (count == 0 and token.tag == .version) {
                     switch (parse_result.wildcard) {
                         .none => {

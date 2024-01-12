@@ -704,6 +704,10 @@ describe("Bun.semver.satisfies()", () => {
       [">=1.0.0 <1.1.0-pre", "1.1.0-pre"],
 
       ["== 1.0.0 || foo", "2.0.0"],
+
+      // https://github.com/oven-sh/bun/issues/8040
+      [">=3.3.0-beta.1 <3.4.0-beta.3", "3.4.5"],
+      ["^3.3.0-beta.1", "3.4.5"],
     ];
 
     for (const [range, version] of tests) {

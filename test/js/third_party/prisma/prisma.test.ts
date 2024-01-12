@@ -20,7 +20,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
   let Client: typeof PrismaClient;
 
   try {
-    if(type !== 'sqlite' && !process.env[`TLS_${type.toUpperCase()}_DATABASE_URL`]) {
+    if (type !== "sqlite" && !process.env[`TLS_${type.toUpperCase()}_DATABASE_URL`]) {
       throw new Error(`$TLS_${type.toUpperCase()}_DATABASE_URL is not set`);
     }
 

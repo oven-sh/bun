@@ -327,8 +327,13 @@ describe("deno_task", () => {
   test("boolean logic", async () => {
     await TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").run();
     await TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").run();
-    await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
-    await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
+
+    await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN).run();
+    await TestBuilder.command`false || false || (echo 2 && false) || echo 3`
+      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
+      .run();
+    // await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
+    // await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
   });
 });
 

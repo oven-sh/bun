@@ -50,6 +50,8 @@ const ast = shell.AST;
 
 const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
+pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
         if (e != error.OutOfMemory) @panic("Ruh roh");
@@ -259,7 +261,24 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return null;
             }
 
-            const script_ast = ThisInterpreter.parse(&arena, script.items[0..], jsobjs.items[0..]) catch |err| {
+            var parser: ?bun.shell.Parser = null;
+            const script_ast = ThisInterpreter.parse(&arena, script.items[0..], jsobjs.items[0..], &parser) catch |err| {
+                if (parser) |p| {
+                    var error_string = std.ArrayList(u8).init(globalThis.bunVM().allocator);
+                    const last = error_string.items.len -| 1;
+                    for (p.errors.items, 0..) |parser_err, i| {
+                        error_string.appendSlice(parser_err.msg) catch bun.outOfMemory();
+                        if (i != last) {
+                            error_string.append('\n') catch bun.outOfMemory();
+                        }
+                    }
+                    var str = JSC.ZigString.init(error_string.items[0..]);
+                    str.markUTF8();
+                    const err_value = str.toErrorInstance(globalThis);
+                    globalThis.vm().throwError(globalThis, err_value);
+                    globalThis.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+                    return null;
+                }
                 globalThis.throwError(err, "failed to lex/parse shell");
                 return null;
             };
@@ -285,7 +304,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return interpreter;
         }
 
-        pub fn parse(arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue) !ast.Script {
+        pub fn parse(arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue, out_parser: *?bun.shell.Parser) !ast.Script {
             const lex_result = brk: {
                 if (bun.strings.isAllASCII(script)) {
                     var lexer = bun.shell.LexerAscii.new(arena.allocator(), script);
@@ -297,9 +316,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 break :brk lexer.get_result();
             };
 
-            var parser = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
+            out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
 
-            const script_ast = try parser.parse();
+            const script_ast = try out_parser.*.?.parse();
             return script_ast;
         }
 
@@ -407,7 +426,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
 
             const jsobjs: []JSValue = &[_]JSValue{};
-            const script = try ThisInterpreter.parse(&arena, src, jsobjs);
+            var out_parser: ?bun.shell.Parser = null;
+            const script = try ThisInterpreter.parse(&arena, src, jsobjs, &out_parser);
             const script_heap = try arena.allocator().create(ast.Script);
             script_heap.* = script;
             var interp = try ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs);
@@ -1493,6 +1513,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         assign_machine.init(this.base.interpreter, assigns, .shell, Assigns.ParentPtr.init(this));
                         assign_machine.start();
                     },
+                    .subshell => {
+                        @panic(SUBSHELL_TODO_ERROR);
+                    },
                 }
             }
 
@@ -1596,6 +1619,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         return ChildPtr.init(pipeline);
                     },
                     .assign => return null,
+                    .subshell => @panic(SUBSHELL_TODO_ERROR),
                 }
             }
 
@@ -1712,16 +1736,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 var i: u32 = 0;
                 for (node.items) |*item| {
-                    if (item.* == .cmd) {
-                        const kind = "subproc";
-                        _ = kind;
-                        var cmd_io = io;
-                        const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin;
-                        const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
-                        cmd_io.stdin = stdin;
-                        cmd_io.stdout = stdout;
-                        pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, &item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
-                        i += 1;
+                    switch (item.*) {
+                        .cmd => {
+                            const kind = "subproc";
+                            _ = kind;
+                            var cmd_io = io;
+                            const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin;
+                            const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
+                            cmd_io.stdin = stdin;
+                            cmd_io.stdout = stdout;
+                            pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
+                            i += 1;
+                        },
+                        // in a pipeline assignments have no effect
+                        .assigns => {},
+                        .subshell => @panic(SUBSHELL_TODO_ERROR),
                     }
                 }
 

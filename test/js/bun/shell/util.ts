@@ -33,19 +33,31 @@ export const sortedShellOutput = (output: string): string[] =>
     .sort();
 
 export class TestBuilder {
-  private promise: ShellPromise;
+  private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
+
   private expected_stdout: string | undefined;
   private expected_stderr: string | undefined;
   private expected_exit_code: number | undefined;
+  private expected_error: string | boolean | undefined;
 
-  constructor(promise: ShellPromise) {
+  static UNEXPECTED_SUBSHELL_ERROR_OPEN =
+    "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
+
+  static UNEXPECTED_SUBSHELL_ERROR_CLOSE =
+    "Unexpected `)`, subshells are currently not supported right now. Escape the `)` or open a GitHub issue.";
+
+  constructor(promise: TestBuilder["promise"]) {
     this.promise = promise;
   }
 
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
-    const promise = Bun.$(strings, ...expressions);
-    const This = new this(promise);
-    return This;
+    try {
+      const promise = Bun.$(strings, ...expressions);
+      const This = new this({ type: "ok", val: promise });
+      return This;
+    } catch (err) {
+      return new this({ type: "err", val: err as Error });
+    }
   }
 
   stdout(expected: string): this {
@@ -58,14 +70,34 @@ export class TestBuilder {
     return this;
   }
 
+  error(expected?: string): this {
+    if (expected === undefined) {
+      this.expected_error = true;
+    } else {
+      this.expected_error = expected;
+    }
+    return this;
+  }
+
   exitCode(expected: number): this {
     this.expected_exit_code = expected;
     return this;
   }
 
-  async run(): Promise<ShellOutput> {
-    const output = await this.promise;
-    const { stdout, stderr, exitCode } = output;
+  async run(): Promise<ShellOutput | undefined> {
+    if (this.promise.type === "err") {
+      const err = this.promise.val;
+      if (this.expected_error === undefined) throw err;
+      if (this.expected_error === true) return undefined;
+      if (typeof this.expected_error === "string") {
+        expect(err.message).toEqual(this.expected_error);
+      }
+      return undefined;
+    }
+
+    const output = await this.promise.val;
+
+    const { stdout, stderr, exitCode } = output!;
     if (this.expected_stdout !== undefined) expect(stdout.toString()).toEqual(this.expected_stdout);
     if (this.expected_stderr !== undefined) expect(stderr.toString()).toEqual(this.expected_stderr);
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);

@@ -30,6 +30,8 @@ pub const SubprocessMini = subproc.ShellSubprocessMini;
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
+pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
     sys: Syscall.Error,
@@ -254,8 +256,18 @@ pub const AST = struct {
         cond: *Conditional,
         pipeline: *Pipeline,
         cmd: *Cmd,
+        subshell: Script,
 
-        pub const Tag = enum { assign, cond, pipeline, cmd };
+        pub fn asPipelineItem(this: *Expr) ?PipelineItem {
+            return switch (this.*) {
+                .assign => .{ .assigns = this.assign },
+                .cmd => .{ .cmd = this.cmd },
+                .subshell => .{ .subshell = this.subshell },
+                else => null,
+            };
+        }
+
+        pub const Tag = enum { assign, cond, pipeline, cmd, subshell };
     };
 
     pub const Conditional = struct {
@@ -267,7 +279,13 @@ pub const AST = struct {
     };
 
     pub const Pipeline = struct {
-        items: []CmdOrAssigns,
+        items: []PipelineItem,
+    };
+
+    pub const PipelineItem = union(enum) {
+        cmd: *Cmd,
+        assigns: []Assign,
+        subshell: Script,
     };
 
     pub const CmdOrAssigns = union(CmdOrAssigns.Tag) {
@@ -275,6 +293,19 @@ pub const AST = struct {
         assigns: []Assign,
 
         pub const Tag = enum { cmd, assigns };
+
+        pub fn to_pipeline_item(this: CmdOrAssigns, alloc: Allocator) PipelineItem {
+            switch (this) {
+                .cmd => |cmd| {
+                    const cmd_ptr = try alloc.create(Cmd);
+                    cmd_ptr.* = cmd;
+                    return .{ .cmd = cmd_ptr };
+                },
+                .assigns => |assigns| {
+                    return .{ .assign = assigns };
+                },
+            }
+        }
 
         pub fn to_expr(this: CmdOrAssigns, alloc: Allocator) !Expr {
             switch (this) {
@@ -479,6 +510,25 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !AST.Script {
+        // Check for subshell syntax which is not supported rn
+        for (self.tokens) |tok| {
+            switch (tok) {
+                .OpenParen => {
+                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
+                    return ParseError.Expected;
+                },
+                .CloseParen => {
+                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
+                    return ParseError.Expected;
+                },
+                else => {},
+            }
+        }
+
+        return try self.parse_impl();
+    }
+
+    pub fn parse_impl(self: *Parser) !AST.Script {
         var stmts = ArrayList(AST.Stmt).init(self.alloc);
         while (!self.match(.Eof)) {
             try stmts.append(try self.parse_stmt());
@@ -506,7 +556,7 @@ pub const Parser = struct {
 
     fn parse_cond(self: *Parser) !AST.Expr {
         var left = try self.parse_pipeline();
-        while (self.atch_any(&.{ .DoubleAmpersand, .DoublePipe })) {
+        while (self.match_any(&.{ .DoubleAmpersand, .DoublePipe })) {
             const op: AST.Conditional.Op = op: {
                 const previous = @as(TokenTag, self.prev());
                 switch (previous) {
@@ -525,19 +575,39 @@ pub const Parser = struct {
     }
 
     fn parse_pipeline(self: *Parser) !AST.Expr {
-        var cmd = try self.parse_cmd_or_assigns();
+        var expr = try self.parse_subshell();
 
         if (self.peek() == .Pipe) {
-            var cmds = std.ArrayList(AST.CmdOrAssigns).init(self.alloc);
-            try cmds.append(cmd);
+            var pipeline_items = std.ArrayList(AST.PipelineItem).init(self.alloc);
+            try pipeline_items.append(expr.asPipelineItem() orelse {
+                try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
+                return ParseError.Expected;
+            });
+
             while (self.match(.Pipe)) {
-                try cmds.append(try self.parse_cmd_or_assigns());
+                expr = try self.parse_subshell();
+                try pipeline_items.append(expr.asPipelineItem() orelse {
+                    try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
+                    return ParseError.Expected;
+                });
             }
-            const pipeline = try self.allocate(AST.Pipeline, .{ .items = cmds.items[0..] });
+            const pipeline = try self.allocate(AST.Pipeline, .{ .items = pipeline_items.items[0..] });
             return .{ .pipeline = pipeline };
         }
 
-        return try cmd.to_expr(self.alloc);
+        return expr;
+    }
+
+    /// Placeholder for when we fully support subshells
+    fn parse_subshell(self: *Parser) anyerror!AST.Expr {
+        // if (self.peek() == .OpenParen) {
+        //     _ = self.expect(.OpenParen);
+        //     const script = try self.parse_impl(true);
+        //     _ = self.expect(.CloseParen);
+        //     return .{ .subshell = script };
+        // }
+        // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
+        return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
     }
 
     fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
@@ -739,6 +809,10 @@ pub const Parser = struct {
                             if (should_break) break;
                         }
                     },
+                    .OpenParen, .CloseParen => {
+                        try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
+                        return null;
+                    },
                     else => return null,
                 }
             }
@@ -790,6 +864,17 @@ pub const Parser = struct {
         if (self.check(toktag)) {
             return self.advance();
         }
+        unreachable;
+    }
+
+    fn expect_any(self: *Parser, comptime toktags: []const TokenTag) Token {
+        // std.debug.assert(toktag == @as(TokenTag, self.peek()));
+
+        const peeked = self.peek();
+        inline for (toktags) |toktag| {
+            if (toktag == @as(TokenTag, peeked)) return self.advance();
+        }
+
         unreachable;
     }
 
@@ -855,6 +940,11 @@ pub const Parser = struct {
         const error_msg = try std.fmt.allocPrint(self.alloc, fmt, args);
         try self.errors.append(.{ .msg = error_msg });
     }
+
+    fn add_error_expected_pipeline_item(self: *Parser, kind: AST.Expr.Tag) !void {
+        const error_msg = try std.fmt.allocPrint(self.alloc, "Expected a command, assignment, or subshell but got: {s}", .{@tagName(kind)});
+        try self.errors.append(.{ .msg = error_msg });
+    }
 };
 
 pub const TokenTag = enum {
@@ -875,6 +965,8 @@ pub const TokenTag = enum {
     BraceEnd,
     CmdSubstBegin,
     CmdSubstEnd,
+    OpenParen,
+    CloseParen,
     Var,
     Text,
     JSObjRef,
@@ -912,6 +1004,8 @@ pub const Token = union(TokenTag) {
     BraceEnd,
     CmdSubstBegin,
     CmdSubstEnd,
+    OpenParen,
+    CloseParen,
 
     Var: TextRange,
     Text: TextRange,
@@ -964,10 +1058,17 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         strpool: ArrayList(u8),
         tokens: ArrayList(Token),
         delimit_quote: bool = false,
-        in_cmd_subst: ?CmdSubstKind = null,
+        in_subshell: ?SubShellKind = null,
         errors: std.ArrayList(Error),
 
-        const CmdSubstKind = enum { backtick, dollar };
+        const SubShellKind = enum {
+            /// (echo hi; echo hello)
+            normal,
+            /// `echo hi; echo hello`
+            backtick,
+            /// $(echo hi; echo hello)
+            dollar,
+        };
 
         const LexerError = error{
             Unexpected,
@@ -1009,13 +1110,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             };
         }
 
-        fn make_sublexer(self: *@This(), kind: CmdSubstKind) @This() {
+        fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
             const sublexer = .{
                 .chars = self.chars,
                 .strpool = self.strpool,
                 .tokens = self.tokens,
                 .errors = self.errors,
-                .in_cmd_subst = kind,
+                .in_subshell = kind,
 
                 .word_start = self.word_start,
                 .j = self.j,
@@ -1133,7 +1234,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // Command substitution
                         '`' => {
-                            if (self.in_cmd_subst == .backtick) {
+                            if (self.in_subshell == .backtick) {
                                 try self.break_word(true);
                                 if (self.last_tok_tag()) |toktag| {
                                     if (toktag != .Delimit) try self.tokens.append(.Delimit);
@@ -1141,7 +1242,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                                 try self.tokens.append(.CmdSubstEnd);
                                 return;
                             } else {
-                                try self.eat_cmd_subst(.backtick);
+                                try self.eat_subshell(.backtick);
                             }
                         },
                         // Command substitution/vars
@@ -1150,7 +1251,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                             const peeked = self.peek() orelse InputChar{ .char = 0 };
                             if (!peeked.escaped and peeked.char == '(') {
-                                try self.eat_cmd_subst(.dollar);
+                                try self.eat_subshell(.dollar);
                                 continue;
                             }
 
@@ -1169,8 +1270,14 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             self.word_start = self.j;
                             continue;
                         },
+                        '(' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+                            try self.eat_subshell(.normal);
+                            continue;
+                        },
                         ')' => {
-                            if (self.in_cmd_subst != .dollar) {
+                            if (self.in_subshell != .dollar and self.in_subshell != .normal) {
                                 if (self.chars.state != .Normal) break :escaped;
                                 @panic("Unexpected ')'");
                             }
@@ -1179,7 +1286,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (self.last_tok_tag()) |toktag| {
                                 if (toktag != .Delimit) try self.tokens.append(.Delimit);
                             }
-                            try self.tokens.append(.CmdSubstEnd);
+                            if (self.in_subshell == .dollar) {
+                                try self.tokens.append(.CmdSubstEnd);
+                            } else if (self.in_subshell == .normal) {
+                                try self.tokens.append(.CloseParen);
+                            }
                             return;
                         },
 
@@ -1285,7 +1396,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 try self.appendCharToStrPool(char);
             }
 
-            if (self.in_cmd_subst != null) {
+            if (self.in_subshell != null) {
                 @panic("Unclosed command substitution");
             }
 
@@ -1504,11 +1615,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return num;
         }
 
-        fn eat_cmd_subst(self: *@This(), kind: CmdSubstKind) !void {
+        fn eat_subshell(self: *@This(), kind: SubShellKind) !void {
             if (kind == .dollar) {
+                // Eat the open paren
                 _ = self.eat();
             }
-            try self.tokens.append(.CmdSubstBegin);
+
+            switch (kind) {
+                .dollar, .backtick => try self.tokens.append(.CmdSubstBegin),
+                .normal => try self.tokens.append(.OpenParen),
+            }
             var sublexer = self.make_sublexer(kind);
             try sublexer.lex();
             self.continue_from_sublexer(&sublexer);
@@ -1540,7 +1656,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     },
                     else => {
                         if (!escaped and
-                            (self.in_cmd_subst == .dollar and char == ')') or (self.in_cmd_subst == .backtick and char == '`'))
+                            (self.in_subshell == .dollar and char == ')') or (self.in_subshell == .backtick and char == '`') or (self.in_subshell == .normal and char == ')'))
                         {
                             return .{ .start = start, .end = self.j };
                         }
@@ -2058,6 +2174,8 @@ pub const Test = struct {
         BraceEnd,
         CmdSubstBegin,
         CmdSubstEnd,
+        OpenParen,
+        CloseParen,
 
         Var: []const u8,
         Text: []const u8,
@@ -2087,6 +2205,8 @@ pub const Test = struct {
                 .BraceEnd => return .BraceEnd,
                 .CmdSubstBegin => return .CmdSubstBegin,
                 .CmdSubstEnd => return .CmdSubstEnd,
+                .OpenParen => return .OpenParen,
+                .CloseParen => return .CloseParen,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }

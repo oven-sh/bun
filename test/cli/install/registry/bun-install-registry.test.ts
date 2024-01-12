@@ -930,6 +930,202 @@ describe("hoisting", async () => {
       });
     }
   });
+
+  test("hoisting/using incorrect peer dep after install", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("incorrect peer dependency");
+
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      " + no-deps@1.0.0",
+      " + peer-deps-fixed@1.0.0",
+      "",
+      " 2 packages installed",
+    ]);
+
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    } as any);
+    expect(await file(join(packageDir, "node_modules", "peer-deps-fixed", "package.json")).json()).toEqual({
+      name: "peer-deps-fixed",
+      version: "1.0.0",
+      peerDependencies: {
+        "no-deps": "^1.0.0",
+      },
+    } as any);
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      " + no-deps@2.0.0",
+      "",
+      " 1 package installed",
+    ]);
+
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "2.0.0",
+    } as any);
+    expect(await file(join(packageDir, "node_modules", "peer-deps-fixed", "package.json")).json()).toEqual({
+      name: "peer-deps-fixed",
+      version: "1.0.0",
+      peerDependencies: {
+        "no-deps": "^1.0.0",
+      },
+    } as any);
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+  });
+
+  test("hoisting/using incorrect peer dep on initial install", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).toContain("incorrect peer dependency");
+
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      " + no-deps@2.0.0",
+      " + peer-deps-fixed@1.0.0",
+      "",
+      " 2 packages installed",
+    ]);
+
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "2.0.0",
+    } as any);
+    expect(await file(join(packageDir, "node_modules", "peer-deps-fixed", "package.json")).json()).toEqual({
+      name: "peer-deps-fixed",
+      version: "1.0.0",
+      peerDependencies: {
+        "no-deps": "^1.0.0",
+      },
+    } as any);
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      " + no-deps@1.0.0",
+      "",
+      " 1 package installed",
+    ]);
+
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    } as any);
+    expect(await file(join(packageDir, "node_modules", "peer-deps-fixed", "package.json")).json()).toEqual({
+      name: "peer-deps-fixed",
+      version: "1.0.0",
+      peerDependencies: {
+        "no-deps": "^1.0.0",
+      },
+    } as any);
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+  });
 });
 
 describe("workspaces", async () => {

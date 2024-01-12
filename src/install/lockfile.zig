@@ -526,9 +526,9 @@ pub const Tree = struct {
     }
 
     // This function does one of three things:
-    // - de-duplicate (skip) the package
-    // - move the package to the top directory
-    // - leave the package at the same (relative) directory
+    // 1 (return hoisted) - de-duplicate (skip) the package
+    // 2 (return id) - move the package to the top directory
+    // 3 (return dependency_loop) - leave the package at the same (relative) directory
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
@@ -556,9 +556,9 @@ pub const Tree = struct {
                     return error.DependencyLoop;
                 }
                 // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop;
+                return dependency_loop; // 3
             }
-            return hoisted;
+            return hoisted; // 1
         }
 
         if (this.parent < error_id) {
@@ -571,10 +571,10 @@ pub const Tree = struct {
                 trees,
                 builder,
             ) catch unreachable;
-            if (!as_defined or id != dependency_loop) return id;
+            if (!as_defined or id != dependency_loop) return id; // 1 or 2
         }
 
-        return this.id;
+        return this.id; // 2
     }
 };
 

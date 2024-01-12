@@ -4410,7 +4410,7 @@ pub const Package = extern struct {
                             const sliced = external_version.value.sliced(lockfile.buffers.string_bytes.items);
                             const result = Semver.Version.parse(sliced);
                             if (result.valid and result.wildcard == .none) {
-                                break :brk result.version.fill();
+                                break :brk result.version.min();
                             }
                         }
 

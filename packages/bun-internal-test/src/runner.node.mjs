@@ -30,11 +30,7 @@ function defaultConcurrency() {
   if (windows) {
     return Math.floor((cpus().length - 2) / 2);
   }
-  // Our macos x64 ci is slow, so only run 1 test at a time
-  if (process.platform === "darwin" && process.arch === "x64") {
-    return 1;
-  }
-  return 2;
+  return 1;
 }
 
 const run_concurrency = Math.max(Number(process.env["BUN_TEST_CONCURRENCY"] || defaultConcurrency(), 10), 1);

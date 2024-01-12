@@ -342,24 +342,31 @@ pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string 
     return out;
 }
 
-// 30 character string or a slice
+// 31 character string or a slice
 pub const StringOrTinyString = struct {
-    pub const Max = 30;
+    pub const Max = 31;
     const Buffer = [Max]u8;
 
     remainder_buf: Buffer = undefined,
-    remainder_len: u7 = 0,
-    is_tiny_string: u1 = 0,
+    meta: packed struct {
+        remainder_len: u7 = 0,
+        is_tiny_string: u1 = 0,
+    } = .{},
+
+    comptime {
+        std.debug.assert(@sizeOf(@This()) == 32);
+    }
+
     pub inline fn slice(this: *const StringOrTinyString) []const u8 {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
-        return switch (this.is_tiny_string) {
-            1 => this.remainder_buf[0..this.remainder_len],
+        return switch (this.meta.is_tiny_string) {
+            1 => this.remainder_buf[0..this.meta.remainder_len],
             0 => @as([*]const u8, @ptrFromInt(std.mem.readInt(usize, this.remainder_buf[0..@sizeOf(usize)], .little)))[0..std.mem.readInt(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], .little)],
         };
     }
 
     pub fn deinit(this: *StringOrTinyString, _: std.mem.Allocator) void {
-        if (this.is_tiny_string == 1) return;
+        if (this.meta.is_tiny_string == 1) return;
 
         // var slice_ = this.slice();
         // allocator.free(slice_);
@@ -384,22 +391,25 @@ pub const StringOrTinyString = struct {
     pub fn init(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
-                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+                return StringOrTinyString{ .meta = .{
+                    .is_tiny_string = 1,
+                    .remainder_len = 0,
+                } };
             },
             1...(@sizeOf(Buffer)) => {
                 @setRuntimeSafety(false);
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 1,
                     .remainder_len = @as(u7, @truncate(stringy.len)),
-                };
-                @memcpy(tiny.remainder_buf[0..tiny.remainder_len], stringy[0..tiny.remainder_len]);
+                } };
+                @memcpy(tiny.remainder_buf[0..tiny.meta.remainder_len], stringy[0..tiny.meta.remainder_len]);
                 return tiny;
             },
             else => {
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 0,
                     .remainder_len = 0,
-                };
+                } };
                 std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
                 std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
@@ -410,22 +420,25 @@ pub const StringOrTinyString = struct {
     pub fn initLowerCase(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
-                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+                return StringOrTinyString{ .meta = .{
+                    .is_tiny_string = 1,
+                    .remainder_len = 0,
+                } };
             },
             1...(@sizeOf(Buffer)) => {
                 @setRuntimeSafety(false);
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 1,
                     .remainder_len = @as(u7, @truncate(stringy.len)),
-                };
+                } };
                 _ = copyLowercase(stringy, &tiny.remainder_buf);
                 return tiny;
             },
             else => {
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 0,
                     .remainder_len = 0,
-                };
+                } };
                 std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
                 std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;

@@ -3908,8 +3908,8 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(args.dest.slice()) },
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd, stat_.mode);
+                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = C.fchmod(dest_fd.int(), stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -3972,16 +3972,16 @@ pub const NodeFS = struct {
                     _ = bun.sys.unlink(dest);
                     return err;
                 }
-                _ = C.fchmod(dest_fd, stat_.mode);
+                _ = C.fchmod(dest_fd.cast(), stat_.mode);
                 _ = Syscall.close(dest_fd);
                 return ret.success;
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
             if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
-                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
+                const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd, stat_.mode);
+                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -3992,8 +3992,8 @@ pub const NodeFS = struct {
             }
 
             defer {
-                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd, stat_.mode);
+                _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = linux.fchmod(dest_fd.cast(), stat_.mode);
                 _ = Syscall.close(dest_fd);
             }
 
@@ -4009,7 +4009,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -4029,7 +4029,7 @@ pub const NodeFS = struct {
                 while (size > 0) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -4126,14 +4126,14 @@ pub const NodeFS = struct {
             return Syscall.fchown(args.fd, args.uid, args.gid);
         }
 
-        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
+        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd.int(), args.uid, args.gid), .fchown) orelse
             Maybe(Return.Fchown).success;
     }
     pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime _: Flavor) Maybe(Return.Fdatasync) {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
+        return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd.int()), .fdatasync) orelse
             Maybe(Return.Fdatasync).success;
     }
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime _: Flavor) Maybe(Return.Fstat) {
@@ -4147,7 +4147,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fsync(args.fd);
         }
-        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
+        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd.int()), .fsync) orelse
             Maybe(Return.Fsync).success;
     }
 
@@ -4175,7 +4175,7 @@ pub const NodeFS = struct {
             args.atime,
         };
 
-        return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd, &times), .futimens)) |err|
+        return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd.int(), &times), .futimens)) |err|
             err
         else
             Maybe(Return.Futimes).success;
@@ -4627,7 +4627,7 @@ pub const NodeFS = struct {
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
-        const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+        const dir = fd.asDir();
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
 
@@ -4724,7 +4724,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) });
+        var iterator = DirIterator.iterate(fd.asDir());
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4867,7 +4867,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) });
+            var iterator = DirIterator.iterate(fd.asDir());
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -5277,7 +5277,7 @@ pub const NodeFS = struct {
                     else brk: {
                         // on linux, it's absolutely positioned
                         const pos = bun.sys.system.lseek(
-                            fd,
+                            fd.cast(),
                             @as(std.os.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
                         );
@@ -5289,7 +5289,7 @@ pub const NodeFS = struct {
                     };
 
                     bun.C.preallocate_file(
-                        fd,
+                        fd.cast(),
                         @as(std.os.off_t, @intCast(offset)),
                         @as(std.os.off_t, @intCast(buf.len)),
                     ) catch {};
@@ -6007,7 +6007,7 @@ pub const NodeFS = struct {
         }
 
         var iterator = iterator: {
-            const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+            const dir = fd.asDir();
             if (Environment.isWindows) {
                 // iterate directly over [:0]const u16 instead of converting to utf8
                 break :iterator DirIterator.IteratorW{
@@ -6176,8 +6176,8 @@ pub const NodeFS = struct {
                         }
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd, stat_.mode);
+                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = C.fchmod(dest_fd.int(), stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -6269,9 +6269,9 @@ pub const NodeFS = struct {
             var size: usize = @intCast(@max(stat_.size, 0));
 
             if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
-                const rc = bun.C.linux.ioctl_ficlone(@intCast(dest_fd), @intCast(src_fd));
+                const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
-                    _ = C.fchmod(dest_fd, stat_.mode);
+                    _ = C.fchmod(dest_fd.cast(), stat_.mode);
                     _ = Syscall.close(dest_fd);
                     return ret.success;
                 }
@@ -6280,8 +6280,8 @@ pub const NodeFS = struct {
             }
 
             defer {
-                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd, stat_.mode);
+                _ = linux.ftruncate(dest_fd.cast(), @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = linux.fchmod(dest_fd.cast(), stat_.mode);
                 _ = Syscall.close(dest_fd);
             }
 
@@ -6297,7 +6297,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -6317,7 +6317,7 @@ pub const NodeFS = struct {
                 while (size > 0) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {
@@ -6463,7 +6463,7 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        const dir = std.fs.Dir{ .fd = fd };
+        const dir = fd.asDir();
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
         while (switch (entry) {

@@ -531,7 +531,7 @@ pub const FilePoll = struct {
 
     pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = manager.file_poll_store.get();
-        poll.fd = @intCast(fd);
+        poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         poll.next_to_free = null;
@@ -608,9 +608,9 @@ pub const FilePoll = struct {
     const linux = std.os.linux;
 
     pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
-        return registerWithFd(this, loop, flag, one_shot, @intCast(this.fd));
+        return registerWithFd(this, loop, flag, one_shot, this.fd);
     }
-    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
+    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
@@ -639,7 +639,7 @@ pub const FilePoll = struct {
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 op,
-                @intCast(fd),
+                fd.cast(),
                 &event,
             );
             this.flags.insert(.was_ever_registered);
@@ -652,7 +652,7 @@ pub const FilePoll = struct {
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
             changelist[0] = switch (flag) {
                 .readable => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -661,7 +661,7 @@ pub const FilePoll = struct {
                     .ext = .{ this.generation_number, 0 },
                 },
                 .writable => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -670,7 +670,7 @@ pub const FilePoll = struct {
                     .ext = .{ this.generation_number, 0 },
                 },
                 .process => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
@@ -679,7 +679,7 @@ pub const FilePoll = struct {
                     .ext = .{ this.generation_number, 0 },
                 },
                 .machport => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
@@ -764,7 +764,7 @@ pub const FilePoll = struct {
 
     pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (Environment.allow_assert) {
-            std.debug.assert(fd >= 0 and fd != bun.invalid_fd);
+            std.debug.assert(fd.int() >= 0 and fd != bun.invalid_fd);
         }
         defer this.deactivate(loop);
 
@@ -804,7 +804,7 @@ pub const FilePoll = struct {
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 linux.EPOLL.CTL_DEL,
-                @intCast(fd),
+                fd.cast(),
                 null,
             );
 
@@ -816,7 +816,7 @@ pub const FilePoll = struct {
 
             changelist[0] = switch (flag) {
                 .readable => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -825,7 +825,7 @@ pub const FilePoll = struct {
                     .ext = .{ 0, 0 },
                 },
                 .machport => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
@@ -834,7 +834,7 @@ pub const FilePoll = struct {
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -843,7 +843,7 @@ pub const FilePoll = struct {
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
-                    .ident = @as(u64, @intCast(fd)),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,

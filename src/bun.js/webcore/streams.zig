@@ -3873,7 +3873,7 @@ pub const FIFO = struct {
 
     pub fn getAvailableToReadOnLinux(this: *FIFO) u32 {
         var len: c_int = 0;
-        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, @as(*c_int, &len));
+        const rc: c_int = std.c.ioctl(this.fd.cast(), std.os.linux.T.FIONREAD, @as(*c_int, &len));
         if (rc != 0) {
             len = 0;
         }
@@ -3921,7 +3921,7 @@ pub const FIFO = struct {
             if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
                 // it might be readable actually
                 this.close_on_empty_read = true;
-                switch (bun.isReadable(@intCast(poll.fd))) {
+                switch (bun.isReadable(poll.fd)) {
                     .ready => {
                         this.close_on_empty_read = false;
                         return null;
@@ -3944,7 +3944,7 @@ pub const FIFO = struct {
 
                 // this happens if we've registered a watcher but we haven't
                 // ticked the event loop since registering it
-                switch (bun.isReadable(@intCast(poll.fd))) {
+                switch (bun.isReadable(poll.fd)) {
                     .ready => {
                         poll.flags.insert(.readable);
                         return null;
@@ -4257,9 +4257,9 @@ pub const File = struct {
         };
 
         if (comptime Environment.isPosix) {
-            if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
+            if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast()))) {
                 var termios = std.mem.zeroes(std.os.termios);
-                _ = std.c.tcgetattr(fd, &termios);
+                _ = std.c.tcgetattr(fd.cast(), &termios);
                 bun.C.cfmakeraw(&termios);
                 file.is_atty = true;
             }
@@ -4278,7 +4278,7 @@ pub const File = struct {
                     // it is important for us to clone it so we don't cause Weird Things to happen
                     if ((flags & std.os.O.NONBLOCK) == 0) {
                         fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                            .result => |_fd| bun.toFD(_fd),
                             .err => |err| return .{ .err = err },
                         };
 
@@ -4864,8 +4864,7 @@ pub fn NewReadyWatcher(
                 @panic("TODO on Windows");
             }
 
-            const fd = @as(c_int, @intCast(fd_));
-            std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
+            std.debug.assert(this.poll_ref.?.fd == fd_);
             std.debug.assert(
                 this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
@@ -4893,11 +4892,10 @@ pub fn NewReadyWatcher(
             return false;
         }
 
-        pub fn watch(this: *Context, fd_: anytype) void {
+        pub fn watch(this: *Context, fd: bun.FileDescriptor) void {
             if (comptime Environment.isWindows) {
                 @panic("Do not call watch() on windows");
             }
-            const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = Async.FilePoll.init(
                     JSC.VirtualMachine.get(),

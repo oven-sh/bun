@@ -57,7 +57,7 @@ pub const LifecycleScriptSubprocess = struct {
         );
 
         pub fn getFd(this: *OutputReader) bun.FileDescriptor {
-            return bun.toFD(this.poll.fd);
+            return this.poll.fd;
         }
 
         pub fn getBuffer(this: *OutputReader) *std.ArrayList(u8) {
@@ -217,8 +217,8 @@ pub const LifecycleScriptSubprocess = struct {
             try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
 
             if (!this.manager.options.log_level.isVerbose()) {
-                try actions.dup2(fdsOut[1], bun.STDOUT_FD);
-                try actions.dup2(fdsErr[1], bun.STDERR_FD);
+                try actions.dup2(bun.toFD(fdsOut[1]), bun.STDOUT_FD);
+                try actions.dup2(bun.toFD(fdsErr[1]), bun.STDERR_FD);
             } else {
                 if (comptime Environment.isMac) {
                     try actions.inherit(bun.STDOUT_FD);
@@ -233,8 +233,8 @@ pub const LifecycleScriptSubprocess = struct {
 
             defer {
                 if (!this.manager.options.log_level.isVerbose()) {
-                    _ = bun.sys.close(fdsOut[1]);
-                    _ = bun.sys.close(fdsErr[1]);
+                    _ = bun.sys.close(bun.toFD(fdsOut[1]));
+                    _ = bun.sys.close(bun.toFD(fdsErr[1]));
                 }
             }
 
@@ -329,12 +329,12 @@ pub const LifecycleScriptSubprocess = struct {
         if (!this.manager.options.log_level.isVerbose()) {
             this.stdout = .{
                 .parent = this,
-                .poll = Async.FilePoll.initWithPackageManager(manager, fdsOut[0], .{}, &this.stdout),
+                .poll = Async.FilePoll.initWithPackageManager(manager, bun.toFD(fdsOut[0]), .{}, &this.stdout),
             };
 
             this.stderr = .{
                 .parent = this,
-                .poll = Async.FilePoll.initWithPackageManager(manager, fdsErr[0], .{}, &this.stderr),
+                .poll = Async.FilePoll.initWithPackageManager(manager, bun.toFD(fdsErr[0]), .{}, &this.stderr),
             };
             try this.stdout.start().unwrap();
             try this.stderr.start().unwrap();
@@ -345,7 +345,7 @@ pub const LifecycleScriptSubprocess = struct {
         } else {
             this.pid_poll = Async.FilePoll.initWithPackageManager(
                 manager,
-                pid_fd,
+                bun.toFD(pid_fd),
                 .{},
                 @as(*PidPollData, @ptrCast(this)),
             );

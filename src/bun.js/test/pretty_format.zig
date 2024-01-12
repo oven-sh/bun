@@ -653,7 +653,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    strings.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
                         self.failed = true;
                     };
                 }

@@ -136,7 +136,7 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -144,7 +144,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
-                        .fd = @intCast(bun.toFD(fd)),
+                        .fd = fd,
                     },
                 },
             };
@@ -639,7 +639,7 @@ pub const PathLike = union(enum) {
         return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSlice {
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
@@ -1439,7 +1439,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+        const S = if (!Environment.isWindows) os.system.S else bun.C.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));

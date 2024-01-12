@@ -31,6 +31,7 @@ pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
 pub const kernel32 = windows.kernel32;
 pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
+pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
 pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
 pub const FILE_SHARE_WRITE = windows.FILE_SHARE_WRITE;
 pub const FILE_SHARE_DELETE = windows.FILE_SHARE_DELETE;
@@ -2950,13 +2951,20 @@ pub extern fn LoadLibraryA(
 ) ?*anyopaque;
 
 pub extern "kernel32" fn CreateHardLinkW(
-    newFileName: [*:0]const u16,
-    existingFileName: [*:0]const u16,
+    newFileName: LPCWSTR,
+    existingFileName: LPCWSTR,
     securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) win32.BOOL;
+) BOOL;
 
 pub extern "kernel32" fn CopyFileW(
-    source: [*:0]const u16,
-    dest: [*:0]const u16,
-    bFailIfExists: win32.BOOL,
-) win32.BOOL;
+    source: LPCWSTR,
+    dest: LPCWSTR,
+    bFailIfExists: BOOL,
+) BOOL;
+
+pub extern "kernel32" fn SetFileInformationByHandle(
+    file: HANDLE,
+    fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
+    fileInformation: LPVOID,
+    bufferSize: DWORD,
+) BOOL;

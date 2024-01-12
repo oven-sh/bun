@@ -669,19 +669,17 @@ pub const H2FrameParser = struct {
         var xhdr: lshpack.lsxpack_header = .{};
 
         lshpack.lsxpack_header_prepare_decode(&xhdr, header_buffer.ptr, 0, header_buffer.len);
-        const start = @intFromPtr(src_buffer.ptr);
-        var src = src_buffer.ptr;
-        if (lshpack.lshpack_dec_decode(&this.decoder, &src, @ptrFromInt(start + src_buffer.len), &xhdr) != 0) {
-            return error.UnableToDecode;
-        }
+        const next = try lshpack.lshpack_decode(&this.decoder, src_buffer.ptr, src_buffer.len, &xhdr);
+
         const name = lshpack.lsxpack_header_get_name(&xhdr);
         if (name.len == 0) {
             return error.EmptyHeaderName;
         }
+
         return .{
             .name = name,
             .value = lshpack.lsxpack_header_get_value(&xhdr),
-            .next = @intFromPtr(src) - start,
+            .next = next,
         };
     }
 

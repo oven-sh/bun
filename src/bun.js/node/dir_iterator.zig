@@ -27,7 +27,18 @@ pub const IteratorResult = struct {
 const Result = Maybe(?IteratorResult);
 
 const IteratorResultW = struct {
-    name: []const u16,
+    // fake PathString to have less `if (Environment.isWindows) ...`
+    name: struct {
+        data: [:0]const u16,
+
+        pub fn slice(this: @This()) []const u16 {
+            return this.data;
+        }
+
+        pub fn sliceAssumeZ(this: @This()) [:0]const u16 {
+            return this.data;
+        }
+    },
     kind: Entry.Kind,
 };
 const ResultW = Maybe(?IteratorResultW);
@@ -171,6 +182,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
             first: bool,
             name_data: [256]u8,
+            name_data_w: [128]u16,
 
             const Self = @This();
 
@@ -244,7 +256,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         self.index = self.buf.len;
                     }
 
-                    const name_utf16le = @as([*]u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
+                    const length = dir_info.FileNameLength / 2;
+                    @memcpy(self.name_data_w[0..length], @as([*]u16, @ptrCast(&dir_info.FileName))[0..length]);
+                    self.name_data_w[length] = 0;
+                    const name_utf16le = self.name_data_w[0..length :0];
+
+                    if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
+                        continue;
 
                     const kind = blk: {
                         const attrs = dir_info.FileAttributes;
@@ -257,13 +275,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         return .{
                             .result = IteratorResultW{
                                 .kind = kind,
-                                .name = name_utf16le,
+                                .name = .{ .data = name_utf16le },
                             },
                         };
                     }
 
-                    if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
-                        continue;
                     // Trust that Windows gives us valid UTF-16LE
                     const name_utf8 = strings.fromWPath(self.name_data[0..], name_utf16le);
 
@@ -344,60 +360,70 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-pub const WrappedIterator = struct {
-    iter: Iterator,
-    const Self = @This();
+const PathType = enum { u8, u16 };
 
-    pub const Error = IteratorError;
+pub fn NewWrappedIterator(comptime path_type: PathType) type {
+    const IteratorType = if (path_type == .u16) IteratorW else Iterator;
+    const ResultType = if (path_type == .u16) ResultW else Result;
+    return struct {
+        iter: IteratorType,
+        const Self = @This();
 
-    pub inline fn next(self: *Self) Result {
-        return self.iter.next();
-    }
-};
+        pub const Error = IteratorError;
 
-pub fn iterate(self: Dir) WrappedIterator {
-    return WrappedIterator{
-        .iter = _iterate(self),
+        pub inline fn next(self: *Self) ResultType {
+            return self.iter.next();
+        }
+
+        pub fn init(dir: Dir) Self {
+            return Self{
+                .iter = switch (builtin.os.tag) {
+                    .macos,
+                    .ios,
+                    .freebsd,
+                    .netbsd,
+                    .dragonfly,
+                    .openbsd,
+                    .solaris,
+                    => IteratorType{
+                        .dir = dir,
+                        .seek = 0,
+                        .index = 0,
+                        .end_index = 0,
+                        .buf = undefined,
+                    },
+                    .linux, .haiku => IteratorType{
+                        .dir = dir,
+                        .index = 0,
+                        .end_index = 0,
+                        .buf = undefined,
+                    },
+                    .windows => IteratorType{
+                        .dir = dir,
+                        .index = 0,
+                        .end_index = 0,
+                        .first = true,
+                        .buf = undefined,
+                        .name_data = undefined,
+                        .name_data_w = undefined,
+                    },
+                    .wasi => IteratorType{
+                        .dir = dir,
+                        .cookie = os.wasi.DIRCOOKIE_START,
+                        .index = 0,
+                        .end_index = 0,
+                        .buf = undefined,
+                    },
+                    else => @compileError("unimplemented"),
+                },
+            };
+        }
     };
 }
 
-fn _iterate(self: Dir) Iterator {
-    switch (builtin.os.tag) {
-        .macos,
-        .ios,
-        .freebsd,
-        .netbsd,
-        .dragonfly,
-        .openbsd,
-        .solaris,
-        => return Iterator{
-            .dir = self,
-            .seek = 0,
-            .index = 0,
-            .end_index = 0,
-            .buf = undefined,
-        },
-        .linux, .haiku => return Iterator{
-            .dir = self,
-            .index = 0,
-            .end_index = 0,
-            .buf = undefined,
-        },
-        .windows => return Iterator{
-            .dir = self,
-            .index = 0,
-            .end_index = 0,
-            .first = true,
-            .buf = undefined,
-            .name_data = undefined,
-        },
-        .wasi => return Iterator{
-            .dir = self,
-            .cookie = os.wasi.DIRCOOKIE_START,
-            .index = 0,
-            .end_index = 0,
-            .buf = undefined,
-        },
-        else => @compileError("unimplemented"),
-    }
+pub const WrappedIterator = NewWrappedIterator(.u8);
+pub const WrappedIteratorW = NewWrappedIterator(.u16);
+
+pub fn iterate(self: Dir, comptime path_type: PathType) NewWrappedIterator(path_type) {
+    return NewWrappedIterator(path_type).init(self);
 }

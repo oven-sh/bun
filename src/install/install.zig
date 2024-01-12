@@ -7721,6 +7721,9 @@ pub const PackageManager = struct {
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), "implement lifecycle scripts for windows");
+            }
             if (comptime Environment.allow_assert) {
                 std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
             }
@@ -7747,6 +7750,9 @@ pub const PackageManager = struct {
         }
 
         pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), "implement lifecycle scripts for windows");
+            }
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
                 i -= 1;
@@ -7783,6 +7789,9 @@ pub const PackageManager = struct {
         }
 
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), "implement lifecycle scripts for windows");
+            }
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.first().package_name;
                 while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
@@ -9508,6 +9517,9 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
+        if (comptime Environment.isWindows) {
+            return bun.todo(@src(), "implement lifecycle scripts on windows");
+        }
         var any_scripts = false;
         for (list.items) |maybe_item| {
             if (maybe_item != null) {

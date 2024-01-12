@@ -332,9 +332,6 @@ pub const Bin = extern struct {
         }
 
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
-            if (comptime Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
             std.os.symlinkatZ(target_path, this.package_installed_node_modules, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
                 // Most likely, the symlink was already created by another package
@@ -359,6 +356,9 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), "implement windows binary linking");
+            }
             var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var from_remain: []u8 = &target_buf;

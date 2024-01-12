@@ -357,7 +357,7 @@ pub const Bin = extern struct {
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
             if (comptime Environment.isWindows) {
-                return bun.todo(@src(), "implement windows binary linking");
+                return bun.todo(@src(), {});
             }
             var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

@@ -7722,7 +7722,7 @@ pub const PackageManager = struct {
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
             if (comptime Environment.isWindows) {
-                return bun.todo(@src(), "implement lifecycle scripts for windows");
+                return bun.todo(@src(), {});
             }
             if (comptime Environment.allow_assert) {
                 std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
@@ -7751,7 +7751,7 @@ pub const PackageManager = struct {
 
         pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             if (comptime Environment.isWindows) {
-                return bun.todo(@src(), "implement lifecycle scripts for windows");
+                return bun.todo(@src(), {});
             }
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
@@ -7790,7 +7790,7 @@ pub const PackageManager = struct {
 
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
             if (comptime Environment.isWindows) {
-                return bun.todo(@src(), "implement lifecycle scripts for windows");
+                return bun.todo(@src(), {});
             }
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.first().package_name;
@@ -9518,7 +9518,7 @@ pub const PackageManager = struct {
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         if (comptime Environment.isWindows) {
-            return bun.todo(@src(), "implement lifecycle scripts on windows");
+            return bun.todo(@src(), {});
         }
         var any_scripts = false;
         for (list.items) |maybe_item| {

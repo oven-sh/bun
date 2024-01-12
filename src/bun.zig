@@ -2581,7 +2581,7 @@ pub inline fn socketcast(fd: anytype) std.os.socket_t {
     if (Environment.isWindows) {
         return @ptrCast(FDImpl.decode(fd).system());
     } else {
-        return fd;
+        return fd.cast();
     }
 }
 

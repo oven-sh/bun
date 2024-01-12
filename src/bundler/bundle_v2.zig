@@ -2928,7 +2928,7 @@ pub const JSMeta = struct {
 
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = struct {
         /// This is true if this file is affected by top-level await, either by having
         /// a top-level await inside this file or by having an import/export statement
         /// that transitively imports such a file. It is forbidden to call "require()"
@@ -3170,7 +3170,8 @@ const LinkerGraph = struct {
         name: []const u8,
         count: u32,
     ) !void {
-        if (count == 0) return;
+        // if (count == 0)
+
         debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
         const ref = graph.runtimeFunction(name);

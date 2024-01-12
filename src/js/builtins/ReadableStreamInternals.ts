@@ -1323,7 +1323,7 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
 
 export function isReadableStreamLocked(stream) {
   $assert($isReadableStream(stream));
-  return !!$getByIdDirectPrivate(stream, "reader");
+  return !!$getByIdDirectPrivate(stream, "reader") || $getByIdDirectPrivate(stream, "bunNativePtr") === -1;
 }
 
 export function readableStreamDefaultControllerGetDesiredSize(controller) {
@@ -1391,7 +1391,10 @@ export function readableStreamDefaultControllerClose(controller) {
 }
 
 export function readableStreamClose(stream) {
-  $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
+  $assert(
+    $getByIdDirectPrivate(stream, "state") === $streamReadable ||
+      $getByIdDirectPrivate(stream, "state") === $streamClosing,
+  );
   $putByIdDirectPrivate(stream, "state", $streamClosed);
   if (!$getByIdDirectPrivate(stream, "reader")) return;
 
@@ -1639,6 +1642,8 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     };
     $lazyStreamPrototypeMap.$set(nativeType, Prototype);
   }
+
+  $putByIdDirectPrivate(stream, "disturbed", true);
 
   const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);
   var drainValue;

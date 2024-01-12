@@ -591,6 +591,10 @@ describe("Bun.semver.satisfies()", () => {
       // ["<=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
 
       // [">=1.0.0 <=1.1.0", "1.1.0-pre", { includePrerelease: true }],
+
+      // https://github.com/oven-sh/bun/issues/8040
+      [">=3.3.0-beta.1 <3.4.0-beta.3", "3.3.1"],
+      ["^3.3.0-beta.1", "3.4.0"],
     ];
 
     for (const [range, version] of tests) {
@@ -707,7 +711,6 @@ describe("Bun.semver.satisfies()", () => {
 
       // https://github.com/oven-sh/bun/issues/8040
       [">=3.3.0-beta.1 <3.4.0-beta.3", "3.4.5"],
-      ["^3.3.0-beta.1", "3.4.5"],
     ];
 
     for (const [range, version] of tests) {

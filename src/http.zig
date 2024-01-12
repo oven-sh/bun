@@ -1786,8 +1786,7 @@ pub const AsyncHTTP = struct {
                 // Password between 0 and 4096 chars
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
-                    var password_buffer: [4096]u8 = undefined;
-                    @memset(&password_buffer, 0);
+                    var password_buffer = std.mem.zeroes([4096]u8);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1798,8 +1797,7 @@ pub const AsyncHTTP = struct {
                     const password = password_buffer[0..password_len];
 
                     // Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1819,8 +1817,7 @@ pub const AsyncHTTP = struct {
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
                     //Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1888,8 +1885,7 @@ pub const AsyncHTTP = struct {
                 // Password between 0 and 4096 chars
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
-                    var password_buffer: [4096]u8 = undefined;
-                    @memset(&password_buffer, 0);
+                    var password_buffer = std.mem.zeroes([4096]u8);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1900,8 +1896,7 @@ pub const AsyncHTTP = struct {
                     const password = password_buffer[0..password_len];
 
                     // Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1922,8 +1917,7 @@ pub const AsyncHTTP = struct {
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
                     //Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);

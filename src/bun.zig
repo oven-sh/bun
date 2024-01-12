@@ -1104,7 +1104,7 @@ pub fn getcwd(buf_: []u8) ![]u8 {
     const temp_slice = try std.os.getcwd(&temp);
     // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
     // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .loose);
+    return path.normalizeBuf(temp_slice, buf_, .auto);
 }
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
@@ -2481,3 +2481,7 @@ pub const S = if (Environment.isWindows) C.S else std.os.S;
 pub const trait = @import("./trait.zig");
 
 pub const brotli = @import("./brotli.zig");
+
+pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
+    return DirIterator.iterate(dir, .u8).iter;
+}

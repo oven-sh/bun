@@ -10,7 +10,7 @@ Call `expectBundled` within a test to test the bundler. The `id` passed as the f
 
 All bundle entry files, their outputs, and other helpful files are written to disk at: `$TEMP/bun-build-tests/{run_id}/{id}`. This can be used to inspect and debug bundles, as they are not deleted after runtime.
 
-In addition to comparing the bundle outputs against snapshots, **most test cases execute the bundle and have additional checks to assert the intended logic is happening properly**. This allows the bundler to change exactly how it writes files (optimizations / variable renaming), and still have concrete tests that ensure what the bundler creates will function properly. Snapshots are also taken, but these are used to check for regressions and not neccessarily check accuracy.
+In addition to comparing the bundle outputs against snapshots, **most test cases execute the bundle and have additional checks to assert the intended logic is happening properly**. This allows the bundler to change exactly how it writes files (optimizations / variable renaming), and still have concrete tests that ensure what the bundler creates will function properly. Snapshots are also taken, but these are used to check for regressions and not necessarily check accuracy.
 
 On top of `expectBundled`, there is also `itBundled` which wraps `expectBundled` and `it` together, which is what we mostly use in our tests.
 

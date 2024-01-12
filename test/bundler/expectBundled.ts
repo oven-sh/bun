@@ -376,7 +376,7 @@ function expectBundled(
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
   }
 
   // This is a sanity check that protects against bad copy pasting.
@@ -1236,7 +1236,7 @@ for (const [key, blob] of build.outputs) {
 
           if (run.errorLineMatch) {
             // in order to properly analyze the error, we have to look backwards on stderr. this approach
-            // most definetly can be improved but it works fine here.
+            // most definitely can be improved but it works fine here.
             const stack = [];
             let error;
             const lines = stderr!

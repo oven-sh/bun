@@ -331,7 +331,7 @@ pub const Bin = extern struct {
             _ = C.fchmodat(folder, target, @intCast(umask | 0o777), 0);
         }
 
-        fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+        fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             const node_modules = this.package_installed_node_modules.asDir();
             std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists

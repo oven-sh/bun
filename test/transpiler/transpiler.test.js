@@ -1943,7 +1943,10 @@ console.log(resolve.length)
     describe("Browsers", () => {
       it('require.resolve("my-module") is untouched', () => {
         // we used to inline the string for this, but that is always incorrect as require.resolve builds an exact path.
-        expectPrinted_(`export const foo = require.resolve('my-module')`, `export const foo = require.resolve("my-module")`);
+        expectPrinted_(
+          `export const foo = require.resolve('my-module')`,
+          `export const foo = require.resolve("my-module")`,
+        );
       });
     });
 

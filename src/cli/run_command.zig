@@ -1038,6 +1038,16 @@ pub const RunCommand = struct {
                     manager.lockfile,
                     ctx.allocator,
                     ctx.log,
+                    // people should be able to use `bun run --workspace` from
+                    // directories which do not immediately contain a
+                    // package.json or bun.lockb
+                    //
+                    //
+                    // for example, if I'm in bun/src, i should be able to run
+                    //
+                    // > bun run --workspace=test foo
+                    //
+                    // see also https://github.com/oven-sh/bun/blob/fdb095a32f542e109c278d02f9bbca4552ffde97/src/install/install.zig#L6080-L6118
                     package_json_source,
                     Features.main,
                 );

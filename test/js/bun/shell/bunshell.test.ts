@@ -331,7 +331,23 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 2\\ \\ \\ 3`.stdout("1 2   3\n").run();
     await TestBuilder.command`echo "1 2\\ \\ \\ 3"`.stdout("1 2\\ \\ \\ 3\n").run();
     await TestBuilder.command`echo test$(echo 1    2)`.stdout("test1 2\n").run();
-    // await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
+    await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
+    await TestBuilder.command`echo "test$(echo "1    2")"`.stdout("test1    2\n").run();
+    await TestBuilder.command`echo test$(echo "1 2 3")`.stdout("test1 2 3\n").run();
+    await TestBuilder.command`VAR=1 bun -e 'console.log(process.env.VAR)' && echo $VAR`.stdout("1\n\n").run();
+    await TestBuilder.command`VAR=1 VAR2=2 bun -e 'console.log(process.env.VAR + process.env.VAR2)'`
+      .stdout("12\n")
+      .run();
+    await TestBuilder.command`EMPTY= bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`
+      .stdout("EMPTY: undefined\n")
+      .run();
+    await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
+    await TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").run();
+    await TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").run();
+    await TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`.stdout("a/bctestte  stasdf\n").run();
+    await TestBuilder.command`echo --test=\"2\" --test='2' test\"TEST\" TEST'test'TEST 'test''test' test'test'\"test\" \"test\"\"test\"'test'`
+      .stdout("--test=2 --test=2 testTEST TESTtestTEST testtest testtesttest testtesttest\n")
+      .run();
   });
 
   test("boolean logic", async () => {

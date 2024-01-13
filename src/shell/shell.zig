@@ -459,7 +459,10 @@ pub const AST = struct {
         brace_begin,
         brace_end,
         comma,
-        cmd_subst: Script,
+        cmd_subst: struct {
+            script: Script,
+            quoted: bool = false,
+        },
 
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
@@ -743,6 +746,10 @@ pub const Parser = struct {
                         }
 
                         if (eq_idx == txt.len - 1) {
+                            if (self.peek() == .Delimit) break :var_decl .{
+                                .label = label,
+                                .value = .{ .simple = .{ .Text = "" } },
+                            };
                             const atom = try self.parse_atom() orelse {
                                 try self.add_error("Expected an atom", .{});
                                 return ParseError.Expected;
@@ -841,20 +848,18 @@ pub const Parser = struct {
                     },
                     .CmdSubstBegin => {
                         _ = self.expect(.CmdSubstBegin);
+                        const is_quoted = self.match(.CmdSubstQuoted);
                         var subparser = self.make_subparser(.cmd_subst);
                         const script = try subparser.parse_impl();
-                        try atoms.append(.{ .cmd_subst = script });
+                        try atoms.append(.{ .cmd_subst = .{
+                            .script = script,
+                            .quoted = is_quoted,
+                        } });
                         self.continue_from_subparser(&subparser);
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             if (should_break) break;
                         }
-                        // const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());
-                        // try exprs.append(.{ .cmd_subst = subst });
-                        // if (next_delimits) {
-                        //     _ = self.expect_delimit();
-                        //     if (should_break) break;
-                        // }
                     },
                     .Text => |txtrng| {
                         _ = self.expect(.Text);
@@ -895,12 +900,6 @@ pub const Parser = struct {
                 .glob_hint = has_glob_syntax,
             } },
         };
-    }
-
-    fn parse_cmd_subst(self: *Parser) anyerror!AST.CmdOrAssigns {
-        const cmd_or_assigns = self.parse_cmd_or_assigns();
-        _ = self.expect(.CmdSubstEnd);
-        return cmd_or_assigns;
     }
 
     fn allocate(self: *const Parser, comptime T: type, val: T) !*T {
@@ -1050,6 +1049,7 @@ pub const TokenTag = enum {
     Comma,
     BraceEnd,
     CmdSubstBegin,
+    CmdSubstQuoted,
     CmdSubstEnd,
     OpenParen,
     CloseParen,
@@ -1089,6 +1089,14 @@ pub const Token = union(TokenTag) {
     Comma,
     BraceEnd,
     CmdSubstBegin,
+    /// When cmd subst is wrapped in quotes, then it should be interpreted as literal string, not word split-ed arguments to a cmd.
+    /// We lose quotation context in the AST, so we don't know how to disambiguate that.
+    /// So this is a quick hack to give the AST that context.
+    ///
+    /// This matches this shell behaviour:
+    /// echo test$(echo "1    2") -> test1 2\n
+    /// echo "test$(echo "1    2")" -> test1    2\n
+    CmdSubstQuoted,
     CmdSubstEnd,
     OpenParen,
     CloseParen,
@@ -1197,6 +1205,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
+            log("[lex] make sublexer", .{});
             var sublexer = .{
                 .chars = self.chars,
                 .strpool = self.strpool,
@@ -1212,6 +1221,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn continue_from_sublexer(self: *@This(), sublexer: *@This()) void {
+            log("[lex] drop sublexer", .{});
             self.strpool = sublexer.strpool;
             self.tokens = sublexer.tokens;
             self.errors = sublexer.errors;
@@ -1321,6 +1331,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // Command substitution
                         '`' => {
+                            if (self.chars.state == .Single) break :escaped;
                             if (self.in_subshell == .backtick) {
                                 try self.break_word(true);
                                 if (self.last_tok_tag()) |toktag| {
@@ -1365,8 +1376,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         ')' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.in_subshell != .dollar and self.in_subshell != .normal) {
-                                if (self.chars.state != .Normal) break :escaped;
                                 @panic("Unexpected ')'");
                             }
 
@@ -1710,7 +1721,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             }
 
             switch (kind) {
-                .dollar, .backtick => try self.tokens.append(.CmdSubstBegin),
+                .dollar, .backtick => {
+                    try self.tokens.append(.CmdSubstBegin);
+                    if (self.chars.state == .Double) {
+                        try self.tokens.append(.CmdSubstQuoted);
+                    }
+                },
                 .normal => try self.tokens.append(.OpenParen),
             }
             var sublexer = self.make_sublexer(kind);
@@ -2261,6 +2277,7 @@ pub const Test = struct {
         Comma,
         BraceEnd,
         CmdSubstBegin,
+        CmdSubstQuoted,
         CmdSubstEnd,
         OpenParen,
         CloseParen,
@@ -2292,6 +2309,7 @@ pub const Test = struct {
                 .Comma => return .Comma,
                 .BraceEnd => return .BraceEnd,
                 .CmdSubstBegin => return .CmdSubstBegin,
+                .CmdSubstQuoted => return .CmdSubstQuoted,
                 .CmdSubstEnd => return .CmdSubstEnd,
                 .OpenParen => return .OpenParen,
                 .CloseParen => return .CloseParen,

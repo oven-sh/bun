@@ -730,6 +730,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             single: bool = false,
         };
 
+        /// FIXME: think about lifetimes and allocators here
+        /// in the case of expanding cmd args, we probably want to use the spawn args arena
+        /// otherwise the interpreter allocator
+        ///
         /// If a word contains command substitution or glob expansion syntax then it
         /// needs to do IO, so we have to keep track of the state for that.
         pub const Expansion = struct {
@@ -750,6 +754,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 idle,
                 cmd_subst: struct {
                     cmd: *Script,
+                    quoted: bool = false,
                 },
                 // TODO
                 glob: struct {
@@ -776,7 +781,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 pub fn pushResultSlice(this: *Result, buf: [:0]const u8) void {
                     if (comptime bun.Environment.allow_assert) {
-                        std.debug.assert(buf.len > 0 and buf[buf.len] == 0);
+                        std.debug.assert(buf[buf.len] == 0);
                     }
 
                     if (this.* == .array_of_slice) {
@@ -789,7 +794,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) void {
                     if (comptime bun.Environment.allow_assert) {
-                        std.debug.assert(buf.items.len > 0 and buf.items[buf.items.len - 1] == 0);
+                        std.debug.assert(buf.items[buf.items.len - 1] == 0);
                     }
 
                     if (this.* == .array_of_slice) {
@@ -874,8 +879,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     this.state = .glob;
                                     continue;
                                 }
-                                this.current_out.append(0) catch bun.outOfMemory();
-                                this.pushResult(&this.current_out);
+
+                                this.pushCurrentOut();
                                 this.state = .done;
                                 continue;
                             }
@@ -971,10 +976,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             var io: IO = .{};
                             io.stdout = .pipe;
                             const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell);
-                            var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst, Script.ParentPtr.init(this), io);
+                            var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst.script, Script.ParentPtr.init(this), io);
                             this.child_state = .{
                                 .cmd_subst = .{
                                     .cmd = script,
+                                    .quoted = simp.cmd_subst.quoted,
                                 },
                             };
                             script.start();
@@ -990,10 +996,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
                                 const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell);
-                                var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst, Script.ParentPtr.init(this), io);
+                                var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst.script, Script.ParentPtr.init(this), io);
                                 this.child_state = .{
                                     .cmd_subst = .{
                                         .cmd = script,
+                                        .quoted = simple_atom.cmd_subst.quoted,
                                     },
                                 };
                                 script.start();
@@ -1009,24 +1016,73 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return false;
             }
 
-            /// Turns all \n into spaces and strips last newline if it iexists
-            fn postSubshellExpansion(stdout_: []u8, out: *std.ArrayList(u8)) void {
+            /// Remove a set of values from the beginning and end of a slice.
+            pub fn trim(slice: []u8, values_to_strip: []const u8) []u8 {
+                var begin: usize = 0;
+                var end: usize = slice.len;
+                while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
+                while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
+                return slice[begin..end];
+            }
+
+            /// 1. Turn all newlines into spaces
+            /// 2. Strip last newline if it exists
+            /// 3. Trim leading, trailing, and consecutive whitespace
+            fn postSubshellExpansion(this: *Expansion, stdout_: []u8) void {
+                // 1. and 2.
+                var stdout = convertNewlinesToSpaces(stdout_);
+
+                // Trim leading & trailing whitespace
+                stdout = trim(stdout, " \n  \r\t");
+
+                // Trim consecutive
+                var prev_whitespace: bool = false;
+                var a: usize = 0;
+                var b: usize = 1;
+                for (stdout[0..], 0..) |c, i| {
+                    if (prev_whitespace) {
+                        if (c != ' ') {
+                            // this.
+                            a = i;
+                            b = i + 1;
+                            prev_whitespace = false;
+                        }
+                        continue;
+                    }
+
+                    b = i;
+                    if (c == ' ') {
+                        prev_whitespace = true;
+                        this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
+                        this.pushCurrentOut();
+                        // const slice_z = this.base.interpreter.allocator.dupeZ(u8, stdout[a..b]) catch bun.outOfMemory();
+                        // this.pushResultSlice(slice_z);
+                    }
+                }
+                // "aa bbb"
+
+                this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
+                // const slice_z = this.base.interpreter.allocator.dupeZ(u8, stdout[a..b]) catch bun.outOfMemory();
+                // this.pushResultSlice(slice_z);
+            }
+
+            fn convertNewlinesToSpaces(stdout_: []u8) []u8 {
                 var stdout = brk: {
-                    if (stdout_.len == 0) return;
+                    if (stdout_.len == 0) return stdout_;
                     if (stdout_[stdout_.len -| 1] == '\n') break :brk stdout_[0..stdout_.len -| 1];
                     break :brk stdout_[0..];
                 };
 
                 if (stdout.len == 0) {
-                    out.append('\n') catch bun.outOfMemory();
-                    return;
+                    // out.append('\n') catch bun.outOfMemory();
+                    return stdout;
                 }
 
                 // From benchmarks the SIMD stuff only is faster when chars >= 64
                 if (stdout.len < 64) {
-                    postSubshellExpansionSlow(0, stdout);
-                    out.appendSlice(stdout[0..]) catch bun.outOfMemory();
-                    return;
+                    convertNewlinesToSpacesSlow(0, stdout);
+                    // out.appendSlice(stdout[0..]) catch bun.outOfMemory();
+                    return stdout[0..];
                 }
 
                 const needles: @Vector(16, u8) = @splat('\n');
@@ -1037,11 +1093,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     stdout[i..][0..16].* = @select(u8, haystack == needles, spaces, haystack);
                 }
 
-                if (i < stdout.len) postSubshellExpansionSlow(i, stdout);
-                out.appendSlice(stdout[0..]) catch bun.outOfMemory();
+                if (i < stdout.len) convertNewlinesToSpacesSlow(i, stdout);
+                // out.appendSlice(stdout[0..]) catch bun.outOfMemory();
+                return stdout[0..];
             }
 
-            fn postSubshellExpansionSlow(i: usize, stdout: []u8) void {
+            fn convertNewlinesToSpacesSlow(i: usize, stdout: []u8) void {
                 for (stdout[i..], i..) |c, j| {
                     if (c == '\n') {
                         stdout[j] = ' ';
@@ -1062,10 +1119,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         std.debug.assert(this.child_state == .cmd_subst);
                     }
 
-                    // const stdout = this.child_state.cmd_subst.cmd.stdoutSlice() orelse @panic("Should not happen");
-                    // const stdout = this.child_state.cmd_subst.cmd.stdoutSlice() orelse @panic("Should not happen");
                     const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout.slice();
-                    postSubshellExpansion(stdout, &this.current_out);
+                    if (!this.child_state.cmd_subst.quoted) {
+                        this.postSubshellExpansion(stdout);
+                    } else {
+                        const trimmed = std.mem.trimRight(u8, stdout, " \n\t\r");
+                        this.current_out.appendSlice(trimmed) catch bun.outOfMemory();
+                    }
 
                     this.word_idx += 1;
                     this.child_state = .idle;
@@ -1150,6 +1210,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // }
 
                 // this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
+            }
+
+            pub fn pushCurrentOut(this: *Expansion) void {
+                if (this.current_out.items.len == 0) return;
+                if (this.current_out.items[this.current_out.items.len - 1] != 0) this.current_out.append(0) catch bun.outOfMemory();
+                this.pushResult(&this.current_out);
+                this.current_out = std.ArrayList(u8).init(this.base.interpreter.allocator);
             }
 
             pub fn pushResult(this: *Expansion, buf: *std.ArrayList(u8)) void {
@@ -2243,6 +2310,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 return;
                             }
 
+                            this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
                             Expansion.init(
                                 this.base.interpreter,
                                 this.base.shell,

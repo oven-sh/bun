@@ -2,6 +2,25 @@ import type { Dirent } from "fs";
 
 // Hardcoded module "node:fs/promises"
 const constants = $processBindingConstants.fs;
+const EventEmitter = require("node:events");
+
+var PromisePrototypeThen = Promise.prototype.then;
+var PromiseResolve = Promise.resolve;
+var SafePromisePrototypeFinally = Promise.prototype.finally; //TODO
+var SymbolAsyncDispose = Symbol.asyncDispose;
+var ObjectFreeze = Object.freeze;
+
+const kFd = Symbol("kFd");
+const kRefs = Symbol("kRefs");
+const kClosePromise = Symbol("kClosePromise");
+const kCloseResolve = Symbol("kCloseResolve");
+const kCloseReject = Symbol("kCloseReject");
+const kRef = Symbol("kRef");
+const kUnref = Symbol("kUnref");
+const kTransfer = Symbol("kTransfer");
+const kTransferList = Symbol("kTransferList");
+const kDeserialize = Symbol("kDeserialize");
+const kEmptyObject = ObjectFreeze({ __proto__: null });
 
 var fs = Bun.fs();
 
@@ -198,26 +217,6 @@ const real_export = {
   opendir,
 };
 export default real_export;
-
-const EventEmitter = require("node:events");
-
-var PromisePrototypeThen = Promise.prototype.then;
-var PromiseResolve = Promise.resolve;
-var SafePromisePrototypeFinally = Promise.prototype.finally; //TODO
-var SymbolAsyncDispose = Symbol.asyncDispose;
-var ObjectFreeze = Object.freeze;
-
-const kFd = Symbol("kFd");
-const kRefs = Symbol("kRefs");
-const kClosePromise = Symbol("kClosePromise");
-const kCloseResolve = Symbol("kCloseResolve");
-const kCloseReject = Symbol("kCloseReject");
-const kRef = Symbol("kRef");
-const kUnref = Symbol("kUnref");
-const kTransfer = Symbol("kTransfer");
-const kTransferList = Symbol("kTransferList");
-const kDeserialize = Symbol("kDeserialize");
-const kEmptyObject = ObjectFreeze({ __proto__: null });
 
 // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
 class FileHandle extends EventEmitter {

@@ -347,8 +347,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     }
 
     const Child = std.meta.Child(T);
-    assertDefined(item);
-
     if (comptime trait.isContainer(Child)) {
         if (std.meta.hasFn(Child, "clone")) {
             const slice = try allocator.alloc(Child, item.len);
@@ -365,41 +363,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 }
 
 pub const StringBuilder = @import("./string_builder.zig");
-
-pub fn assertDefined(val: anytype) void {
-    if (comptime !Environment.allow_assert) return;
-    const Type = @TypeOf(val);
-
-    if (comptime @typeInfo(Type) == .Optional) {
-        if (val) |res| {
-            assertDefined(res);
-        }
-        return;
-    }
-
-    if (comptime trait.isSlice(Type)) {
-        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        const slice: []Type = undefined;
-        if (val.len > 0) {
-            std.debug.assert(@intFromPtr(val.ptr) != @intFromPtr(slice.ptr));
-        }
-        return;
-    }
-
-    if (comptime @typeInfo(Type) == .Pointer) {
-        const slice: *Type = undefined;
-        std.debug.assert(@intFromPtr(val) != @intFromPtr(slice));
-        return;
-    }
-
-    if (comptime @typeInfo(Type) == .Struct) {
-        inline for (comptime std.meta.fieldNames(Type)) |name| {
-            assertDefined(@field(val, name));
-        }
-    }
-}
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {

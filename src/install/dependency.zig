@@ -603,6 +603,10 @@ pub const Version = struct {
                     if (dependency.len == 1) return .npm;
                     if (dependency[1] == '.') return .npm;
                 },
+                'p' => {
+                    // TODO(dylan-conway): apply .patch files on packages
+                    if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
+                },
                 else => {},
             }
 

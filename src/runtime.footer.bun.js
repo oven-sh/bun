@@ -17,4 +17,3 @@ export var __legacyMetadataTS = BUN_RUNTIME.__legacyMetadataTS;
 export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace = BUN_RUNTIME.__internalIsCommonJSNamespace;
 export var $$typeof = BUN_RUNTIME.$$typeof;
-

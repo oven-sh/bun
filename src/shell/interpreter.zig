@@ -1043,7 +1043,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             fn postSubshellExpansionSlow(i: usize, stdout: []u8) void {
                 for (stdout[i..], i..) |c, j| {
-
                     if (c == '\n') {
                         stdout[j] = ' ';
                     }

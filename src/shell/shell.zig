@@ -1338,6 +1338,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                             const peeked = self.peek() orelse InputChar{ .char = 0 };
                             if (!peeked.escaped and peeked.char == '(') {
+                                try self.break_word(false);
                                 try self.eat_subshell(.dollar);
                                 continue;
                             }

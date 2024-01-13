@@ -324,6 +324,16 @@ ${temp_dir}`
 });
 
 describe("deno_task", () => {
+  test("commands", async () => {
+    await TestBuilder.command`echo 1`.stdout("1\n").run();
+    await TestBuilder.command`echo 1 2   3`.stdout("1 2 3\n").run();
+    await TestBuilder.command`echo "1 2   3"`.stdout("1 2   3\n").run();
+    await TestBuilder.command`echo 1 2\\ \\ \\ 3`.stdout("1 2   3\n").run();
+    await TestBuilder.command`echo "1 2\\ \\ \\ 3"`.stdout("1 2\\ \\ \\ 3\n").run();
+    await TestBuilder.command`echo test$(echo 1    2)`.stdout("test1 2\n").run();
+    // await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
+  });
+
   test("boolean logic", async () => {
     await TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").run();
     await TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").run();

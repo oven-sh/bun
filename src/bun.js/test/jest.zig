@@ -1875,7 +1875,7 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     args_idx += 1;
                 },
                 'p' => {
-                    var formatter = JSC.ZigConsoleClient.Formatter{
+                    var formatter = JSC.ConsoleObject.Formatter{
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };

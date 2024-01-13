@@ -705,7 +705,7 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
     queued_shutdowns: ShutdownQueue = ShutdownQueue{},
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    timer: std.time.Timer = undefined,
+    timer: std.time.Timer,
     const threadlog = Output.scoped(.HTTPThread, true);
 
     const FakeStruct = struct {

@@ -188,7 +188,7 @@ const string = @import("root").bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
+    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
     framework: string = "",
     framework_version: string = "",
 

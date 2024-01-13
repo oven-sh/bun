@@ -8,7 +8,7 @@ const bun = @import("root").bun;
 pub const Error = error{InvalidUUID};
 const UUID = @This();
 
-bytes: [16]u8 = undefined,
+bytes: [16]u8,
 
 pub fn init() UUID {
     var uuid = UUID{ .bytes = undefined };

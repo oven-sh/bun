@@ -50,9 +50,7 @@ fn NewEVP(
             BoringSSL.load();
 
             const md = @call(.auto, @field(BoringSSL, MDName), .{});
-            var this: @This() = .{
-                .ctx = undefined,
-            };
+            var this = @This(){};
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
 

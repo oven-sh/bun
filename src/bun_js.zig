@@ -39,7 +39,7 @@ pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
-    arena: Arena = undefined,
+    arena: Arena,
     any_unhandled: bool = false,
 
     pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
@@ -375,6 +375,7 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
+                //
                 while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();

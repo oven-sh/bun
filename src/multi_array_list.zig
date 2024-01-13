@@ -906,7 +906,7 @@ test "sorting a span" {
         }
     }{ .chars = sliced.items(.chr) });
 
-    var i: u32 = undefined;
+    var i: u32 = 0;
     var j: u32 = 6;
     var c: u8 = 'a';
 

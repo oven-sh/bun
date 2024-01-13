@@ -1941,10 +1941,12 @@ console.log(resolve.length)
     });
 
     describe("Browsers", () => {
-      it('require.resolve("my-module") -> "/resolved/my-module"', () => {
-        // the module resolver & linker doesn't run with Bun.Transpiler
-        // so in this test, it becomes the same path string
-        expectPrinted_(`export const foo = require.resolve('my-module')`, `export const foo = "my-module"`);
+      it('require.resolve("my-module") is untouched', () => {
+        // we used to inline the string for this, but that is always incorrect as require.resolve builds an exact path.
+        expectPrinted_(
+          `export const foo = require.resolve('my-module')`,
+          `export const foo = require.resolve("my-module")`,
+        );
       });
     });
 

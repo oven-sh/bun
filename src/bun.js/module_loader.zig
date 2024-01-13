@@ -58,7 +58,7 @@ const NewClass = @import("./base.zig").NewClass;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -539,6 +539,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -553,6 +554,7 @@ pub const RuntimeTranspilerStore = struct {
                         import_record.path.namespace = "bun";
                         import_record.tag = .bun_test;
                         import_record.path.text = "test";
+                        import_record.is_external_without_side_effects = true;
                         continue;
                     }
                 }
@@ -560,6 +562,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
+                    import_record.is_external_without_side_effects = true;
 
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;

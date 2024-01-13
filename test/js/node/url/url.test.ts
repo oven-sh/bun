@@ -17,4 +17,38 @@ describe("Url.prototype.parse", () => {
   it("accepts empty host", () => {
     expect(() => parse("http://")).not.toThrow();
   });
+
+  it("accepts ipv6 host", () => {
+    expect(parse("http://[::1]")).toEqual({
+      protocol: "http:",
+      slashes: true,
+      auth: null,
+      host: "[::1]",
+      port: null,
+      hostname: "::1",
+      hash: null,
+      search: null,
+      query: null,
+      pathname: "/",
+      path: "/",
+      href: "http://[::1]/",
+    });
+  });
+
+  it("handles punycode", () => {
+    expect(parse("http://xn--xample-hva.com")).toEqual({
+      protocol: "http:",
+      slashes: true,
+      auth: null,
+      host: "xn--xample-hva.com",
+      port: null,
+      hostname: "xn--xample-hva.com",
+      hash: null,
+      search: null,
+      query: null,
+      pathname: "/",
+      path: "/",
+      href: "http://xn--xample-hva.com/",
+    });
+  });
 });

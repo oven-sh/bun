@@ -308,6 +308,12 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
       this.hostname = this.hostname.toLowerCase();
     }
 
+    /*
+     * IDNA Support: Returns a punycoded representation of "domain".
+     * It only converts parts of the domain name that
+     * have non-ASCII characters, i.e. it doesn't matter if
+     * you call it with a domain that already is ASCII-only.
+     */
     if (this.hostname) {
       this.hostname = new URL("http://" + this.hostname).hostname;
     }

@@ -1,4 +1,4 @@
-const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
+const { setRawMode: ttySetMode, isTTY: isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
 // primordials
 const NumberIsInteger = Number.isInteger;

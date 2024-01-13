@@ -17,6 +17,8 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
 
+#include "ProcessBindingTTYWrap.h"
+
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
@@ -228,80 +230,6 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
         thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
 
     return true;
-}
-
-static bool getWindowSize(int fd, size_t* width, size_t* height)
-{
-#if OS(WINDOWS)
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    switch (fd) {
-    case 0:
-        handle = GetStdHandle(STD_INPUT_HANDLE);
-        break;
-    case 1:
-        handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        break;
-    case 2:
-        handle = GetStdHandle(STD_ERROR_HANDLE);
-        break;
-    default:
-        break;
-    }
-    if (handle == INVALID_HANDLE_VALUE)
-        return false;
-
-    if (!GetConsoleScreenBufferInfo(handle, &csbi))
-        return false;
-
-    *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-    *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-    return true;
-#else
-    struct winsize ws;
-    int err;
-    do
-        err = ioctl(fd, TIOCGWINSZ, &ws);
-    while (err == -1 && errno == EINTR);
-
-    if (err == -1)
-        return false;
-
-    *width = ws.ws_col;
-    *height = ws.ws_row;
-
-    return true;
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto argCount = callFrame->argumentCount();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (argCount == 0) {
-        JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (a file descriptor)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    int fd = callFrame->uncheckedArgument(0).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(1));
-    if (!array || array->length() < 2) {
-        JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (an array)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    size_t width, height;
-    if (!getWindowSize(fd, &width, &height)) {
-        return JSC::JSValue::encode(jsBoolean(false));
-    }
-
-    array->putDirectIndex(globalObject, 0, jsNumber(width));
-    array->putDirectIndex(globalObject, 1, jsNumber(height));
-
-    return JSC::JSValue::encode(jsBoolean(true));
 }
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
@@ -1930,7 +1858,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "stream_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("stream_wrap", "4957");
     if (moduleName == "tcp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tcp_wrap");
     if (moduleName == "tls_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tls_wrap");
-    if (moduleName == "tty_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("tty_wrap", "4694");
+    if (moduleName == "tty_wrap"_s) return JSValue::encode(Bun::createNodeTTYWrapObject(globalObject));
     if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
     if (moduleName == "url"_s) PROCESS_BINDING_NOT_IMPLEMENTED("url");
     if (moduleName == "util"_s) return JSValue::encode(processBindingUtil(globalObject, vm));

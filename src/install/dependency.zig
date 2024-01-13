@@ -604,7 +604,8 @@ pub const Version = struct {
                     if (dependency[1] == '.') return .npm;
                 },
                 'p' => {
-                    // TODO(dylan-conway): apply .patch files on packages
+                    // TODO(dylan-conway): apply .patch files on packages. In the future this could
+                    // return `Tag.git` or `Tag.npm`.
                     if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
                 },
                 else => {},

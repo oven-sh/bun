@@ -22,9 +22,9 @@ const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
 const JSPromise = JSC.JSPromise;
 const EventType = JSC.EventType;
 
-pub const shim = Shimmer("Zig", "ConsoleObject", @This());
+pub const shim = Shimmer("Bun", "ConsoleObject", @This());
 pub const Type = *anyopaque;
-pub const name = "Zig::ConsoleObject";
+pub const name = "Bun::ConsoleObject";
 pub const include = "\"ConsoleObject.h\"";
 pub const namespace = shim.namespace;
 const Counter = std.AutoHashMapUnmanaged(u64, u32);

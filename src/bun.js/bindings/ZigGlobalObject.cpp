@@ -981,7 +981,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
 void GlobalObject::setConsole(void* console)
 {
-    this->setConsoleClient(new Zig::ConsoleObject(console));
+    this->setConsoleClient(new Bun::ConsoleObject(console));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,

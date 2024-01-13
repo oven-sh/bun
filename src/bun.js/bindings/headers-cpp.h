@@ -171,8 +171,8 @@ extern "C" const size_t Bun__Path_object_align_ = alignof(Bun__Path);
 #include ""ConsoleObject.h""
 #endif
 
-extern "C" const size_t Zig__ConsoleObject_object_size_ = sizeof(Zig::ConsoleClient);
-extern "C" const size_t Zig__ConsoleObject_object_align_ = alignof(Zig::ConsoleClient);
+extern "C" const size_t Bun__ConsoleObject_object_size_ = sizeof(Zig::ConsoleClient);
+extern "C" const size_t Bun__ConsoleObject_object_align_ = alignof(Zig::ConsoleClient);
 
 #ifndef INCLUDED_
 #define INCLUDED_

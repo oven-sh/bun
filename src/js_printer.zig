@@ -2397,7 +2397,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.resolveSync");
+                        p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
@@ -2419,7 +2419,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.resolveSync");
+                        p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");

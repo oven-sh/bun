@@ -101,18 +101,16 @@ BunString toString(const char* bytes, size_t length)
 
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    JSC::JSString* str = value.toStringOrNull(globalObject);
-    if (UNLIKELY(!str)) {
+    // TOOD: should this be assertion?
+    if(UNLIKELY(!value.isString()))
         return { BunStringTag::Dead };
-    }
 
-    if (str->length() == 0) {
+    WTF::String str = jsCast<JSString*>(value)->value(globalObject);
+    if (str.length() == 0) {
         return { BunStringTag::Empty };
     }
 
-    auto wtfString = str->value(globalObject);
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = str.impl() } };
 }
 
 extern "C" void BunString__toThreadSafe(BunString* str)

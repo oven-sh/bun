@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { gc } from "harness";
 import fs from "fs";

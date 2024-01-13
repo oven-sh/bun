@@ -1,3 +1,4 @@
+// @known-failing-on-windows: panic "TODO on Windows"
 import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 

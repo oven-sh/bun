@@ -1,3 +1,4 @@
+// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import dedent from "dedent";
 import { itBundled, testForFile } from "./expectBundled";

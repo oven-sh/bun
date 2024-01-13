@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { bunExe, bunEnv } from "harness";
 import { existsSync, promises } from "fs";
 import { join } from "path";

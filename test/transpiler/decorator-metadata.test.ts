@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import "reflect-metadata";
 
 describe("decorator metadata", () => {

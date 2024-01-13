@@ -20,15 +20,12 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
-var ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
-var ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
-var MathAbs = Math.abs;
 
 var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
@@ -915,30 +912,32 @@ function normalizeSpawnArguments(file, args, options) {
     validateArgumentNullCheck(options.argv0, "options.argv0");
   }
 
-  // TODO: Windows checks for Windows specific options
+  let { windowsVerbatimArguments } = options;
+  if (windowsVerbatimArguments != null) {
+    validateBoolean(windowsVerbatimArguments, "options.windowsVerbatimArguments");
+  }
 
   // Handle shell
   if (options.shell) {
     validateArgumentNullCheck(options.shell, "options.shell");
     const command = ArrayPrototypeJoin.$call([file, ...args], " ");
-    // TODO: Windows moment
     // Set the shell, switches, and commands.
-    // if (process.platform === "win32") {
-    //   if (typeof options.shell === "string") file = options.shell;
-    //   else file = process.env.comspec || "cmd.exe";
-    //   // '/d /s /c' is used only for cmd.exe.
-    //   if (RegExpPrototypeExec(/^(?:.*\\)?cmd(?:\.exe)?$/i, file) !== null) {
-    //     args = ["/d", "/s", "/c", `"${command}"`];
-    //     windowsVerbatimArguments = true;
-    //   } else {
-    //     args = ["-c", command];
-    //   }
-    // } else {
-    if (typeof options.shell === "string") file = options.shell;
-    else if (process.platform === "android") file = "sh";
-    else file = "sh";
-    args = ["-c", command];
-    // }
+    if (process.platform === "win32") {
+      if (typeof options.shell === "string") file = options.shell;
+      else file = process.env.comspec || "cmd.exe";
+      // '/d /s /c' is used only for cmd.exe.
+      if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
+        args = ["/d", "/s", "/c", `"${command}"`];
+        windowsVerbatimArguments = true;
+      } else {
+        args = ["-c", command];
+      }
+    } else {
+      if (typeof options.shell === "string") file = options.shell;
+      else if (process.platform === "android") file = "sh";
+      else file = "sh";
+      args = ["-c", command];
+    }
   }
 
   // Handle argv0

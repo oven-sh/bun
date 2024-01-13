@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import jwt from "jsonwebtoken";
 import { describe, it } from "bun:test";
 

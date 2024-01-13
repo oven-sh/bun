@@ -162,3 +162,5 @@ x64
 .vs
 
 **/.verdaccio-db.json
+/test-report.md
+/test-report.json

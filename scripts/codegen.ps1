@@ -11,5 +11,7 @@ Set-Content $Script1 -Force -NoNewline -Value $CrossCompileCodegen
 Set-Content $Script2 -Force -NoNewline -Value $CreateHashTable
 
 # copy into build-release as well
+Remove-Item -Path "build-release/codegen" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "build-release/js" -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path "build/codegen" -Destination "build-release/codegen" -Recurse -Force
-Copy-Item -Path "build/js" -Destination "build-release/codegen" -Recurse -Force
+Copy-Item -Path "build/js" -Destination "build-release/js" -Recurse -Force

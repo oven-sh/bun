@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";

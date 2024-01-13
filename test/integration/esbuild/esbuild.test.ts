@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";

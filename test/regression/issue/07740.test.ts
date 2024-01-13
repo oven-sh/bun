@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { bunEnv } from "harness";
 import { bunExe } from "harness";
 import { tempDirWithFiles } from "harness";

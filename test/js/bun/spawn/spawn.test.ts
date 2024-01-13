@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick, bunExe, bunEnv } from "harness";

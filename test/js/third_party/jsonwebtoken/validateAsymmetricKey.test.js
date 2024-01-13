@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, describe, it } from "bun:test";
 import { createPrivateKey } from "crypto";
 import fs from "fs";

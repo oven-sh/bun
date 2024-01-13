@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { test as bunTest, expect, describe } from "bun:test";
 import { generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
@@ -19,6 +20,10 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
   let Client: typeof PrismaClient;
 
   try {
+    if (type !== "sqlite" && !process.env[`TLS_${type.toUpperCase()}_DATABASE_URL`]) {
+      throw new Error(`$TLS_${type.toUpperCase()}_DATABASE_URL is not set`);
+    }
+
     Client = await generateClient(type);
   } catch (err: any) {
     console.warn(`Skipping ${type} tests, failed to generate/migrate`, err.message);

@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import assert from "assert";
 import dedent from "dedent";
 

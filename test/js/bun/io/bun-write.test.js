@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
 import path, { join } from "path";

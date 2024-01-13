@@ -401,8 +401,8 @@ pub const UpgradeCommand = struct {
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
-        .windows => "TODO",
-        else => "TODO",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
+        else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
     pub fn exec(ctx: Command.Context) !void {

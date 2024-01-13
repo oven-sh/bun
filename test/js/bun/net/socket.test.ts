@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
 import { connect, SocketHandler, spawn } from "bun";

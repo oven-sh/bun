@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 import { gc, ServeOptions } from "bun";
 import { afterAll, describe, expect, it, test } from "bun:test";

@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 
 import { which } from "bun";

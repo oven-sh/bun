@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";

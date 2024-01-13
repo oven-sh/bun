@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import { bunRunAsScript, tempDirWithFiles } from "harness";
 

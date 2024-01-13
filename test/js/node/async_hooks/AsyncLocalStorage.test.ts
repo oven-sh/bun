@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
 

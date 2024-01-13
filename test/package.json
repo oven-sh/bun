@@ -10,7 +10,7 @@
   "dependencies": {
     "@grpc/grpc-js": "1.9.9",
     "@grpc/proto-loader": "0.7.10",
-    "@prisma/client": "5.1.1",
+    "@prisma/client": "5.8.0",
     "@resvg/resvg-js": "2.4.1",
     "@swc/core": "1.3.38",
     "body-parser": "1.20.2",
@@ -20,7 +20,6 @@
     "esbuild": "0.18.6",
     "express": "4.18.2",
     "fast-glob": "3.3.1",
-    "fsevents": "2.3.2",
     "iconv-lite": "0.6.3",
     "jest-extended": "4.0.0",
     "jsonwebtoken": "9.0.2",

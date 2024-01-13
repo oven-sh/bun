@@ -92,10 +92,7 @@ const zig_base64 = struct {
         NoSpaceLeft,
     };
 
-    const decoderWithIgnoreProto = switch (@import("builtin").zig_backend) {
-        .stage1 => fn (ignore: []const u8) Base64DecoderWithIgnore,
-        else => *const fn (ignore: []const u8) Base64DecoderWithIgnore,
-    };
+    const decoderWithIgnoreProto = *const fn (ignore: []const u8) Base64DecoderWithIgnore;
 
     /// Base64 codecs
     pub const Codecs = struct {

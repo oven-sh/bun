@@ -20399,9 +20399,7 @@ fn NewParser_(
                 }
 
                 var constructor_function: ?*E.Function = null;
-                for (0..class.properties.len) |i| {
-                    var property = &class.properties[i];
-
+                for (class.properties) |*property| {
                     if (property.kind == .class_static_block) {
                         const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
                         const old_fn_only_data = p.fn_only_data_visit;
@@ -20437,7 +20435,7 @@ fn NewParser_(
                     if (is_private) {
                         p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
                     } else if (property.key) |key| {
-                        class.properties[i].key = p.visitExpr(key);
+                        property.key = p.visitExpr(key);
                     }
 
                     // Make it an error to use "arguments" in a class body

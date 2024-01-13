@@ -11,16 +11,7 @@ namespace Zig {
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTty_isatty);
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplementedYet,
-                         (JSGlobalObject * globalObject,
-                          CallFrame *callFrame)) {
-  VM &vm = globalObject->vm();
-  auto throwScope = DECLARE_THROW_SCOPE(vm);
-  throwException(globalObject, throwScope,
-                 createError(globalObject, "Not implemented yet"_s));
-  return JSValue::encode(jsUndefined());
-}
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplementedYet);
 
 DEFINE_NATIVE_MODULE(NodeTTY) {
   INIT_NATIVE_MODULE(3);

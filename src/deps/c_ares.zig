@@ -464,7 +464,7 @@ pub const Channel = opaque {
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
                 const container = bun.cast(*Container, ctx.?);
-                Container.onDNSSocketState(container, @as(i32, @intCast(socket)), readable != 0, writable != 0);
+                Container.onDNSSocketState(container, socket, readable != 0, writable != 0);
             }
         };
 

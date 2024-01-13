@@ -2630,16 +2630,6 @@ pub const Package = extern struct {
         }
     };
 
-    pub fn verify(this: *const Package, externs: []const ExternalString) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        this.name.assertDefined();
-        this.resolution.verify();
-        this.meta.man_dir.assertDefined();
-        this.bin.verify(externs);
-    }
-
     pub const DependencyGroup = struct {
         prop: string,
         field: string,
@@ -2755,7 +2745,6 @@ pub const Package = extern struct {
             },
             id,
         );
-        defer new_package.verify(new.buffers.extern_strings.items);
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 

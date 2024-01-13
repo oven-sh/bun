@@ -26,29 +26,6 @@ pub const Bin = extern struct {
     // Largest member must be zero initialized
     value: Value = Value{ .map = ExternalStringList{} },
 
-    pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        switch (this.tag) {
-            .file => this.value.file.assertDefined(),
-            .named_file => {
-                this.value.named_file[0].assertDefined();
-                this.value.named_file[1].assertDefined();
-            },
-            .dir => {
-                this.value.dir.assertDefined();
-            },
-            .map => {
-                const list = this.value.map.get(extern_strings);
-                for (list) |*extern_string| {
-                    extern_string.value.assertDefined();
-                }
-            },
-            else => {},
-        }
-    }
-
     pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
             .file => builder.count(this.value.file.slice(buf)),

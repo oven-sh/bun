@@ -47,25 +47,13 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn assertDefined(_: *const String) void {
-        // if (comptime !Environment.allow_assert)
-        //     return;
-
-        // if (this.isUndefined()) {
-        //     @breakpoint();
-        //     @panic("String is undefined");
-        // }
-    }
-
     pub inline fn init(
         buf: string,
         in: string,
     ) String {
         if (comptime Environment.allow_assert) {
             const out = realInit(buf, in);
-            if (out.isInline()) {
-                out.assertDefined();
-            } else {
+            if (!out.isInline()) {
                 std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
             }
 
@@ -276,8 +264,6 @@ pub const String = extern struct {
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
-        this.assertDefined();
-
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
                 // Edgecase: string that starts with a 0 byte will be considered empty.

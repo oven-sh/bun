@@ -33,14 +33,6 @@ pub const Repository = extern struct {
         .{ "gitlab", ".com" },
     });
 
-    pub fn verify(this: *const Repository) void {
-        this.owner.assertDefined();
-        this.repo.assertDefined();
-        this.committish.assertDefined();
-        this.resolved.assertDefined();
-        this.package_name.assertDefined();
-    }
-
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
         const owner_order = lhs.owner.order(&rhs.owner, lhs_buf, rhs_buf);
         if (owner_order != .eq) return owner_order;

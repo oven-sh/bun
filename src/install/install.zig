@@ -3131,8 +3131,6 @@ pub const PackageManager = struct {
         install_peer: bool,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
-        name.assertDefined();
-
         if (install_peer and behavior.isPeer()) {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);

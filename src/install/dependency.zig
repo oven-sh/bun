@@ -725,8 +725,6 @@ pub fn parseWithTag(
     sliced: *const SlicedString,
     log_: ?*logger.Log,
 ) ?Version {
-    alias.assertDefined();
-
     switch (tag) {
         .npm => {
             var input = dependency;

@@ -376,7 +376,7 @@ pub fn constructor(
         return null;
     }
 
-    const pat_str: []u8 = pat_arg.toBunString(globalThis).toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return null).slice());
 
     const all_ascii = isAllAscii(pat_str);
 

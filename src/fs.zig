@@ -1392,7 +1392,7 @@ pub const NodeJSPathName = struct {
             if (strings.lastIndexOfChar(filename, '.')) |dot| {
                 if (dot > 0) {
                     filename = filename[0..dot];
-                    ext = filename[dot..];
+                    ext = base[dot..];
                 }
             }
         }

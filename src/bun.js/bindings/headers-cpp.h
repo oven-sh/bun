@@ -166,13 +166,13 @@ extern "C" const size_t Zig__GlobalObject_object_align_ = alignof(Zig::GlobalObj
 extern "C" const size_t Bun__Path_object_size_ = sizeof(Bun__Path);
 extern "C" const size_t Bun__Path_object_align_ = alignof(Bun__Path);
 
-#ifndef INCLUDED__ZigConsoleClient_h_
-#define INCLUDED__ZigConsoleClient_h_
-#include ""ZigConsoleClient.h""
+#ifndef INCLUDED__ConsoleObject_h_
+#define INCLUDED__ConsoleObject_h_
+#include ""ConsoleObject.h""
 #endif
 
-extern "C" const size_t Zig__ConsoleClient_object_size_ = sizeof(Zig::ConsoleClient);
-extern "C" const size_t Zig__ConsoleClient_object_align_ = alignof(Zig::ConsoleClient);
+extern "C" const size_t Bun__ConsoleObject_object_size_ = sizeof(Zig::ConsoleClient);
+extern "C" const size_t Bun__ConsoleObject_object_align_ = alignof(Zig::ConsoleClient);
 
 #ifndef INCLUDED_
 #define INCLUDED_

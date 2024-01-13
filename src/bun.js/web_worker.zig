@@ -221,7 +221,7 @@ pub const WebWorker = struct {
         const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
         // when it's under 4096, we want to avoid the dynamic allocation
-        bun.JSC.ZigConsoleClient.format(
+        bun.JSC.ConsoleObject.format(
             .Debug,
             globalObject,
             &[_]JSC.JSValue{error_instance},

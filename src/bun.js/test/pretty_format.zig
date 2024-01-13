@@ -415,12 +415,6 @@ pub const JestPrettyFormat = struct {
                     };
                 }
 
-                if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
-                    return .{
-                        .tag = .Private,
-                        .cell = js_type,
-                    };
-
                 // If we check an Object has a method table and it does not
                 // it will crash
                 if (js_type != .Object and value.isCallable(globalThis.vm())) {

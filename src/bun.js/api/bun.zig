@@ -211,7 +211,7 @@ const JSValue = @import("root").bun.JSC.JSValue;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -375,7 +375,7 @@ pub fn inspect(
         }
     }
 
-    var formatOptions = ZigConsoleClient.FormatOptions{
+    var formatOptions = ConsoleObject.FormatOptions{
         .enable_colors = false,
         .add_newline = false,
         .flush = false,
@@ -449,7 +449,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ZigConsoleClient.format(
+    ConsoleObject.format(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),

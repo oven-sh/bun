@@ -13,8 +13,6 @@ class SourceProvider;
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
-#include "ZigConsoleClient.h"
-// #include <JavaScriptCore/SourceCodeKey.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 

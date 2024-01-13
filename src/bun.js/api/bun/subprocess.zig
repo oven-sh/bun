@@ -1159,7 +1159,7 @@ pub const Subprocess = struct {
                     if (Environment.isWindows) @panic("TODO");
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
-                        .fd = bun.toFD(fd),
+                        .fd = fd,
                         .buffer = bun.ByteList{},
                         .allocator = globalThis.bunVM().allocator,
                         .auto_close = true,
@@ -1178,7 +1178,7 @@ pub const Subprocess = struct {
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
-                    var buffered_input: BufferedInput = .{ .fd = bun.toFD(fd), .source = undefined };
+                    var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined };
                     switch (stdio) {
                         .array_buffer => |array_buffer| {
                             buffered_input.source = .{ .array_buffer = array_buffer };
@@ -1194,7 +1194,7 @@ pub const Subprocess = struct {
                     return Writable{ .memfd = stdio.memfd };
                 },
                 .fd => {
-                    return Writable{ .fd = bun.toFD(fd) };
+                    return Writable{ .fd = fd };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };

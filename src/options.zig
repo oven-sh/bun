@@ -81,6 +81,7 @@ pub const ExternalModules = struct {
     node_modules: std.BufSet = undefined,
     abs_paths: std.BufSet = undefined,
     patterns: []const WildcardPattern = undefined,
+
     pub const WildcardPattern = struct {
         prefix: string,
         suffix: string,

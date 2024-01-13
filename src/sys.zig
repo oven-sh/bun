@@ -430,7 +430,7 @@ pub fn openDirAtWindows(
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
-            return JSC.Maybe(bun.FileDescriptor){
+            return .{
                 .result = bun.toFD(fd),
             };
         },
@@ -1548,7 +1548,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
         };
         const attr = windows.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-            .RootDirectory = bun.toFD(fd),
+            .RootDirectory = fd,
             .Attributes = 0,
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,

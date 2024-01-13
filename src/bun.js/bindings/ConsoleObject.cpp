@@ -16,9 +16,12 @@
 
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/InspectorScriptProfilerAgent.h>
+#include <JavaScriptCore/InspectorDebuggerAgent.h>
+#include <JavaScriptCore/InspectorConsoleAgent.h>
 
 namespace Bun {
 using namespace JSC;
+using namespace Inspector;
 
 using ScriptArguments = Inspector::ScriptArguments;
 using MessageType = JSC::MessageType;
@@ -69,16 +72,7 @@ void ConsoleObject::countReset(JSGlobalObject* globalObject, const String& label
     auto input = label.tryGetUTF8().value();
     Bun__ConsoleObject__countReset(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
-void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& label)
-{
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__profile(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
-}
-void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& label)
-{
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__profileEnd(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
-}
+
 void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String& label)
 {
     auto input = label.tryGetUTF8().value();
@@ -119,5 +113,23 @@ void ConsoleObject::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
 }
 void ConsoleObject::warnUnimplemented(const String& method) {}
+
+void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
+{
+    if (globalObject->inspectable()) {
+        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+            client->profile(globalObject, title);
+        }
+    }
+}
+
+void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& title)
+{
+    if (globalObject->inspectable()) {
+        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+            client->profileEnd(globalObject, title);
+        }
+    }
+}
 
 }

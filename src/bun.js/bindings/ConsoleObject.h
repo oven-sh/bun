@@ -59,9 +59,6 @@ private:
     void internalAddMessage(MessageType, MessageLevel, JSC::JSGlobalObject*,
         Ref<Inspector::ScriptArguments>&&);
 
-    void startConsoleProfile();
-    void stopConsoleProfile();
-
     Inspector::InspectorConsoleAgent* m_consoleAgent;
     Inspector::InspectorDebuggerAgent* m_debuggerAgent { nullptr };
     Inspector::InspectorScriptProfilerAgent* m_scriptProfilerAgent { nullptr };

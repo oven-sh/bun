@@ -60,7 +60,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: apt update && apt install -y llvm-16-dev libclang-16-dev clang-16 libssl-dev libxml2-dev build-essential ninja-build cmake
       - name: Install npm dependencies
@@ -87,7 +87,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -115,7 +115,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Setup Tag
@@ -252,7 +252,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.0.21"
       - name: Install Dependencies
         run: bun install
       - name: Release

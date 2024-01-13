@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.21")
+set(Bun_VERSION "1.0.22")
 set(WEBKIT_TAG b4de09f41b83e9e5c0e43ef414f1aee5968b6f7c)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -235,7 +235,7 @@ endif()
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
 
-    if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
+    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro) Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
 endif()
@@ -545,6 +545,17 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
 
+# -- Brotli --
+set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
+file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
+    "${BROTLI_SRC}/common/*.c"
+    "${BROTLI_SRC}/enc/*.c"
+    "${BROTLI_SRC}/dec/*.c"
+)
+list(APPEND BUN_RAW_SOURCES ${BROTLI_FILES})
+include_directories("${BUN_DEPS_DIR}/brotli/include")
+
+# -- uSockets --
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
 file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/*.c"
@@ -971,7 +982,9 @@ if(WIN32)
         "BORINGSSL_NO_CXX=1" # lol
     )
 
+    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
 else()
@@ -1304,6 +1317,7 @@ else()
         ucrt
         userenv
         dbghelp
+        wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     )
 endif()
 

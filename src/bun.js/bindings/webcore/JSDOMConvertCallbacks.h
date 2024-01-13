@@ -36,6 +36,20 @@ template<typename T> struct Converter<IDLCallbackFunction<T>> : DefaultConverter
     static constexpr bool conversionHasSideEffects = false;
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
+    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    {
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        if (!value.isCallable()) {
+            exceptionThrower(lexicalGlobalObject, scope);
+            return nullptr;
+        }
+
+        return T::create(JSC::asObject(value), &globalObject);
+    }
+
+    template<typename ExceptionThrower = DefaultExceptionThrower>
     static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
@@ -54,7 +68,7 @@ template<typename T> struct JSConverter<IDLCallbackFunction<T>> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    template<typename U>
+    template <typename U>
     static JSC::JSValue convert(const U& value)
     {
         return toJS(Detail::getPtrOrRef(value));
@@ -67,9 +81,10 @@ template<typename T> struct JSConverter<IDLCallbackFunction<T>> {
     }
 };
 
+
 template<typename T> struct Converter<IDLCallbackInterface<T>> : DefaultConverter<IDLCallbackInterface<T>> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -79,7 +94,7 @@ template<typename T> struct Converter<IDLCallbackInterface<T>> : DefaultConverte
             return nullptr;
         }
 
-        return T::create(vm, JSC::asObject(value));
+        return T::create(JSC::asObject(value), &globalObject);
     }
 };
 
@@ -87,7 +102,7 @@ template<typename T> struct JSConverter<IDLCallbackInterface<T>> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    template<typename U>
+    template <typename U>
     static JSC::JSValue convert(const U& value)
     {
         return toJS(Detail::getPtrOrRef(value));

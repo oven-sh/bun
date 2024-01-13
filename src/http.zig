@@ -148,7 +148,7 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd(), this.fd, &signed_offset, this.remain);
+                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
             const errcode = std.os.linux.getErrno(val);
@@ -162,13 +162,24 @@ pub const Sendfile = struct {
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
+        } else if (Environment.isWindows) {
+            const win = std.os.windows;
+            const uv = bun.windows.libuv;
+            const wsocket = bun.socketcast(socket.fd());
+            const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
+            if (win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
+                return .{ .done = {} };
+            }
+            this.offset += this.remain;
+            this.remain = 0;
+            const errorno = win.ws2_32.WSAGetLastError();
+            return .{ .err = bun.errnoToZigErr(errorno) };
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(
-                this.fd,
-                socket.fd(),
-
+                this.fd.cast(),
+                socket.fd().cast(),
                 signed_offset,
                 &sbytes,
                 null,
@@ -1208,12 +1219,11 @@ pub const CertificateInfo = struct {
 const Decompressor = union(enum) {
     zlib: *Zlib.ZlibReaderArrayList,
     brotli: *Brotli.BrotliReaderArrayList,
-    CompressionFramework: *bun.CompressionFramework.DecompressionArrayList,
     none: void,
 
     pub fn deinit(this: *Decompressor) void {
         switch (this.*) {
-            inline .brotli, .CompressionFramework, .zlib => |that| {
+            inline .brotli, .zlib => |that| {
                 that.deinit();
                 this.* = .{ .none = {} };
             },
@@ -1247,25 +1257,14 @@ const Decompressor = union(enum) {
                     return;
                 },
                 .brotli => {
-                    if (bun.CompressionFramework.isAvailable()) {
-                        this.* = .{
-                            .CompressionFramework = try bun.CompressionFramework.DecompressionArrayList.initWithOptions(
-                                buffer,
-                                &body_out_str.list,
-                                body_out_str.allocator,
-                                .BROTLI,
-                            ),
-                        };
-                    } else {
-                        this.* = .{
-                            .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
-                                buffer,
-                                &body_out_str.list,
-                                body_out_str.allocator,
-                                .{},
-                            ),
-                        };
-                    }
+                    this.* = .{
+                        .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
+                            buffer,
+                            &body_out_str.list,
+                            body_out_str.allocator,
+                            .{},
+                        ),
+                    };
 
                     return;
                 },
@@ -1299,19 +1298,6 @@ const Decompressor = union(enum) {
                 reader.list = body_out_str.list;
                 reader.total_out = @truncate(initial);
             },
-            .CompressionFramework => |reader| {
-                if (comptime !Environment.isMac) {
-                    @panic("CompressionFramework is not supported on this platform. This code should not be reachable");
-                }
-
-                reader.input = buffer;
-                reader.total_in = @as(u32, @truncate(buffer.len));
-
-                const initial = body_out_str.list.items.len;
-
-                reader.list = body_out_str.list;
-                reader.total_out = @truncate(initial);
-            },
             else => @panic("Invalid encoding. This code should not be reachable"),
         }
     }
@@ -1320,10 +1306,6 @@ const Decompressor = union(enum) {
         switch (this.*) {
             .zlib => |zlib| try zlib.readAll(),
             .brotli => |brotli| try brotli.readAll(is_done),
-            .CompressionFramework => |framework| if (!bun.Environment.isMac)
-                unreachable
-            else
-                try framework.readAll(is_done),
             .none => {},
         }
     }
@@ -2147,11 +2129,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_accept_encoding and !this.disable_decompression) {
-        if (canUseBrotli()) {
-            request_headers_buf[header_count] = accept_encoding_header;
-        } else {
-            request_headers_buf[header_count] = accept_encoding_header_compression_no_brotli;
-        }
+        request_headers_buf[header_count] = accept_encoding_header;
 
         header_count += 1;
     }
@@ -3403,7 +3381,7 @@ pub fn handleResponseMetadata(
                     }
                 } else if (strings.eqlComptime(header.value, "br")) {
                     if (!this.disable_decompression) {
-                        this.state.transfer_encoding = Encoding.brotli;
+                        this.state.transfer_encoding = .brotli;
                     }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;

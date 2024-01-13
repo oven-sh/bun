@@ -52,9 +52,12 @@ pub const ReadableStream = struct {
 
     pub const Strong = struct {
         held: JSC.Strong = .{},
-        globalThis: ?*JSGlobalObject = null,
 
-        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) !Strong {
+        pub fn globalThis(this: *const Strong) ?*JSGlobalObject {
+            return this.held.globalThis;
+        }
+
+        pub fn init(this: ReadableStream, global: *JSGlobalObject) !Strong {
             switch (this.ptr) {
                 .Blob => |stream| {
                     try stream.parent().incrementCount();
@@ -68,15 +71,14 @@ pub const ReadableStream = struct {
                 else => {},
             }
             return .{
-                .globalThis = globalThis,
-                .held = JSC.Strong.create(this.value, globalThis),
+                .held = JSC.Strong.create(this.value, global),
             };
         }
 
         pub fn get(this: *Strong) ?ReadableStream {
-            if (this.globalThis) |globalThis| {
+            if (this.globalThis()) |global| {
                 if (this.held.get()) |value| {
-                    return ReadableStream.fromJS(value, globalThis);
+                    return ReadableStream.fromJS(value, global);
                 }
             }
             return null;
@@ -85,8 +87,7 @@ pub const ReadableStream = struct {
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
                 // decrement the ref count and if it's zero we auto detach
-                readable.detachIfPossible(this.globalThis.?);
-                this.globalThis = null;
+                readable.detachIfPossible(this.globalThis().?);
             }
             this.held.deinit();
         }
@@ -96,10 +97,25 @@ pub const ReadableStream = struct {
         return this.value;
     }
 
+    pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) void {
+        if (ReadableStream.fromJS(this.value, globalThis)) |stream| {
+            this.* = stream;
+        } else {
+            this.value.unprotect();
+            this.* = .{ .ptr = .{ .Invalid = {} }, .value = .zero };
+        }
+    }
+
     pub fn toAnyBlob(
         stream: *ReadableStream,
         globalThis: *JSC.JSGlobalObject,
     ) ?JSC.WebCore.AnyBlob {
+        if (stream.isDisturbed(globalThis)) {
+            return null;
+        }
+
+        stream.reloadTag(globalThis);
+
         switch (stream.ptr) {
             .Blob => |blobby| {
                 var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
@@ -147,14 +163,19 @@ pub const ReadableStream = struct {
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
+        this.value.unprotect();
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
+        this.value.unprotect();
+    }
+
+    pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
+        ReadableStream__detach(this.value, globalObject);
+        this.value.unprotect();
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -171,8 +192,8 @@ pub const ReadableStream = struct {
         };
 
         if (ref_count == 0) {
-            this.value.unprotect();
             ReadableStream__detach(this.value, globalThis);
+            this.value.unprotect();
         }
     }
 
@@ -2296,7 +2317,14 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 const wait = callframe.argumentsCount() > 0 and
                     callframe.argument(0).isBoolean() and
                     callframe.argument(0).asBoolean();
-                return this.sink.flushFromJS(globalThis, wait).result;
+                const maybe_value: JSC.Node.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
+                return switch (maybe_value) {
+                    .result => |value| value,
+                    .err => |err| blk: {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        break :blk JSC.JSValue.jsUndefined();
+                    },
+                };
             }
 
             return this.sink.flush().toJS(globalThis);
@@ -3845,7 +3873,7 @@ pub const FIFO = struct {
 
     pub fn getAvailableToReadOnLinux(this: *FIFO) u32 {
         var len: c_int = 0;
-        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, @as(*c_int, &len));
+        const rc: c_int = std.c.ioctl(this.fd.cast(), std.os.linux.T.FIONREAD, @as(*c_int, &len));
         if (rc != 0) {
             len = 0;
         }
@@ -3893,7 +3921,7 @@ pub const FIFO = struct {
             if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
                 // it might be readable actually
                 this.close_on_empty_read = true;
-                switch (bun.isReadable(@intCast(poll.fd))) {
+                switch (bun.isReadable(poll.fd)) {
                     .ready => {
                         this.close_on_empty_read = false;
                         return null;
@@ -3916,7 +3944,7 @@ pub const FIFO = struct {
 
                 // this happens if we've registered a watcher but we haven't
                 // ticked the event loop since registering it
-                switch (bun.isReadable(@intCast(poll.fd))) {
+                switch (bun.isReadable(poll.fd)) {
                     .ready => {
                         poll.flags.insert(.readable);
                         return null;
@@ -4229,9 +4257,9 @@ pub const File = struct {
         };
 
         if (comptime Environment.isPosix) {
-            if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
+            if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast()))) {
                 var termios = std.mem.zeroes(std.os.termios);
-                _ = std.c.tcgetattr(fd, &termios);
+                _ = std.c.tcgetattr(fd.cast(), &termios);
                 bun.C.cfmakeraw(&termios);
                 file.is_atty = true;
             }
@@ -4250,7 +4278,7 @@ pub const File = struct {
                     // it is important for us to clone it so we don't cause Weird Things to happen
                     if ((flags & std.os.O.NONBLOCK) == 0) {
                         fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                            .result => |_fd| bun.toFD(_fd),
                             .err => |err| return .{ .err = err },
                         };
 
@@ -4275,11 +4303,6 @@ pub const File = struct {
             if (bun.S.ISDIR(stat.mode)) {
                 _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
-            }
-
-            if (bun.S.ISSOCK(stat.mode)) {
-                _ = Syscall.close(fd);
-                return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
 
             file.mode = @as(bun.Mode, @intCast(stat.mode));
@@ -4841,8 +4864,7 @@ pub fn NewReadyWatcher(
                 @panic("TODO on Windows");
             }
 
-            const fd = @as(c_int, @intCast(fd_));
-            std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
+            std.debug.assert(this.poll_ref.?.fd == fd_);
             std.debug.assert(
                 this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
@@ -4870,11 +4892,10 @@ pub fn NewReadyWatcher(
             return false;
         }
 
-        pub fn watch(this: *Context, fd_: anytype) void {
+        pub fn watch(this: *Context, fd: bun.FileDescriptor) void {
             if (comptime Environment.isWindows) {
                 @panic("Do not call watch() on windows");
             }
-            const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = Async.FilePoll.init(
                     JSC.VirtualMachine.get(),

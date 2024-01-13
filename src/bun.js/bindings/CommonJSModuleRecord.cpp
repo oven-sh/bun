@@ -66,7 +66,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const char* input_ptr, uint64_t input_len);
+extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
 namespace Bun {
 using namespace JSC;
@@ -321,8 +321,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     // dont need `module.parent` and creating commonjs module records is done a ton.
     auto idValue = thisObject->m_id.get();
     if (idValue) {
-        auto id = idValue->value(globalObject).utf8();
-        if (Bun__isBunMain(globalObject, id.data(), id.length())) {
+        auto id = idValue->value(globalObject);
+        auto idStr = Bun::toString(id);
+        if (Bun__isBunMain(globalObject, &idStr)) {
             thisObject->m_parent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
         }
@@ -661,7 +662,7 @@ bool JSCommonJSModule::evaluate(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
-    // This goes off of the assumption that you only call this `evaluate` using a generator that explicity
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
     // assigns the `default` export first.
     JSValue defaultValue = arguments.at(0);
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);

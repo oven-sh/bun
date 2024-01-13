@@ -120,13 +120,13 @@ const LibInfo = struct {
             return promise_value;
         }
         std.debug.assert(request.backend.libinfo.machport != null);
-        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, GetAddrInfoRequest, request);
+        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
         std.debug.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
                 true,
-                @intFromPtr(request.backend.libinfo.machport),
+                bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
             ) == .result,
         );
 
@@ -1938,13 +1938,13 @@ pub const DNSResolver = struct {
         defer vm.drainMicrotasks();
 
         var channel = this.channel orelse {
-            _ = this.polls.orderedRemove(@as(i32, @intCast(poll.fd)));
+            _ = this.polls.orderedRemove(poll.fd.int());
             poll.deinit();
             return;
         };
 
         channel.process(
-            @as(i32, @intCast(poll.fd)),
+            poll.fd.int(),
             poll.isReadable(),
             poll.isWritable(),
         );

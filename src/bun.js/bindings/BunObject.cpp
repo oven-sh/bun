@@ -1,6 +1,7 @@
+
 #include "root.h"
 #include "ZigGlobalObject.h"
-
+#include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
 #include "helpers.h"
 #include "IDLTypes.h"
@@ -28,6 +29,7 @@
 #include "BunObject+exports.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
+#include "wtf/Compiler.h"
 
 namespace Bun {
 
@@ -71,6 +73,15 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
     bool any_buffer = false;
     bool any_typed = false;
 
+    // Use an argument buffer to avoid calling `getIndex` more than once per element.
+    // This is a small optimization
+    MarkedArgumentBuffer args;
+    args.ensureCapacity(arrayLength);
+    if (UNLIKELY(args.hasOverflowed())) {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return JSValue::encode({});
+    }
+
     for (size_t i = 0; i < arrayLength; i++) {
         auto element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -80,8 +91,13 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
                 throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
                 return JSValue::encode(jsUndefined());
             }
-            byteLength += typedArray->byteLength();
+            size_t current = typedArray->byteLength();
             any_typed = true;
+            byteLength += current;
+
+            if (current > 0) {
+                args.append(typedArray);
+            }
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
             if (UNLIKELY(!impl)) {
@@ -89,8 +105,14 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
                 return JSValue::encode(jsUndefined());
             }
 
-            byteLength += impl->byteLength();
+            size_t current = impl->byteLength();
             any_buffer = true;
+
+            if (current > 0) {
+                args.append(arrayBuffer);
+            }
+
+            byteLength += current;
         } else {
             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
             return JSValue::encode(jsUndefined());
@@ -111,8 +133,8 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
     auto* head = reinterpret_cast<char*>(buffer->data());
 
     if (!any_buffer) {
-        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-            auto element = array->getIndex(lexicalGlobalObject, i);
+        for (size_t i = 0; i < args.size(); i++) {
+            auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             auto* view = JSC::jsCast<JSC::JSArrayBufferView*>(element);
             size_t length = std::min(remain, view->byteLength());
@@ -121,8 +143,8 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
             head += length;
         }
     } else if (!any_typed) {
-        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-            auto element = array->getIndex(lexicalGlobalObject, i);
+        for (size_t i = 0; i < args.size(); i++) {
+            auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             auto* view = JSC::jsCast<JSC::JSArrayBuffer*>(element);
             size_t length = std::min(remain, view->impl()->byteLength());
@@ -131,8 +153,8 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
             head += length;
         }
     } else {
-        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-            auto element = array->getIndex(lexicalGlobalObject, i);
+        for (size_t i = 0; i < args.size(); i++) {
+            auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             size_t length = 0;
             if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {

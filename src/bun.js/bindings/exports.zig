@@ -1267,7 +1267,7 @@ pub const ZigConsoleClient = struct {
                 }
 
                 if (value.isEmpty()) {
-                    try writer.writeByteNTimes(' ', col.width + 2 + PADDING);
+                    try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
                 } else {
                     const len: u32 = this.getWidthForValue(value);
                     const needed = col.width -| len;
@@ -2191,7 +2191,7 @@ pub const ZigConsoleClient = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    strings.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
                         self.failed = true;
                     };
                 }

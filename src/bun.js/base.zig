@@ -168,7 +168,7 @@ pub fn createError(
 ) JSC.JSValue {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
-        if (comptime !strings.isAllASCIISimple(fmt)) {
+        if (comptime !strings.isAllASCII(fmt)) {
             zig_str.markUTF16();
         }
 
@@ -1192,7 +1192,7 @@ pub fn wrapInstanceMethod(
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
-            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
@@ -1370,7 +1370,7 @@ pub fn wrapStaticMethod(
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
-            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
             comptime var i: usize = 0;

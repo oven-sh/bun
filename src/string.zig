@@ -372,7 +372,7 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFromOSPath(os_path: bun.OSPathSliceWithoutSentinel) String {
+    pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
             []const u8 => create(os_path),
             []const u16 => createUTF16(os_path),
@@ -1087,7 +1087,7 @@ pub const String = extern struct {
     }
 
     pub fn eqlUTF8(this: String, other: []const u8) bool {
-        return this.toZigString().eql(ZigString.initUTF8(other));
+        return this.toZigString().eql(ZigString.fromUTF8(other));
     }
 
     pub fn eql(this: String, other: String) bool {

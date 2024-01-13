@@ -5609,65 +5609,6 @@ pub const NodeFS = struct {
 
             return Maybe(Return.Rm).success;
         }
-
-        if (false) {
-            const dest = args.path.osPath(&this.sync_error_buf);
-            std.os.windows.DeleteFile(dest, .{
-                .dir = null,
-                .remove_dir = brk: {
-                    const file_attrs = std.os.windows.GetFileAttributesW(dest.ptr) catch |err| {
-                        if (args.force) {
-                            return Maybe(Return.Rm).success;
-                        }
-
-                        const code: E = switch (err) {
-                            error.FileNotFound => .NOENT,
-                            error.PermissionDenied => .PERM,
-                            else => .INVAL,
-                        };
-
-                        return .{
-                            .err = bun.sys.Error.fromCode(
-                                code,
-                                .unlink,
-                            ),
-                        };
-                    };
-                    // TODO: check FILE_ATTRIBUTE_INVALID
-                    break :brk (file_attrs & std.os.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
-                },
-            }) catch |er| {
-                // empircally, it seems to return AccessDenied when the
-                // file is actually a directory on macOS.
-
-                if (args.force) {
-                    return Maybe(Return.Rm).success;
-                }
-
-                {
-                    const code: E = switch (er) {
-                        error.FileNotFound => .NOENT,
-                        error.AccessDenied => .PERM,
-                        error.NameTooLong => .INVAL,
-                        error.FileBusy => .BUSY,
-                        error.NotDir => .NOTDIR,
-                        error.IsDir => .ISDIR,
-                        error.DirNotEmpty => .INVAL,
-                        error.NetworkNotFound => .NOENT,
-                        else => .UNKNOWN,
-                    };
-
-                    return .{
-                        .err = bun.sys.Error.fromCode(
-                            code,
-                            .unlink,
-                        ),
-                    };
-                }
-            };
-
-            return Maybe(Return.Rm).success;
-        }
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
         return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {

@@ -5502,172 +5502,111 @@ pub const NodeFS = struct {
             Maybe(Return.Rmdir).success;
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rm) {
-        if (true) {
-            // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
-            if (args.recursive) {
-                // TODO: switch to an implementation which does not use any "unreachable"
-                std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                    const errno: E = switch (err) {
-                        error.InvalidHandle => .BADF,
-                        error.AccessDenied => .PERM,
-                        error.FileTooBig => .FBIG,
-                        error.SymLinkLoop => .LOOP,
-                        error.ProcessFdQuotaExceeded => .NFILE,
-                        error.NameTooLong => .NAMETOOLONG,
-                        error.SystemFdQuotaExceeded => .MFILE,
-                        error.SystemResources => .NOMEM,
-                        error.ReadOnlyFileSystem => .ROFS,
-                        error.FileSystem => .IO,
-                        error.FileBusy => .BUSY,
-                        error.DeviceBusy => .BUSY,
+        // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
+        if (args.recursive) {
+            // TODO: switch to an implementation which does not use any "unreachable"
+            std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
+                const errno: E = switch (err) {
+                    error.InvalidHandle => .BADF,
+                    error.AccessDenied => .PERM,
+                    error.FileTooBig => .FBIG,
+                    error.SymLinkLoop => .LOOP,
+                    error.ProcessFdQuotaExceeded => .NFILE,
+                    error.NameTooLong => .NAMETOOLONG,
+                    error.SystemFdQuotaExceeded => .MFILE,
+                    error.SystemResources => .NOMEM,
+                    error.ReadOnlyFileSystem => .ROFS,
+                    error.FileSystem => .IO,
+                    error.FileBusy => .BUSY,
+                    error.DeviceBusy => .BUSY,
 
-                        // One of the path components was not a directory.
-                        // This error is unreachable if `sub_path` does not contain a path separator.
-                        error.NotDir => .NOTDIR,
-                        // On Windows, file paths must be valid Unicode.
-                        error.InvalidUtf8 => .INVAL,
+                    // One of the path components was not a directory.
+                    // This error is unreachable if `sub_path` does not contain a path separator.
+                    error.NotDir => .NOTDIR,
+                    // On Windows, file paths must be valid Unicode.
+                    error.InvalidUtf8 => .INVAL,
 
-                        // On Windows, file paths cannot contain these characters:
-                        // '/', '*', '?', '"', '<', '>', '|'
-                        error.BadPathName => .INVAL,
+                    // On Windows, file paths cannot contain these characters:
+                    // '/', '*', '?', '"', '<', '>', '|'
+                    error.BadPathName => .INVAL,
 
-                        else => .FAULT,
-                    };
+                    else => .FAULT,
+                };
+                if (args.force) {
+                    return Maybe(Return.Rm).success;
+                }
+                return Maybe(Return.Rm){
+                    .err = bun.sys.Error.fromCode(errno, .unlink),
+                };
+            };
+            return Maybe(Return.Rm).success;
+        }
+
+        const dest = args.path.sliceZ(&this.sync_error_buf);
+
+        std.os.unlinkZ(dest) catch |er| {
+            // empircally, it seems to return AccessDenied when the
+            // file is actually a directory on macOS.
+            if (args.recursive and
+                (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
+            {
+                std.os.rmdirZ(dest) catch |err| {
                     if (args.force) {
                         return Maybe(Return.Rm).success;
                     }
-                    return Maybe(Return.Rm){
-                        .err = bun.sys.Error.fromCode(errno, .unlink),
-                    };
-                };
-                return Maybe(Return.Rm).success;
-            }
 
-            const dest = args.path.sliceZ(&this.sync_error_buf);
-
-            std.os.unlinkZ(dest) catch |er| {
-                // empircally, it seems to return AccessDenied when the
-                // file is actually a directory on macOS.
-                if (args.recursive and
-                    (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
-                {
-                    std.os.rmdirZ(dest) catch |err| {
-                        if (args.force) {
-                            return Maybe(Return.Rm).success;
-                        }
-
-                        const code: E = switch (err) {
-                            error.AccessDenied => .PERM,
-                            error.SymLinkLoop => .LOOP,
-                            error.NameTooLong => .NAMETOOLONG,
-                            error.SystemResources => .NOMEM,
-                            error.ReadOnlyFileSystem => .ROFS,
-                            error.FileBusy => .BUSY,
-                            error.FileNotFound => .NOENT,
-                            error.InvalidUtf8 => .INVAL,
-                            error.BadPathName => .INVAL,
-                            else => .FAULT,
-                        };
-
-                        return .{
-                            .err = bun.sys.Error.fromCode(
-                                code,
-                                .rmdir,
-                            ),
-                        };
-                    };
-
-                    return Maybe(Return.Rm).success;
-                }
-
-                if (args.force) {
-                    return Maybe(Return.Rm).success;
-                }
-
-                {
-                    const code: E = switch (er) {
+                    const code: E = switch (err) {
                         error.AccessDenied => .PERM,
                         error.SymLinkLoop => .LOOP,
                         error.NameTooLong => .NAMETOOLONG,
                         error.SystemResources => .NOMEM,
                         error.ReadOnlyFileSystem => .ROFS,
                         error.FileBusy => .BUSY,
+                        error.FileNotFound => .NOENT,
                         error.InvalidUtf8 => .INVAL,
                         error.BadPathName => .INVAL,
-                        error.FileNotFound => .NOENT,
                         else => .FAULT,
                     };
 
                     return .{
                         .err = bun.sys.Error.fromCode(
                             code,
-                            .unlink,
+                            .rmdir,
                         ),
                     };
-                }
-            };
+                };
 
-            return Maybe(Return.Rm).success;
-        }
+                return Maybe(Return.Rm).success;
+            }
 
-        if (false) {
-            const dest = args.path.osPath(&this.sync_error_buf);
-            std.os.windows.DeleteFile(dest, .{
-                .dir = null,
-                .remove_dir = brk: {
-                    const file_attrs = std.os.windows.GetFileAttributesW(dest.ptr) catch |err| {
-                        if (args.force) {
-                            return Maybe(Return.Rm).success;
-                        }
+            if (args.force) {
+                return Maybe(Return.Rm).success;
+            }
 
-                        const code: E = switch (err) {
-                            error.FileNotFound => .NOENT,
-                            error.PermissionDenied => .PERM,
-                            else => .INVAL,
-                        };
+            {
+                const code: E = switch (er) {
+                    error.AccessDenied => .PERM,
+                    error.SymLinkLoop => .LOOP,
+                    error.NameTooLong => .NAMETOOLONG,
+                    error.SystemResources => .NOMEM,
+                    error.ReadOnlyFileSystem => .ROFS,
+                    error.FileBusy => .BUSY,
+                    error.InvalidUtf8 => .INVAL,
+                    error.BadPathName => .INVAL,
+                    error.FileNotFound => .NOENT,
+                    else => .FAULT,
+                };
 
-                        return .{
-                            .err = bun.sys.Error.fromCode(
-                                code,
-                                .unlink,
-                            ),
-                        };
-                    };
-                    // TODO: check FILE_ATTRIBUTE_INVALID
-                    break :brk (file_attrs & std.os.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
-                },
-            }) catch |er| {
-                // empircally, it seems to return AccessDenied when the
-                // file is actually a directory on macOS.
+                return .{
+                    .err = bun.sys.Error.fromCode(
+                        code,
+                        .unlink,
+                    ),
+                };
+            }
+        };
 
-                if (args.force) {
-                    return Maybe(Return.Rm).success;
-                }
-
-                {
-                    const code: E = switch (er) {
-                        error.FileNotFound => .NOENT,
-                        error.AccessDenied => .PERM,
-                        error.NameTooLong => .INVAL,
-                        error.FileBusy => .BUSY,
-                        error.NotDir => .NOTDIR,
-                        error.IsDir => .ISDIR,
-                        error.DirNotEmpty => .INVAL,
-                        error.NetworkNotFound => .NOENT,
-                        else => .UNKNOWN,
-                    };
-
-                    return .{
-                        .err = bun.sys.Error.fromCode(
-                            code,
-                            .unlink,
-                        ),
-                    };
-                }
-            };
-
-            return Maybe(Return.Rm).success;
-        }
+        return Maybe(Return.Rm).success;
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
         return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {

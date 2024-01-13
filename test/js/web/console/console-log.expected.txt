@@ -241,3 +241,22 @@ myCustomName {
   "1": 42,
   length: 1,
 }
+0.5
+0.9
+NaN
+NaN
+NaN
+NaN
+1
+1
+1
+0
+NaN
+1
+1
+1
+0
+undefined
+NaN
+NaN
+NaN

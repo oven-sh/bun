@@ -20,15 +20,12 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
-var ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
-var ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
-var MathAbs = Math.abs;
 
 var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
@@ -571,18 +568,22 @@ function spawnSync(file, args, options) {
     }
   }
 
-  const { stdout, stderr, success, exitCode } = Bun.spawnSync({
+  const {
+    stdout = null,
+    stderr = null,
+    success,
+    exitCode,
+  } = Bun.spawnSync({
     cmd: options.args,
     env: options.env || undefined,
     cwd: options.cwd || undefined,
-    stdin: bunStdio[0],
-    stdout: bunStdio[1],
-    stderr: bunStdio[2],
+    stdio: bunStdio,
   });
 
   const result = {
     signal: null,
     status: exitCode,
+    // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
   };
 
@@ -911,30 +912,32 @@ function normalizeSpawnArguments(file, args, options) {
     validateArgumentNullCheck(options.argv0, "options.argv0");
   }
 
-  // TODO: Windows checks for Windows specific options
+  let { windowsVerbatimArguments } = options;
+  if (windowsVerbatimArguments != null) {
+    validateBoolean(windowsVerbatimArguments, "options.windowsVerbatimArguments");
+  }
 
   // Handle shell
   if (options.shell) {
     validateArgumentNullCheck(options.shell, "options.shell");
     const command = ArrayPrototypeJoin.$call([file, ...args], " ");
-    // TODO: Windows moment
     // Set the shell, switches, and commands.
-    // if (process.platform === "win32") {
-    //   if (typeof options.shell === "string") file = options.shell;
-    //   else file = process.env.comspec || "cmd.exe";
-    //   // '/d /s /c' is used only for cmd.exe.
-    //   if (RegExpPrototypeExec(/^(?:.*\\)?cmd(?:\.exe)?$/i, file) !== null) {
-    //     args = ["/d", "/s", "/c", `"${command}"`];
-    //     windowsVerbatimArguments = true;
-    //   } else {
-    //     args = ["-c", command];
-    //   }
-    // } else {
-    if (typeof options.shell === "string") file = options.shell;
-    else if (process.platform === "android") file = "sh";
-    else file = "sh";
-    args = ["-c", command];
-    // }
+    if (process.platform === "win32") {
+      if (typeof options.shell === "string") file = options.shell;
+      else file = process.env.comspec || "cmd.exe";
+      // '/d /s /c' is used only for cmd.exe.
+      if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
+        args = ["/d", "/s", "/c", `"${command}"`];
+        windowsVerbatimArguments = true;
+      } else {
+        args = ["-c", command];
+      }
+    } else {
+      if (typeof options.shell === "string") file = options.shell;
+      else if (process.platform === "android") file = "sh";
+      else file = "sh";
+      args = ["-c", command];
+    }
   }
 
   // Handle argv0
@@ -1101,7 +1104,7 @@ class ChildProcess extends EventEmitter {
   #stdioOptions;
 
   #createStdioObject() {
-    let result = {};
+    let result = new Array(this.#stdioOptions.length);
     for (let i = 0; i < this.#stdioOptions.length; i++) {
       const element = this.#stdioOptions[i];
       if (element !== "pipe") {
@@ -1123,7 +1126,7 @@ class ChildProcess extends EventEmitter {
           continue;
       }
     }
-    return ObjectCreate.$call(null, result);
+    return result;
   }
 
   get stdin() {
@@ -1327,16 +1330,22 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-function nodeToBun(item) {
+function nodeToBun(item, index) {
+  // If not defined, use the default.
+  // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
+  if (item == null) {
+    return index > 3 ? "ignore" : "pipe";
+  }
   // If inherit and we are referencing stdin/stdout/stderr index,
   // we can get the fd from the ReadStream for the corresponding stdio
   if (typeof item === "number") {
     return item;
-  } else {
-    const result = nodeToBunLookup[item];
-    if (result === undefined) throw new Error(`Invalid stdio option "${item}"`);
-    return result;
   }
+  const result = nodeToBunLookup[item];
+  if (result === undefined) {
+    throw new Error(`Invalid stdio option "${item}"`);
+  }
+  return result;
 }
 
 function fdToStdioName(fd) {
@@ -1376,7 +1385,7 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(item => nodeToBun(item));
+  const bunStdio = normalizedStdio.map(nodeToBun);
   return bunStdio;
 }
 

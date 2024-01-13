@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 import {
   createServer,

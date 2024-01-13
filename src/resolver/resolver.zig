@@ -624,16 +624,6 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
-        if (r.opts.mark_builtins_as_external) {
-            if (strings.hasPrefixComptime(import_path, "node:") or strings.hasPrefixComptime(import_path, "bun:")) {
-                return true;
-            }
-
-            if (bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target)) {
-                return true;
-            }
-        }
-
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -832,6 +822,25 @@ pub const Resolver = struct {
         }
 
         if (import_path.len == 0) return .{ .not_found = {} };
+
+        if (r.opts.mark_builtins_as_external) {
+            if (strings.hasPrefixComptime(import_path, "node:") or
+                strings.hasPrefixComptime(import_path, "bun:") or
+                bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target))
+            {
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = PathPair{
+                            .primary = Path.init(import_path),
+                        },
+                        .is_external = true,
+                        .module_type = .cjs,
+                        .primary_side_effects_data = .no_side_effects__pure_data,
+                    },
+                };
+            }
+        }
 
         // Certain types of URLs default to being external for convenience
         if (r.isExternalPattern(import_path) or
@@ -1315,6 +1324,7 @@ pub const Resolver = struct {
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
                     result.is_from_node_modules = true;
+                    result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
 
@@ -1329,6 +1339,7 @@ pub const Resolver = struct {
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
                     result.is_from_node_modules = true;
+                    result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
             }

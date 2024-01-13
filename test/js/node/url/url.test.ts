@@ -50,5 +50,19 @@ describe("Url.prototype.parse", () => {
       path: "/",
       href: "http://xn--xample-hva.com/",
     });
+    expect(parse("http://💥.net")).toEqual({
+      protocol: "http:",
+      slashes: true,
+      auth: null,
+      host: "xn--hs8h.net",
+      port: null,
+      hostname: "xn--hs8h.net",
+      hash: null,
+      search: null,
+      query: null,
+      pathname: "/",
+      path: "/",
+      href: "http://xn--hs8h.net/",
+    });
   });
 });

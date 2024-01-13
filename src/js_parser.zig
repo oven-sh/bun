@@ -10845,7 +10845,6 @@ fn NewParser_(
 
         fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
             const token_range = p.lexer.range();
-            var could_be_let = false;
 
             if (p.lexer.token != .t_identifier) {
                 return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
@@ -10853,18 +10852,8 @@ fn NewParser_(
 
             const raw = p.lexer.raw();
             if (strings.eqlComptime(raw, "let")) {
-                could_be_let = true;
-            } else if (strings.eqlComptime(raw, "using")) {
-                if (opts.is_export) {
-                    try p.log.addError(p.source, token_range.loc, "Cannot use \"export\" with \"using\" declaration");
-                }
-            } else {
-                return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
-            }
+                try p.lexer.next();
 
-            try p.lexer.next();
-
-            if (could_be_let) {
                 switch (p.lexer.token) {
                     .t_identifier, .t_open_bracket, .t_open_brace => {
                         if (opts.lexical_decl == .allow_all or !p.lexer.has_newline_before or p.lexer.token == .t_open_bracket) {
@@ -10888,32 +10877,109 @@ fn NewParser_(
                     },
                     else => {},
                 }
-            } else if (p.lexer.token == .t_identifier and !p.lexer.has_newline_before) {
-                // See: https://github.com/tc39/proposal-explicit-resource-management
-                if (opts.lexical_decl != .allow_all) {
-                    try p.forbidLexicalDecl(token_range.loc);
+            } else if (strings.eqlComptime(raw, "using")) {
+                // Handle an "using" declaration
+                if (opts.is_export) {
+                    try p.log.addError(p.source, token_range.loc, "Cannot use \"export\" with a \"using\" declaration");
                 }
-                // p.markSyntaxFeature(.using, token_range.loc);
-                opts.is_using_statement = true;
-                const decls = try p.parseAndDeclareDecls(.constant, opts);
-                if (true) { // TODO: !opts.isForLoopInit
-                    try p.requireInitializers(.k_using, decls.items);
+
+                try p.lexer.next();
+
+                if (p.lexer.token == .t_identifier and !p.lexer.has_newline_before) {
+                    if (opts.lexical_decl != .allow_all) {
+                        try p.forbidLexicalDecl(token_range.loc);
+                    }
+                    // p.markSyntaxFeature(.using, token_range.loc);
+                    opts.is_using_statement = true;
+                    const decls = try p.parseAndDeclareDecls(.constant, opts);
+                    if (true) { // TODO: !opts.isForLoopInit
+                        try p.requireInitializers(.k_using, decls.items);
+                    }
+                    return ExprOrLetStmt{
+                        .stmt_or_expr = js_ast.StmtOrExpr{
+                            .stmt = p.s(S.Local{
+                                .kind = .k_using,
+                                .decls = G.Decl.List.fromList(decls),
+                                .is_export = false,
+                            }, token_range.loc),
+                        },
+                        .decls = decls.items,
+                    };
                 }
+            } else if (p.fn_or_arrow_data_parse.allow_await == .allow_expr and strings.eqlComptime(raw, "await")) {
+                // Handle an "await using" declaration
+                if (opts.is_export) {
+                    try p.log.addError(p.source, token_range.loc, "Cannot use \"export\" with an \"await using\" declaration");
+                }
+
+                if (p.fn_or_arrow_data_parse.is_top_level) {
+                    p.top_level_await_keyword = token_range;
+                }
+
+                try p.lexer.next();
+
+                const raw2 = p.lexer.raw();
+                const value = if (p.lexer.token == .t_identifier and strings.eqlComptime(raw2, "using")) value: {
+                    // const using_loc = p.saveExprCommentsHere();
+                    const using_range = p.lexer.range();
+                    try p.lexer.next();
+                    if (p.lexer.token == .t_identifier and !p.lexer.has_newline_before) {
+                        // It's an "await using" declaration if we get here
+                        if (opts.lexical_decl != .allow_all) {
+                            try p.forbidLexicalDecl(using_range.loc);
+                        }
+                        // p.markSyntaxFeature(.using, using_range.loc);
+                        opts.is_using_statement = true;
+                        const decls = try p.parseAndDeclareDecls(.constant, opts);
+                        if (true) { // TODO: !opts.isForLoopInit
+                            try p.requireInitializers(.k_await_using, decls.items);
+                        }
+                        return ExprOrLetStmt{
+                            .stmt_or_expr = js_ast.StmtOrExpr{
+                                .stmt = p.s(S.Local{
+                                    .kind = .k_await_using,
+                                    .decls = G.Decl.List.fromList(decls),
+                                    .is_export = false,
+                                }, token_range.loc),
+                            },
+                            .decls = decls.items,
+                        };
+                    }
+                    break :value Expr{
+                        .data = .{ .e_identifier = .{ .ref = try p.storeNameInRef(raw) } },
+                        // TODO: implement saveExprCommentsHere and use using_loc here
+                        .loc = using_range.loc,
+                    };
+                } else try p.parseExpr(.prefix);
+
+                if (p.lexer.token == .t_asterisk_asterisk) {
+                    try p.lexer.unexpected();
+                }
+                const expr = p.newExpr(
+                    E.Await{ .value = try p.parseSuffix(value, .prefix, null, .none) },
+                    token_range.loc,
+                );
                 return ExprOrLetStmt{
                     .stmt_or_expr = js_ast.StmtOrExpr{
-                        .stmt = p.s(S.Local{
-                            .kind = .k_using,
-                            .decls = G.Decl.List.fromList(decls),
-                            .is_export = false,
-                        }, token_range.loc),
+                        .expr = try p.parseSuffix(expr, .lowest, null, .none),
                     },
-                    .decls = decls.items,
+                };
+            } else {
+                return ExprOrLetStmt{
+                    .stmt_or_expr = js_ast.StmtOrExpr{
+                        .expr = try p.parseExpr(.lowest),
+                    },
                 };
             }
 
-            const ref = p.storeNameInRef(raw) catch unreachable;
+            // Parse the remainder of this expression that starts with an identifier
+            const ref = try p.storeNameInRef(raw);
             const expr = p.newExpr(E.Identifier{ .ref = ref }, token_range.loc);
-            return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
+            return ExprOrLetStmt{
+                .stmt_or_expr = js_ast.StmtOrExpr{
+                    .expr = try p.parseSuffix(expr, .lowest, null, .none),
+                },
+            };
         }
 
         fn requireInitializers(p: *P, comptime kind: S.Local.Kind, decls: []G.Decl) anyerror!void {

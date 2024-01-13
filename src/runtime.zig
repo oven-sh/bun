@@ -313,7 +313,7 @@ pub const Runtime = struct {
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
-        dynamic_require: bool = false,
+        use_import_meta_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},
 
@@ -345,7 +345,7 @@ pub const Runtime = struct {
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
             .should_fold_typescript_constant_expressions,
-            .dynamic_require,
+            .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,

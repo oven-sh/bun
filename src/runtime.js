@@ -177,11 +177,6 @@ export var __internalIsCommonJSNamespace = /* @__PURE__ */ namespace =>
   typeof namespace === "object" &&
   ((namespace.default && namespace.default[cjsRequireSymbol]) || namespace[cjsRequireSymbol]);
 
-// require()
-export var __require = /* @__PURE__ */ id => {
-  return import.meta.require(id);
-};
-
 export var $$m = __commonJS;
 
 export var __name = (target, name) => {

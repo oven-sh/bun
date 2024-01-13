@@ -1039,4 +1039,13 @@ describe("bundler", () => {
       `,
     },
   });
+
+  const requireTranspilationListESM = [
+    // input, output:bun, output:node
+    ["require", "import.meta.require", "__require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+  ];
+
+  // itBundled('edgecase/RequireTranspilation')
 });

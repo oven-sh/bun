@@ -49,7 +49,6 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
 
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
-
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
     return bunString->tag != BunStringTag::Dead;
@@ -101,18 +100,18 @@ BunString toString(const char* bytes, size_t length)
 
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    JSC::JSString* str = value.toStringOrNull(globalObject);
-    if (UNLIKELY(!str)) {
+    WTF::String str = value.toWTFString(globalObject);
+
+    if (str.isNull()) {
+        // failure to convert to string
         return { BunStringTag::Dead };
     }
 
-    if (str->length() == 0) {
+    if (str.length() == 0) {
         return { BunStringTag::Empty };
     }
 
-    auto wtfString = str->value(globalObject);
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = str.impl() } };
 }
 
 extern "C" void BunString__toThreadSafe(BunString* str)

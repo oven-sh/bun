@@ -153,6 +153,7 @@ fn NewLexer_(
         token: T = T.t_end_of_file,
         has_newline_before: bool = false,
         has_pure_comment_before: bool = false,
+        has_no_side_effect_comment_before: bool = false,
         preserve_all_comments_before: bool = false,
         is_legacy_octal_literal: bool = false,
         is_log_disabled: bool = false,
@@ -196,6 +197,7 @@ fn NewLexer_(
                 .token = self.token,
                 .has_newline_before = self.has_newline_before,
                 .has_pure_comment_before = self.has_pure_comment_before,
+                .has_no_side_effect_comment_before = self.has_no_side_effect_comment_before,
                 .preserve_all_comments_before = self.preserve_all_comments_before,
                 .is_legacy_octal_literal = self.is_legacy_octal_literal,
                 .is_log_disabled = self.is_log_disabled,
@@ -1140,6 +1142,7 @@ fn NewLexer_(
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
             lexer.has_pure_comment_before = false;
+            lexer.has_no_side_effect_comment_before = false;
             lexer.prev_token_was_await_keyword = false;
 
             while (true) {
@@ -1957,6 +1960,11 @@ fn NewLexer_(
                                             lexer.has_pure_comment_before = true;
                                             continue;
                                         }
+                                        // TODO: implement NO_SIDE_EFFECTS
+                                        // else if (strings.hasPrefixWithWordBoundary(chunk, "__NO_SIDE_EFFECTS__")) {
+                                        //     lexer.has_no_side_effect_comment_before = true;
+                                        //     continue;
+                                        // }
                                     }
 
                                     if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {

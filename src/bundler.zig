@@ -1086,7 +1086,6 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
-                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
@@ -1109,7 +1108,6 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
@@ -1137,7 +1135,14 @@ pub const Bundler = struct {
                         .minify_syntax = bundler.options.minify_syntax,
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
-                        .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
+                        .module_type = if (is_bun and bundler.options.transform_only)
+                            // this is for when using `bun build --no-bundle`
+                            // it should copy what was passed for the cli
+                            bundler.options.output_format
+                        else if (ast.exports_kind == .cjs)
+                            .cjs
+                        else
+                            .esm,
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
@@ -1328,7 +1333,7 @@ pub const Bundler = struct {
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
-                opts.features.dynamic_require = target.isBun();
+                opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;

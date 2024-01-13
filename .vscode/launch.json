@@ -369,7 +369,7 @@
       "name": "Windows: bun run [file]",
       "program": "${workspaceFolder}/build/bun-debug.exe",
       "args": ["run", "${file}"],
-      "cwd": "${fileDirname}",
-    },
+      "cwd": "${fileDirname}"
+    }
   ]
 }

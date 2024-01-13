@@ -746,10 +746,13 @@ pub const Parser = struct {
                         }
 
                         if (eq_idx == txt.len - 1) {
-                            if (self.peek() == .Delimit) break :var_decl .{
-                                .label = label,
-                                .value = .{ .simple = .{ .Text = "" } },
-                            };
+                            if (self.peek() == .Delimit) {
+                                _ = self.expect_delimit();
+                                break :var_decl .{
+                                    .label = label,
+                                    .value = .{ .simple = .{ .Text = "" } },
+                                };
+                            }
                             const atom = try self.parse_atom() orelse {
                                 try self.add_error("Expected an atom", .{});
                                 return ParseError.Expected;
@@ -1755,7 +1758,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const escaped = result.escaped;
 
                 switch (char) {
-                    '{', '}', ';', '\'', '\"', ' ', '|', '&', '>', ',' => {
+                    '{', '}', ';', '\'', '\"', ' ', '|', '&', '>', ',', '$' => {
                         return .{ .start = start, .end = self.j };
                     },
                     else => {

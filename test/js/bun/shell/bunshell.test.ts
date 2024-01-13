@@ -338,9 +338,7 @@ describe("deno_task", () => {
     await TestBuilder.command`VAR=1 VAR2=2 bun -e 'console.log(process.env.VAR + process.env.VAR2)'`
       .stdout("12\n")
       .run();
-    await TestBuilder.command`EMPTY= bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`
-      .stdout("EMPTY: undefined\n")
-      .run();
+    await TestBuilder.command`EMPTY= bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`.stdout("EMPTY: \n").run();
     await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
     await TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").run();
     await TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").run();
@@ -360,6 +358,25 @@ describe("deno_task", () => {
       .run();
     // await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
     // await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
+  });
+
+  test("command substitution", async () => {
+    await TestBuilder.command`echo $(echo 1)`.stdout("1\n").run();
+    await TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").run();
+    // TODO Sleep tests
+  });
+
+  test("shell variables", async () => {
+    await TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && deno eval 'console.log(Deno.env.get("VAR"))'"`
+      .stdout("\n1\nundefined\n")
+      .run();
+
+    await TestBuilder.command`VAR=1 && echo $VAR$VAR`.stdout("11\n").run();
+
+    await TestBuilder.command`VAR=1 && echo Test$VAR && echo $(echo "Test: $VAR") ; echo CommandSub$($VAR); echo $ ; echo \$VAR`
+      .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
+      .stderr("1: command not found\n")
+      .run();
   });
 });
 

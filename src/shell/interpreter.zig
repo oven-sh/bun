@@ -232,8 +232,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             const Kind = enum {
                 normal,
+                /// does not inherit environment
                 subshell,
-                pipeline,
+                /// DOES inherit environment
+                subshell_inherit,
             };
 
             pub fn deinit(this: *ShellState) void {
@@ -246,6 +248,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) *ShellState {
+                if (comptime bun.Environment.allow_assert) std.debug.assert(kind != .normal);
                 const duped = allocator.create(ShellState) catch bun.outOfMemory();
 
                 duped.* = .{
@@ -253,7 +256,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .kind = kind,
                     .buffered_stdout = .{},
                     .buffered_stderr = .{},
-                    .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+                    .shell_env = if (kind == .subshell) std.StringArrayHashMap([:0]const u8).init(allocator) else this.shell_env.clone() catch bun.outOfMemory(),
                     .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
                     .export_env = this.export_env.clone() catch bun.outOfMemory(),
 
@@ -975,7 +978,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             // @panic("FIXME ZACK FIX THIS!!");
                             var io: IO = .{};
                             io.stdout = .pipe;
-                            const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell);
+                            const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit);
                             var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst.script, Script.ParentPtr.init(this), io);
                             this.child_state = .{
                                 .cmd_subst = .{
@@ -995,7 +998,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             if (is_cmd_subst) {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
-                                const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell);
+                                const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit);
                                 var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst.script, Script.ParentPtr.init(this), io);
                                 this.child_state = .{
                                     .cmd_subst = .{
@@ -1034,6 +1037,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 // Trim leading & trailing whitespace
                 stdout = trim(stdout, " \n  \r\t");
+                if (stdout.len == 0) return;
 
                 // Trim consecutive
                 var prev_whitespace: bool = false;
@@ -1050,8 +1054,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         continue;
                     }
 
-                    b = i;
+                    b = i + 1;
                     if (c == ' ') {
+                        b = i;
                         prev_whitespace = true;
                         this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
                         this.pushCurrentOut();
@@ -1062,6 +1067,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // "aa bbb"
 
                 this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
+                this.pushCurrentOut();
                 // const slice_z = this.base.interpreter.allocator.dupeZ(u8, stdout[a..b]) catch bun.outOfMemory();
                 // this.pushResultSlice(slice_z);
             }
@@ -1833,7 +1839,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, node.pipeline, Pipeline.ParentPtr.init(this), this.io);
                         return ChildPtr.init(pipeline);
                     },
-                    .assign => return null,
+                    .assign => |assigns| {
+                        var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
+                        assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this));
+                        return ChildPtr.init(assign_machine);
+                    },
                     .subshell => @panic(SUBSHELL_TODO_ERROR),
                 }
             }
@@ -1861,7 +1871,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         this.parent.childDone(this, 0);
                         return;
                     } else {
-                        this.currently_executing.?.as(Cmd).start();
+                        this.currently_executing.?.start();
+                        // this.currently_executing.?.as(Cmd).start();
                     }
                     return;
                 }
@@ -3052,7 +3063,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.exit_code = exit_code;
 
                 var cmd = this.parentCmd();
-                log("builtin done ({s}: {d}) cmd to free: ({x})", .{ @tagName(this.kind), exit_code, @intFromPtr(cmd) });
+                log("builtin done ({s}: exit={d}) cmd to free: ({x})", .{ @tagName(this.kind), exit_code, @intFromPtr(cmd) });
                 cmd.exit_code = this.exit_code.?;
 
                 // Aggregate output data if shell state is piped and this cmd is piped
@@ -3128,7 +3139,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 switch (io.*) {
                     .captured, .fd => @panic("writeNoIO can't write to a file descriptor"),
                     .buf => {
-                        log("{s} write to buf {d}\n", .{ this.kind.asString(), buf.len });
+                        log("{s} write to buf len={d} str={s}{s}\n", .{ this.kind.asString(), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
                         io.buf.appendSlice(buf) catch bun.outOfMemory();
                         return Maybe(usize).initResult(buf.len);
                     },

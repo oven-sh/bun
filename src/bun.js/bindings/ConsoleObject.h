@@ -1,5 +1,7 @@
 #pragma once
 
+#include "root.h"
+
 #include <JavaScriptCore/ConsoleClient.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -15,12 +17,12 @@ using InspectorDebuggerAgent = Inspector::InspectorDebuggerAgent;
 using InspectorScriptProfilerAgent = Inspector::InspectorScriptProfilerAgent;
 using namespace JSC;
 
-class ConsoleClient final : public JSC::ConsoleClient {
+class ConsoleObject final : public JSC::ConsoleClient {
     WTF_MAKE_FAST_ALLOCATED;
 
 public:
-    ~ConsoleClient() final {}
-    ConsoleClient(void* client)
+    ~ConsoleObject() final {}
+    ConsoleObject(void* client)
         : JSC::ConsoleClient()
     {
         m_client = client;

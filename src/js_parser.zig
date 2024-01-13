@@ -8685,7 +8685,8 @@ fn NewParser_(
             }
             var end: usize = 0;
 
-            for (stmt.items) |*item| {
+            for (stmt.items) |item_| {
+                var item = item_;
                 const name = p.loadNameFromRef(item.name.ref orelse unreachable);
                 const ref = try p.declareSymbol(.import, item.name.loc, name);
                 item.name.ref = ref;
@@ -8717,7 +8718,7 @@ fn NewParser_(
                 }
 
                 item_refs.putAssumeCapacity(item.alias, item.name);
-                stmt.items[end] = item.*;
+                stmt.items[end] = item;
                 end += 1;
             }
             stmt.items = stmt.items[0..end];

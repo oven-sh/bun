@@ -1,1 +1,1 @@
-module.exports = 'perhaps I work';
+module.exports = "perhaps I work";

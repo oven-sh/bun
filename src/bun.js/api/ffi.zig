@@ -301,16 +301,15 @@ pub const FFI = struct {
 
         var dylib: std.DynLib = brk: {
             // First try using the name directly
-            break :brk std.DynLib.open(name) catch |err1| {
+            break :brk std.DynLib.open(name) catch {
                 const backup_name = Fs.FileSystem.instance.abs(&[1]string{name});
                 // if that fails, try resolving the filepath relative to the current working directory
                 break :brk std.DynLib.open(backup_name) catch {
                     // Then, if that fails, report an error.
-                    // TODO: report error name better
                     const system_error = JSC.SystemError{
                         .code = bun.String.create(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
-                        .message = bun.String.create(std.fmt.allocPrint(bun.default_allocator, "Failed to open library {s}. This is usually caused by a missing library or an invalid library path.", .{@errorName(err1)}) catch bun.outOfMemory()),
-                        .syscall = bun.String.static("dlopen"),
+                        .message = bun.String.create("Failed to open library. This is usually caused by a missing library or an invalid library path."),
+                        .syscall = bun.String.create("dlopen"),
                     };
                     return system_error.toErrorInstance(global);
                 };

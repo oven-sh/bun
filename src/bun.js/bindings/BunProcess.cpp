@@ -670,7 +670,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
         signalNumberToNameMap->add(SIGIO, signalNames[28]);
 #ifdef SIGINFO
-        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
 #endif
         signalNumberToNameMap->add(SIGSYS, signalNames[30]);
     });

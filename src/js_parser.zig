@@ -1318,7 +1318,7 @@ pub const ImportScanner = struct {
                     }
 
                     // when bundling, all top-level variables become var
-                    if (p.options.bundle) {
+                    if (p.options.bundle and !st.kind.isUsing()) {
                         st.kind = .k_var;
                     }
                 },
@@ -4151,6 +4151,7 @@ const ParseStatementOptions = struct {
     is_module_scope: bool = false,
     is_namespace_scope: bool = false,
     is_export: bool = false,
+    is_using_statement: bool = false,
     is_name_optional: bool = false, // For "export default" pseudo-statements,
     is_typescript_declare: bool = false,
 
@@ -7571,7 +7572,7 @@ fn NewParser_(
                 var is_typescript_ctor_field = false;
                 const is_identifier = p.lexer.token == T.t_identifier;
                 var text = p.lexer.identifier;
-                var arg = try p.parseBinding();
+                var arg = try p.parseBinding(.{});
                 var ts_metadata = TypeScript.Metadata.default;
 
                 if (comptime is_typescript_enabled) {
@@ -7595,7 +7596,7 @@ fn NewParser_(
                                     text = p.lexer.identifier;
 
                                     // Re-parse the binding (the current binding is the TypeScript keyword)
-                                    arg = try p.parseBinding();
+                                    arg = try p.parseBinding(.{});
                                 },
                                 else => {
                                     break;
@@ -9593,11 +9594,11 @@ fn NewParser_(
                         return p.parseTypescriptEnumStmt(loc, opts);
                     }
 
-                    const decls = try p.parseAndDeclareDecls(.cconst, opts);
+                    const decls = try p.parseAndDeclareDecls(.constant, opts);
                     try p.lexer.expectOrInsertSemicolon();
 
                     if (!opts.is_typescript_declare) {
-                        try p.requireInitializers(decls.items);
+                        try p.requireInitializers(.k_const, decls.items);
                     }
 
                     // When HMR is enabled, replace all const/let exports with var
@@ -9749,7 +9750,7 @@ fn NewParser_(
                         // jarred: TIL!
                         if (p.lexer.token != .t_open_brace) {
                             try p.lexer.expect(.t_open_paren);
-                            var value = try p.parseBinding();
+                            var value = try p.parseBinding(.{});
 
                             // Skip over types
                             if (is_typescript_enabled and p.lexer.token == .t_colon) {
@@ -9857,7 +9858,7 @@ fn NewParser_(
                         .t_const => {
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
-                            decls.update(try p.parseAndDeclareDecls(.cconst, &stmtOpts));
+                            decls.update(try p.parseAndDeclareDecls(.constant, &stmtOpts));
                             init_ = p.s(S.Local{ .kind = .k_const, .decls = Decl.List.fromList(decls) }, init_loc);
                         },
                         // for (;)
@@ -9924,7 +9925,7 @@ fn NewParser_(
                         switch (init_stmt.data) {
                             .s_local => {
                                 if (init_stmt.data.s_local.kind == .k_const) {
-                                    try p.requireInitializers(decls.slice());
+                                    try p.requireInitializers(.k_const, decls.slice());
                                 }
                             },
                             else => {},
@@ -10633,7 +10634,7 @@ fn NewParser_(
                 return p.s(S.TypeScript{}, loc);
             }
 
-            const ref = p.declareSymbol(.cconst, default_name_loc, default_name) catch unreachable;
+            const ref = p.declareSymbol(.constant, default_name_loc, default_name) catch unreachable;
             var decls = p.allocator.alloc(Decl, 1) catch unreachable;
             decls[0] = Decl{
                 .binding = p.b(B.Identifier{ .ref = ref }, default_name_loc),
@@ -10843,62 +10844,110 @@ fn NewParser_(
         }
 
         fn parseExprOrLetStmt(p: *P, opts: *ParseStatementOptions) !ExprOrLetStmt {
-            const let_range = p.lexer.range();
+            const token_range = p.lexer.range();
+            var could_be_let = false;
+
+            if (p.lexer.token != .t_identifier) {
+                return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
+            }
+
             const raw = p.lexer.raw();
-            if (p.lexer.token != .t_identifier or !strings.eqlComptime(raw, "let")) {
-                // Output.print("HI", .{});
+            if (strings.eqlComptime(raw, "let")) {
+                could_be_let = true;
+            } else if (strings.eqlComptime(raw, "using")) {
+                if (opts.is_export) {
+                    try p.log.addError(p.source, token_range.loc, "Cannot use \"export\" with \"using\" declaration");
+                }
+            } else {
                 return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseExpr(.lowest) } };
             }
 
             try p.lexer.next();
 
-            switch (p.lexer.token) {
-                .t_identifier, .t_open_bracket, .t_open_brace => {
-                    if (opts.lexical_decl == .allow_all or !p.lexer.has_newline_before or p.lexer.token == .t_open_bracket) {
-                        if (opts.lexical_decl != .allow_all) {
-                            try p.forbidLexicalDecl(let_range.loc);
-                        }
+            if (could_be_let) {
+                switch (p.lexer.token) {
+                    .t_identifier, .t_open_bracket, .t_open_brace => {
+                        if (opts.lexical_decl == .allow_all or !p.lexer.has_newline_before or p.lexer.token == .t_open_bracket) {
+                            if (opts.lexical_decl != .allow_all) {
+                                try p.forbidLexicalDecl(token_range.loc);
+                            }
 
-                        const decls = try p.parseAndDeclareDecls(.other, opts);
-                        return ExprOrLetStmt{
-                            .stmt_or_expr = js_ast.StmtOrExpr{
-                                .stmt = p.s(S.Local{
-                                    // Replace all "export let" with "export var" when HMR is enabled
-                                    .kind = if (opts.is_export and p.options.features.hot_module_reloading) .k_var else .k_let,
-                                    .decls = G.Decl.List.fromList(decls),
-                                    .is_export = opts.is_export,
-                                }, let_range.loc),
-                            },
-                            .decls = decls.items,
-                        };
-                    }
-                },
-                else => {},
+                            const decls = try p.parseAndDeclareDecls(.other, opts);
+                            return ExprOrLetStmt{
+                                .stmt_or_expr = js_ast.StmtOrExpr{
+                                    .stmt = p.s(S.Local{
+                                        // Replace all "export let" with "export var" when HMR is enabled
+                                        .kind = if (opts.is_export and p.options.features.hot_module_reloading) .k_var else .k_let,
+                                        .decls = G.Decl.List.fromList(decls),
+                                        .is_export = opts.is_export,
+                                    }, token_range.loc),
+                                },
+                                .decls = decls.items,
+                            };
+                        }
+                    },
+                    else => {},
+                }
+            } else if (p.lexer.token == .t_identifier and !p.lexer.has_newline_before) {
+                // See: https://github.com/tc39/proposal-explicit-resource-management
+                if (opts.lexical_decl != .allow_all) {
+                    try p.forbidLexicalDecl(token_range.loc);
+                }
+                // p.markSyntaxFeature(.using, token_range.loc);
+                opts.is_using_statement = true;
+                const decls = try p.parseAndDeclareDecls(.constant, opts);
+                if (true) { // TODO: !opts.isForLoopInit
+                    try p.requireInitializers(.k_using, decls.items);
+                }
+                return ExprOrLetStmt{
+                    .stmt_or_expr = js_ast.StmtOrExpr{
+                        .stmt = p.s(S.Local{
+                            .kind = .k_using,
+                            .decls = G.Decl.List.fromList(decls),
+                            .is_export = false,
+                        }, token_range.loc),
+                    },
+                    .decls = decls.items,
+                };
             }
 
             const ref = p.storeNameInRef(raw) catch unreachable;
-            const expr = p.newExpr(E.Identifier{ .ref = ref }, let_range.loc);
+            const expr = p.newExpr(E.Identifier{ .ref = ref }, token_range.loc);
             return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
         }
 
-        fn requireInitializers(p: *P, decls: []G.Decl) anyerror!void {
+        fn requireInitializers(p: *P, comptime kind: S.Local.Kind, decls: []G.Decl) anyerror!void {
+            const what = switch (kind) {
+                .k_await_using, .k_using => "declaration",
+                .k_const => "constant",
+                else => comptime unreachable,
+            };
+
             for (decls) |decl| {
                 if (decl.value == null) {
                     switch (decl.binding.data) {
                         .b_identifier => |ident| {
                             const r = js_lexer.rangeOfIdentifier(p.source, decl.binding.loc);
-                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{s}\" must be initialized", .{p.symbols.items[ident.ref.innerIndex()].original_name});
+                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The " ++ what ++ " \"{s}\" must be initialized", .{
+                                p.symbols.items[ident.ref.innerIndex()].original_name,
+                            });
                             // return;/
                         },
                         else => {
-                            try p.log.addError(p.source, decl.binding.loc, "This constant must be initialized");
+                            try p.log.addError(p.source, decl.binding.loc, "This " ++ what ++ " must be initialized");
                         },
                     }
                 }
             }
         }
 
-        fn parseBinding(p: *P) anyerror!Binding {
+        const ParseBindingOptions = struct {
+            /// This will prevent parsing of destructuring patterns, as using statement
+            /// is only allowed to be `using name, name2, name3`, nothing special.
+            is_using_statement: bool = false,
+        };
+
+        fn parseBinding(p: *P, comptime opts: ParseBindingOptions) anyerror!Binding {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -10914,119 +10963,123 @@ fn NewParser_(
                     return p.b(B.Identifier{ .ref = ref }, loc);
                 },
                 .t_open_bracket => {
-                    try p.lexer.next();
-                    var is_single_line = !p.lexer.has_newline_before;
-                    var items = ListManaged(js_ast.ArrayBinding).init(p.allocator);
-                    var has_spread = false;
+                    if (!opts.is_using_statement) {
+                        try p.lexer.next();
+                        var is_single_line = !p.lexer.has_newline_before;
+                        var items = ListManaged(js_ast.ArrayBinding).init(p.allocator);
+                        var has_spread = false;
 
-                    // "in" expressions are allowed
-                    const old_allow_in = p.allow_in;
-                    p.allow_in = true;
+                        // "in" expressions are allowed
+                        const old_allow_in = p.allow_in;
+                        p.allow_in = true;
 
-                    while (p.lexer.token != .t_close_bracket) {
-                        if (p.lexer.token == .t_comma) {
-                            items.append(js_ast.ArrayBinding{
-                                .binding = Binding{ .data = Prefill.Data.BMissing, .loc = p.lexer.loc() },
-                            }) catch unreachable;
-                        } else {
-                            if (p.lexer.token == .t_dot_dot_dot) {
-                                try p.lexer.next();
-                                has_spread = true;
+                        while (p.lexer.token != .t_close_bracket) {
+                            if (p.lexer.token == .t_comma) {
+                                items.append(js_ast.ArrayBinding{
+                                    .binding = Binding{ .data = Prefill.Data.BMissing, .loc = p.lexer.loc() },
+                                }) catch unreachable;
+                            } else {
+                                if (p.lexer.token == .t_dot_dot_dot) {
+                                    try p.lexer.next();
+                                    has_spread = true;
 
-                                // This was a bug in the ES2015 spec that was fixed in ES2016
-                                if (p.lexer.token != .t_identifier) {
-                                    // p.markSyntaxFeature(compat.NestedRestBinding, p.lexer.Range())
+                                    // This was a bug in the ES2015 spec that was fixed in ES2016
+                                    if (p.lexer.token != .t_identifier) {
+                                        // p.markSyntaxFeature(compat.NestedRestBinding, p.lexer.Range())
 
+                                    }
+                                }
+
+                                const binding = try p.parseBinding(opts);
+
+                                var default_value: ?Expr = null;
+                                if (!has_spread and p.lexer.token == .t_equals) {
+                                    try p.lexer.next();
+                                    default_value = try p.parseExpr(.comma);
+                                }
+
+                                items.append(js_ast.ArrayBinding{ .binding = binding, .default_value = default_value }) catch unreachable;
+
+                                // Commas after spread elements are not allowed
+                                if (has_spread and p.lexer.token == .t_comma) {
+                                    p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
+                                    return error.SyntaxError;
                                 }
                             }
 
-                            const binding = try p.parseBinding();
-
-                            var default_value: ?Expr = null;
-                            if (!has_spread and p.lexer.token == .t_equals) {
-                                try p.lexer.next();
-                                default_value = try p.parseExpr(.comma);
+                            if (p.lexer.token != .t_comma) {
+                                break;
                             }
 
-                            items.append(js_ast.ArrayBinding{ .binding = binding, .default_value = default_value }) catch unreachable;
+                            if (p.lexer.has_newline_before) {
+                                is_single_line = false;
+                            }
+                            try p.lexer.next();
+
+                            if (p.lexer.has_newline_before) {
+                                is_single_line = false;
+                            }
+                        }
+
+                        p.allow_in = old_allow_in;
+
+                        if (p.lexer.has_newline_before) {
+                            is_single_line = false;
+                        }
+                        try p.lexer.expect(.t_close_bracket);
+                        return p.b(B.Array{
+                            .items = items.items,
+                            .has_spread = has_spread,
+                            .is_single_line = is_single_line,
+                        }, loc);
+                    }
+                },
+                .t_open_brace => {
+                    if (!opts.is_using_statement) {
+                        // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
+                        try p.lexer.next();
+                        var is_single_line = !p.lexer.has_newline_before;
+                        var properties = ListManaged(js_ast.B.Property).init(p.allocator);
+
+                        // "in" expressions are allowed
+                        const old_allow_in = p.allow_in;
+                        p.allow_in = true;
+
+                        while (p.lexer.token != .t_close_brace) {
+                            var property = try p.parsePropertyBinding();
+                            properties.append(property) catch unreachable;
 
                             // Commas after spread elements are not allowed
-                            if (has_spread and p.lexer.token == .t_comma) {
+                            if (property.flags.contains(.is_spread) and p.lexer.token == .t_comma) {
                                 p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
                                 return error.SyntaxError;
                             }
+
+                            if (p.lexer.token != .t_comma) {
+                                break;
+                            }
+
+                            if (p.lexer.has_newline_before) {
+                                is_single_line = false;
+                            }
+                            try p.lexer.next();
+                            if (p.lexer.has_newline_before) {
+                                is_single_line = false;
+                            }
                         }
 
-                        if (p.lexer.token != .t_comma) {
-                            break;
-                        }
+                        p.allow_in = old_allow_in;
 
                         if (p.lexer.has_newline_before) {
                             is_single_line = false;
                         }
-                        try p.lexer.next();
+                        try p.lexer.expect(.t_close_brace);
 
-                        if (p.lexer.has_newline_before) {
-                            is_single_line = false;
-                        }
+                        return p.b(B.Object{
+                            .properties = properties.items,
+                            .is_single_line = is_single_line,
+                        }, loc);
                     }
-
-                    p.allow_in = old_allow_in;
-
-                    if (p.lexer.has_newline_before) {
-                        is_single_line = false;
-                    }
-                    try p.lexer.expect(.t_close_bracket);
-                    return p.b(B.Array{
-                        .items = items.items,
-                        .has_spread = has_spread,
-                        .is_single_line = is_single_line,
-                    }, loc);
-                },
-                .t_open_brace => {
-                    // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
-                    try p.lexer.next();
-                    var is_single_line = !p.lexer.has_newline_before;
-                    var properties = ListManaged(js_ast.B.Property).init(p.allocator);
-
-                    // "in" expressions are allowed
-                    const old_allow_in = p.allow_in;
-                    p.allow_in = true;
-
-                    while (p.lexer.token != .t_close_brace) {
-                        var property = try p.parsePropertyBinding();
-                        properties.append(property) catch unreachable;
-
-                        // Commas after spread elements are not allowed
-                        if (property.flags.contains(.is_spread) and p.lexer.token == .t_comma) {
-                            p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
-                            return error.SyntaxError;
-                        }
-
-                        if (p.lexer.token != .t_comma) {
-                            break;
-                        }
-
-                        if (p.lexer.has_newline_before) {
-                            is_single_line = false;
-                        }
-                        try p.lexer.next();
-                        if (p.lexer.has_newline_before) {
-                            is_single_line = false;
-                        }
-                    }
-
-                    p.allow_in = old_allow_in;
-
-                    if (p.lexer.has_newline_before) {
-                        is_single_line = false;
-                    }
-                    try p.lexer.expect(.t_close_brace);
-
-                    return p.b(B.Object{
-                        .properties = properties.items,
-                        .is_single_line = is_single_line,
-                    }, loc);
                 },
                 else => {},
             }
@@ -11110,7 +11163,7 @@ fn NewParser_(
             }
 
             try p.lexer.expect(.t_colon);
-            const value = try p.parseBinding();
+            const value = try p.parseBinding(.{});
 
             var default_value: ?Expr = null;
             if (p.lexer.token == .t_equals) {
@@ -11133,12 +11186,16 @@ fn NewParser_(
 
             while (true) {
                 // Forbid "let let" and "const let" but not "var let"
-                if ((kind == .other or kind == .cconst) and p.lexer.isContextualKeyword("let")) {
+                if ((kind == .other or kind == .constant) and p.lexer.isContextualKeyword("let")) {
                     p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"let\" as an identifier here") catch unreachable;
                 }
 
                 var value: ?js_ast.Expr = null;
-                var local = try p.parseBinding();
+                var local = switch (opts.is_using_statement) {
+                    inline else => |is_using| try p.parseBinding(.{
+                        .is_using_statement = is_using,
+                    }),
+                };
                 p.declareBinding(kind, &local, opts) catch unreachable;
 
                 // Skip over types
@@ -15199,6 +15256,8 @@ fn NewParser_(
                         }
                     },
                     .s_local => |st| {
+                        if (st.kind.isUsing()) return false;
+
                         for (st.decls.slice()) |*decl| {
                             if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
                                 return false;
@@ -15471,7 +15530,7 @@ fn NewParser_(
                     e_.ref = result.ref;
 
                     // Handle assigning to a constant
-                    if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .cconst) {
+                    if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .constant) {
                         const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                         var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                         notes[0] = logger.Data{
@@ -17515,6 +17574,8 @@ fn NewParser_(
         }
 
         fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
+            if (kind.isUsing()) return kind;
+
             if (p.options.bundle and p.current_scope.parent == null) {
                 return .k_var;
             }
@@ -20432,7 +20493,7 @@ fn NewParser_(
                 ) catch unreachable;
             } else {
                 const name_str: []const u8 = if (default_name_ref.isNull()) "_this" else "_default";
-                shadow_ref = p.newSymbol(.cconst, name_str) catch unreachable;
+                shadow_ref = p.newSymbol(.constant, name_str) catch unreachable;
             }
 
             p.recordDeclaredSymbol(shadow_ref) catch unreachable;

@@ -200,9 +200,8 @@ pub fn repeatingBuf(self: []u8, char: u8) void {
 }
 
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
-    var i: u32 = 0;
-    while (i < self.len) : (i += 1) {
-        if (self[i] == char) return @as(i32, @intCast(i));
+    for (self, 0..) |c, i| {
+        if (c == char) return @as(i32, @intCast(i));
     }
     return -1;
 }
@@ -989,8 +988,7 @@ pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string,
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
     var remain = out;
     var count: usize = 0;
-    comptime var i: usize = 0;
-    inline while (i < parts_len) : (i += 1) {
+    inline for (0..parts_len) |i| {
         const part = parts[i];
         bun.copy(u8, remain, part);
         remain = remain[part.len..];
@@ -2382,8 +2380,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                         buf.items.len = copy_len;
                         any_needs_escape = true;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
@@ -2436,8 +2433,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @as(AsciiVectorU1, @bitCast((vec == vecs[4])))) == 1)
                     {
                         buf.ensureUnusedCapacity(ascii_vector_size + 6) catch unreachable;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
@@ -3096,7 +3092,6 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
     var i: usize = 0;
     // TODO: is it safe to just make this u32 or u21?
     var r1: i32 = undefined;
-    var k: u4 = 0;
     while (i < n) : (i += 1) {
         r1 = text[i];
         if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
@@ -3111,8 +3106,7 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
         if (j + width > str.len) {
             return false;
         }
-        k = 0;
-        while (k < width) : (k += 1) {
+        for (0..width) |k| {
             if (temp[k] != str[j]) {
                 return false;
             }
@@ -3396,8 +3390,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
                                 std.debug.assert(remaining[first_set_byte] > 127);
-                                var j: usize = 0;
-                                while (j < first_set_byte) : (j += 1) {
+                                for (0..first_set_byte) |j| {
                                     std.debug.assert(remaining[j] <= 127);
                                 }
                             }
@@ -3414,8 +3407,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
                                 std.debug.assert(remaining[first_set_byte] > 127);
-                                var j: usize = 0;
-                                while (j < first_set_byte) : (j += 1) {
+                                for (0..first_set_byte) |j| {
                                     std.debug.assert(remaining[j] <= 127);
                                 }
                             }
@@ -3459,8 +3451,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                     const first_set_byte = @ctz(mask) / 8;
                     if (comptime Environment.allow_assert) {
                         std.debug.assert(remaining[first_set_byte] > 127);
-                        var j: usize = 0;
-                        while (j < first_set_byte) : (j += 1) {
+                        for (0..first_set_byte) |j| {
                             std.debug.assert(remaining[j] <= 127);
                         }
                     }
@@ -4204,8 +4195,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 test "indexOfNotChar" {
     {
         var yes: [312]u8 = undefined;
-        var i: usize = 0;
-        while (i < yes.len) {
+        for (0..yes.len) |i| {
             @memset(yes, 'a');
             yes[i] = 'b';
             if (comptime Environment.allow_assert) std.debug.assert(indexOfNotChar(&yes, 'a').? == i);
@@ -4757,8 +4747,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             defer it.i = original_i;
 
             var end_ix = original_i;
-            var found: usize = 0;
-            while (found < n) : (found += 1) {
+            for (0..n) |_| {
                 const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
                 end_ix += next_codepoint.len;
             }

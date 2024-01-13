@@ -1017,9 +1017,7 @@ pub const ImportScanner = struct {
                         if (st.items.len > 0) {
                             found_imports = true;
                             var items_end: usize = 0;
-                            var i: usize = 0;
-                            while (i < st.items.len) : (i += 1) {
-                                const item = st.items[i];
+                            for (st.items) |item| {
                                 const ref = item.name.ref.?;
                                 const symbol: Symbol = p.symbols.items[ref.innerIndex()];
 
@@ -8685,11 +8683,9 @@ fn NewParser_(
                     item_refs.putAssumeCapacity(name, name_loc.*);
                 }
             }
-            var i: usize = 0;
             var end: usize = 0;
 
-            while (i < stmt.items.len) : (i += 1) {
-                var item: js_ast.ClauseItem = stmt.items[i];
+            for (stmt.items) |*item| {
                 const name = p.loadNameFromRef(item.name.ref orelse unreachable);
                 const ref = try p.declareSymbol(.import, item.name.loc, name);
                 item.name.ref = ref;
@@ -8721,7 +8717,7 @@ fn NewParser_(
                 }
 
                 item_refs.putAssumeCapacity(item.alias, item.name);
-                stmt.items[end] = item;
+                stmt.items[end] = item.*;
                 end += 1;
             }
             stmt.items = stmt.items[0..end];
@@ -18775,9 +18771,7 @@ fn NewParser_(
                         const old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
                         p.fn_or_arrow_data_visit.is_inside_switch = true;
                         defer p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_Swsitch;
-                        var i: usize = 0;
-                        while (i < data.cases.len) : (i += 1) {
-                            const case = data.cases[i];
+                        for (data.cases, 0..) |case, i| {
                             if (case.value) |val| {
                                 data.cases[i].value = p.visitExpr(val);
                                 // TODO: error messages
@@ -20403,9 +20397,8 @@ fn NewParser_(
                     p.enclosing_class_keyword = old_enclosing_class_keyword;
                 }
 
-                var i: usize = 0;
                 var constructor_function: ?*E.Function = null;
-                while (i < class.properties.len) : (i += 1) {
+                for (0..class.properties.len) |i| {
                     var property = &class.properties[i];
 
                     if (property.kind == .class_static_block) {

@@ -2788,13 +2788,11 @@ pub const ZigConsoleClient = struct {
                             }
                         }
 
-                        var i: u32 = 1;
-
-                        while (i < len) : (i += 1) {
-                            const element = value.getDirectIndex(this.globalThis, i);
+                        for (1..len) |i| {
+                            const element = value.getDirectIndex(this.globalThis, @intCast(i));
                             if (element.isEmpty()) {
                                 if (empty_start == null) {
-                                    empty_start = i;
+                                    empty_start = @intCast(i);
                                 }
                                 continue;
                             }
@@ -3474,8 +3472,7 @@ pub const ZigConsoleClient = struct {
 
                                                     defer this.indent -|= 1;
 
-                                                    var j: usize = 0;
-                                                    while (j < length) : (j += 1) {
+                                                    for (0..length) |j| {
                                                         const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
                                                         this.format(Tag.getAdvanced(child, this.globalThis, .{ .hide_global = true }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                         if (j + 1 < length) {

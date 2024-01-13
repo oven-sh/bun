@@ -459,7 +459,7 @@ pub const AST = struct {
         brace_begin,
         brace_end,
         comma,
-        cmd_subst: *CmdOrAssigns,
+        cmd_subst: Script,
 
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
@@ -483,7 +483,6 @@ pub const AST = struct {
     };
 };
 
-// FIXME command substitution can be any arbitrary expression not just command
 pub const Parser = struct {
     strpool: []const u8,
     tokens: []const Token,
@@ -491,6 +490,18 @@ pub const Parser = struct {
     jsobjs: []JSValue,
     current: u32 = 0,
     errors: std.ArrayList(Error),
+    inside_subshell: ?SubshellKind = null,
+
+    const SubshellKind = enum {
+        cmd_subst,
+        normal,
+        pub fn closing_tok(this: SubshellKind) TokenTag {
+            return switch (this) {
+                .cmd_subst => TokenTag.CmdSubstEnd,
+                .normal => TokenTag.CloseParen,
+            };
+        }
+    };
 
     // FIXME error location
     const Error = struct { msg: []const u8 };
@@ -509,7 +520,7 @@ pub const Parser = struct {
         };
     }
 
-    pub fn make_subparser(this: *Parser) !Parser {
+    pub fn make_subparser(this: *Parser, kind: SubshellKind) Parser {
         const subparser = .{
             .strpool = this.strpool,
             .tokens = this.tokens,
@@ -519,12 +530,15 @@ pub const Parser = struct {
             // We replace the old Parser's struct with the updated error list
             // when this subparser is done
             .errors = this.errors,
+            .inside_subshell = kind,
         };
         return subparser;
     }
 
     pub fn continue_from_subparser(this: *Parser, subparser: *Parser) void {
-        this.current = subparser.current;
+        // this.current = if (this.tokens[subparser.current] == .Eof) subparser.current else subparser;
+        this.current =
+            if (subparser.current >= this.tokens.len) subparser.current else subparser.current + 1;
         this.errors = subparser.errors;
     }
 
@@ -549,17 +563,29 @@ pub const Parser = struct {
 
     pub fn parse_impl(self: *Parser) !AST.Script {
         var stmts = ArrayList(AST.Stmt).init(self.alloc);
-        while (!self.match(.Eof)) {
+        while (if (self.inside_subshell == null)
+            !self.match(.Eof)
+        else
+            !self.match_any(&.{ .Eof, self.inside_subshell.?.closing_tok() }))
+        {
             try stmts.append(try self.parse_stmt());
         }
-        _ = self.expect(.Eof);
+        if (self.inside_subshell) |kind| {
+            _ = self.expect_any(&.{ .Eof, kind.closing_tok() });
+        } else {
+            _ = self.expect(.Eof);
+        }
         return .{ .stmts = stmts.items[0..stmts.items.len] };
     }
 
     pub fn parse_stmt(self: *Parser) !AST.Stmt {
         var exprs = std.ArrayList(AST.Expr).init(self.alloc);
 
-        while (!self.match_any(&.{ .Semicolon, .Newline, .Eof })) {
+        while (if (self.inside_subshell == null)
+            !self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
+        else
+            !self.match_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
+        {
             const expr = try self.parse_expr();
             try exprs.append(expr);
         }
@@ -575,7 +601,7 @@ pub const Parser = struct {
 
     fn parse_cond(self: *Parser) !AST.Expr {
         var left = try self.parse_pipeline();
-        while (self.match_any(&.{ .DoubleAmpersand, .DoublePipe })) {
+        while (self.match_any_comptime(&.{ .DoubleAmpersand, .DoublePipe })) {
             const op: AST.Conditional.Op = op: {
                 const previous = @as(TokenTag, self.prev());
                 switch (previous) {
@@ -631,7 +657,11 @@ pub const Parser = struct {
 
     fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
         var assigns = std.ArrayList(AST.Assign).init(self.alloc);
-        while (!self.check_any(&.{ .Semicolon, .Newline, .Eof })) {
+        while (if (self.inside_subshell == null)
+            !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
+        else
+            !self.check_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
+        {
             if (try self.parse_assign()) |assign| {
                 try assigns.append(assign);
             } else {
@@ -639,7 +669,11 @@ pub const Parser = struct {
             }
         }
 
-        if (self.match_any(&.{ .Semicolon, .Newline, .Eof })) {
+        if (if (self.inside_subshell == null)
+            self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
+        else
+            self.match_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
+        {
             if (assigns.items.len == 0) {
                 try self.add_error("expected a command or assignment", .{});
                 return ParseError.Expected;
@@ -743,22 +777,26 @@ pub const Parser = struct {
 
     fn parse_atom(self: *Parser) !?AST.Atom {
         var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
-        var exprs = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
+        var atoms = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         var has_brace_open = false;
         var has_brace_close = false;
         var has_comma = false;
         var has_glob_syntax = false;
         {
-            while (!self.match_any(&.{ .Delimit, .Eof })) {
+            while (if (self.inside_subshell == null)
+                !self.match_any_comptime(&.{ .Delimit, .Eof })
+            else
+                !self.match_any(&.{ .Delimit, .Eof, self.inside_subshell.?.closing_tok() }))
+            {
                 const next = self.peek_n(1);
-                const next_delimits = next == .Delimit or next == .Eof;
+                const next_delimits = next == .Delimit or next == .Eof or (self.inside_subshell != null and next == self.inside_subshell.?.closing_tok());
                 const peeked = self.peek();
                 const should_break = next_delimits;
                 switch (peeked) {
                     .Asterisk => {
                         has_glob_syntax = true;
                         _ = self.expect(.Asterisk);
-                        try exprs.append(.asterisk);
+                        try atoms.append(.asterisk);
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             break;
@@ -767,7 +805,7 @@ pub const Parser = struct {
                     .DoubleAsterisk => {
                         has_glob_syntax = true;
                         _ = self.expect(.DoubleAsterisk);
-                        try exprs.append(.double_asterisk);
+                        try atoms.append(.double_asterisk);
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             break;
@@ -776,7 +814,7 @@ pub const Parser = struct {
                     .BraceBegin => {
                         has_brace_open = true;
                         _ = self.expect(.BraceBegin);
-                        try exprs.append(.brace_begin);
+                        try atoms.append(.brace_begin);
                         // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
                         if (next_delimits) {
                             _ = self.expect_delimit();
@@ -786,7 +824,7 @@ pub const Parser = struct {
                     .BraceEnd => {
                         has_brace_close = true;
                         _ = self.expect(.BraceEnd);
-                        try exprs.append(.brace_end);
+                        try atoms.append(.brace_end);
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             break;
@@ -795,7 +833,7 @@ pub const Parser = struct {
                     .Comma => {
                         has_comma = true;
                         _ = self.expect(.Comma);
-                        try exprs.append(.comma);
+                        try atoms.append(.comma);
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             if (should_break) break;
@@ -803,17 +841,25 @@ pub const Parser = struct {
                     },
                     .CmdSubstBegin => {
                         _ = self.expect(.CmdSubstBegin);
-                        const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());
-                        try exprs.append(.{ .cmd_subst = subst });
+                        var subparser = self.make_subparser(.cmd_subst);
+                        const script = try subparser.parse_impl();
+                        try atoms.append(.{ .cmd_subst = script });
+                        self.continue_from_subparser(&subparser);
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             if (should_break) break;
                         }
+                        // const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());
+                        // try exprs.append(.{ .cmd_subst = subst });
+                        // if (next_delimits) {
+                        //     _ = self.expect_delimit();
+                        //     if (should_break) break;
+                        // }
                     },
                     .Text => |txtrng| {
                         _ = self.expect(.Text);
                         const txt = self.text(txtrng);
-                        try exprs.append(.{ .Text = txt });
+                        try atoms.append(.{ .Text = txt });
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             if (should_break) break;
@@ -822,7 +868,7 @@ pub const Parser = struct {
                     .Var => |txtrng| {
                         _ = self.expect(.Var);
                         const txt = self.text(txtrng);
-                        try exprs.append(.{ .Var = txt });
+                        try atoms.append(.{ .Var = txt });
                         if (next_delimits) {
                             _ = self.expect_delimit();
                             if (should_break) break;
@@ -837,14 +883,14 @@ pub const Parser = struct {
             }
         }
 
-        return switch (exprs.items.len) {
+        return switch (atoms.items.len) {
             0 => null,
             1 => {
-                std.debug.assert(exprs.capacity == 1);
-                return AST.Atom.new_simple(exprs.items[0]);
+                std.debug.assert(atoms.capacity == 1);
+                return AST.Atom.new_simple(atoms.items[0]);
             },
             else => .{ .compound = .{
-                .atoms = exprs.items[0..exprs.items.len],
+                .atoms = atoms.items[0..atoms.items.len],
                 .brace_expansion_hint = has_brace_open and has_brace_close and has_comma,
                 .glob_hint = has_glob_syntax,
             } },
@@ -875,7 +921,7 @@ pub const Parser = struct {
     }
 
     fn is_at_end(self: *Parser) bool {
-        return self.peek() == .Eof;
+        return self.peek() == .Eof or self.inside_subshell != null and self.inside_subshell.?.closing_tok() == self.peek();
     }
 
     fn expect(self: *Parser, toktag: TokenTag) Token {
@@ -886,11 +932,11 @@ pub const Parser = struct {
         unreachable;
     }
 
-    fn expect_any(self: *Parser, comptime toktags: []const TokenTag) Token {
+    fn expect_any(self: *Parser, toktags: []const TokenTag) Token {
         // std.debug.assert(toktag == @as(TokenTag, self.peek()));
 
         const peeked = self.peek();
-        inline for (toktags) |toktag| {
+        for (toktags) |toktag| {
             if (toktag == @as(TokenTag, peeked)) return self.advance();
         }
 
@@ -898,8 +944,8 @@ pub const Parser = struct {
     }
 
     fn expect_delimit(self: *Parser) Token {
-        std.debug.assert(.Delimit == @as(TokenTag, self.peek()) or .Eof == @as(TokenTag, self.peek()));
-        if (self.check(.Delimit) or self.check(.Eof)) {
+        std.debug.assert(.Delimit == @as(TokenTag, self.peek()) or .Eof == @as(TokenTag, self.peek()) or (self.inside_subshell != null and @as(TokenTag, self.peek()) == self.inside_subshell.?.closing_tok()));
+        if (self.check(.Delimit) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
             return self.advance();
         }
         unreachable;
@@ -914,7 +960,7 @@ pub const Parser = struct {
         return false;
     }
 
-    fn match_any(self: *Parser, comptime toktags: []const TokenTag) bool {
+    fn match_any_comptime(self: *Parser, comptime toktags: []const TokenTag) bool {
         const peeked = @as(TokenTag, self.peek());
         inline for (toktags) |tag| {
             if (peeked == tag) {
@@ -925,9 +971,30 @@ pub const Parser = struct {
         return false;
     }
 
-    fn check_any(self: *Parser, comptime toktags: []const TokenTag) bool {
+    fn match_any(self: *Parser, toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        for (toktags) |tag| {
+            if (peeked == tag) {
+                _ = self.advance();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn check_any_comptime(self: *Parser, comptime toktags: []const TokenTag) bool {
         const peeked = @as(TokenTag, self.peek());
         inline for (toktags) |tag| {
+            if (peeked == tag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn check_any(self: *Parser, toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        for (toktags) |tag| {
             if (peeked == tag) {
                 return true;
             }
@@ -1130,7 +1197,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
-            const sublexer = .{
+            var sublexer = .{
                 .chars = self.chars,
                 .strpool = self.strpool,
                 .tokens = self.tokens,
@@ -1140,6 +1207,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .word_start = self.word_start,
                 .j = self.j,
             };
+            sublexer.chars.state = .Normal;
             return sublexer;
         }
 
@@ -1574,7 +1642,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     else => return null,
                 }
                 _ = self.eat();
-            }
+            } else return null;
 
             const is_double = self.eat_simple_redirect_operator(dir);
             if (is_double) {

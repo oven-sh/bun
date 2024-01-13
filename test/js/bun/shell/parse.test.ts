@@ -311,6 +311,74 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("cmd subst", () => {
+    const expected = {
+      "stmts": [
+        {
+          "exprs": [
+            {
+              "cmd": {
+                "assigns": [],
+                "name_and_args": [
+                  { "simple": { "Text": "echo" } },
+                  {
+                    "simple": {
+                      "cmd_subst": {
+                        "stmts": [
+                          {
+                            "exprs": [
+                              {
+                                "cmd": {
+                                  "assigns": [],
+                                  "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "1" } }],
+                                  "redirect": {
+                                    "stdin": false,
+                                    "stdout": false,
+                                    "stderr": false,
+                                    "append": false,
+                                    "__unused": 0,
+                                  },
+                                  "redirect_file": null,
+                                },
+                              },
+                            ],
+                          },
+                          {
+                            "exprs": [
+                              {
+                                "cmd": {
+                                  "assigns": [],
+                                  "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "2" } }],
+                                  "redirect": {
+                                    "stdin": false,
+                                    "stdout": false,
+                                    "stderr": false,
+                                    "append": false,
+                                    "__unused": 0,
+                                  },
+                                  "redirect_file": null,
+                                },
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+                "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                "redirect_file": null,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = JSON.parse($.parse`echo "$(echo 1; echo 2)"`);
+    expect(result).toEqual(expected);
+  });
+
   describe("bad syntax", () => {
     test("cmd subst edgecase", () => {
       const expected = {
@@ -325,23 +393,42 @@ describe("parse shell", () => {
                     {
                       "simple": {
                         "cmd_subst": {
-                          "cmd": {
-                            "assigns": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } } }],
-                            "name_and_args": [{ "simple": { "Var": "FOO" } }],
-                            "redirect": {
-                              "stdin": false,
-                              "stdout": false,
-                              "stderr": false,
-                              "append": false,
-                              "__unused": 0,
+                          "stmts": [
+                            {
+                              "exprs": [
+                                {
+                                  "cmd": {
+                                    "assigns": [
+                                      {
+                                        "label": "FOO",
+                                        "value": { "simple": { "Text": "bar" } },
+                                      },
+                                    ],
+                                    "name_and_args": [{ "simple": { "Var": "FOO" } }],
+                                    "redirect": {
+                                      "stdin": false,
+                                      "stdout": false,
+                                      "stderr": false,
+                                      "append": false,
+                                      "__unused": 0,
+                                    },
+                                    "redirect_file": null,
+                                  },
+                                },
+                              ],
                             },
-                            "redirect_file": null,
-                          },
+                          ],
                         },
                       },
                     },
                   ],
-                  "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                  "redirect": {
+                    "stdin": false,
+                    "stdout": false,
+                    "stderr": false,
+                    "append": false,
+                    "__unused": 0,
+                  },
                   "redirect_file": null,
                 },
               },
@@ -349,7 +436,6 @@ describe("parse shell", () => {
           },
         ],
       };
-
       const result = JSON.parse($.parse`echo $(FOO=bar $FOO)`);
       expect(result).toEqual(expected);
     });

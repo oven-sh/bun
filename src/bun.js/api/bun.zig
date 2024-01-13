@@ -3300,7 +3300,6 @@ pub const Timer = struct {
             if (result.isAnyError()) {
                 vm.onUnhandledError(globalThis, result);
                 this.deinit();
-                //
                 return;
             }
 

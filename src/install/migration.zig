@@ -395,7 +395,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 const sliced_version = Semver.SlicedString.init(version_string, version_string);
                 const result = Semver.Version.parse(sliced_version);
                 if (result.valid and result.wildcard == .none) {
-                    this.workspace_versions.putAssumeCapacity(name_hash, result.version.fill());
+                    this.workspace_versions.putAssumeCapacity(name_hash, result.version.min());
                 }
             }
         }
@@ -809,7 +809,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                             break :res Resolution.init(.{
                                                 .npm = .{
                                                     .url = builder.append(String, dep_resolved),
-                                                    .version = Semver.Version.parse(dep_actual_version_sliced).version.fill(),
+                                                    .version = Semver.Version.parse(dep_actual_version_sliced).version.min(),
                                                 },
                                             });
                                         },

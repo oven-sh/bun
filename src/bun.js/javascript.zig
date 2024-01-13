@@ -60,7 +60,7 @@ const NewClass = @import("./base.zig").NewClass;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -477,7 +477,7 @@ pub const VirtualMachine = struct {
     has_loaded_constructors: bool = false,
     bundler: Bundler,
     bun_watcher: ImportWatcher = .{ .none = {} },
-    console: *ZigConsoleClient,
+    console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
     main_hash: u32 = 0,
@@ -1156,8 +1156,8 @@ pub const VirtualMachine = struct {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
-        const console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const log = opts.log.?;
         const bundler = try Bundler.init(
             allocator,
@@ -1269,8 +1269,8 @@ pub const VirtualMachine = struct {
         }
 
         VMHolder.vm = try allocator.create(VirtualMachine);
-        const console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
             allocator,
             log,
@@ -1417,8 +1417,8 @@ pub const VirtualMachine = struct {
         }
 
         VMHolder.vm = try allocator.create(VirtualMachine);
-        const console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
             allocator,
             log,

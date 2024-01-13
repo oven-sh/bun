@@ -1159,7 +1159,7 @@ pub const Subprocess = struct {
                     if (Environment.isWindows) @panic("TODO");
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
-                        .fd = bun.toFD(fd),
+                        .fd = fd,
                         .buffer = bun.ByteList{},
                         .allocator = globalThis.bunVM().allocator,
                         .auto_close = true,
@@ -1178,7 +1178,7 @@ pub const Subprocess = struct {
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
-                    var buffered_input: BufferedInput = .{ .fd = bun.toFD(fd), .source = undefined };
+                    var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined };
                     switch (stdio) {
                         .array_buffer => |array_buffer| {
                             buffered_input.source = .{ .array_buffer = array_buffer };
@@ -1194,7 +1194,7 @@ pub const Subprocess = struct {
                     return Writable{ .memfd = stdio.memfd };
                 },
                 .fd => {
-                    return Writable{ .fd = bun.toFD(fd) };
+                    return Writable{ .fd = fd };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -2700,7 +2700,10 @@ pub const Subprocess = struct {
                 }
 
                 switch (req.ptr) {
-                    .File, .Blob => unreachable,
+                    .File, .Blob => {
+                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049");
+                        return false;
+                    },
                     .Direct, .JavaScript, .Bytes => {
                         if (req.isLocked(globalThis)) {
                             globalThis.throwInvalidArguments("ReadableStream cannot be locked", .{});
@@ -2710,11 +2713,11 @@ pub const Subprocess = struct {
                         out_stdio.* = .{ .pipe = req };
                         return true;
                     },
-                    else => {},
+                    .Invalid => {
+                        globalThis.throwInvalidArguments("ReadableStream is in invalid state.", .{});
+                        return false;
+                    },
                 }
-
-                globalThis.throwInvalidArguments("Unsupported ReadableStream type", .{});
-                return false;
             }
         } else if (value.asArrayBuffer(globalThis)) |array_buffer| {
             if (array_buffer.slice().len == 0) {

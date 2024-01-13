@@ -1,5 +1,13 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"e4885a8bc2de343a"`;
+
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"cb8abf3391c2971f"`;
+
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"e4885a8bc2de343a"`;
+
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
+
 exports[`Bun.build Bun.write(BuildArtifact) 1`] = `
 "var __defProp = Object.defineProperty;
 var __export = (target, all) => {
@@ -71,14 +79,6 @@ NS.then(({ fn: fn2 }) => {
 });
 "
 `;
-
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"61fa5aa06740929b"`;
-
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"e6329e3574ac500f"`;
-
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"61fa5aa06740929b"`;
-
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
 
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `
 "var __defProp = Object.defineProperty;

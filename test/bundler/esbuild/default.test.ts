@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import assert from "assert";
 import dedent from "dedent";
 
@@ -891,6 +892,7 @@ describe("bundler", () => {
       "/node_modules/c/index.js": `exports.foo = 123`,
       "/node_modules/c/package.json": `{"main": "index.js", "name": "c"}`,
     },
+    target: "node",
     run: [
       {
         args: ["true", "true", "./c.js"],
@@ -5125,7 +5127,6 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5168,10 +5169,10 @@ describe("bundler", () => {
       "/node_modules/some-path/index.js": `module.exports = 123`,
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
-    bundling: false,
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",
@@ -5194,10 +5195,10 @@ describe("bundler", () => {
   itBundled("default/RequireShimSubstitutionNode", {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
-    bundling: false,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",

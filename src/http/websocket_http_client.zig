@@ -1,7 +1,6 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
 const std = @import("std");
-const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const bun = @import("root").bun;
 const string = bun.string;
@@ -1574,7 +1573,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             header.len = @as(u7, @truncate(body_len + 2));
             final_body_bytes[0..2].* = header.slice();
             const mask_buf: *[4]u8 = final_body_bytes[2..6];
-            final_body_bytes[6..8].* = if (native_endian == .big) @bitCast(code) else @bitCast(@byteSwap(code));
+            final_body_bytes[6..8].* = @bitCast(@byteSwap(code));
 
             var reason = bun.String.empty;
             if (body) |data| {

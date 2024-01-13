@@ -154,13 +154,15 @@ fn ws(comptime str: []const u8) Whitespacer {
 
         pub const without = brk: {
             var buf = std.mem.zeroes([str.len]u8);
-            for (str, &buf) |c, *b| {
+            var buf_i: usize = 0;
+            for (str) |c| {
                 if (c != ' ') {
-                    b.* = c;
+                    buf[buf_i] = c;
+                    buf_i += 1;
                 }
             }
 
-            break :brk buf[0..str.len];
+            break :brk buf[0..buf_i];
         };
     };
 

@@ -1393,7 +1393,7 @@ pub const Source = struct {
 
         if (quote == '"' or quote == '\'') {
             var i: usize = 1;
-            var c: u8 = undefined;
+            var c: u8 = 0;
             while (i < text.len) {
                 c = text[i];
 

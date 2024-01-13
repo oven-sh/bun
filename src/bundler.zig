@@ -311,7 +311,7 @@ pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
-    result: options.TransformResult = undefined,
+    result: options.TransformResult,
     resolver: Resolver,
     fs: *Fs.FileSystem,
     output_files: std.ArrayList(options.OutputFile),
@@ -323,7 +323,7 @@ pub const Bundler = struct {
     source_map: options.SourceMapOption = .none,
 
     linker: Linker,
-    timer: SystemTimer = undefined,
+    timer: SystemTimer,
     env: *DotEnv.Loader,
 
     macro_context: ?js_ast.Macro.MacroContext = null,

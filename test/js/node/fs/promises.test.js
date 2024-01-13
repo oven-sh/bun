@@ -54,22 +54,22 @@ async function tmpDir() {
 }
 
 function verifyStatObject(stat) {
-  assert.strictEqual(typeof stat, "object");
-  assert.strictEqual(typeof stat.dev, "number");
-  assert.strictEqual(typeof stat.mode, "number");
+  expect(typeof stat).toBe("object");
+  expect(typeof stat.dev).toBe("number");
+  expect(typeof stat.mode).toBe("number");
 }
 
 function verifyStatFsObject(stat, isBigint = false) {
   const valueType = isBigint ? "bigint" : "number";
 
-  assert.strictEqual(typeof stat, "object");
-  assert.strictEqual(typeof stat.type, valueType);
-  assert.strictEqual(typeof stat.bsize, valueType);
-  assert.strictEqual(typeof stat.blocks, valueType);
-  assert.strictEqual(typeof stat.bfree, valueType);
-  assert.strictEqual(typeof stat.bavail, valueType);
-  assert.strictEqual(typeof stat.files, valueType);
-  assert.strictEqual(typeof stat.ffree, valueType);
+  expect(typeof stat).toBe("object");
+  expect(typeof stat.type).toBe(valueType);
+  expect(typeof stat.bsize).toBe(valueType);
+  expect(typeof stat.blocks).toBe(valueType);
+  expect(typeof stat.bfree).toBe(valueType);
+  expect(typeof stat.bavail).toBe(valueType);
+  expect(typeof stat.files).toBe(valueType);
+  expect(typeof stat.ffree).toBe(valueType);
 }
 
 //

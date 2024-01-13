@@ -979,8 +979,14 @@ pub const ArgumentsSlice = struct {
 pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
     return if (bun.FDImpl.fromJSValidated(value, ctx, exception) catch null) |fd|
         fd.encode()
-    else
-        null;
+    else if (value.isObject()) { // FileHandle
+        if (value.get(ctx, "fd")) |fd_| {
+            if (fd_.isNumber()) {
+                return fd_.asFileDescriptor();
+            }
+        }
+        return null;
+    } else null;
 }
 
 // Node.js docs:

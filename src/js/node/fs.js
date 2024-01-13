@@ -484,7 +484,7 @@ var defaultReadStreamOptions = {
   autoClose: true,
   emitClose: true,
   start: 0,
-  end: Infinity,
+  end: () => {},
   highWaterMark: 64 * 1024,
   fs: {
     read,
@@ -619,7 +619,6 @@ ReadStream = (function (InternalReadStream) {
 
       this[readStreamPathFastPathSymbol] =
         start === 0 &&
-        end === Infinity &&
         autoClose &&
         fs === defaultReadStreamOptions.fs &&
         // is it an encoding which we don't need to decode?

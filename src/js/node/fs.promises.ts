@@ -135,7 +135,7 @@ async function opendir(dir: string) {
   return new Dir(entries, dir);
 }
 
-export default {
+const real_export = {
   access: fs.access.bind(fs),
   appendFile: fs.appendFile.bind(fs),
   close: fs.close.bind(fs),
@@ -148,6 +148,7 @@ export default {
   fchown: fs.fchown.bind(fs),
   fstat: fs.fstat.bind(fs),
   fsync: fs.fsync.bind(fs),
+  fdatasync: fs.fdatasync.bind(fs),
   ftruncate: fs.ftruncate.bind(fs),
   futimes: fs.futimes.bind(fs),
   lchmod: fs.lchmod.bind(fs),
@@ -156,7 +157,10 @@ export default {
   lstat: fs.lstat.bind(fs),
   mkdir: fs.mkdir.bind(fs),
   mkdtemp: fs.mkdtemp.bind(fs),
-  open: fs.open.bind(fs),
+  open: async (path, flags, mode) => {
+    const fd = await fs.open(path, flags, mode);
+    return new FileHandle(fd);
+  },
   read: fs.read.bind(fs),
   write: fs.write.bind(fs),
   readdir: fs.readdir.bind(fs),
@@ -193,3 +197,197 @@ export default {
 
   opendir,
 };
+export default real_export;
+
+const EventEmitter = require("node:events");
+
+var PromisePrototypeThen = Promise.prototype.then;
+var PromiseResolve = Promise.resolve;
+var SafePromisePrototypeFinally = Promise.prototype.finally; //TODO
+var SymbolAsyncDispose = Symbol.asyncDispose;
+var ObjectFreeze = Object.freeze;
+
+const kFd = Symbol("kFd");
+const kRefs = Symbol("kRefs");
+const kClosePromise = Symbol("kClosePromise");
+const kCloseResolve = Symbol("kCloseResolve");
+const kCloseReject = Symbol("kCloseReject");
+const kRef = Symbol("kRef");
+const kUnref = Symbol("kUnref");
+const kTransfer = Symbol("kTransfer");
+const kTransferList = Symbol("kTransferList");
+const kDeserialize = Symbol("kDeserialize");
+const kEmptyObject = ObjectFreeze({ __proto__: null });
+
+// Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
+class FileHandle extends EventEmitter {
+  /**
+   * @param {InternalFSBinding.FileHandle | undefined} filehandle
+   */
+  constructor(fd) {
+    super();
+    const filehandle = { fd };
+    this[kFd] = filehandle ? filehandle.fd : -1;
+
+    this[kRefs] = 1;
+    this[kClosePromise] = null;
+  }
+
+  getAsyncId() {
+    throw new Error("BUN TODO FileHandle.getAsyncId");
+  }
+
+  get fd() {
+    return this[kFd];
+  }
+
+  appendFile(data, options) {
+    return fsCall(real_export.writeFile, this, data, options);
+  }
+
+  chmod(mode) {
+    return fsCall(real_export.fchmod, this, mode);
+  }
+
+  chown(uid, gid) {
+    return fsCall(real_export.fchown, this, uid, gid);
+  }
+
+  datasync() {
+    return fsCall(real_export.fdatasync, this);
+  }
+
+  sync() {
+    return fsCall(real_export.fsync, this);
+  }
+
+  read(buffer, offset, length, position) {
+    return fsCall(real_export.read, this, buffer, offset, length, position);
+  }
+
+  readv(buffers, position) {
+    return fsCall(real_export.readv, this, buffers, position);
+  }
+
+  readFile(options) {
+    return fsCall(real_export.readFile, this, options);
+  }
+
+  readLines(options = undefined) {
+    throw new Error("BUN TODO FileHandle.readLines");
+  }
+
+  stat(options) {
+    return fsCall(real_export.fstat, this, options);
+  }
+
+  truncate(len = 0) {
+    return fsCall(real_export.ftruncate, this, len);
+  }
+
+  utimes(atime, mtime) {
+    return fsCall(real_export.futimes, this, atime, mtime);
+  }
+
+  write(buffer, offset, length, position) {
+    return fsCall(real_export.write, this, buffer, offset, length, position);
+  }
+
+  writev(buffers, position) {
+    return fsCall(real_export.writev, this, buffers, position);
+  }
+
+  writeFile(data, options) {
+    return fsCall(real_export.writeFile, this, data, options);
+  }
+
+  close() {
+    if (this[kFd] === -1) {
+      return PromiseResolve();
+    }
+
+    if (this[kClosePromise]) {
+      return this[kClosePromise];
+    }
+
+    this[kRefs]--;
+    if (this[kRefs] === 0) {
+      this[kClosePromise] = SafePromisePrototypeFinally.$call(real_export.close(this[kFd]), () => {
+        this[kClosePromise] = undefined;
+      });
+    } else {
+      this[kClosePromise] = SafePromisePrototypeFinally.$call(
+        new Promise((resolve, reject) => {
+          this[kCloseResolve] = resolve;
+          this[kCloseReject] = reject;
+        }),
+        () => {
+          this[kClosePromise] = undefined;
+          this[kCloseReject] = undefined;
+          this[kCloseResolve] = undefined;
+        },
+      );
+    }
+
+    this.emit("close");
+    return this[kClosePromise];
+  }
+
+  async [SymbolAsyncDispose]() {
+    return this.close();
+  }
+
+  readableWebStream(options = kEmptyObject) {
+    throw new Error("BUN TODO FileHandle.readableWebStream");
+  }
+
+  createReadStream(options = undefined) {
+    throw new Error("BUN TODO FileHandle.createReadStream");
+  }
+
+  createWriteStream(options = undefined) {
+    throw new Error("BUN TODO FileHandle.createWriteStream");
+  }
+
+  [kTransfer]() {
+    throw new Error("BUN TODO FileHandle.kTransfer");
+  }
+
+  [kTransferList]() {
+    throw new Error("BUN TODO FileHandle.kTransferList");
+  }
+
+  [kDeserialize]({ handle }) {
+    throw new Error("BUN TODO FileHandle.kDeserialize");
+  }
+
+  [kRef]() {
+    this[kRefs]++;
+  }
+
+  [kUnref]() {
+    this[kRefs]--;
+    if (this[kRefs] === 0) {
+      PromisePrototypeThen(this.close(), this[kCloseResolve], this[kCloseReject]);
+    }
+  }
+}
+
+async function fsCall(fn, handle, ...args) {
+  $assert(handle[kRefs] !== undefined, "handle must be an instance of FileHandle");
+
+  if (handle.fd === -1) {
+    // eslint-disable-next-line no-restricted-syntax
+    const err = new Error("file closed");
+    err.code = "EBADF";
+    err.syscall = fn.name;
+    throw err;
+  }
+
+  try {
+    handle[kRef]();
+    return await fn(handle, ...args);
+  } finally {
+    handle[kUnref]();
+  }
+}

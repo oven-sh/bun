@@ -1026,6 +1026,41 @@ pub const RunCommand = struct {
 
         const passthrough = ctx.passthrough;
         const force_using_bun = ctx.debug.run_in_bun;
+        // is there a --workspace flag set?
+        if (ctx.run_options.hasWorkspace()) {
+            var manager = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
+            var load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+
+            if (load_lockfile == .not_found) {
+                var root = Lockfile.Package{};
+                try manager.lockfile.initEmpty(ctx.allocator);
+                try root.parseMain(
+                    manager.lockfile,
+                    ctx.allocator,
+                    ctx.log,
+                    package_json_source,
+                    Features.main,
+                );
+
+                _ = try manager.lockfile.appendPackage(root);
+            }
+
+            if (manager.lockfile.workspace_paths.get(bun.hash(ctx.run_options.workspace))) |path_ptr| {
+                const path = manager.lockfile.str(path_ptr);
+                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const package_json_path = Path.joinZBuf(
+                    &local_buf,
+                    &[_]string{ path, "package.json" },
+                    .auto,
+                );
+                // check if package.json exists!
+                // if it does exist, then let's set cwd
+                std.os.chdir(path) catch |err| {
+                    // print some message saying we couldn't change directory
+                    Global.crash();
+                };
+            } // else if it's not found, try the passed in directory as a package.json
+        }
 
         // This doesn't cover every case
         if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or

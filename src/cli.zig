@@ -196,6 +196,7 @@ pub const Arguments = struct {
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("-w, --workspace <STR>             Run a script from a workspace member package") catch unreachable,
     };
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -516,6 +517,10 @@ pub const Arguments = struct {
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
+
+            if (comptime cmd == .RunCommand) {
+                ctx.run_options.workspace = args.option("--workspace") orelse "";
+            }
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
@@ -1086,9 +1091,18 @@ pub const Command = struct {
         test_options: TestOptions = TestOptions{},
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
+        run_options: RunOptions = RunOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
+
+        pub const RunOptions = struct {
+            workspace: []const u8 = "",
+
+            pub fn hasWorkspace(this: *const RunOptions) bool {
+                return this.workspace.len > 0;
+            }
+        };
 
         pub const BundlerOptions = struct {
             compile: bool = false,

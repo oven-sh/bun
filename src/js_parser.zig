@@ -2472,6 +2472,7 @@ const PrependTempRefsOpts = struct {
 pub const StmtsKind = enum {
     none,
     loop_body,
+    switch_stmt,
     fn_body,
 };
 
@@ -4889,6 +4890,9 @@ fn NewParser_(
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
+        // If this is true, then all top-level statements are wrapped in a try/catch
+        will_wrap_module_in_try_catch_for_using: bool = false,
 
         /// use this instead of checking p.source.index
         /// because when not bundling, p.source.index is `0`
@@ -15322,7 +15326,8 @@ fn NewParser_(
                         }
                     },
                     .s_local => |st| {
-                        if (st.kind.isUsing()) return false;
+                        // "await" is a side effect because it affects code timing
+                        if (st.kind == .k_await_using) return false;
 
                         for (st.decls.slice()) |*decl| {
                             if (!p.bindingCanBeRemovedIfUnused(decl.binding)) {
@@ -15332,6 +15337,11 @@ fn NewParser_(
                             if (decl.value) |*decl_value| {
                                 if (!p.exprCanBeRemovedIfUnused(decl_value)) {
                                     return false;
+                                } else if (st.kind == .k_using) {
+                                    // "using" declarations are only side-effect free if they are initialized to null or undefined
+                                    if (decl_value.data != .e_null and decl_value.data != .e_undefined) {
+                                        return false;
+                                    }
                                 }
                             }
                         }
@@ -17640,12 +17650,17 @@ fn NewParser_(
         }
 
         fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
-            if (kind.isUsing()) return kind;
-
-            if (p.options.bundle and p.current_scope.parent == null) {
+            // Use "var" instead of "let" and "const" if the variable declaration may
+            // need to be separated from the initializer. This allows us to safely move
+            // this declaration into a nested scope.
+            if ((p.options.bundle or p.will_wrap_module_in_try_catch_for_using) and
+                (p.current_scope.parent == null and !kind.isUsing()))
+            {
                 return .k_var;
             }
 
+            // Optimization: use "let" instead of "const" because it's shorter. This is
+            // only done when bundling because assigning to "const" is only an error when bundling.
             if (p.options.bundle and kind == .k_const and p.options.features.minify_syntax) {
                 return .k_let;
             }
@@ -18284,7 +18299,7 @@ fn NewParser_(
                     }
 
                     switch (data.value) {
-                        .expr => |expr| {
+                        .expr => |expr| brk_expr: {
                             const was_anonymous_named_expr = expr.isAnonymousNamed();
 
                             data.value.expr = p.visitExpr(expr);
@@ -18317,6 +18332,30 @@ fn NewParser_(
                                     },
                                     else => {},
                                 }
+                            }
+
+                            // If there are lowered "using" declarations, change this into a "var"
+                            if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
+                                try stmts.ensureUnusedCapacity(2);
+
+                                const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                                decls[0] = .{
+                                    .binding = p.b(B.Identifier{ .ref = data.default_name.ref.? }, data.default_name.loc),
+                                    .value = expr,
+                                };
+                                stmts.appendAssumeCapacity(p.s(S.Local{
+                                    .decls = G.Decl.List.init(decls),
+                                }, stmt.loc));
+                                const items = p.allocator.alloc(js_ast.ClauseItem, 1) catch bun.outOfMemory();
+                                items[0] = js_ast.ClauseItem{
+                                    .alias = "default",
+                                    .alias_loc = data.default_name.loc,
+                                    .name = data.default_name,
+                                };
+                                stmts.appendAssumeCapacity(p.s(S.ExportClause{
+                                    .items = items,
+                                }, stmt.loc));
+                                break :brk_expr;
                             }
 
                             if (mark_for_replace) {
@@ -18482,6 +18521,9 @@ fn NewParser_(
                     p.popScope();
                 },
                 .s_local => |data| {
+                    // TODO: Silently remove unsupported top-level "await" in dead code branches
+                    // (this was from 'await using' syntax)
+
                     // Local statements do not end the const local prefix
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
 
@@ -18510,6 +18552,21 @@ fn NewParser_(
                         }
 
                         return;
+                    }
+
+                    // Optimization: Avoid unnecessary "using" machinery by changing ones
+                    // initialized to "null" or "undefined" into a normal variable. Note that
+                    // "await using" still needs the "await", so we can't do it for those.
+                    if (p.options.features.minify_syntax and data.kind == .k_using) {
+                        data.kind = .k_let;
+                        for (data.decls.slice()) |*d| {
+                            if (d.value) |val| {
+                                if (val.data == .e_null or val.data == .e_undefined) {
+                                    data.kind = .k_using;
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     // We must relocate vars in order to safely handle removing if/else depending on NODE_ENV.
@@ -18816,40 +18873,42 @@ fn NewParser_(
                     }
                 },
                 .s_for => |data| {
-                    {
-                        p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
+                    p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
-                        if (data.init) |initst| {
-                            data.init = p.visitForLoopInit(initst, false);
-                        }
-
-                        if (data.test_) |test_| {
-                            data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(test_));
-
-                            const result = SideEffects.toBoolean(p, data.test_.?.data);
-                            if (result.ok and result.value and result.side_effects == .no_side_effects) {
-                                data.test_ = null;
-                            }
-                        }
-
-                        if (data.update) |update| {
-                            data.update = p.visitExpr(update);
-                        }
-
-                        data.body = p.visitLoopBody(data.body);
-
-                        // Potentially relocate "var" declarations to the top level. Note that this
-                        // must be done inside the scope of the for loop or they won't be relocated.
-                        if (data.init) |init_| {
-                            if (init_.data == .s_local and init_.data.s_local.kind == .k_var) {
-                                const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls.slice(), .normal);
-                                if (relocate.stmt) |relocated| {
-                                    data.init = relocated;
-                                }
-                            }
-                        }
-                        p.popScope();
+                    if (data.init) |initst| {
+                        data.init = p.visitForLoopInit(initst, false);
                     }
+
+                    if (data.test_) |test_| {
+                        data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(test_));
+
+                        const result = SideEffects.toBoolean(p, data.test_.?.data);
+                        if (result.ok and result.value and result.side_effects == .no_side_effects) {
+                            data.test_ = null;
+                        }
+                    }
+
+                    if (data.update) |update| {
+                        data.update = p.visitExpr(update);
+                    }
+
+                    data.body = p.visitLoopBody(data.body);
+
+                    // Potentially relocate "var" declarations to the top level. Note that this
+                    // must be done inside the scope of the for loop or they won't be relocated.
+                    if (data.init) |init_| {
+                        if (init_.data == .s_local and init_.data.s_local.kind == .k_var) {
+                            const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls.slice(), .normal);
+                            if (relocate.stmt) |relocated| {
+                                data.init = relocated;
+                            }
+                        }
+                    }
+
+                    // Handle "for (using x of y)" and "for (await using x of y)"
+                    // TODO(@paperdave)!nomerge: left off here: https://github.com/evanw/esbuild/pull/3192/files#diff-e20508c4ae566a2d8a60274ff05e408d81c9758a27d84318feecdfbf9e24af5e
+
+                    p.popScope();
                 },
                 .s_for_in => |data| {
                     {
@@ -20824,7 +20883,7 @@ fn NewParser_(
         }
 
         // Try separating the list for appending, so that it's not a pointer.
-        fn visitStmts(p: *P, stmts: *ListManaged(Stmt), _: StmtsKind) anyerror!void {
+        fn visitStmts(p: *P, stmts: *ListManaged(Stmt), kind: StmtsKind) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -20832,11 +20891,10 @@ fn NewParser_(
             const initial_scope: *Scope = if (comptime Environment.allow_assert) p.current_scope else undefined;
 
             {
-
                 // Save the current control-flow liveness. This represents if we are
                 // currently inside an "if (false) { ... }" block.
                 const old_is_control_flow_dead = p.is_control_flow_dead;
-                defer p.is_control_flow_dead = old_is_control_flow_dead;
+                errdefer p.is_control_flow_dead = old_is_control_flow_dead;
 
                 var before = ListManaged(Stmt).init(p.allocator);
                 var after = ListManaged(Stmt).init(p.allocator);
@@ -21030,6 +21088,17 @@ fn NewParser_(
                     remain[0] = item;
                     remain = remain[1..];
                 }
+
+                // Restore the current control-flow liveness if it was changed inside the
+                // loop above. This is important because the caller will not restore it.
+                p.is_control_flow_dead = old_is_control_flow_dead;
+
+                // Lower using declarations
+                if (kind != .switch_stmt and p.shouldLowerUsingDeclarations(visited)) {
+                    const ctx = p.lowerUsingDeclarationsContext();
+                    ctx.scanStmts(p, visited);
+                    visited = ctx.finalize(p, visited, p.current_scope.parent == null);
+                }
             }
 
             if (comptime Environment.allow_assert)
@@ -21041,7 +21110,6 @@ fn NewParser_(
             }
 
             if (p.current_scope.parent != null and !p.current_scope.contains_direct_eval) {
-
                 // Remove inlined constants now that we know whether any of these statements
                 // contained a direct eval() or not. This can't be done earlier when we
                 // encounter the constant because we haven't encountered the eval() yet.

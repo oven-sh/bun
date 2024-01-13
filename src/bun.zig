@@ -1951,13 +1951,7 @@ pub fn serializable(input: anytype) @TypeOf(input) {
             }
         }
     }
-    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
-        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
-        for (&buf) |*ptr| {
-            ptr.* = 0;
-        }
-        break :brk buf;
-    };
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = std.mem.zeroes([@sizeOf(T)]u8);
     const result: *T = @ptrCast(&zeroed);
 
     inline for (comptime std.meta.fieldNames(T)) |field_name| {
@@ -1968,13 +1962,7 @@ pub fn serializable(input: anytype) @TypeOf(input) {
 }
 
 pub inline fn serializableInto(comptime T: type, init: anytype) T {
-    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
-        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
-        for (&buf) |*ptr| {
-            ptr.* = 0;
-        }
-        break :brk buf;
-    };
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = std.mem.zeroes([@sizeOf(T)]u8);
     const result: *T = @ptrCast(&zeroed);
 
     inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {

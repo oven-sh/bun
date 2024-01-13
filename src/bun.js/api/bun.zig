@@ -2447,15 +2447,7 @@ pub const Crypto = struct {
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
                 } else {
-                    output_digest_buf = comptime brk: {
-                        var bytes: Hasher.Digest = undefined;
-                        var i: usize = 0;
-                        while (i < Hasher.digest) {
-                            bytes[i] = 0;
-                            i += 1;
-                        }
-                        break :brk bytes;
-                    };
+                    output_digest_buf = std.mem.zeroes(Hasher.Digest);
                 }
 
                 this.hashing.final(output_digest_slice);

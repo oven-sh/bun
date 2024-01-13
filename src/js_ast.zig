@@ -7014,7 +7014,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return try switch (JSC.ZigConsoleClient.Formatter.Tag.get(value, this.global).tag) {
+                return try switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),
@@ -7043,7 +7043,7 @@ pub const Macro = struct {
             pub fn coerce(
                 this: *Run,
                 value: JSC.JSValue,
-                comptime tag: JSC.ZigConsoleClient.Formatter.Tag,
+                comptime tag: JSC.ConsoleObject.Formatter.Tag,
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
@@ -7103,7 +7103,7 @@ pub const Macro = struct {
                     .Boolean => {
                         return Expr{ .data = .{ .e_boolean = .{ .value = value.toBoolean() } }, .loc = this.caller.loc };
                     },
-                    JSC.ZigConsoleClient.Formatter.Tag.Array => {
+                    JSC.ConsoleObject.Formatter.Tag.Array => {
                         this.is_top_level = false;
 
                         const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
@@ -7155,7 +7155,7 @@ pub const Macro = struct {
                         return out;
                     },
                     // TODO: optimize this
-                    JSC.ZigConsoleClient.Formatter.Tag.Object => {
+                    JSC.ConsoleObject.Formatter.Tag.Object => {
                         this.is_top_level = false;
                         const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                         if (_entry.found_existing) {

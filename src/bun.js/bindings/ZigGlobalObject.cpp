@@ -30,7 +30,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSClassRef.h"
 #include "JavaScriptCore/JSMicrotask.h"
-#include "ZigConsoleClient.h"
+#include "ConsoleObject.h"
 // #include "JavaScriptCore/JSContextInternal.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/DeferredWorkTimer.h"
@@ -981,7 +981,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
 void GlobalObject::setConsole(void* console)
 {
-    this->setConsoleClient(new Zig::ConsoleClient(console));
+    this->setConsoleClient(new Bun::ConsoleObject(console));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,

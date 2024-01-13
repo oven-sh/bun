@@ -3808,7 +3808,7 @@ pub const JSValue = enum(JSValueReprInt) {
         const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
-        const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+        const fmt_options = JSC.ConsoleObject.FormatOptions{
             .enable_colors = false,
             .add_newline = false,
             .flush = false,
@@ -3816,7 +3816,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .quote_strings = true,
         };
 
-        JSC.ZigConsoleClient.format(
+        JSC.ConsoleObject.format(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
@@ -4737,15 +4737,15 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn toFmt(
         this: JSValue,
         global: *JSGlobalObject,
-        formatter: *Exports.ZigConsoleClient.Formatter,
-    ) Exports.ZigConsoleClient.Formatter.ZigFormatter {
+        formatter: *Exports.ConsoleObject.Formatter,
+    ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
         if (formatter.map_node) |node| {
             node.release();
             formatter.map_node = null;
         }
 
-        return Exports.ZigConsoleClient.Formatter.ZigFormatter{
+        return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
             .value = this,
             .global = global,

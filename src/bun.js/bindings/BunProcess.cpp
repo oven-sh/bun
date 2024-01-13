@@ -9,7 +9,7 @@
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
-#include "ZigConsoleClient.h"
+#include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/LazyProperty.h>
@@ -880,7 +880,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     }
 
     auto jsArgs = JSValue::encode(errorInstance);
-    Zig__ConsoleClient__messageWithTypeAndLevel(reinterpret_cast<Zig::ConsoleClient*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
+    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
         static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
     return JSValue::encode(jsUndefined());
 }

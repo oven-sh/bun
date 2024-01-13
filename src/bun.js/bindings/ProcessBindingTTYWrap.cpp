@@ -5,7 +5,7 @@
 
 #include <JavaScriptCore/ObjectConstructor.h>
 
-#include "TTYWrap.h"
+#include "ProcessBindingTTYWrap.h"
 #include "NodeTTYModule.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -130,7 +130,7 @@ JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* g
 
 extern "C" int Bun__ttySetMode(int fd, int mode);
 
-JSC_DEFINE_HOST_FUNCTION(jsTTYSeMtode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -224,7 +224,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
 
 static const HashTableValue TTYWrapPrototypeValues[] = {
     { "getWindowSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionGetWindowSize, 1 } },
-    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTTYSeMtode, 0 } },
+    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTTYSetMode, 0 } },
 };
 
 class TTYWrapPrototype final : public JSC::JSNonFinalObject {

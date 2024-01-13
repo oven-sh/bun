@@ -17,7 +17,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
 
-#include "TTYWrap.h"
+#include "ProcessBindingTTYWrap.h"
 
 #ifndef WIN32
 #include <errno.h>

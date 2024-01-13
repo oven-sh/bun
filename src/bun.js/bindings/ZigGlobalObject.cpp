@@ -242,7 +242,7 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 #include <unistd.h>
 #endif
 
-#include "TTYWrap.h"
+#include "ProcessBindingTTYWrap.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;

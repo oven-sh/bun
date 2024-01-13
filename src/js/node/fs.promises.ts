@@ -220,14 +220,9 @@ export default real_export;
 
 // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
 class FileHandle extends EventEmitter {
-  /**
-   * @param {InternalFSBinding.FileHandle | undefined} filehandle
-   */
   constructor(fd) {
     super();
-    const filehandle = { fd };
-    this[kFd] = filehandle ? filehandle.fd : -1;
-
+    this[kFd] = fd ? fd : -1;
     this[kRefs] = 1;
     this[kClosePromise] = null;
   }
@@ -241,35 +236,99 @@ class FileHandle extends EventEmitter {
   }
 
   appendFile(data, options) {
-    return fsCall(real_export.writeFile, this, data, options);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.writeFile, fd);
+
+    try {
+      this[kRef]();
+      return real_export.writeFile(fd, data, options);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   chmod(mode) {
-    return fsCall(real_export.fchmod, this, mode);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.fchmod, fd);
+
+    try {
+      this[kRef]();
+      return real_export.fchmod(fd, mode);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   chown(uid, gid) {
-    return fsCall(real_export.fchown, this, uid, gid);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.fchown, fd);
+
+    try {
+      this[kRef]();
+      return real_export.fchown(fd, uid, gid);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   datasync() {
-    return fsCall(real_export.fdatasync, this);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.fdatasync, fd);
+
+    try {
+      this[kRef]();
+      return real_export.fdatasync(fd);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   sync() {
-    return fsCall(real_export.fsync, this);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.fsync, fd);
+
+    try {
+      this[kRef]();
+      return real_export.fsync(fd);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   read(buffer, offset, length, position) {
-    return fsCall(real_export.read, this, buffer, offset, length, position);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.read, fd);
+
+    try {
+      this[kRef]();
+      return real_export.read(fd, buffer, offset, length, position);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   readv(buffers, position) {
-    return fsCall(real_export.readv, this, buffers, position);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.readv, fd);
+
+    try {
+      this[kRef]();
+      return real_export.readv(fd, buffers, position);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   readFile(options) {
-    return fsCall(real_export.readFile, this, options);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.readFile, fd);
+
+    try {
+      this[kRef]();
+      return real_export.readFile(fd, options);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   readLines(options = undefined) {
@@ -277,27 +336,75 @@ class FileHandle extends EventEmitter {
   }
 
   stat(options) {
-    return fsCall(real_export.fstat, this, options);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.fstat, fd);
+
+    try {
+      this[kRef]();
+      return real_export.fstat(fd, options);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   truncate(len = 0) {
-    return fsCall(real_export.ftruncate, this, len);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.ftruncate, fd);
+
+    try {
+      this[kRef]();
+      return real_export.ftruncate(fd, len);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   utimes(atime, mtime) {
-    return fsCall(real_export.futimes, this, atime, mtime);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.futimes, fd);
+
+    try {
+      this[kRef]();
+      return real_export.futimes(fd, atime, mtime);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   write(buffer, offset, length, position) {
-    return fsCall(real_export.write, this, buffer, offset, length, position);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.write, fd);
+
+    try {
+      this[kRef]();
+      return real_export.write(fd, buffer, offset, length, position);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   writev(buffers, position) {
-    return fsCall(real_export.writev, this, buffers, position);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.writev, fd);
+
+    try {
+      this[kRef]();
+      return real_export.writev(fd, buffers, position);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   writeFile(data, options) {
-    return fsCall(real_export.writeFile, this, data, options);
+    const fd = this[kFd];
+    throwEBADFIfNecessary(real_export.writeFile, fd);
+
+    try {
+      this[kRef]();
+      return real_export.writeFile(fd, data, options);
+    } finally {
+      this[kUnref]();
+    }
   }
 
   close() {
@@ -372,21 +479,13 @@ class FileHandle extends EventEmitter {
   }
 }
 
-async function fsCall(fn, handle, ...args) {
-  $assert(handle[kRefs] !== undefined, "handle must be an instance of FileHandle");
-
-  if (handle.fd === -1) {
+function throwEBADFIfNecessary(fn, fd) {
+  if (fd === -1) {
     // eslint-disable-next-line no-restricted-syntax
     const err = new Error("file closed");
     err.code = "EBADF";
+    err.name = "SystemError";
     err.syscall = fn.name;
     throw err;
-  }
-
-  try {
-    handle[kRef]();
-    return await fn(handle, ...args);
-  } finally {
-    handle[kUnref]();
   }
 }

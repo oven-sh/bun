@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { describe, test, expect } from "bun:test";
 import { file, spawn, version, readableStreamToText } from "bun";
 

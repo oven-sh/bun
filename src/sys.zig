@@ -430,8 +430,8 @@ pub fn openDirAtWindows(
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
-            return JSC.Maybe(bun.FileDescriptor){
-                .result = fd,
+            return .{
+                .result = bun.toFD(fd),
             };
         },
         else => |code| {

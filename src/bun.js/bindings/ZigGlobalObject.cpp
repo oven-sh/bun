@@ -242,14 +242,12 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 #include <unistd.h>
 #endif
 
+#include "ProcessBindingTTYWrap.h"
+
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-
-namespace Bun {
-extern JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-}
 
 namespace WebCore {
 class Base64Utilities {
@@ -1602,35 +1600,6 @@ JSC_DEFINE_HOST_FUNCTION(asyncHooksSetEnabled, (JSC::JSGlobalObject * globalObje
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" int Bun__ttySetMode(int fd, int mode);
-
-JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() != 2) {
-        throwTypeError(globalObject, scope, "Expected 2 arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue fd = callFrame->argument(0);
-    if (!fd.isNumber()) {
-        throwTypeError(globalObject, scope, "fd must be a number"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue mode = callFrame->argument(1);
-    if (!mode.isNumber()) {
-        throwTypeError(globalObject, scope, "mode must be a number"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd.asNumber(), mode.asNumber());
-    return JSValue::encode(jsNumber(err));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1958,15 +1927,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "tty"_s) {
-            auto* obj = constructEmptyObject(globalObject);
-
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "ttySetMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 1);
-
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, jsFunctionTty_isatty, ImplementationVisibility::Public), 1);
-
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
-
-            return JSValue::encode(obj);
+            return JSValue::encode(Bun::createBunTTYFunctions(lexicalGlobalObject));
         }
 
         if (string == "unstable_syntaxHighlight"_s) {

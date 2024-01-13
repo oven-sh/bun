@@ -35,7 +35,7 @@ test("process.binding('tty_wrap')", () => {
   const ttywrapper = new tty(0);
 
   expect(ttywrapper.getWindowSize(array)).toBeBoolean();
-  
+
   if (ttywrapper.getWindowSize(array)) {
     expect(array[0]).toBeNumber();
     expect(array[0]).toBeGreaterThanOrEqual(0);

@@ -23,20 +23,22 @@ const received = new Bun.SHA256();
 const { promise: clientPromise, resolve: clientResolve } = Promise.withResolvers();
 const { promise: serverPromise, resolve: serverResolve } = Promise.withResolvers();
 
-const server = listen({
+var server = listen({
   port: 0,
   hostname: "localhost",
   data: { sent: 0 },
   socket: {
     open(socket) {
+      console.time("send 1 GB (server)");
       socket.data.sent = socket.write(huge);
     },
-    drain(socket) {
+    async drain(socket) {
       socket.data.sent += socket.write(huge.subarray(socket.data.sent));
 
       if (socket.data.sent === huge.length) {
-        console.log("Done [server]");
-        socket.end();
+        console.timeEnd("send 1 GB (server)");
+        socket.shutdown();
+        server.stop(true);
         serverResolve();
       }
     },
@@ -49,16 +51,17 @@ const socket = await connect({
   data: { received: 0 },
   socket: {
     open(socket) {
+      console.time("recv 1 GB (client)");
       socket.data.received = 0;
     },
 
     data(socket, data) {
       socket.data.received += data.length;
-      console.log("Received", socket.data.received, "bytes");
+      console.log("Received", data.length, "bytes");
       received.update(data);
 
       if (socket.data.received === huge.length) {
-        console.log("Done [client]");
+        console.timeEnd("recv 1 GB (client)");
         socket.end();
         clientResolve();
       }

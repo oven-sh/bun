@@ -1869,11 +1869,22 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn eat_var(self: *@This()) !Token.TextRange {
             const start = self.j;
+            var i: usize = 0;
             // Eat until special character
             while (self.peek()) |result| {
+                defer i += 1;
                 const char = result.char;
                 const escaped = result.escaped;
 
+                if (i == 0) {
+                    switch (char) {
+                        '=', '0'...'9' => return .{ .start = start, .end = self.j },
+                        'a'...'z', 'A'...'Z', '_' => {},
+                        else => return .{ .start = start, .end = self.j },
+                    }
+                }
+
+                // if (char
                 switch (char) {
                     '{', '}', ';', '\'', '\"', ' ', '|', '&', '>', ',', '$' => {
                         return .{ .start = start, .end = self.j };
@@ -1884,8 +1895,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         {
                             return .{ .start = start, .end = self.j };
                         }
-                        _ = self.eat() orelse unreachable;
-                        try self.appendCharToStrPool(char);
+                        switch (char) {
+                            '0'...'9', 'a'...'z', 'A'...'Z', '_' => {
+                                _ = self.eat() orelse unreachable;
+                                try self.appendCharToStrPool(char);
+                            },
+                            else => return .{ .start = start, .end = self.j },
+                        }
                     },
                 }
             }

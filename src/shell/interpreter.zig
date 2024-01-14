@@ -289,9 +289,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return self.changeCwd(interp, self.prev_cwd);
             }
 
-            pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: [:0]const u8) Maybe(void) {
+            // pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: [:0]const u8) Maybe(void) {
+            pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
+                if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
+                    @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
+                }
+                const is_sentinel = @TypeOf(new_cwd_) == [:0]const u8;
+
                 const new_cwd: [:0]const u8 = brk: {
-                    if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
+                    if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
+                        if (is_sentinel)
+                            break :brk new_cwd_;
+                        std.mem.copyForwards(u8, ResolvePath.join_buf, new_cwd_);
+                        ResolvePath.join_buf[new_cwd_.len] = 0;
+                        break :brk ResolvePath.join_buf[0..new_cwd_.len :0];
+                    }
 
                     const existing_cwd = this.cwd;
                     const cwd_str = ResolvePath.joinZ(&[_][]const u8{
@@ -677,6 +689,22 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             _ = globalThis;
             const value = callframe.argument(0);
             this.reject = value;
+            return .undefined;
+        }
+
+        pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const value = callframe.argument(0);
+            const str = bun.String.fromJS(value, globalThis);
+
+            const slice = str.toUTF8(bun.default_allocator);
+            defer slice.deinit();
+            switch (this.root_shell.changeCwd(this, slice.sliceZ())) {
+                .err => |e| {
+                    globalThis.throwValue(e.toJSC(globalThis));
+                    return .undefined;
+                },
+                .result => {},
+            }
             return .undefined;
         }
 

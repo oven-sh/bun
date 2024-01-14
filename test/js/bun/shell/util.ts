@@ -70,9 +70,11 @@ export class TestBuilder {
     return this;
   }
 
-  error(expected?: string): this {
-    if (expected === undefined) {
+  error(expected?: string | boolean): this {
+    if (expected === undefined || expected === true) {
       this.expected_error = true;
+    } else if (expected === false) {
+      this.expected_error = false;
     } else {
       this.expected_error = expected;
     }

@@ -2525,12 +2525,10 @@ pub const VirtualMachine = struct {
         const stack = trace.frames();
         if (stack.len > 0) {
             var vm = VirtualMachine.get();
-            var i: i16 = 0;
             const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
             const dir = vm.bundler.fs.top_level_dir;
 
-            while (i < stack.len) : (i += 1) {
-                const frame = stack[@as(usize, @intCast(i))];
+            for (stack) |frame| {
                 const file_slice = frame.source_url.toUTF8(bun.default_allocator);
                 defer file_slice.deinit();
                 const func_slice = frame.function_name.toUTF8(bun.default_allocator);
@@ -2648,9 +2646,7 @@ pub const VirtualMachine = struct {
 
             if (start_index) |k| {
                 var j = k;
-                var i: usize = k;
-                while (i < frames.len) : (i += 1) {
-                    const frame = frames[i];
+                for (frames[k..]) |frame| {
                     if (frame.source_url.eqlComptime("bun:wrap") or
                         frame.function_name.eqlComptime("::bunternal::"))
                     {

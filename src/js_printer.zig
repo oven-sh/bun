@@ -153,12 +153,11 @@ fn ws(comptime str: []const u8) Whitespacer {
         pub const with = str;
 
         pub const without = brk: {
-            var buf = [_]u8{0} ** str.len;
-            var i: usize = 0;
+            var buf = std.mem.zeroes([str.len]u8);
             var buf_i: usize = 0;
-            while (i < str.len) : (i += 1) {
-                if (str[i] != ' ') {
-                    buf[buf_i] = str[i];
+            for (str) |c| {
+                if (c != ' ') {
+                    buf[buf_i] = c;
                     buf_i += 1;
                 }
             }

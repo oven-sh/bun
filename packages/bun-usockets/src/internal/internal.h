@@ -143,6 +143,7 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+  unsigned has_added_timer_to_event_loop;
 };
 
 #endif

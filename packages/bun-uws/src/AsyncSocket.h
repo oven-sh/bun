@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  * Authored by Alex Hultman, 2018-2020.
  * Intellectual property of third-party.
@@ -148,11 +150,6 @@ public:
         getLoopData()->corkedSocketIsSSL = SSL;
     }
 
-    /* Returns the corked socket or nullptr */
-    void *corkedSocket() {
-        return getLoopData()->corkedSocket;
-    }
-
     /* Returns wheter we are corked or not */
     bool isCorked() {
         return getLoopData()->corkedSocket == this;
@@ -290,7 +287,7 @@ public:
                     /* Fall through to default return */
                 } else {
                     /* Strategy differences between SSL and non-SSL regarding syscall minimizing */
-                    if constexpr (SSL) {
+                    if constexpr (false) {
                         /* Cork up as much as we can */
                         unsigned int stripped = LoopData::CORK_BUFFER_SIZE - loopData->corkOffset;
                         memcpy(loopData->corkBuffer + loopData->corkOffset, src, stripped);

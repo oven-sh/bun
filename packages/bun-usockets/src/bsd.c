@@ -434,13 +434,13 @@ int bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_mo
 #ifdef MSG_MORE
 
     // for Linux we do not want signals
-    return send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL);
+    return send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL | MSG_DONTWAIT);
 
 #else
 
     // use TCP_NOPUSH
 
-    return send(fd, buf, length, MSG_NOSIGNAL);
+    return send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
 
 #endif
 }

@@ -1387,6 +1387,13 @@ pub const Subprocess = struct {
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
         var stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{};
+        var pipes_to_close: std.ArrayListUnmanaged(bun.FileDescriptor) = .{};
+        defer {
+            for (pipes_to_close.items) |pipe_fd| {
+                _ = bun.sys.close(pipe_fd);
+            }
+            pipes_to_close.clearAndFree(bun.default_allocator);
+        }
 
         var windows_hide: if (Environment.isWindows) u1 else u0 = 0;
 
@@ -1863,6 +1870,7 @@ pub const Subprocess = struct {
                     .PROTONOSUPPORT => break :blk error.ProtocolNotSupported,
                     else => |err| break :blk std.os.unexpectedErrno(err),
                 }
+                pipes_to_close.append(bun.default_allocator, bun.toFD(fds[1])) catch |err| break :blk err;
                 actions.dup2(bun.toFD(fds[1]), bun.toFD(item.fileno)) catch |err| break :blk err;
                 actions.close(bun.toFD(fds[1])) catch |err| break :blk err;
                 item.fd = fds[0];
@@ -1915,7 +1923,14 @@ pub const Subprocess = struct {
                 });
                 return .zero;
             };
+            pipes_to_close.append(bun.default_allocator, bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
             actions.dup2(bun.toFD(fds[1]), bun.toFD(3)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            actions.close(bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            // enable non-block
+            const before = std.c.fcntl(fds[0], os.F.GETFL);
+            _ = std.c.fcntl(fds[0], os.F.SETFL, before | os.O.NONBLOCK);
+            // enable SOCK_CLOXEC
+            _ = std.c.fcntl(fds[0], os.FD_CLOEXEC);
         }
 
         env_array.append(allocator, null) catch {
@@ -1935,9 +1950,12 @@ pub const Subprocess = struct {
                 if (stdio[2].isPiped()) {
                     _ = bun.sys.close(bun.toFD(stderr_pipe[1]));
                 }
-                for (stdio_pipes.items) |item| {
-                    _ = bun.sys.close(bun.toFD(item.fd + 1));
+
+                // we always close these, but we want to close these earlier
+                for (pipes_to_close.items) |pipe_fd| {
+                    _ = bun.sys.close(pipe_fd);
                 }
+                pipes_to_close.clearAndFree(bun.default_allocator);
             }
 
             break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {

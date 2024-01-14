@@ -300,7 +300,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
                         if (is_sentinel)
                             break :brk new_cwd_;
-                        std.mem.copyForwards(u8, ResolvePath.join_buf, new_cwd_);
+                        std.mem.copyForwards(u8, &ResolvePath.join_buf, new_cwd_);
                         ResolvePath.join_buf[new_cwd_.len] = 0;
                         break :brk ResolvePath.join_buf[0..new_cwd_.len :0];
                     }
@@ -698,7 +698,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             const slice = str.toUTF8(bun.default_allocator);
             defer slice.deinit();
-            switch (this.root_shell.changeCwd(this, slice.sliceZ())) {
+            switch (this.root_shell.changeCwd(this, slice.slice())) {
                 .err => |e| {
                     globalThis.throwValue(e.toJSC(globalThis));
                     return .undefined;

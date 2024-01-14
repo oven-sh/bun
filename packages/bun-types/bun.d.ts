@@ -60,6 +60,11 @@ declare module "bun" {
 
   interface ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
+    /**
+     * Change the current working directory of the shell.
+     * @param newCwd - The new working directory
+     */
+    cwd(newCwd: string): this;
   }
 
   export interface Shell {

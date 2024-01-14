@@ -2624,6 +2624,7 @@ pub const VirtualMachine = struct {
             .{"link"},
             .{"linkAndEvaluateModule"},
             .{"moduleEvaluation"},
+            .{"asyncModuleEvaluation"},
             .{"processTicksAndRejections"},
         });
 

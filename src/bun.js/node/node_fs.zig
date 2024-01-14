@@ -5226,43 +5226,6 @@ pub const NodeFS = struct {
                 _ = bun.sys.close(fd);
         }
 
-        if (Environment.isWindows) {
-            const native_fd = bun.fdcast(fd);
-
-            var data = args.data.slice();
-
-            // "WriteFile sets this value to zero before doing any work or error checking."
-            var bytes_written: u32 = undefined;
-
-            while (data.len > 0) {
-                const adjusted_len = @min(data.len, std.math.maxInt(u32));
-                const rc = std.os.windows.kernel32.WriteFile(native_fd, data.ptr, adjusted_len, &bytes_written, null);
-                if (rc == 0) {
-                    return .{
-                        .err = Syscall.Error{
-                            .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                            .syscall = .WriteFile,
-                            .fd = fd,
-                        },
-                    };
-                }
-                data = data[bytes_written..];
-            }
-
-            const rc = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
-            if (rc == 0) {
-                return .{
-                    .err = Syscall.Error{
-                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                        .syscall = .WriteFile,
-                        .fd = fd,
-                    },
-                };
-            }
-
-            return Maybe(Return.WriteFile).success;
-        }
-
         var buf = args.data.slice();
         var written: usize = 0;
 
@@ -5298,7 +5261,7 @@ pub const NodeFS = struct {
         }
 
         while (buf.len > 0) {
-            switch (Syscall.write(fd, buf)) {
+            switch (bun.sys.write(fd, buf)) {
                 .err => |err| return .{
                     .err = err,
                 },
@@ -5312,9 +5275,22 @@ pub const NodeFS = struct {
             }
         }
 
-        // https://github.com/oven-sh/bun/issues/2931
-        if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
-            _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
+        if (Environment.isWindows) {
+            const rc = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+            if (rc == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                        .syscall = .SetEndOfFile,
+                        .fd = fd,
+                    },
+                };
+            }
+        } else {
+            // https://github.com/oven-sh/bun/issues/2931
+            if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
+                _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
+            }
         }
 
         return Maybe(Return.WriteFile).success;

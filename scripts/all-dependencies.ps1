@@ -65,9 +65,9 @@ Build-Dependency `
 Build-Dependency `
   -Script "mimalloc" `
   -Outputs @("mimalloc.lib")
-# Build-Dependency `
-#   -Script "tinycc" `
-#   -Outputs @("tcc.lib")
+Build-Dependency `
+  -Script "tinycc" `
+  -Outputs @("tcc.lib")
 Build-Dependency `
   -Script "zlib" `
   -Outputs @("zlib.lib")

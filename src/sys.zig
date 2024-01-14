@@ -132,6 +132,7 @@ pub const Tag = enum(u8) {
     GetFinalPathNameByHandle,
     CloseHandle,
     SetFilePointerEx,
+    SetEndOfFile,
 
     pub fn isWindows(this: Tag) bool {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
@@ -681,6 +682,7 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
 pub const max_count = switch (builtin.os.tag) {
     .linux => 0x7ffff000,
     .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
+    .windows => std.math.maxInt(u32),
     else => std.math.maxInt(isize),
 };
 
@@ -696,7 +698,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 return err;
             }
 
-            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+            return Maybe(usize){ .result = @intCast(rc) };
         },
         .linux => {
             while (true) {
@@ -708,10 +710,31 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                     return err;
                 }
 
-                return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+                return Maybe(usize){ .result = @intCast(rc) };
             }
         },
-        .windows => sys_uv.write(fd, bytes),
+        .windows => {
+            // "WriteFile sets this value to zero before doing any work or error checking."
+            var bytes_written: u32 = undefined;
+            std.debug.assert(bytes.len > 0);
+            const rc = std.os.windows.kernel32.WriteFile(
+                bun.fdcast(fd),
+                bytes.ptr,
+                adjusted_len,
+                &bytes_written,
+                null,
+            );
+            if (rc == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .WriteFile,
+                        .fd = fd,
+                    },
+                };
+            }
+            return Maybe(usize){ .result = bytes_written };
+        },
         else => @compileError("Not implemented yet"),
     };
 }

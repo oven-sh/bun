@@ -354,7 +354,7 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i6
     }
 
     if (rc.errno()) |errno| {
-        return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .read } };
+        return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .write } };
     } else {
         return .{ .result = @as(usize, @intCast(rc.value)) };
     }

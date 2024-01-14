@@ -143,7 +143,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
 
-    JSMap* esmRegistry;
+    JSMap* esmRegistry = nullptr;
 
     if (auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s))) {
         if (auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s))) {
@@ -287,7 +287,6 @@ extern "C" JSC::EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* glo
 extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     JSC::VM& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callframe->argumentCount() < 1) {
         JSC::throwTypeError(globalObject, throwScope, "plugin needs at least one argument (an object)"_s);
@@ -309,20 +308,14 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
     if (JSValue targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s))) {
         if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
             auto targetString = targetJSString->value(globalObject);
-            if (targetString == "node"_s) {
-                target = BunPluginTargetNode;
-            } else if (targetString == "bun"_s) {
-                target = BunPluginTargetBun;
-            } else if (targetString == "browser"_s) {
-                target = BunPluginTargetBrowser;
-            } else {
+            if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
                 return JSValue::encode(jsUndefined());
             }
         }
     }
 
-    JSFunction* setupFunction = jsCast<JSFunction*>(setupFunctionValue);
+    // JSFunction* setupFunction = jsCast<JSFunction*>(setupFunctionValue);
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
     builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);

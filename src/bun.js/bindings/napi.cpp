@@ -189,17 +189,17 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 static uint32_t getPropertyAttributes(napi_property_attributes attributes)
 {
     uint32_t result = 0;
-    if (!(attributes & napi_key_configurable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
 
-    if (!(attributes & napi_key_enumerable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_enumerable))) {
         result |= JSC::PropertyAttribute::DontEnum;
     }
 
-    if (!(attributes & napi_key_writable)) {
-        // result |= JSC::PropertyAttribute::ReadOnly;
-    }
+    // if (!(attributes & napi_key_writable)) {
+    //     // result |= JSC::PropertyAttribute::ReadOnly;
+    // }
 
     return result;
 }
@@ -889,8 +889,6 @@ extern "C" napi_status napi_wrap(napi_env env,
         return napi_invalid_arg;
     }
 
-    auto clientData = WebCore::clientData(vm);
-
     auto* ref = new NapiRef(globalObject, 0);
     ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
 
@@ -961,7 +959,6 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     if (!value.isObject()) {
         return NAPI_OBJECT_EXPECTED;
     }
-    auto* globalObject = toJS(env);
 
     NapiRef* ref = nullptr;
     if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
@@ -1014,7 +1011,6 @@ extern "C" napi_status napi_get_cb_info(
 {
     NAPI_PREMABLE
 
-    Zig::GlobalObject* globalObject = toJS(env);
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
 
     if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
@@ -1576,13 +1572,19 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSC::EncodedJSValue encodedCode = reinterpret_cast<JSC::EncodedJSValue>(code);
-    JSC::JSValue codeValue = JSC::JSValue::decode(encodedCode);
-
-    JSC::EncodedJSValue encodedMessage = reinterpret_cast<JSC::EncodedJSValue>(msg);
-    JSC::JSValue messageValue = JSC::JSValue::decode(encodedMessage);
+    JSC::JSValue codeValue = toJS(code);
+    JSC::JSValue messageValue = toJS(msg);
 
     auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
+
+    if (!codeValue.isEmpty() && !codeValue.isUndefined()) {
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+    }
+
+    if (!messageValue.isEmpty() && !messageValue.isUndefined()) {
+        error->putDirect(vm, vm.propertyNames->message, messageValue, 0);
+    }
+
     *result = reinterpret_cast<napi_value>(error);
     return napi_ok;
 }
@@ -1678,7 +1680,6 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     RETURN_IF_EXCEPTION(scope, {});
     callFrame->setThisValue(subclass);
 
-    size_t count = callFrame->argumentCount();
     MarkedArgumentBufferWithSize<12> args;
     size_t argc = callFrame->argumentCount() + 1;
     args.fill(vm, argc, [&](auto* slot) {
@@ -1687,7 +1688,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     NAPICallFrame frame(JSC::ArgList(args), nullptr);
     frame.newTarget = newTarget;
 
-    auto result = napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
+    napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(frame.thisValue()));
 }
@@ -1723,8 +1724,6 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned le
     size_t prototypePropertyCount = 2;
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
-
-    auto clientData = WebCore::clientData(vm);
 
     for (size_t i = 0; i < property_count; i++) {
         const napi_property_descriptor& property = properties[i];
@@ -2228,8 +2227,6 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     uint64_t* words)
 {
     NAPI_PREMABLE
-
-    Zig::GlobalObject* globalObject = toJS(env);
 
     JSC::JSValue jsValue = toJS(value);
     if (UNLIKELY(!jsValue.isBigInt()))

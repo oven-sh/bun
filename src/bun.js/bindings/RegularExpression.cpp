@@ -10,7 +10,9 @@ extern "C" RegularExpression* Yarr__RegularExpression__init(BunString pattern, u
 {
     // TODO: Remove this, we technically are accessing options before we finalize them.
     // This means you cannot use BUN_JSC_dumpCompiledRegExpPatterns on the flag passed to `bun test -t`
-    Options::AllowUnfinalizedAccessScope scope;
+    // NOLINTBEGIN
+    Options::AllowUnfinalizedAccessScope scope {};
+    // NOLINTEND
     return new RegularExpression(pattern.toWTFString(BunString::ZeroCopy), OptionSet<Flags>(static_cast<Flags>(flags)));
 }
 extern "C" void Yarr__RegularExpression__deinit(RegularExpression* re)

@@ -18,6 +18,7 @@ namespace Zig {
 
 #include "headers-handwritten.h"
 
+// NOLINTBEGIN
 template<class CppType, typename ZigType> class Wrap {
 public:
     Wrap() {};
@@ -52,6 +53,7 @@ public:
 
     static CppType* unwrap(ZigType* obj) { return static_cast<CppType*>(static_cast<void*>(obj)); }
 };
+// NOLINTEND
 
 template<class To, class From> To cast(From v)
 {

@@ -710,7 +710,7 @@ pub const Parser = struct {
                 }
 
                 const redirect_file = try self.parse_atom() orelse {
-                    try self.add_error("redirection with no file", .{});
+                    try self.add_error("Redirection with no file", .{});
                     return ParseError.Expected;
                 };
                 break :redirect_file .{ .atom = redirect_file };
@@ -1033,6 +1033,27 @@ pub const Parser = struct {
 
     fn prev(self: *Parser) Token {
         return self.tokens[self.current - 1];
+    }
+
+    pub fn combineErrors(self: *Parser) []const u8 {
+        const errors = self.errors.items[0..];
+        const str = str: {
+            const size = size: {
+                var i: usize = 0;
+                for (errors) |e| {
+                    i += e.msg.len;
+                }
+                break :size i;
+            };
+            var buf = self.alloc.alloc(u8, size) catch bun.outOfMemory();
+            var i: usize = 0;
+            for (errors) |e| {
+                @memcpy(buf[i .. i + e.msg.len], e.msg);
+                i += e.msg.len;
+            }
+            break :str buf;
+        };
+        return str;
     }
 
     fn add_error(self: *Parser, comptime fmt: []const u8, args: anytype) !void {

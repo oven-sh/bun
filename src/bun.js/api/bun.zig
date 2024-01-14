@@ -387,7 +387,7 @@ pub fn shellParse(
         return JSC.JSValue.jsUndefined();
     };
 
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
@@ -405,40 +405,25 @@ pub fn shellParse(
         return .undefined;
     }
 
-    const lex_result = brk: {
-        if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
-            lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
-            };
-            break :brk lexer.get_result();
-        }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
-        lexer.lex() catch |err| {
-            globalThis.throwError(err, "failed to lex shell");
-            return JSValue.undefined;
-        };
-        break :brk lexer.get_result();
-    };
+    var out_parser: ?bun.shell.Parser = null;
+    var out_lex_result: ?bun.shell.LexResult = null;
 
-    if (lex_result.errors.len > 0) {
-        const str = lex_result.combineErrors(arena.allocator());
-        globalThis.throwPretty("{s}", .{str});
+    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], &out_parser, &out_lex_result) catch |err| {
+        if (err == bun.shell.ParseError.Lex) {
+            std.debug.assert(out_lex_result != null);
+            const str = out_lex_result.?.combineErrors(arena.allocator());
+            globalThis.throwPretty("{s}", .{str});
+            return .undefined;
+        }
+
+        if (out_parser) |*p| {
+            const errstr = p.combineErrors();
+            globalThis.throwPretty("{s}", .{errstr});
+            return .undefined;
+        }
+
+        globalThis.throwError(err, "failed to lex/parse shell");
         return .undefined;
-    }
-
-    var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
-        globalThis.throwError(err, "failed to create shell parser");
-        return JSValue.undefined;
-    };
-
-    const script_ast = parser.parse() catch |err| {
-        for (parser.errors.items[0..]) |parse_err| {
-            std.debug.print("Errors: {s}\n", .{parse_err.msg});
-        }
-        globalThis.throwError(err, "failed to parse shell");
-        return JSValue.undefined;
     };
 
     const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {

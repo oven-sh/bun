@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { redirect } from "./util";
+import { TestBuilder, redirect } from "./util";
 
 const BUN = process.argv0;
 
@@ -324,49 +324,58 @@ describe("parse shell", () => {
                   {
                     "simple": {
                       "cmd_subst": {
-                        "stmts": [
-                          {
-                            "exprs": [
-                              {
-                                "cmd": {
-                                  "assigns": [],
-                                  "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "1" } }],
-                                  "redirect": {
-                                    "stdin": false,
-                                    "stdout": false,
-                                    "stderr": false,
-                                    "append": false,
-                                    "__unused": 0,
+                        "script": {
+                          "stmts": [
+                            {
+                              "exprs": [
+                                {
+                                  "cmd": {
+                                    "assigns": [],
+                                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "1" } }],
+                                    "redirect": {
+                                      "stdin": false,
+                                      "stdout": false,
+                                      "stderr": false,
+                                      "append": false,
+                                      "__unused": 0,
+                                    },
+                                    "redirect_file": null,
                                   },
-                                  "redirect_file": null,
                                 },
-                              },
-                            ],
-                          },
-                          {
-                            "exprs": [
-                              {
-                                "cmd": {
-                                  "assigns": [],
-                                  "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "2" } }],
-                                  "redirect": {
-                                    "stdin": false,
-                                    "stdout": false,
-                                    "stderr": false,
-                                    "append": false,
-                                    "__unused": 0,
+                              ],
+                            },
+                            {
+                              "exprs": [
+                                {
+                                  "cmd": {
+                                    "assigns": [],
+                                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "2" } }],
+                                    "redirect": {
+                                      "stdin": false,
+                                      "stdout": false,
+                                      "stderr": false,
+                                      "append": false,
+                                      "__unused": 0,
+                                    },
+                                    "redirect_file": null,
                                   },
-                                  "redirect_file": null,
                                 },
-                              },
-                            ],
-                          },
-                        ],
+                              ],
+                            },
+                          ],
+                        },
+                        "quoted": true,
                       },
                     },
                   },
                 ],
-                "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                "redirect": {
+                  "stdin": false,
+                  "stdout": false,
+                  "stderr": false,
+                  "append": false,
+                  "__unused": 0,
+                },
                 "redirect_file": null,
               },
             },
@@ -393,31 +402,34 @@ describe("parse shell", () => {
                     {
                       "simple": {
                         "cmd_subst": {
-                          "stmts": [
-                            {
-                              "exprs": [
-                                {
-                                  "cmd": {
-                                    "assigns": [
-                                      {
-                                        "label": "FOO",
-                                        "value": { "simple": { "Text": "bar" } },
+                          "script": {
+                            "stmts": [
+                              {
+                                "exprs": [
+                                  {
+                                    "cmd": {
+                                      "assigns": [
+                                        {
+                                          "label": "FOO",
+                                          "value": { "simple": { "Text": "bar" } },
+                                        },
+                                      ],
+                                      "name_and_args": [{ "simple": { "Var": "FOO" } }],
+                                      "redirect": {
+                                        "stdin": false,
+                                        "stdout": false,
+                                        "stderr": false,
+                                        "append": false,
+                                        "__unused": 0,
                                       },
-                                    ],
-                                    "name_and_args": [{ "simple": { "Var": "FOO" } }],
-                                    "redirect": {
-                                      "stdin": false,
-                                      "stdout": false,
-                                      "stderr": false,
-                                      "append": false,
-                                      "__unused": 0,
+                                      "redirect_file": null,
                                     },
-                                    "redirect_file": null,
                                   },
-                                },
-                              ],
-                            },
-                          ],
+                                ],
+                              },
+                            ],
+                          },
+                          "quoted": false,
                         },
                       },
                     },
@@ -441,27 +453,56 @@ describe("parse shell", () => {
     });
 
     test("cmd edgecase", () => {
-      const result = $.parse`FOO=bar BAR=baz; BUN_DEBUG_QUIET_LOGS=1 echo`;
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "assign": [
+                  { "label": "FOO", "value": { "simple": { "Text": "bar" } } },
+                  { "label": "BAR", "value": { "simple": { "Text": "baz" } } },
+                ],
+              },
+              {
+                "cmd": {
+                  "assigns": [
+                    {
+                      "label": "BUN_DEBUG_QUIET_LOGS",
+                      "value": { "simple": { "Text": "1" } },
+                    },
+                  ],
+                  "name_and_args": [{ "simple": { "Text": "echo" } }],
+                  "redirect": {
+                    "stdin": false,
+                    "stdout": false,
+                    "stderr": false,
+                    "append": false,
+                    "__unused": 0,
+                  },
+                  "redirect_file": null,
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const result = JSON.parse($.parse`FOO=bar BAR=baz; BUN_DEBUG_QUIET_LOGS=1 echo`);
+      expect(result).toEqual(expected);
     });
   });
 });
 
 describe("parse shell invalid input", () => {
-  function run(cb: Function): Error | undefined {
-    try {
-      cb();
-    } catch (err) {
-      return err as Error;
-    }
-    return undefined;
-  }
+  test("invalid js obj", async () => {
+    const file = new Uint8Array(420);
+    await TestBuilder.command`${file} | cat`.error("expected a command or assignment").run();
+  });
 
-  test("invalid js obj", () => {
-    const error = run(() => {
-      const file = new Uint8Array(1 << 20);
-      const result = $.parse`${file} | cat`;
-    });
+  test("subshell", async () => {
+    await TestBuilder.command`echo (echo foo && echo hi)`
+      .error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.")
+      .run();
 
-    expect(error).toBeDefined();
+    await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
   });
 });

@@ -406,22 +406,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return null;
                 }
 
-                if (parser) |p| {
-                    var error_string = std.ArrayList(u8).init(globalThis.bunVM().allocator);
-                    const last = error_string.items.len -| 1;
-                    for (p.errors.items, 0..) |parser_err, i| {
-                        error_string.appendSlice(parser_err.msg) catch bun.outOfMemory();
-                        if (i != last) {
-                            error_string.append('\n') catch bun.outOfMemory();
-                        }
-                    }
-                    var str = JSC.ZigString.init(error_string.items[0..]);
-                    str.markUTF8();
-                    const err_value = str.toErrorInstance(globalThis);
-                    globalThis.vm().throwError(globalThis, err_value);
-                    globalThis.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+                if (parser) |*p| {
+                    const errstr = p.combineErrors();
+                    globalThis.throwPretty("{s}", .{errstr});
                     return null;
                 }
+
                 globalThis.throwError(err, "failed to lex/parse shell");
                 return null;
             };

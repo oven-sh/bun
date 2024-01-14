@@ -2620,6 +2620,14 @@ pub const VirtualMachine = struct {
             }
         }
 
+        const NoisyBuiltinFunctionMap = bun.ComptimeStringMap(void, .{
+            .{"asyncModuleEvaluation"},
+            .{"link"},
+            .{"linkAndEvaluateModule"},
+            .{"moduleEvaluation"},
+            .{"processTicksAndRejections"},
+        });
+
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
@@ -2632,7 +2640,7 @@ pub const VirtualMachine = struct {
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation")) {
+                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                     start_index = 0;
                     break;
                 }
@@ -2650,8 +2658,9 @@ pub const VirtualMachine = struct {
                     }
 
                     // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                    if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation"))
+                    if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                         continue;
+                    }
 
                     frames[j] = frame;
                     j += 1;
@@ -2666,7 +2675,11 @@ pub const VirtualMachine = struct {
         var top = &frames[0];
         if (this.hide_bun_stackframes) {
             for (frames) |*frame| {
-                if (frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:") or frame.source_url.isEmpty()) {
+                if (frame.source_url.hasPrefixComptime("bun:") or
+                    frame.source_url.hasPrefixComptime("node:") or
+                    frame.source_url.isEmpty() or
+                    frame.source_url.eqlComptime("native"))
+                {
                     continue;
                 }
 

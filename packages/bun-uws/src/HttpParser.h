@@ -46,7 +46,7 @@ namespace uWS
         friend struct HttpParser;
 
     private:
-        const static int MAX_HEADERS = 50;
+        const static int MAX_HEADERS = 256;
         struct Header
         {
             std::string_view key, value;

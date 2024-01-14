@@ -282,9 +282,8 @@ pub fn flushCSSImports() void {
 }
 
 pub fn getCSSImports() []ZigString {
-    var i: u16 = 0;
     const tail = css_imports_list_tail;
-    while (i < tail) : (i += 1) {
+    for (0..tail) |i| {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
@@ -3269,11 +3268,8 @@ pub const Timer = struct {
                         } else {
                             args = args_buf[0..count];
                         }
-                        var arg = args.ptr;
-                        var i: u32 = 0;
-                        while (i < count) : (i += 1) {
-                            arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
-                            arg += 1;
+                        for (args, 0..) |*arg, i| {
+                            arg.* = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
                         }
                     }
                 }

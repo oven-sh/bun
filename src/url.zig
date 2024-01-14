@@ -322,9 +322,8 @@ pub const URL = struct {
     }
 
     pub fn parseProtocol(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
         if (str.len < "://".len) return null;
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 '/', '?', '%' => {
                     return null;
@@ -332,7 +331,7 @@ pub const URL = struct {
                 ':' => {
                     if (i + 3 <= str.len and str[i + 1] == '/' and str[i + 2] == '/') {
                         url.protocol = str[0..i];
-                        return i + 3;
+                        return @intCast(i + 3);
                     }
                 },
                 else => {},
@@ -343,19 +342,16 @@ pub const URL = struct {
     }
 
     pub fn parseUsername(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
-
         // reset it
         url.username = "";
 
         if (str.len < "@".len) return null;
-
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 ':', '@' => {
                     // we found a username, everything before this point in the slice is a username
                     url.username = str[0..i];
-                    return i + 1;
+                    return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no username
                 '?', '/' => {
@@ -368,20 +364,17 @@ pub const URL = struct {
     }
 
     pub fn parsePassword(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
-
         // reset it
         url.password = "";
 
         if (str.len < "@".len) return null;
-
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
                     if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
-                    return i + 1;
+                    return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no password
                 '?', '/' => {

@@ -1030,9 +1030,7 @@ pub const ImportScanner = struct {
                         if (st.items.len > 0) {
                             found_imports = true;
                             var items_end: usize = 0;
-                            var i: usize = 0;
-                            while (i < st.items.len) : (i += 1) {
-                                const item = st.items[i];
+                            for (st.items) |item| {
                                 const ref = item.name.ref.?;
                                 const symbol: Symbol = p.symbols.items[ref.innerIndex()];
 
@@ -8724,11 +8722,10 @@ fn NewParser_(
                     item_refs.putAssumeCapacity(name, name_loc.*);
                 }
             }
-            var i: usize = 0;
             var end: usize = 0;
 
-            while (i < stmt.items.len) : (i += 1) {
-                var item: js_ast.ClauseItem = stmt.items[i];
+            for (stmt.items) |item_| {
+                var item = item_;
                 const name = p.loadNameFromRef(item.name.ref orelse unreachable);
                 const ref = try p.declareSymbol(.import, item.name.loc, name);
                 item.name.ref = ref;
@@ -18820,9 +18817,7 @@ fn NewParser_(
                         const old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
                         p.fn_or_arrow_data_visit.is_inside_switch = true;
                         defer p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_Swsitch;
-                        var i: usize = 0;
-                        while (i < data.cases.len) : (i += 1) {
-                            const case = data.cases[i];
+                        for (data.cases, 0..) |case, i| {
                             if (case.value) |val| {
                                 data.cases[i].value = p.visitExpr(val);
                                 // TODO: error messages
@@ -20448,11 +20443,8 @@ fn NewParser_(
                     p.enclosing_class_keyword = old_enclosing_class_keyword;
                 }
 
-                var i: usize = 0;
                 var constructor_function: ?*E.Function = null;
-                while (i < class.properties.len) : (i += 1) {
-                    var property = &class.properties[i];
-
+                for (class.properties) |*property| {
                     if (property.kind == .class_static_block) {
                         const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
                         const old_fn_only_data = p.fn_only_data_visit;
@@ -20488,7 +20480,7 @@ fn NewParser_(
                     if (is_private) {
                         p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
                     } else if (property.key) |key| {
-                        class.properties[i].key = p.visitExpr(key);
+                        property.key = p.visitExpr(key);
                     }
 
                     // Make it an error to use "arguments" in a class body

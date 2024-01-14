@@ -1014,12 +1014,10 @@ pub fn HexIntFormatter(comptime Int: type, comptime lower: bool) type {
 
         fn getOutBuf(value: Int) BufType {
             var buf: BufType = undefined;
-            comptime var i: usize = 0;
-            inline while (i < buf.len) : (i += 1) {
+            inline for (&buf, 0..) |*c, i| {
                 // value relative to the current nibble
-                buf[i] = table[@as(u8, @as(u4, @truncate(value >> comptime ((buf.len - i - 1) * 4)))) & 0xF];
+                c.* = table[@as(u8, @as(u4, @truncate(value >> comptime ((buf.len - i - 1) * 4)))) & 0xF];
             }
-
             return buf;
         }
 

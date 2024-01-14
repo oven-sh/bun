@@ -309,8 +309,7 @@ fn NewLexer_(
             defer it.current = original_i;
 
             var end_ix = original_i;
-            var found: usize = 0;
-            while (found < n) : (found += 1) {
+            for (0..n) |_| {
                 const next_codepoint = it.nextCodepointSlice();
                 if (next_codepoint.len == 0) break;
                 end_ix += next_codepoint.len;

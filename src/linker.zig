@@ -197,20 +197,16 @@ pub const Linker = struct {
 
         const is_deferred = result.pending_imports.len > 0;
 
-        var import_records = result.ast.import_records.listManaged(linker.allocator);
+        const import_records = result.ast.import_records.listManaged(linker.allocator);
         defer {
             result.ast.import_records = ImportRecord.List.fromList(import_records);
         }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
-                var record_i: u32 = 0;
-                const record_count = @as(u32, @truncate(import_records.items.len));
-
-                while (record_i < record_count) : (record_i += 1) {
-                    var import_record = &import_records.items[record_i];
+                for (import_records.items, 0..) |*import_record, record_i| {
                     if (import_record.is_unused or
-                        (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
+                        (is_bun and is_deferred and !result.isPendingImport(@intCast(record_i)))) continue;
 
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {
@@ -228,7 +224,7 @@ pub const Linker = struct {
                                 );
                             }
 
-                            result.ast.runtime_import_record_id = record_index;
+                            result.ast.runtime_import_record_id = @intCast(record_index);
                             result.ast.needs_runtime = true;
                             continue;
                         }
@@ -240,7 +236,7 @@ pub const Linker = struct {
                             import_record.tag = replacement.tag;
                             import_record.is_external_without_side_effects = true;
                             if (replacement.tag != .none) {
-                                externals.append(record_index) catch unreachable;
+                                externals.append(@intCast(record_index)) catch unreachable;
                                 continue;
                             }
                         }

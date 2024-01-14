@@ -799,14 +799,7 @@ pub const Log = struct {
             var string_builder = StringBuilder{};
             var notes_count: usize = 0;
             {
-                var i: usize = 0;
-                var j: usize = other.msgs.items.len - self.msgs.items.len;
-
-                while (i < self.msgs.items.len) : ({
-                    i += 1;
-                    j += 1;
-                }) {
-                    const msg: Msg = self.msgs.items[i];
+                for (self.msgs.items) |msg| {
                     msg.count(&string_builder);
 
                     if (msg.notes) |notes| {
@@ -820,14 +813,7 @@ pub const Log = struct {
             var note_i: usize = 0;
 
             {
-                var i: usize = 0;
-                var j: usize = other.msgs.items.len - self.msgs.items.len;
-
-                while (i < self.msgs.items.len) : ({
-                    i += 1;
-                    j += 1;
-                }) {
-                    const msg: Msg = self.msgs.items[i];
+                for (self.msgs.items, (other.msgs.items.len - self.msgs.items.len)..) |msg, j| {
                     other.msgs.items[j] = msg.cloneWithBuilder(notes_buf[note_i..], &string_builder);
                     note_i += (msg.notes orelse &[_]Data{}).len;
                 }

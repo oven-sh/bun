@@ -529,8 +529,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
     const iter = CodepointIterator.init(pattern);
     var cursor = CodepointIterator.Cursor{};
-    var i: u32 = 0;
-    while (iter.next(&cursor)) : (i += 1) {
+    while (iter.next(&cursor)) {
         try codepoints.append(@intCast(cursor.c));
     }
 }

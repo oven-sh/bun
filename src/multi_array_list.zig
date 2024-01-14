@@ -653,8 +653,7 @@ test "basic usage" {
     try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
 
     // Add 6 more things to force a capacity increase.
-    var i: usize = 0;
-    while (i < 6) : (i += 1) {
+    for (0..6) |i| {
         try list.append(ally, .{
             .a = @as(u32, @intCast(4 + i)),
             .b = "whatever",

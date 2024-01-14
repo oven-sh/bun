@@ -169,14 +169,11 @@ fn arePartsEqual(a: []const string, b: []const string) bool {
     if (a.len != b.len) {
         return false;
     }
-
-    var i: usize = 0;
-    while (i < a.len) : (i += 1) {
+    for (0..a.len) |i| {
         if (!strings.eql(a[i], b[i])) {
             return false;
         }
     }
-
     return true;
 }
 

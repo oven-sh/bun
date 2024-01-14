@@ -5950,10 +5950,8 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         }
 
         pub fn hasLongNames(self: *Self) bool {
-            var i = self.i;
-            const len = self.len;
             var estimated_length: usize = 0;
-            while (i < len) : (i += 1) {
+            for (self.i..self.len) |i| {
                 estimated_length += JSC.C.JSStringGetLength(JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, i));
                 if (estimated_length > 14) return true;
             }

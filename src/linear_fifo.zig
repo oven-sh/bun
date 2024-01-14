@@ -418,8 +418,7 @@ test "LinearFifo(u8, .Dynamic)" {
     try testing.expectEqualSlices(u8, "HELLO", fifo.readableSlice(0));
 
     {
-        var i: usize = 0;
-        while (i < 5) : (i += 1) {
+        for (0..5) |i| {
             try fifo.write(&[_]u8{fifo.peekItem(i)});
         }
         try testing.expectEqual(@as(usize, 10), fifo.readableLength());
@@ -452,8 +451,7 @@ test "LinearFifo(u8, .Dynamic)" {
     {
         const buf = try fifo.writableWithSize(12);
         try testing.expectEqual(@as(usize, 12), buf.len);
-        var i: u8 = 0;
-        while (i < 10) : (i += 1) {
+        for (0..10) |i| {
             buf[i] = i + 'a';
         }
         fifo.update(10);

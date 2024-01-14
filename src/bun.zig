@@ -304,10 +304,8 @@ pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @Ty
 pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usize {
     return comptime brk: {
         var slice: [max - min]usize = undefined;
-        var i: usize = min;
-        while (i < max) {
+        for (min..max) |i| {
             slice[i - min] = i;
-            i += 1;
         }
         break :brk slice;
     };

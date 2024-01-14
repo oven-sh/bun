@@ -468,25 +468,24 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
 
     // subdir
-    let tempdir = tempDirWithFiles("temp-redirectsflkjsdf", {});
-    await TestBuilder.command`mkdir ${tempdir}/subdir && cd ${tempdir}/subdir && echo 1 2 3 > test.txt`
-      .fileEquals(`${tempdir}/subdir/test.txt`, "1 2 3\n")
+    await TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`
+      .fileEquals(`subdir/test.txt`, "1 2 3\n")
       .run();
 
     // absolute path
     await TestBuilder.command`echo 1 2 3 > "$PWD/test.txt"`.fileEquals("test.txt", "1 2 3\n").run();
 
     // stdout
-    // await TestBuilder.command`deno eval 'console.log(1); console.error(5)' 1> test.txt`
-    //   .stderr("5\n")
-    //   .fileEquals("test.txt", "1\n")
-    //   .run();
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(5)' 1> test.txt`
+      .stderr("5\n")
+      .fileEquals("test.txt", "1\n")
+      .run();
 
     // stderr
-    // await TestBuilder.command`deno eval 'console.log(1); console.error(5)' 2> test.txt`
-    //   .stdout("1\n")
-    //   .fileEquals("test.txt", "5\n")
-    //   .run();
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(5)' 2> test.txt`
+      .stdout("1\n")
+      .fileEquals("test.txt", "5\n")
+      .run();
 
     // invalid fd
     // await TestBuilder.command`echo 2 3> test.txt`
@@ -496,15 +495,17 @@ describe("deno_task", () => {
     //   .run();
 
     // /dev/null
-    // await TestBuilder.command`deno eval 'console.log(1); console.error(5)' 2> /dev/null`.stdout("1\n").run();
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(5)' 2> /dev/null`
+      .stdout("1\n")
+      .run();
 
     // appending
-    // await TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`.fileEquals("test.txt", "1\n2\n").run();
+    await TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`.fileEquals("test.txt", "1\n2\n").run();
 
     // &> and &>> redirect
-    // await TestBuilder.command`deno eval 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && deno eval 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
-    //   .fileEquals("file.txt", "1\n23\n456\n789\n")
-    //   .run();
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
+      .fileEquals("file.txt", "1\n23\n456\n789\n")
+      .run();
 
     // multiple arguments after re-direct
     // await TestBuilder.command`export TwoArgs=testing\\ this && echo 1 > $TwoArgs`
@@ -515,10 +516,10 @@ describe("deno_task", () => {
     //   .run();
 
     // zero arguments after re-direct
-    // await TestBuilder.command`echo 1 > $EMPTY`
-    //   .stderr("redirect path must be 1 argument, but found 0\n")
-    //   .exitCode(1)
-    //   .run();
+    await TestBuilder.command`echo 1 > $EMPTY`
+      .stderr("redirect path must be 1 argument, but found 0\n")
+      .exitCode(1)
+      .run();
   });
 });
 

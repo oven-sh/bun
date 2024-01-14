@@ -449,10 +449,10 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
 
     // Avoid the system call overhead of re-adding this timer to the event loop only to receive EEXIST
     if (internal_cb->loop->data.sweep_timer == t) {
-        if (t->has_added_timer_to_event_loop) {
+        if (internal_cb->has_added_timer_to_event_loop) {
             return;
         }
-        t->has_added_timer_to_event_loop = 1;
+        internal_cb->has_added_timer_to_event_loop = 1;
     }
     us_poll_start((struct us_poll_t *) t, internal_cb->loop, LIBUS_SOCKET_READABLE);
 }

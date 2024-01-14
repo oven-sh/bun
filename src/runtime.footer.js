@@ -23,7 +23,3 @@ export var __legacyDecorateParamTS = BUN_RUNTIME.__legacyDecorateParamTS;
 export var __legacyMetadataTS = BUN_RUNTIME.__legacyMetadataTS;
 export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace = BUN_RUNTIME.__internalIsCommonJSNamespace;
-
-globalThis.__internalIsCommonJSNamespace ||= __internalIsCommonJSNamespace;
-globalThis.require ||= BUN_RUNTIME.__require;
-globalThis.self ||= globalThis;

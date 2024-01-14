@@ -1596,6 +1596,9 @@ const StaticSymbolName = struct {
         pub const delegateEvents = NewStaticSymbol("delegateEvents");
 
         pub const __merge = NewStaticSymbol("__merge");
+
+        pub const __using = NewStaticSymbol("__using");
+        pub const __callDispose = NewStaticSymbol("__callDispose");
     };
 };
 
@@ -18561,7 +18564,7 @@ fn NewParser_(
                         data.kind = .k_let;
                         for (data.decls.slice()) |*d| {
                             if (d.value) |val| {
-                                if (val.data == .e_null or val.data == .e_undefined) {
+                                if (val.data != .e_null and val.data != .e_undefined) {
                                     data.kind = .k_using;
                                     break;
                                 }
@@ -18894,19 +18897,22 @@ fn NewParser_(
 
                     data.body = p.visitLoopBody(data.body);
 
-                    // Potentially relocate "var" declarations to the top level. Note that this
-                    // must be done inside the scope of the for loop or they won't be relocated.
-                    if (data.init) |init_| {
-                        if (init_.data == .s_local and init_.data.s_local.kind == .k_var) {
-                            const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls.slice(), .normal);
-                            if (relocate.stmt) |relocated| {
-                                data.init = relocated;
+                    if (data.init) |for_init| {
+                        if (for_init.data == .s_local) {
+                            // Potentially relocate "var" declarations to the top level. Note that this
+                            // must be done inside the scope of the for loop or they won't be relocated.
+                            if (for_init.data.s_local.kind == .k_var) {
+                                const relocate = p.maybeRelocateVarsToTopLevel(for_init.data.s_local.decls.slice(), .normal);
+                                if (relocate.stmt) |relocated| {
+                                    data.init = relocated;
+                                }
                             }
+
+                            // Handle "for (using x of y)" and "for (await using x of y)"
+                            if (for_init.data.s_local.kind == .k_using and p.options.features.lower_using) {}
+                            // TODO(@paperdave)!nomerge
                         }
                     }
-
-                    // Handle "for (using x of y)" and "for (await using x of y)"
-                    // TODO(@paperdave)!nomerge: left off here: https://github.com/evanw/esbuild/pull/3192/files#diff-e20508c4ae566a2d8a60274ff05e408d81c9758a27d84318feecdfbf9e24af5e
 
                     p.popScope();
                 },
@@ -20894,7 +20900,7 @@ fn NewParser_(
                 // Save the current control-flow liveness. This represents if we are
                 // currently inside an "if (false) { ... }" block.
                 const old_is_control_flow_dead = p.is_control_flow_dead;
-                errdefer p.is_control_flow_dead = old_is_control_flow_dead;
+                defer p.is_control_flow_dead = old_is_control_flow_dead;
 
                 var before = ListManaged(Stmt).init(p.allocator);
                 var after = ListManaged(Stmt).init(p.allocator);
@@ -21088,17 +21094,13 @@ fn NewParser_(
                     remain[0] = item;
                     remain = remain[1..];
                 }
+            }
 
-                // Restore the current control-flow liveness if it was changed inside the
-                // loop above. This is important because the caller will not restore it.
-                p.is_control_flow_dead = old_is_control_flow_dead;
-
-                // Lower using declarations
-                if (kind != .switch_stmt and p.shouldLowerUsingDeclarations(visited)) {
-                    const ctx = p.lowerUsingDeclarationsContext();
-                    ctx.scanStmts(p, visited);
-                    visited = ctx.finalize(p, visited, p.current_scope.parent == null);
-                }
+            // Lower using declarations
+            if (kind != .switch_stmt and p.shouldLowerUsingDeclarations(stmts.items)) {
+                var ctx = try LowerUsingDeclarationsContext.init(p);
+                ctx.scanStmts(p, stmts.items);
+                stmts.* = ctx.finalize(p, stmts.items, p.current_scope.parent == null);
             }
 
             if (comptime Environment.allow_assert)
@@ -21645,6 +21647,330 @@ fn NewParser_(
 
             p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
         }
+
+        const GenerateTempRefKind = enum {
+            needs_declare,
+            no_declare,
+            // This is used when the generated temporary may a) be used inside of a loop
+            // body and b) may be used inside of a closure. In that case we can't use
+            // "var" for the temporary and we can't declare the temporary at the top of
+            // the enclosing function. Instead, we need to use "let" and we need to
+            // declare the temporary in the enclosing block (so it's inside of the loop
+            // body).
+            needs_declare_may_be_captured_in_loop,
+        };
+
+        pub fn generateTempRef(p: *P, comptime declare_kind: GenerateTempRefKind, comptime default_name: ?string) Ref {
+            var scope = p.current_scope;
+            if (declare_kind != .needs_declare_may_be_captured_in_loop) {
+                while (scope.kindStopsHoisting()) {
+                    scope = scope.parent.?;
+                }
+            }
+
+            const name = default_name orelse {
+                p.temp_ref_count += 1;
+                @compileError("TODO: generateTempRef with null name");
+            };
+            const ref = p.newSymbol(.other, name) catch bun.outOfMemory();
+
+            if (declare_kind == .needs_declare_may_be_captured_in_loop and !scope.kindStopsHoisting()) {
+                @compileError("TODO: generateTempRef with needs_declare_may_be_captured_in_loop");
+            } else if (declare_kind != .no_declare) {
+                p.temp_refs_to_declare.append(p.allocator, .{
+                    .ref = ref,
+                });
+            }
+
+            scope.generated.append(p.allocator, &.{ref}) catch bun.outOfMemory();
+
+            return ref;
+        }
+
+        fn shouldLowerUsingDeclarations(p: *const P, stmts: []Stmt) bool {
+            // TODO: We do not support lowering await, but when we do this needs to point to that var
+            const lower_await = false;
+
+            // Check feature flags first, then iterate statements.
+            if (!p.options.features.lower_using and !lower_await) return false;
+
+            for (stmts) |stmt| {
+                if (stmt.data == .s_local and
+                    // Need to re-check lower_using for the k_using case in case lower_await is true
+                    ((stmt.data.s_local.kind == .k_using and p.options.features.lower_using) or
+                    (stmt.data.s_local.kind == .k_await_using)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        const LowerUsingDeclarationsContext = struct {
+            first_using_loc: logger.Loc,
+            stack_ref: Ref,
+            has_await_using: bool,
+
+            pub fn init(p: *P) !LowerUsingDeclarationsContext {
+                return LowerUsingDeclarationsContext{
+                    .first_using_loc = logger.Loc.Empty,
+                    .stack_ref = try p.newSymbol(.other, "__stack"),
+                    .has_await_using = false,
+                };
+            }
+
+            pub fn scanStmts(ctx: *LowerUsingDeclarationsContext, p: *P, stmts: []Stmt) void {
+                for (stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_local => |local| {
+                            if (!local.kind.isUsing()) continue;
+
+                            if (ctx.first_using_loc.isEmpty()) {
+                                ctx.first_using_loc = stmt.loc;
+                            }
+                            if (local.kind == .k_await_using) {
+                                ctx.has_await_using = true;
+                            }
+                            for (local.decls.slice()) |*decl| {
+                                if (decl.value) |*decl_value| {
+                                    const value_loc = decl_value.loc;
+                                    p.recordUsage(ctx.stack_ref);
+                                    const args = p.allocator.alloc(Expr, 2) catch bun.outOfMemory();
+                                    args[0] = Expr{
+                                        .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
+                                        .loc = stmt.loc,
+                                    };
+                                    // 1. always pass this param for hopefully better jit performance
+                                    // 2. pass 1 or 0 to be shorter than `true` or `false`
+                                    args[1] = Expr{
+                                        .data = .{ .e_number = .{ .value = if (local.kind == .k_await_using) 1 else 0 } },
+                                        .loc = stmt.loc,
+                                    };
+                                    decl.value = p.callRuntime(value_loc, "__using", args);
+                                }
+                            }
+                            if (p.will_wrap_module_in_try_catch_for_using and p.current_scope.kind == .entry) {
+                                local.kind = .k_var;
+                            } else {
+                                local.kind = .k_const;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+
+            pub fn finalize(ctx: *LowerUsingDeclarationsContext, p: *P, stmts: []Stmt, should_hoist_fns: bool) ListManaged(Stmt) {
+                var result = ListManaged(Stmt).init(p.allocator);
+                var exports = ListManaged(js_ast.ClauseItem).init(p.allocator);
+                var end: u32 = 0;
+                for (stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_directive,
+                        .s_import,
+                        .s_export_from,
+                        .s_export_star,
+                        => {
+                            // These can't go in a try/catch block
+                            result.append(stmt) catch bun.outOfMemory();
+                            continue;
+                        },
+
+                        .s_export_clause => |data| {
+                            // Merge export clauses together
+                            exports.appendSlice(data.items) catch bun.outOfMemory();
+                            continue;
+                        },
+
+                        .s_function => {
+                            if (should_hoist_fns) {
+                                // Hoist function declarations for cross-file ESM references
+                                result.append(stmt) catch bun.outOfMemory();
+                                continue;
+                            }
+                        },
+
+                        .s_local => |local| {
+                            // If any of these are exported, turn it into a "var" and add export clauses
+                            if (local.is_export) {
+                                local.is_export = false;
+                                for (local.decls.slice()) |decl| {
+                                    if (decl.binding.data == .b_identifier) {
+                                        const identifier = decl.binding.data.b_identifier;
+                                        exports.append(js_ast.ClauseItem{
+                                            .name = .{
+                                                .loc = decl.binding.loc,
+                                                .ref = identifier.ref,
+                                            },
+                                            .alias = p.symbols.items[identifier.ref.inner_index].original_name,
+                                            .alias_loc = decl.binding.loc,
+                                        }) catch bun.outOfMemory();
+                                        local.kind = .k_var;
+                                    }
+                                }
+                            }
+                        },
+
+                        else => {},
+                    }
+
+                    stmts[end] = stmt;
+                    end += 1;
+                }
+
+                // TODO(@paperdave): leak
+                const non_exported_statements = stmts[0..end];
+
+                const caught_ref = p.newSymbol(.other, "_catch") catch bun.outOfMemory();
+                const err_ref = p.newSymbol(.other, "_err") catch bun.outOfMemory();
+                const has_err_ref = p.newSymbol(.other, "_hasErr") catch bun.outOfMemory();
+
+                var scope = p.current_scope;
+                while (!scope.kindStopsHoisting()) {
+                    scope = scope.parent.?;
+                }
+
+                const is_top_level = scope == p.module_scope;
+                scope.generated.append(p.allocator, &.{
+                    ctx.stack_ref,
+                    caught_ref,
+                    err_ref,
+                    has_err_ref,
+                }) catch bun.outOfMemory();
+                p.declared_symbols.ensureUnusedCapacity(
+                    p.allocator,
+                    // 5 to include the _promise decl later on:
+                    if (ctx.has_await_using) 5 else 4,
+                ) catch bun.outOfMemory();
+                p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = ctx.stack_ref });
+                p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = caught_ref });
+                p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = err_ref });
+                p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = has_err_ref });
+
+                const loc = ctx.first_using_loc;
+                const call_dispose = call_dispose: {
+                    p.recordUsage(ctx.stack_ref);
+                    p.recordUsage(err_ref);
+                    p.recordUsage(has_err_ref);
+                    const args = p.allocator.alloc(Expr, 3) catch bun.outOfMemory();
+                    args[0] = Expr{
+                        .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
+                        .loc = loc,
+                    };
+                    args[1] = Expr{
+                        .data = .{ .e_identifier = .{ .ref = err_ref } },
+                        .loc = loc,
+                    };
+                    args[2] = Expr{
+                        .data = .{ .e_identifier = .{ .ref = has_err_ref } },
+                        .loc = loc,
+                    };
+                    break :call_dispose p.callRuntime(loc, "__callDispose", args);
+                };
+
+                const finally_stmts = finally: {
+                    if (ctx.has_await_using) {
+                        const promise_ref = p.generateTempRef(.no_declare, "_promise");
+                        scope.generated.append(p.allocator, &.{promise_ref}) catch bun.outOfMemory();
+                        p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = promise_ref });
+
+                        const promise_ref_expr = p.newExpr(E.Identifier{ .ref = promise_ref }, loc);
+
+                        const await_expr = p.newExpr(E.Await{
+                            .value = promise_ref_expr,
+                        }, loc);
+                        p.recordUsage(promise_ref);
+
+                        const statements = p.allocator.alloc(Stmt, 2) catch bun.outOfMemory();
+                        statements[0] = p.s(S.Local{
+                            .decls = decls: {
+                                const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
+                                decls[0] = .{
+                                    .binding = p.b(B.Identifier{ .ref = promise_ref }, loc),
+                                    .value = call_dispose,
+                                };
+                                break :decls G.Decl.List.init(decls);
+                            },
+                        }, loc);
+
+                        // The "await" must not happen if an error was thrown before the
+                        // "await using", so we conditionally await here:
+                        //
+                        //   var promise = __callDispose(stack, error, hasError);
+                        //   promise && await promise;
+                        //
+                        statements[1] = p.s(S.SExpr{
+                            .value = p.newExpr(E.Binary{
+                                .op = .bin_logical_and,
+                                .left = promise_ref_expr,
+                                .right = await_expr,
+                            }, loc),
+                        }, loc);
+
+                        break :finally statements;
+                    } else {
+                        const single = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                        single[0] = p.s(S.SExpr{ .value = call_dispose }, call_dispose.loc);
+                        break :finally single;
+                    }
+                };
+
+                // Wrap everything in a try/catch/finally block
+                p.recordUsage(caught_ref);
+                result.ensureUnusedCapacity(2) catch bun.outOfMemory();
+                result.appendAssumeCapacity(p.s(S.Local{
+                    .decls = decls: {
+                        const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
+                        decls[0] = .{
+                            .binding = p.b(B.Identifier{ .ref = ctx.stack_ref }, loc),
+                            .value = p.newExpr(E.Array{}, loc),
+                        };
+                        break :decls G.Decl.List.init(decls);
+                    },
+                    .kind = .k_let,
+                }, loc));
+                result.appendAssumeCapacity(p.s(S.Try{
+                    .body = non_exported_statements,
+                    .body_loc = loc,
+                    .catch_ = .{
+                        .binding = p.b(B.Identifier{ .ref = caught_ref }, loc),
+                        .body = catch_body: {
+                            const statements = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                            statements[0] = p.s(S.Local{
+                                .decls = decls: {
+                                    const decls = p.allocator.alloc(Decl, 2) catch bun.outOfMemory();
+                                    decls[0] = .{
+                                        .binding = p.b(B.Identifier{ .ref = err_ref }, loc),
+                                        .value = p.newExpr(E.Identifier{ .ref = caught_ref }, loc),
+                                    };
+                                    decls[1] = .{
+                                        .binding = p.b(B.Identifier{ .ref = has_err_ref }, loc),
+                                        .value = p.newExpr(E.Number{ .value = 1 }, loc),
+                                    };
+                                    break :decls G.Decl.List.init(decls);
+                                },
+                            }, loc);
+                            break :catch_body statements;
+                        },
+                        .body_loc = loc,
+                        .loc = loc,
+                    },
+                    .finally = .{
+                        .loc = loc,
+                        .stmts = finally_stmts,
+                    },
+                }, loc));
+
+                if (exports.items.len > 0) {
+                    result.appendAssumeCapacity(p.s(S.ExportClause{
+                        .items = exports.items,
+                    }, loc));
+                }
+
+                return result;
+            }
+        };
 
         pub fn toAST(
             p: *P,

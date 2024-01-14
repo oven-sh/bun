@@ -333,6 +333,9 @@ pub const Runtime = struct {
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
+        // TODO: make this a bitset of all unsupported features
+        lower_using: bool = true,
+
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
             .auto_import_jsx,
@@ -349,6 +352,7 @@ pub const Runtime = struct {
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
+            .lower_using,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
         };
@@ -536,7 +540,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                0...21 => |t| (@field(imports, all[t]) orelse return null).ref,
+                inline 0...21 => |t| (@field(imports, all[t]) orelse return null).ref,
                 else => null,
             };
         }

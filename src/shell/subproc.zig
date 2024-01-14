@@ -1270,7 +1270,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 &spawn_args,
                 out,
             )) {
-                .ok => |subproc| subproc,
+                .result => |subproc| subproc,
                 .err => |err| return .{ .err = err },
             };
             _ = subprocess; // autofix
@@ -1693,7 +1693,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 }
             }
 
-            return .{ .ok = subprocess };
+            return .{ .result = subprocess };
         }
 
         pub fn onExitNotificationTask(this: *@This()) void {

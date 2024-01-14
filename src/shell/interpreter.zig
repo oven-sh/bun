@@ -208,7 +208,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             io: IO = .{},
             kind: Kind = .normal,
 
-            /// FIXME These should be nullable, because buffered output can be optional
             /// These MUST use the `bun.default_allocator` Allocator
             buffered_stdout: bun.ByteList = .{},
             buffered_stderr: bun.ByteList = .{},
@@ -438,15 +437,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             script_heap.* = script_ast;
 
-            const interpreter = ThisInterpreter.init(
+            const interpreter = switch (ThisInterpreter.init(
                 globalThis,
                 allocator,
                 &arena,
                 script_heap,
                 jsobjs.items[0..],
-            ) catch {
-                arena.deinit();
-                return null;
+            )) {
+                .result => |i| i,
+                .err => |e| {
+                    arena.deinit();
+                    GlobalHandle.init(globalThis).actuallyThrow(e);
+                    return null;
+                },
             };
 
             return interpreter;
@@ -483,8 +486,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             arena: *bun.ArenaAllocator,
             script: *ast.Script,
             jsobjs: []JSValue,
-        ) !*ThisInterpreter {
-            var interpreter = try allocator.create(ThisInterpreter);
+        ) shell.Result(*ThisInterpreter) {
+            var interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
             interpreter.global = global;
             errdefer {
                 allocator.destroy(interpreter);
@@ -506,24 +509,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 var iter = env_loader.map.iter();
                 while (iter.next()) |entry| {
-                    const dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
-                    try export_env.put(entry.key_ptr.*, dupedz);
+                    const dupedz = allocator.dupeZ(u8, entry.value_ptr.value) catch bun.outOfMemory();
+                    export_env.put(entry.key_ptr.*, dupedz) catch bun.outOfMemory();
                 }
 
                 break :brk export_env;
             };
 
-            var pathbuf = try arena.allocator().alloc(u8, bun.MAX_PATH_BYTES);
+            var pathbuf = arena.allocator().alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
 
             const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
                 .result => |cwd| cwd.ptr[0..cwd.len :0],
                 .err => |err| {
-                    _ = err; // autofix
-
-                    @panic("FIXME TODO handle this");
-                    // const errJs = err.toJSC(global);
-                    // global.throwValue(errJs);
-                    // return ShellError.Init;
+                    return .{ .err = .{ .sys = err } };
                 },
             };
 
@@ -533,12 +531,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                 .result => |fd| fd,
                 .err => |err| {
-                    _ = err; // autofix
-
-                    @panic("FIXME TODO handle this");
-                    // const errJs = err.toJSC(global);
-                    // global.throwValue(errJs);
-                    // return ShellError.Init;
+                    return .{ .err = .{ .sys = err } };
                 },
             };
 
@@ -570,7 +563,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 interpreter.root_shell.io.stderr = .{ .std = .{ .captured = &interpreter.root_shell.buffered_stderr } };
             }
 
-            return interpreter;
+            return .{ .result = interpreter };
         }
 
         pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !void {
@@ -602,7 +595,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
             const script_heap = try arena.allocator().create(ast.Script);
             script_heap.* = script;
-            var interp = try ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs);
+            var interp = switch (ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs)) {
+                .err => |e| {
+                    GlobalHandle.init(mini).actuallyThrow(e);
+                    return;
+                },
+                .result => |i| i,
+            };
             const IsDone = struct {
                 done: bool = false,
 
@@ -2713,7 +2712,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .buffered_closed = buffered_closed,
                 } };
                 const subproc = switch (Subprocess.spawnAsync(this.base.interpreter.global, spawn_args, &this.exec.subproc.child)) {
-                    .ok => this.exec.subproc.child,
+                    .result => this.exec.subproc.child,
                     .err => |e| {
                         _ = e; // autofix
                         @panic("FIXME handle this");

@@ -39,8 +39,8 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
-    pub fn throwJS(this: *@This(), globalThis: *JSC.JSGlobalObject) void {
-        switch (this.*) {
+    pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
+        switch (this) {
             .sys => {
                 const err = this.sys.toJSC(globalThis);
                 globalThis.throwValue(err);
@@ -48,15 +48,39 @@ pub const ShellErr = union(enum) {
             .custom => {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
-                const err_value = str.toErrorInstance(this);
+                const err_value = str.toErrorInstance(globalThis);
                 globalThis.vm().throwError(globalThis, err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
-                globalThis.throwInvalidArguments(this.invalid_arguments.val, .{});
+                globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
             },
             .todo => {
                 globalThis.throwTODO(this.todo);
+            },
+        }
+    }
+
+    pub fn throwMini(this: @This()) void {
+        switch (this) {
+            .sys => {
+                const err = this.sys.toSystemError();
+                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: {s}: {}", .{ err.message, err.path }) catch bun.outOfMemory();
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+                bun.Global.exit(1);
+            },
+            .custom => {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{this.custom});
+                bun.Global.exit(1);
+            },
+            .invalid_arguments => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: invalid arguments: {s}", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+                bun.Global.exit(1);
+            },
+            .todo => {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>TODO: {s}<r>", .{this.todo});
+                bun.Global.exit(1);
             },
         }
     }
@@ -73,7 +97,7 @@ pub const ShellErr = union(enum) {
 
 pub fn Result(comptime T: anytype) type {
     return union(enum) {
-        ok: T,
+        result: T,
         err: ShellErr,
 
         pub const success: @This() = undefined;
@@ -168,6 +192,10 @@ pub const GlobalJS = struct {
         const loop = JSC.AbstractVM(this.eventLoopCtx());
         return loop.platformEventLoop();
     }
+
+    pub inline fn actuallyThrow(this: @This(), shellerr: bun.shell.ShellErr) void {
+        shellerr.throwJS(this.globalThis);
+    }
 };
 
 pub const GlobalMini = struct {
@@ -190,6 +218,8 @@ pub const GlobalMini = struct {
     pub inline fn eventLoopCtx(this: @This()) *JSC.MiniEventLoop {
         return this.mini;
     }
+
+    // pub inline fn throwShellErr(this: @This(), shell_err: bun.shell.ShellErr
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) bun.shell.ShellErr {
         return .{
@@ -233,6 +263,11 @@ pub const GlobalMini = struct {
         return .{
             .custom = str,
         };
+    }
+
+    pub inline fn actuallyThrow(this: @This(), shellerr: bun.shell.ShellErr) void {
+        _ = this; // autofix
+        shellerr.throwMini();
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {

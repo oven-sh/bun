@@ -21715,7 +21715,13 @@ fn NewParser_(
             pub fn init(p: *P) !LowerUsingDeclarationsContext {
                 return LowerUsingDeclarationsContext{
                     .first_using_loc = logger.Loc.Empty,
-                    .stack_ref = try p.newSymbol(.other, "__stack"),
+                    .stack_ref = try p.newSymbol(.other, if (p.willUseRenamer())
+                        "__stack"
+                    else brk: {
+                        // TODO: this is stupid
+                        defer p.temp_ref_count += 1;
+                        break :brk std.fmt.allocPrint(p.allocator, "__stack__{d}", .{p.temp_ref_count}) catch bun.outOfMemory();
+                    }),
                     .has_await_using = false,
                 };
             }
@@ -21736,14 +21742,15 @@ fn NewParser_(
                                 if (decl.value) |*decl_value| {
                                     const value_loc = decl_value.loc;
                                     p.recordUsage(ctx.stack_ref);
-                                    const args = p.allocator.alloc(Expr, 2) catch bun.outOfMemory();
+                                    const args = p.allocator.alloc(Expr, 3) catch bun.outOfMemory();
                                     args[0] = Expr{
                                         .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
                                         .loc = stmt.loc,
                                     };
+                                    args[1] = decl_value.*;
                                     // 1. always pass this param for hopefully better jit performance
                                     // 2. pass 1 or 0 to be shorter than `true` or `false`
-                                    args[1] = Expr{
+                                    args[2] = Expr{
                                         .data = .{ .e_number = .{ .value = if (local.kind == .k_await_using) 1 else 0 } },
                                         .loc = stmt.loc,
                                     };

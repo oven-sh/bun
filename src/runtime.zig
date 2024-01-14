@@ -197,71 +197,7 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const ProdSourceContent = @embedFile("./runtime.out.js");
-    pub const ProdSourceContentNode = @embedFile("./runtime.node.out.js");
-    pub const ProdSourceContentBun = @embedFile("./runtime.bun.out.js");
-    pub const ProdSourceContentWithRefresh = @embedFile("./runtime.out.refresh.js");
-
-    pub inline fn sourceContentWithoutRefresh() string {
-        if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
-            const dir = std.mem.replaceOwned(
-                u8,
-                default_allocator,
-                dirpath,
-                "jarred",
-                env.get("USER").?,
-            ) catch unreachable;
-            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
-                "Missing bun/src/runtime.out.js. " ++ "Please run \"make runtime_js_dev\"",
-                ProdSourceContent,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return ProdSourceContent;
-        }
-    }
-
-    pub inline fn sourceContent(with_refresh: bool) string {
-        if (with_refresh) return sourceContentWithRefresh();
-        return sourceContentWithoutRefresh();
-    }
-
-    pub inline fn sourceContentNode() string {
-        return ProdSourceContentNode;
-    }
-
-    pub inline fn sourceContentBun() string {
-        return ProdSourceContentBun;
-    }
-
-    pub inline fn sourceContentWithRefresh() string {
-        if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
-            const dir = std.mem.replaceOwned(
-                u8,
-                default_allocator,
-                dirpath,
-                "jarred",
-                env.get("USER").?,
-            ) catch unreachable;
-            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.refresh.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
-                "Missing bun/src/runtime.out.refresh.js. " ++ "Please run \"make runtime_js_dev\"",
-                ProdSourceContentWithRefresh,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return ProdSourceContentWithRefresh;
-        }
-    }
+    pub const source_code = @embedFile("./runtime.out.js");
 
     pub const version_hash = @import("build_options").runtime_js_version;
     var version_hash_int: u32 = 0;

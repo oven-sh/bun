@@ -454,7 +454,7 @@ function generatePrototypeHeader(typename) {
     };`;
 }
 
-function generateConstructorHeader(typeName, doesConstructorHaveAnyFields) {
+function generateConstructorHeader(typeName) {
   const name = constructorName(typeName);
 
   // we use a single shared isosubspace for constructors since they will rarely
@@ -1473,7 +1473,7 @@ function generateImpl(typeName, obj) {
   const proto = obj.proto;
   return [
     generatePrototypeHeader(typeName),
-    !obj.noConstructor ? generateConstructorHeader(typeName, Object.keys(obj.klass).length > 0).trim() + "\n" : null,
+    !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     generateClassImpl(typeName, obj).trim(),

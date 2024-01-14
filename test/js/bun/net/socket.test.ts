@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
-import { connect, SocketHandler, spawn } from "bun";
+import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 
 it("should keep process alive only when active", async () => {
   const { exited, stdout, stderr } = spawn({
@@ -195,3 +195,7 @@ it("should handle connection error", done => {
 it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 2, 100);
 });
+
+it("should allow large amounts of data to be sent and received", async () => {
+  expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+}, 10_000);

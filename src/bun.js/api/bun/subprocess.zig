@@ -1916,6 +1916,12 @@ pub const Subprocess = struct {
                 return .zero;
             };
             actions.dup2(bun.toFD(fds[1]), bun.toFD(3)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            actions.close(bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            // enable non-block
+            const before = std.c.fcntl(fds[0], os.F.GETFL);
+            _ = std.c.fcntl(fds[0], os.F.SETFL, before | os.O.NONBLOCK);
+            // enable SOCK_CLOXEC
+            _ = std.c.fcntl(fds[0], os.FD_CLOEXEC);
         }
 
         env_array.append(allocator, null) catch {

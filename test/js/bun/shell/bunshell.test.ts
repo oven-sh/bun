@@ -36,6 +36,20 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  describe("echo+cmdsubst edgecases", async () => {
+    async function doTest(cmd: string, expected: string) {
+      test(cmd, async () => {
+        const { stdout } = await $`${cmd}`;
+        expect(stdout.toString()).toEqual(expected);
+      });
+    }
+
+    // funny/crazy edgecases thanks to @paperdave and @Electroid
+    doTest(`echo "$(echo 1; echo 2)"`, "1\n2\n");
+    doTest(`echo "$(echo "1" ; echo "2")"`, "1\n2\n");
+    doTest(`echo $(echo 1; echo 2)`, "1 2\n");
+  });
+
   describe("unicode", () => {
     test("basic", async () => {
       const whatsupbro = "元気かい、兄弟";

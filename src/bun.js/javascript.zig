@@ -2639,7 +2639,7 @@ pub const VirtualMachine = struct {
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.source_url, String.eqlComptime) != null) {
+                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                     start_index = 0;
                     break;
                 }
@@ -2657,7 +2657,7 @@ pub const VirtualMachine = struct {
                     }
 
                     // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                    if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.source_url, String.eqlComptime) != null) {
+                    if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                         continue;
                     }
 

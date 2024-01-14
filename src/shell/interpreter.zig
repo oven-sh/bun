@@ -806,18 +806,29 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const Result = union(enum) {
                 array_of_slice: *std.ArrayList([:0]const u8),
                 array_of_ptr: *std.ArrayList(?[*:0]const u8),
+                single: struct {
+                    list: *std.ArrayList(u8),
+                    done: bool = false,
+                },
 
                 pub fn pushResultSlice(this: *Result, buf: [:0]const u8) void {
                     if (comptime bun.Environment.allow_assert) {
                         std.debug.assert(buf[buf.len] == 0);
                     }
 
-                    if (this.* == .array_of_slice) {
-                        this.array_of_slice.append(buf) catch bun.outOfMemory();
-                        return;
+                    switch (this.*) {
+                        .array_of_slice => {
+                            this.array_of_slice.append(buf) catch bun.outOfMemory();
+                        },
+                        .array_of_ptr => {
+                            this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
+                        },
+                        .single => {
+                            if (this.single.done) return;
+                            this.single.list.appendSlice(buf[0 .. buf.len + 1]) catch bun.outOfMemory();
+                            this.single.done = true;
+                        },
                     }
-
-                    this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
                 }
 
                 pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) void {
@@ -825,12 +836,18 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         std.debug.assert(buf.items[buf.items.len - 1] == 0);
                     }
 
-                    if (this.* == .array_of_slice) {
-                        this.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
-                        return;
+                    switch (this.*) {
+                        .array_of_slice => {
+                            this.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
+                        },
+                        .array_of_ptr => {
+                            this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
+                        },
+                        .single => {
+                            if (this.single.done) return;
+                            this.single.list.appendSlice(buf.items[0..]) catch bun.outOfMemory();
+                        },
                     }
-
-                    this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
                 }
             };
 
@@ -1000,7 +1017,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .simple => |*simp| {
                         const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out);
                         if (is_cmd_subst) {
-                            // @panic("FIXME ZACK FIX THIS!!");
                             var io: IO = .{};
                             io.stdout = .pipe;
                             io.stderr = this.base.shell.io.stderr;
@@ -1326,6 +1342,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .array_of_slice => {
                         this.out.array_of_slice.ensureUnusedCapacity(additional) catch bun.outOfMemory();
                     },
+                    .single => {},
                 }
             }
 
@@ -2126,6 +2143,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             /// This allocated by the above arena
             args: std.ArrayList(?[*:0]const u8),
 
+            /// If the cmd redirects to a file we have to expand that string
+            redirection_file: std.ArrayList(u8),
+            redirection_fd: bun.FileDescriptor = bun.invalid_fd,
+
             exec: Exec = .none,
             exit_code: ?u8 = null,
             io: IO,
@@ -2134,6 +2155,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             state: union(enum) {
                 idle,
                 expanding_assigns: Assigns,
+                expanding_redirect: struct {
+                    idx: u32 = 0,
+                    expansion: Expansion,
+                },
                 expanding_args: struct {
                     idx: u32 = 0,
                     expansion: Expansion,
@@ -2320,11 +2345,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
                     .args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory(),
+                    .redirection_file = undefined,
 
                     .exit_code = null,
                     .io = io,
                     .state = .idle,
                 };
+
+                cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
 
                 return cmd;
             }
@@ -2340,6 +2368,47 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         },
                         .expanding_assigns => {
                             return; // yield execution
+                        },
+                        .expanding_redirect => {
+                            if (this.state.expanding_redirect.idx >= 1) {
+                                this.state = .{
+                                    .expanding_args = undefined,
+                                };
+                                continue;
+                            }
+                            this.state.expanding_redirect.idx += 1;
+
+                            // Get the node to expand otherwise go straight to
+                            // `expanding_args` state
+                            const node_to_expand = brk: {
+                                if (this.node.redirect_file) |file| {
+                                    break :brk &file.atom;
+                                }
+                                this.state = .{
+                                    .expanding_args = .{
+                                        .expansion = undefined,
+                                    },
+                                };
+                                continue;
+                            };
+
+                            this.redirection_file = std.ArrayList(u8).init(this.spawn_arena.allocator());
+
+                            Expansion.init(
+                                this.base.interpreter,
+                                this.base.shell,
+                                &this.state.expanding_redirect.expansion,
+                                node_to_expand,
+                                Expansion.ParentPtr.init(this),
+                                .{
+                                    .single = .{
+                                        .list = &this.redirection_file,
+                                    },
+                                },
+                            );
+
+                            this.state.expanding_redirect.expansion.start();
+                            return;
                         },
                         .expanding_args => {
                             if (this.state.expanding_args.idx >= this.node.name_and_args.len) {
@@ -2409,7 +2478,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 if (child.ptr.is(Assigns)) {
                     this.state.expanding_assigns.deinit();
                     this.state = .{
-                        .expanding_args = .{
+                        .expanding_redirect = .{
                             .expansion = undefined,
                         },
                     };
@@ -2563,7 +2632,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 @panic("FIXME Unhandled");
                             }
                         },
-                        else => @panic("FIXME TODO"),
+                        .atom => {
+                            const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
+                            log("EXPANDED REDIRECT: {s}\n", .{this.redirection_file.items[0..]});
+                            const perm = 0o666;
+                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT, perm)) {
+                                .err => |e| {
+                                    const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
+                                    return this.writeFailingError(buf, 1);
+                                },
+                                .result => |f| f,
+                            };
+                            this.redirection_fd = redirfd;
+                            spawn_args.stdio[fd] = .{ .fd = redirfd };
+                        },
                     }
                 }
 
@@ -2638,6 +2720,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub fn deinit(this: *Cmd) void {
                 log("cmd deinit {x}", .{@intFromPtr(this)});
                 this.base.shell.cmd_local_env.clearRetainingCapacity();
+                if (this.redirection_fd != bun.invalid_fd) {
+                    _ = Syscall.close(this.redirection_fd);
+                }
                 // if (this.exit_code != null) {
                 //     if (this.cmd) |cmd| {
                 //         _ = cmd.tryKill(9);

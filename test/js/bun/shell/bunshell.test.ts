@@ -350,11 +350,15 @@ describe("deno_task", () => {
     await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
     await TestBuilder.command`echo "test$(echo "1    2")"`.stdout("test1    2\n").run();
     await TestBuilder.command`echo test$(echo "1 2 3")`.stdout("test1 2 3\n").run();
-    await TestBuilder.command`VAR=1 bun -e 'console.log(process.env.VAR)' && echo $VAR`.stdout("1\n\n").run();
-    await TestBuilder.command`VAR=1 VAR2=2 bun -e 'console.log(process.env.VAR + process.env.VAR2)'`
+    await TestBuilder.command`VAR=1 BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(process.env.VAR)' && echo $VAR`
+      .stdout("1\n\n")
+      .run();
+    await TestBuilder.command`VAR=1 VAR2=2 BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(process.env.VAR + process.env.VAR2)'`
       .stdout("12\n")
       .run();
-    await TestBuilder.command`EMPTY= bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`.stdout("EMPTY: \n").run();
+    await TestBuilder.command`EMPTY= BUN_DEBUG_QUIET_LOGS=1 bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`
+      .stdout("EMPTY: \n")
+      .run();
     await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
     await TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").run();
     await TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").run();
@@ -393,6 +397,57 @@ describe("deno_task", () => {
       .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
       .stderr("bunsh: command not found: 1\n")
       .run();
+  });
+
+  test("env variables", async () => {
+    await TestBuilder.command`echo $VAR && export VAR=1 && echo $VAR && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(process.env.VAR)'`
+      .stdout("\n1\n1\n")
+      .run();
+
+    await TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
+      .stdout("1 testing test this out\n")
+      .run();
+  });
+
+  test("pipeline", async () => {
+    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+      .stdout("1\n")
+      .run();
+
+    await TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").run();
+
+    // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    //   .stdout("1 2\n")
+    //   .run();
+
+    // await TestBuilder.command`echo 2 | echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    //   .stdout("1\n")
+    //   .run();
+
+    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    //   .stdout("1\n")
+    //   .stderr("2\n")
+    //   .run();
+
+    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    //   .stdout("1\n2\n")
+    //   .run();
+
+    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e --unstable 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
+    //   .stderr("2\n1\n")
+    //   .run();
+
+    // await TestBuilder.command`echo 1 |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    //   .stdout("1\n")
+    //   .run();
+
+    // await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)' > output.txt`
+    //   .fileEquals("output.txt", "1\n")
+    //   .run();
+
+    // await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)' 2> output.txt`
+    //   .fileEquals("output.txt", "1\n")
+    //   .run();
   });
 });
 

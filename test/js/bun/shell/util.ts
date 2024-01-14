@@ -35,10 +35,10 @@ export const sortedShellOutput = (output: string): string[] =>
 export class TestBuilder {
   private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
 
-  private expected_stdout: string | undefined;
-  private expected_stderr: string | undefined;
-  private expected_exit_code: number | undefined;
-  private expected_error: string | boolean | undefined;
+  private expected_stdout: string = "";
+  private expected_stderr: string = "";
+  private expected_exit_code: number = 0;
+  private expected_error: string | boolean | undefined = undefined;
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";

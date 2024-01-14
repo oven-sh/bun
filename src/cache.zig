@@ -184,7 +184,7 @@ pub const Fs = struct {
                     }
                 }).asFile();
             } else {
-                file_handle = (try bun.sys.openA(std.fs.path.basename(path), std.os.O.RDONLY, 0).unwrap()).asFile();
+                file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
         }
 

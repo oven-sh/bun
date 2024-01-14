@@ -673,7 +673,7 @@ assert-deps:
 	@echo "You have the dependencies installed! Woo"
 
 # the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
-# unless you explicity clone it yourself (a huge download)
+# unless you explicitly clone it yourself (a huge download)
 SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
 ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
 	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))

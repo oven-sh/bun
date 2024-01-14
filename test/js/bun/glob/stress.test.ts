@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, test, describe, beforeAll } from "bun:test";
 import { Glob } from "bun";
 import { tempFixturesDir } from "./util";

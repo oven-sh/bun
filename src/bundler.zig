@@ -145,7 +145,8 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.toBunString(global);
+        const file_path = path_value.toBunString(global);
+        defer file_path.deref();
 
         if (file_path.length() == 0) {
             log.addError(
@@ -178,18 +179,22 @@ pub const PluginRunner = struct {
 
                 const namespace_str = namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("node");
                 }
 
@@ -200,6 +205,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.init("file");
         };
+        defer user_namespace.deref();
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
@@ -275,14 +281,17 @@ pub const PluginRunner = struct {
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("node");
                 }
 
@@ -293,6 +302,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.static("file");
         };
+        defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by JSC
         const combined_string = std.fmt.allocPrint(
@@ -311,7 +321,7 @@ pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
-    result: options.TransformResult = undefined,
+    result: options.TransformResult,
     resolver: Resolver,
     fs: *Fs.FileSystem,
     output_files: std.ArrayList(options.OutputFile),
@@ -323,7 +333,7 @@ pub const Bundler = struct {
     source_map: options.SourceMapOption = .none,
 
     linker: Linker,
-    timer: SystemTimer = undefined,
+    timer: SystemTimer,
     env: *DotEnv.Loader,
 
     macro_context: ?js_ast.Macro.MacroContext = null,
@@ -1027,7 +1037,7 @@ pub const Bundler = struct {
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
-                        file_op.fd = 0;
+                        file_op.fd = .zero;
                     }
                 }
 
@@ -1038,7 +1048,7 @@ pub const Bundler = struct {
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
@@ -1086,7 +1096,6 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
-                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
@@ -1109,7 +1118,6 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
@@ -1137,7 +1145,14 @@ pub const Bundler = struct {
                         .minify_syntax = bundler.options.minify_syntax,
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
-                        .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
+                        .module_type = if (is_bun and bundler.options.transform_only)
+                            // this is for when using `bun build --no-bundle`
+                            // it should copy what was passed for the cli
+                            bundler.options.output_format
+                        else if (ast.exports_kind == .cjs)
+                            .cjs
+                        else
+                            .esm,
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
@@ -1328,7 +1343,7 @@ pub const Bundler = struct {
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
-                opts.features.dynamic_require = target.isBun();
+                opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;

@@ -52,7 +52,7 @@ const JSValue = @import("root").bun.JSC.JSValue;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -80,7 +80,7 @@ const BoringSSL = @import("root").bun.BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
     fd: bun.FileDescriptor,
-    socket_fd: i32 = 0,
+    socket_fd: bun.FileDescriptor = bun.invalid_fd,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
     has_listener: bool = false,
@@ -280,8 +280,7 @@ pub const ServerConfig = struct {
             }
 
             if (this.cert) |cert| {
-                var i: u32 = 0;
-                while (i < this.cert_count) : (i += 1) {
+                for (0..this.cert_count) |i| {
                     const slice = std.mem.span(cert[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
@@ -293,8 +292,7 @@ pub const ServerConfig = struct {
             }
 
             if (this.key) |key| {
-                var i: u32 = 0;
-                while (i < this.key_count) : (i += 1) {
+                for (0..this.key_count) |i| {
                     const slice = std.mem.span(key[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
@@ -306,8 +304,7 @@ pub const ServerConfig = struct {
             }
 
             if (this.ca) |ca| {
-                var i: u32 = 0;
-                while (i < this.ca_count) : (i += 1) {
+                for (0..this.ca_count) |i| {
                     const slice = std.mem.span(ca[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
@@ -355,10 +352,9 @@ pub const ServerConfig = struct {
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                        var i: u32 = 0;
                         var valid_count: u32 = 0;
-                        while (i < count) : (i += 1) {
-                            const item = js_obj.getIndex(global, i);
+                        for (0..count) |i| {
+                            const item = js_obj.getIndex(global, @intCast(i));
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
@@ -466,11 +462,9 @@ pub const ServerConfig = struct {
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                        var i: u32 = 0;
                         var valid_count: u32 = 0;
-
-                        while (i < count) : (i += 1) {
-                            const item = js_obj.getIndex(global, i);
+                        for (0..count) |i| {
+                            const item = js_obj.getIndex(global, @intCast(i));
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
@@ -574,11 +568,9 @@ pub const ServerConfig = struct {
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                        var i: u32 = 0;
                         var valid_count: u32 = 0;
-
-                        while (i < count) : (i += 1) {
-                            const item = js_obj.getIndex(global, i);
+                        for (0..count) |i| {
+                            const item = js_obj.getIndex(global, @intCast(i));
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
@@ -1277,8 +1269,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        // TODO: Use TransmitFile on Windows
-        const can_sendfile = !ssl_enabled and !bun.Environment.isWindows;
+        const can_sendfile = !ssl_enabled;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1877,9 +1868,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isLinux) {
                 var signed_offset = @as(i64, @intCast(this.sendfile.offset));
                 const start = this.sendfile.offset;
-                const val =
-                    // this does the syscall directly, without libc
-                    linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
+                const val = linux.sendfile(this.sendfile.socket_fd.cast(), this.sendfile.fd.cast(), &signed_offset, this.sendfile.remain);
                 this.sendfile.offset = @as(Blob.SizeType, @intCast(signed_offset));
 
                 const errcode = linux.getErrno(val);
@@ -1894,13 +1883,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
                 }
+            } else if (Environment.isWindows) {
+                const win = std.os.windows;
+                const uv = bun.windows.libuv;
+                const socket = bun.socketcast(this.sendfile.socket_fd);
+                const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.sendfile.fd));
+                this.sendfile.offset += this.sendfile.remain;
+                this.sendfile.remain = 0;
+                return win.ws2_32.TransmitFile(socket, file_handle, 0, 0, null, null, 0) == 1;
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
                 const errcode = std.c.getErrno(std.c.sendfile(
-                    this.sendfile.fd,
-                    this.sendfile.socket_fd,
-
+                    this.sendfile.fd.cast(),
+                    this.sendfile.socket_fd.cast(),
                     signed_offset,
                     &sbytes,
                     null,
@@ -2066,7 +2062,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .remain = this.blob.Blob.offset + original_size,
                 .offset = this.blob.Blob.offset,
                 .auto_close = auto_close,
-                .socket_fd = if (!this.flags.aborted) resp.getNativeHandle() else -999,
+                .socket_fd = if (!this.flags.aborted) resp.getNativeHandle() else bun.invalid_fd,
             };
 
             // if we are sending only part of a file, include the content-range header
@@ -2158,7 +2154,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
                     .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
                     .auto_close = false,
-                    .socket_fd = -999,
+                    .socket_fd = bun.invalid_fd,
                 };
 
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
@@ -5364,7 +5360,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             const fmt = switch (this.config.address) {
-                .unix => |unix| strings.URLFormatter{
+                .unix => |unix| bun.fmt.URLFormatter{
                     .proto = .unix,
                     .hostname = bun.sliceTo(@constCast(unix), 0),
                 },
@@ -5373,7 +5369,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     if (this.listener) |listener| {
                         port = @intCast(listener.getLocalPort());
                     }
-                    break :blk strings.URLFormatter{
+                    break :blk bun.fmt.URLFormatter{
                         .proto = if (comptime ssl_enabled_) .https else .http,
                         .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
                         .port = port,
@@ -5476,7 +5472,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.unref();
 
             if (!ssl_enabled_)
-                this.vm.removeListeningSocketForWatchMode(@intCast(listener.socket().fd()));
+                this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
 
             if (!abrupt) {
                 listener.close();
@@ -5634,7 +5630,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     },
                     .unix => |unix| {
                         error_instance = (JSC.SystemError{
-                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
                             .code = bun.String.static("EADDRINUSE"),
                             .syscall = bun.String.static("listen"),
                         }).toErrorInstance(this.globalThis);
@@ -5661,7 +5657,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.listener = socket;
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
-                this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
+                this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
         }
 
         pub fn ref(this: *ThisServer) void {

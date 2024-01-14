@@ -58,7 +58,7 @@ const NewClass = @import("./base.zig").NewClass;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -382,7 +382,7 @@ pub const RuntimeTranspilerStore = struct {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const _fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
+                        fd = if (_fd.int() > 0) _fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -406,12 +406,12 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = 0;
+            var input_file_fd: StoredFileDescriptorType = .zero;
             var parse_options = Bundler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
                 .loader = loader,
-                .dirname_fd = 0,
+                .dirname_fd = .zero,
                 .file_descriptor = fd,
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
@@ -430,9 +430,9 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             defer {
-                if (should_close_input_file_fd and input_file_fd != 0) {
+                if (should_close_input_file_fd and input_file_fd != .zero) {
                     _ = bun.sys.close(input_file_fd);
-                    input_file_fd = 0;
+                    input_file_fd = .zero;
                 }
             }
 
@@ -451,7 +451,7 @@ pub const RuntimeTranspilerStore = struct {
                 false,
             ) orelse {
                 if (vm.isWatcherEnabled()) {
-                    if (input_file_fd != 0) {
+                    if (input_file_fd != .zero) {
                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
                             vm.bun_watcher.addFile(
@@ -459,7 +459,7 @@ pub const RuntimeTranspilerStore = struct {
                                 path.text,
                                 hash,
                                 loader,
-                                0,
+                                .zero,
                                 package_json,
                                 true,
                             ) catch {};
@@ -472,7 +472,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             if (vm.isWatcherEnabled()) {
-                if (input_file_fd != 0) {
+                if (input_file_fd != .zero) {
                     if (!is_node_override and
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
@@ -482,7 +482,7 @@ pub const RuntimeTranspilerStore = struct {
                             path.text,
                             hash,
                             loader,
-                            0,
+                            .zero,
                             package_json,
                             true,
                         ) catch {};
@@ -539,6 +539,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -553,6 +554,7 @@ pub const RuntimeTranspilerStore = struct {
                         import_record.path.namespace = "bun";
                         import_record.tag = .bun_test;
                         import_record.path.text = "test";
+                        import_record.is_external_without_side_effects = true;
                         continue;
                     }
                 }
@@ -560,6 +562,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
+                    import_record.is_external_without_side_effects = true;
 
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;
@@ -1326,7 +1329,7 @@ pub const ModuleLoader = struct {
                             path.text,
                             this.hash,
                             options.Loader.fromAPI(this.loader),
-                            0,
+                            .zero,
                             this.package_json,
                             true,
                         ) catch {};
@@ -1467,7 +1470,7 @@ pub const ModuleLoader = struct {
 
                 if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
                     const _fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
-                    fd = if (_fd > 0) _fd else null;
+                    fd = if (_fd.int() > 0) _fd else null;
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
@@ -1555,7 +1558,7 @@ pub const ModuleLoader = struct {
                         ) orelse {
                             if (comptime !disable_transpilying) {
                                 if (jsc_vm.isWatcherEnabled()) {
-                                    if (input_file_fd != 0) {
+                                    if (input_file_fd != .zero) {
                                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                             should_close_input_file_fd = false;
                                             jsc_vm.bun_watcher.addFile(
@@ -1563,7 +1566,7 @@ pub const ModuleLoader = struct {
                                                 path.text,
                                                 hash,
                                                 loader,
-                                                0,
+                                                .zero,
                                                 package_json,
                                                 true,
                                             ) catch {};
@@ -1598,7 +1601,7 @@ pub const ModuleLoader = struct {
 
                 if (comptime !disable_transpilying) {
                     if (jsc_vm.isWatcherEnabled()) {
-                        if (input_file_fd != 0) {
+                        if (input_file_fd != .zero) {
                             if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
                                 jsc_vm.bun_watcher.addFile(
@@ -1606,7 +1609,7 @@ pub const ModuleLoader = struct {
                                     path.text,
                                     hash,
                                     loader,
-                                    0,
+                                    .zero,
                                     package_json,
                                     true,
                                 ) catch {};

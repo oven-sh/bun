@@ -42,7 +42,7 @@ pub const BunSpawn = struct {
 
         kind: FileActionType = .none,
         path: ?[*:0]const u8 = null,
-        fds: [2]c_int = .{ 0, 0 },
+        fds: [2]bun.FileDescriptor,
         flags: c_int = 0,
         mode: c_int = 0,
 
@@ -80,37 +80,37 @@ pub const BunSpawn = struct {
             self.actions.deinit(bun.default_allocator);
         }
 
-        pub fn open(self: *Actions, fd: fd_t, path: []const u8, flags: u32, mode: i32) !void {
+        pub fn open(self: *Actions, fd: bun.FileDescriptor, path: []const u8, flags: u32, mode: i32) !void {
             const posix_path = try toPosixPath(path);
 
             return self.openZ(fd, &posix_path, flags, mode);
         }
 
-        pub fn openZ(self: *Actions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: i32) !void {
+        pub fn openZ(self: *Actions, fd: bun.FileDescriptor, path: [*:0]const u8, flags: u32, mode: i32) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .open,
                 .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
                 .flags = @intCast(flags),
                 .mode = @intCast(mode),
-                .fds = .{ fd, 0 },
+                .fds = .{ fd, bun.toFD(0) },
             });
         }
 
-        pub fn close(self: *Actions, fd: fd_t) !void {
+        pub fn close(self: *Actions, fd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .close,
-                .fds = .{ fd, 0 },
+                .fds = .{ fd, bun.toFD(0) },
             });
         }
 
-        pub fn dup2(self: *Actions, fd: fd_t, newfd: fd_t) !void {
+        pub fn dup2(self: *Actions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .dup2,
-                .fds = .{ @truncate(fd), @truncate(newfd) },
+                .fds = .{ fd, newfd },
             });
         }
 
-        pub fn inherit(self: *Actions, fd: fd_t) !void {
+        pub fn inherit(self: *Actions, fd: bun.FileDescriptor) !void {
             _ = self;
             _ = fd;
 
@@ -234,13 +234,13 @@ pub const PosixSpawn = struct {
             self.* = undefined;
         }
 
-        pub fn open(self: *PosixSpawnActions, fd: fd_t, path: []const u8, flags: u32, mode: mode_t) !void {
+        pub fn open(self: *PosixSpawnActions, fd: bun.FileDescriptor, path: []const u8, flags: u32, mode: mode_t) !void {
             const posix_path = try toPosixPath(path);
             return self.openZ(fd, &posix_path, flags, mode);
         }
 
-        pub fn openZ(self: *PosixSpawnActions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @as(c_int, @bitCast(flags)), mode))) {
+        pub fn openZ(self: *PosixSpawnActions, fd: bun.FileDescriptor, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
+            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd.cast(), path, @as(c_int, @bitCast(flags)), mode))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -250,8 +250,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn close(self: *PosixSpawnActions, fd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd))) {
+        pub fn close(self: *PosixSpawnActions, fd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -261,8 +261,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn dup2(self: *PosixSpawnActions, fd: fd_t, newfd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd, newfd))) {
+        pub fn dup2(self: *PosixSpawnActions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd.cast(), newfd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -272,8 +272,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn inherit(self: *PosixSpawnActions, fd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addinherit_np(&self.actions, fd))) {
+        pub fn inherit(self: *PosixSpawnActions, fd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_addinherit_np(&self.actions, fd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,

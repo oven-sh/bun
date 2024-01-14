@@ -78,13 +78,13 @@ pub fn hasParentPackage(this: *const DirInfo) bool {
 
 pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
     if (!FeatureFlags.store_file_descriptors) {
-        return 0;
+        return .zero;
     }
 
     if (dirinfo.getEntries(0)) |entries| {
         return entries.fd;
     } else {
-        return 0;
+        return .zero;
     }
 }
 

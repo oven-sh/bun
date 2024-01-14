@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { redirect } from "./util";
+import { TestBuilder, redirect } from "./util";
 
 const BUN = process.argv0;
 
@@ -636,14 +636,36 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
-  test("edgecase2", () => {
-    const buffer = new Uint8Array(1);
-    let error: Error | undefined = undefined;
-    try {
-      const result = $.parse`FOO=bar ${BUN} -e "console.log(process.env) > ${buffer}"`;
-    } catch (err) {
-      error = err as Error;
-    }
-    expect(error).toBeDefined();
+  describe("errors", async () => {
+    // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
+    // this will break things inside of a quote.
+    test("JS object ref in quotes", async () => {
+      const buffer = new Uint8Array(1);
+      await TestBuilder.command`FOO=bar ${BUN} -e "console.log(process.env) > ${buffer}"`
+        .error("JS object reference not allowed in double quotes")
+        .run();
+    });
+
+    test("Unexpected ')'", async () => {
+      await TestBuilder.command`echo )`.error("Unexpected ')'").run();
+      await TestBuilder.command`"echo (echo hi)"`.error(false).run();
+      await TestBuilder.command`echo "()"`.error(false).run();
+    });
+
+    test("Unexpected EOF", async () => {
+      await TestBuilder.command`echo hi |`.error("Unexpected EOF").run();
+      await TestBuilder.command`echo hi &`.error("Unexpected EOF").run();
+    });
+
+    test("Unclosed subshell", async () => {
+      await TestBuilder.command`echo hi && $(echo uh oh`.error("Unclosed command substitution").run();
+      await TestBuilder.command`echo hi && $(echo uh oh)`.error(false).run();
+
+      await TestBuilder.command`echo hi && \`echo uh oh`.error("Unclosed command substitution").run();
+      await TestBuilder.command`echo hi && \`echo uh oh\``.error(false).run();
+
+      await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
+      await TestBuilder.command`echo hi && (echo uh oh)`.error(false).run();
+    });
   });
 });

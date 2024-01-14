@@ -391,7 +391,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             var parser: ?bun.shell.Parser = null;
-            const script_ast = ThisInterpreter.parse(&arena, script.items[0..], jsobjs.items[0..], &parser) catch |err| {
+            var lex_result: ?shell.LexResult = null;
+            const script_ast = ThisInterpreter.parse(
+                &arena,
+                script.items[0..],
+                jsobjs.items[0..],
+                &parser,
+                &lex_result,
+            ) catch |err| {
+                if (err == shell.ParseError.Lex) {
+                    std.debug.assert(lex_result != null);
+                    const str = lex_result.?.combineErrors(arena.allocator());
+                    globalThis.throwPretty("{s}", .{str});
+                    return null;
+                }
+
                 if (parser) |p| {
                     var error_string = std.ArrayList(u8).init(globalThis.bunVM().allocator);
                     const last = error_string.items.len -| 1;
@@ -433,7 +447,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return interpreter;
         }
 
-        pub fn parse(arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue, out_parser: *?bun.shell.Parser) !ast.Script {
+        pub fn parse(arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue, out_parser: *?bun.shell.Parser, out_lex_result: *?shell.LexResult) !ast.Script {
             const lex_result = brk: {
                 if (bun.strings.isAllASCII(script)) {
                     var lexer = bun.shell.LexerAscii.new(arena.allocator(), script);
@@ -444,6 +458,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 try lexer.lex();
                 break :brk lexer.get_result();
             };
+
+            if (lex_result.errors.len > 0) {
+                out_lex_result.* = lex_result;
+                return shell.ParseError.Lex;
+            }
 
             out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
 
@@ -556,7 +575,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
-            const script = try ThisInterpreter.parse(&arena, src, jsobjs, &out_parser);
+            var out_lex_result: ?bun.shell.LexResult = null;
+            const script = try ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result);
             const script_heap = try arena.allocator().create(ast.Script);
             script_heap.* = script;
             var interp = try ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs);

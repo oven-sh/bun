@@ -348,6 +348,12 @@ pub fn shellLex(
         break :brk lexer.get_result();
     };
 
+    if (lex_result.errors.len > 0) {
+        const str = lex_result.combineErrors(arena.allocator());
+        globalThis.throwPretty("{s}", .{str});
+        return .undefined;
+    }
+
     var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
@@ -415,6 +421,12 @@ pub fn shellParse(
         };
         break :brk lexer.get_result();
     };
+
+    if (lex_result.errors.len > 0) {
+        const str = lex_result.combineErrors(arena.allocator());
+        globalThis.throwPretty("{s}", .{str});
+        return .undefined;
+    }
 
     var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to create shell parser");

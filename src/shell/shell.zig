@@ -84,6 +84,7 @@ pub const ShellError = error{ Init, Process, GlobalThisThrown, Spawn };
 pub const ParseError = error{
     Expected,
     Unknown,
+    Lex,
 };
 
 extern "C" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
@@ -1144,8 +1145,34 @@ pub const Token = union(TokenTag) {
 pub const LexerAscii = NewLexer(.ascii);
 pub const LexerUnicode = NewLexer(.wtf8);
 pub const LexResult = struct {
+    errors: []LexError,
     tokens: []const Token,
     strpool: []const u8,
+
+    pub fn combineErrors(this: *const LexResult, arena: Allocator) []const u8 {
+        const errors = this.errors;
+        const str = str: {
+            const size = size: {
+                var i: usize = 0;
+                for (errors) |e| {
+                    i += e.msg.len;
+                }
+                break :size i;
+            };
+            var buf = arena.alloc(u8, size) catch bun.outOfMemory();
+            var i: usize = 0;
+            for (errors) |e| {
+                @memcpy(buf[i .. i + e.msg.len], e.msg);
+                i += e.msg.len;
+            }
+            break :str buf;
+        };
+        return str;
+    }
+};
+pub const LexError = struct {
+    /// Allocated with lexer arena
+    msg: []const u8,
 };
 pub const LEX_JS_OBJREF_PREFIX = "$__bun_";
 
@@ -1166,7 +1193,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         tokens: ArrayList(Token),
         delimit_quote: bool = false,
         in_subshell: ?SubShellKind = null,
-        errors: std.ArrayList(Error),
+        errors: std.ArrayList(LexError),
 
         const SubShellKind = enum {
             /// (echo hi; echo hello)
@@ -1178,14 +1205,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         };
 
         const LexerError = error{
-            Unexpected,
             OutOfMemory,
             Utf8CannotEncodeSurrogateHalf,
             Utf8InvalidStartByte,
             CodepointTooLarge,
-        };
-        const Error = struct {
-            msg: []const u8,
         };
 
         pub const js_objref_prefix = "$__bun_";
@@ -1206,7 +1229,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .chars = Chars.init(src),
                 .tokens = ArrayList(Token).init(alloc),
                 .strpool = ArrayList(u8).init(alloc),
-                .errors = ArrayList(Error).init(alloc),
+                .errors = ArrayList(LexError).init(alloc),
             };
         }
 
@@ -1214,7 +1237,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return .{
                 .tokens = self.tokens.items[0..],
                 .strpool = self.strpool.items[0..],
+                .errors = self.errors.items[0..],
             };
+        }
+
+        pub fn add_error(self: *@This(), msg: []const u8) void {
+            const start = self.strpool.items.len;
+            self.strpool.appendSlice(msg) catch bun.outOfMemory();
+            const end = self.strpool.items.len;
+            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -1372,8 +1403,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             try self.break_word(false);
                             if (self.eat_js_obj_ref()) |ref| {
                                 if (self.chars.state == .Double) {
-                                    try self.errors.append(.{ .msg = "JS object reference not allowed in double quotes" });
-                                    return LexerError.Unexpected;
+                                    try self.errors.append(.{ .msg = bun.default_allocator.dupe(u8, "JS object reference not allowed in double quotes") catch bun.outOfMemory() });
+                                    return;
                                 }
                                 try self.tokens.append(ref);
                             } else {
@@ -1398,7 +1429,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         ')' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.in_subshell != .dollar and self.in_subshell != .normal) {
-                                @panic("Unexpected ')'");
+                                self.add_error("Unexpected ')'");
+                                continue;
                             }
 
                             try self.break_word(true);
@@ -1430,7 +1462,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
 
-                            const next = self.peek() orelse @panic("Unexpected EOF");
+                            const next = self.peek() orelse {
+                                self.add_error("Unexpected EOF");
+                                return;
+                            };
                             if (next.escaped or next.char != '|') {
                                 try self.tokens.append(.Pipe);
                             } else if (next.char == '|') {
@@ -1457,7 +1492,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
 
-                            const next = self.peek() orelse @panic("Unexpected EOF");
+                            const next = self.peek() orelse {
+                                self.add_error("Unexpected EOF");
+                                return;
+                            };
                             if (next.char == '>' and !next.escaped) {
                                 _ = self.eat();
                                 const inner = if (self.eat_simple_redirect_operator(.out))
@@ -1515,8 +1553,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 try self.appendCharToStrPool(char);
             }
 
-            if (self.in_subshell != null) {
-                @panic("Unclosed command substitution");
+            if (self.in_subshell) |subshell_kind| {
+                switch (subshell_kind) {
+                    .dollar, .backtick => self.add_error("Unclosed command substitution"),
+                    .normal => self.add_error("Unclosed subshell"),
+                }
+                return;
             }
 
             try self.tokens.append(.Eof);

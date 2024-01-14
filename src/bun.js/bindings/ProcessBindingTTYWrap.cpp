@@ -175,7 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
     int fd = ttyWrap->fd;
-    JSValue mode = callFrame->argument(1);
+    JSValue mode = callFrame->argument(0);
     if (!mode.isNumber()) {
         throwTypeError(globalObject, throwScope, "mode must be a number"_s);
         return JSValue::encode(jsUndefined());

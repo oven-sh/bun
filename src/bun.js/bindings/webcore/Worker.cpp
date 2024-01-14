@@ -62,6 +62,8 @@
 #include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
+#include "JSMessagePort.h"
+
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(Worker);
@@ -423,6 +425,65 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 
     globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
+}
+
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
+
+JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto port = callFrame->argument(0);
+
+    if (!port.isObject()) {
+        throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
+        return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
+    } else if (auto* broadcastChannel = jsDynamicCast<JSBroadcastChannel*>(port)) {
+        // TODO: support broadcast channels
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSValue createWorkerThreadsBinding(Zig::GlobalObject* globalObject)
+{
+    VM&vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue workerData = jsUndefined();
+    JSValue threadId = jsNumber(0);
+
+    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
+        auto& options = worker->options();
+        if (worker && options.bun.data) {
+            auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.bun.dataMessagePorts));
+            RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
+            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+            RETURN_IF_EXCEPTION(scope, {});
+            workerData = deserialized;
+        }
+
+        // Main thread starts at 1
+        threadId = jsNumber(worker->clientIdentifier() - 1);
+    }
+
+    JSArray* array = constructEmptyArray(globalObject, nullptr, 3);
+    array->push(globalObject, workerData);
+    array->push(globalObject, threadId);
+    array->push(globalObject, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+    return array;
 }
 
 } // namespace WebCore

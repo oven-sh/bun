@@ -1,5 +1,6 @@
 import { LoaderKeys } from "../api/schema";
 import { sliceSourceCode } from "./builtin-parser";
+import { registerNativeCall } from "./js2native-generator";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -134,7 +135,7 @@ export function applyReplacements(src: string, length: number) {
     slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
   }
   let match;
-  if ((match = slice.match(/__intrinsic__(debug|assert)$/)) && rest.startsWith("(")) {
+  if ((match = slice.match(/__intrinsic__(debug|assert|zig|cpp)$/)) && rest.startsWith("(")) {
     const name = match[1];
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);
@@ -154,18 +155,40 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
-          checkSlice.result.slice(1, -1) +
-          "," +
-          JSON.stringify(
-            checkSlice.result
-              .slice(1, -1)
-              .replace(/__intrinsic__/g, "$")
-              .trim(),
-          ) +
-          extraArgs +
-          "):void 0)",
+        "(IS_BUN_DEVELOPMENT?$assert(" +
+        checkSlice.result.slice(1, -1) +
+        "," +
+        JSON.stringify(
+          checkSlice.result
+            .slice(1, -1)
+            .replace(/__intrinsic__/g, "$")
+            .trim(),
+        ) +
+        extraArgs +
+        "):void 0)",
         rest2,
+        true,
+      ];
+    } else if (name == 'zig' || name == 'cpp') {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      try {
+        args = JSON.parse('[' + inner.result.slice(1, -1).replaceAll("'", "\"") + ']');
+      } catch {
+        throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
+      }
+      if (args.length != 2
+        || typeof args[0] !== 'string'
+        || typeof args[1] !== 'string'
+      ) {
+        throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+      }
+
+      const id = registerNativeCall(name, args[0], args[1]);
+
+      return [
+        slice.slice(0, match.index) + "__intrinsic__native(" + id + ")",
+        inner.rest,
         true,
       ];
     }

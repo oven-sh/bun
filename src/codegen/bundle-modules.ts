@@ -8,13 +8,14 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import { getJS2NativeCPP, getJS2NativeZig } from "./js2native-generator";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
 if (!CMAKE_BUILD_ROOT) {
-  console.error("Usage: bun bundle-modules.ts <CMAKE_WORK_DIR>");
+  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR>");
   process.exit(1);
 }
 
@@ -44,7 +45,7 @@ const {
 // work, so i have lot of debug logs that blow up the console because not sure what is going on.
 // that is also the reason for using `retry` when theoretically writing a file the first time
 // should actually write the file.
-const verbose = Bun.env.VERBOSE ? console.log : () => {};
+const verbose = Bun.env.VERBOSE ? console.log : () => { };
 async function retry(n, fn) {
   var err;
   while (n > 0) {
@@ -87,12 +88,12 @@ for (let i = 0; i < moduleList.length; i++) {
 
     const processed = sliceSourceCode(
       "{" +
-        input
-          .replace(
-            /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
-            stmt => (importStatements.push(stmt), ""),
-          )
-          .replace(/export\s*{\s*}\s*;/g, ""),
+      input
+        .replace(
+          /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
+          stmt => (importStatements.push(stmt), ""),
+        )
+        .replace(/export\s*{\s*}\s*;/g, ""),
       true,
       x => requireTransformer(x, moduleList[i]),
     );
@@ -236,13 +237,13 @@ for (const entrypoint of bundledEntryPoints) {
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +
-      (usesDebug
-        ? createLogClientJS(
-            file_path.replace(".js", ""),
-            idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
-          )
-        : "") +
-      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
+    (usesDebug
+      ? createLogClientJS(
+        file_path.replace(".js", ""),
+        idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
+      )
+      : "") +
+    (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
   );
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -285,12 +286,11 @@ writeIfNotChanged(
 // actually use this enum but it's probably a good thing to include.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+enum.h"),
-  `${
-    moduleList
-      .map((id, n) => {
-        return `${idToEnumName(id)} = ${n},`;
-      })
-      .join("\n") + "\n"
+  `${moduleList
+    .map((id, n) => {
+      return `${idToEnumName(id)} = ${n},`;
+    })
+    .join("\n") + "\n"
   }
 `,
 );
@@ -304,16 +304,16 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
   switch (id) {
     // JS internal modules
     ${moduleList
-      .map((id, n) => {
-        return `case Field::${idToEnumName(id)}: {
+    .map((id, n) => {
+      return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-          id.replace(/\.[mc]?[tj]s$/, ".js"),
-        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-          .replace(/\.[mc]?[tj]s$/, "")
-          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+        id.replace(/\.[mc]?[tj]s$/, ".js"),
+      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+        .replace(/\.[mc]?[tj]s$/, "")
+        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
-      })
-      .join("\n    ")}
+    })
+    .join("\n    ")}
     default: {
       __builtin_unreachable();
     }
@@ -373,8 +373,8 @@ pub const ResolvedSourceTag = enum(u32) {
 ${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
     // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
-  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
-  .join("\n")}
+    .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
+    .join("\n")}
 };
 `,
 );
@@ -400,8 +400,8 @@ ${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("
     // They also have bit 10 set to differentiate them from JS builtins.
     NativeModuleFlag = (1 << 10) | (1 << 9),
 ${Object.entries(nativeModuleEnumToId)
-  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
-  .join("\n")}
+    .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
+    .join("\n")}
 };
 
 `,
@@ -415,13 +415,16 @@ writeIfNotChanged(
     .join("\n") + "\n",
 );
 
-// This is used for debug builds for the base path for dynamic loading
-// fs.writeFileSync(
-//   path.join(OUT_DIR, "DebugPath.h"),
-//   `// Using __FILE__ does not give an absolute file path
-// // This is a workaround for that.
-// #define BUN_DYNAMIC_JS_LOAD_PATH "${path.join(OUT_DIR, "")}"
-// `,
-// );
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "GeneratedJS2Native.h"),
+  getJS2NativeCPP(),
+);
+
+// zig will complain if this file is outside of the module
+const js2nativeZigPath = path.join(import.meta.dir, "../bun.js/bindings/GeneratedJS2Native.zig");
+writeIfNotChanged(
+  js2nativeZigPath,
+  getJS2NativeZig(js2nativeZigPath),
+);
 
 mark("Generate Code");

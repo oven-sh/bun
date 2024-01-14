@@ -20,8 +20,8 @@ export function sliceSourceCode(
   while (contents.length) {
     const match = contents.match(
       endOnComma && bracketCount <= 1
-        ? /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\),]|(?<!\$)\brequire\(|(\$assert\(|\$debug\()/
-        : /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\)]|(?<!\$)\brequire\(|(\$assert\(|\$debug\()/,
+        ? /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\),]|(?<!\$)\brequire\(|(\$assert\(|\$debug\(|\$zig\(|\$cpp\()/
+        : /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\)]|(?<!\$)\brequire\(|(\$assert\(|\$debug\(|\$zig\(|\$cpp\()/,
     );
     i = match?.index ?? contents.length;
     if (match?.[2]) {

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, define } from "./replacements";
-import { cap, fmtCPPString, low, writeIfNotChanged } from "./helpers";
+import { cap, fmtCPPCharArray, low, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 
@@ -172,10 +172,9 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 // do not allow the bundler to rename a symbol to $
 ($);
 
-$$capture_start$$(${fn.async ? "async " : ""}${
-        useThis
-          ? `function(${fn.params.join(",")})`
-          : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
+$$capture_start$$(${fn.async ? "async " : ""}${useThis
+        ? `function(${fn.params.join(",")})`
+        : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
       } {${fn.source}}).$$capture_end$$;
 `,
     );
@@ -199,11 +198,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       (fn.directives.sloppy
         ? captured
         : captured.replace(
-            /function\s*\(.*?\)\s*{/,
-            '$&"use strict";' +
-              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
-              (usesAssert ? createAssertClientJS(fn.name) : ""),
-          )
+          /function\s*\(.*?\)\s*{/,
+          '$&"use strict";' +
+          (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+          (usesAssert ? createAssertClientJS(fn.name) : ""),
+        )
       )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@") + "\n";
@@ -222,8 +221,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
         : fn.directives.overriddenName
-        ? `"${fn.directives.overriddenName}"_s`
-        : "ASCIILiteral()",
+          ? `"${fn.directives.overriddenName}"_s`
+          : "ASCIILiteral()",
     });
   }
 
@@ -278,13 +277,12 @@ for (const { basename, functions } of files) {
   bundledCPP += `/* ${basename}.ts */\n`;
   const lowerBasename = low(basename);
   for (const fn of functions) {
-    const [code, count] = fmtCPPString(fn.source, true);
+    const [code, count] = fmtCPPCharArray(fn.source, true);
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
-const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${
-      fn.directives.alwaysInline ? "Always" : "None"
-    };
+const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"
+      };
 const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};

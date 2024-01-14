@@ -2483,34 +2483,61 @@ pub const JSFunction = extern struct {
     pub const name = "JSC::JSFunction";
     pub const namespace = "JSC";
 
-    // pub fn createFromSourceCode(
-    //     global: *JSGlobalObject,
-    //     function_name: ?[*]const u8,
-    //     function_name_len: u16,
-    //     args: ?[*]JSValue,
-    //     args_len: u16,
-    //     source: *const SourceCode,
-    //     origin: *SourceOrigin,
-    //     exception: *?*JSObject,
-    // ) *JSFunction {
-    //     return cppFn("createFromSourceCode", .{
-    //         global,
-    //         function_name,
-    //         function_name_len,
-    //         args,
-    //         args_len,
-    //         source,
-    //         origin,
-    //         exception,
-    //     });
-    // }
+    const ImplementationVisibility = enum(u8) {
+        public,
+        private,
+        private_recursive,
+    };
+
+    /// In WebKit: Intrinsic.h
+    const Intrinsic = enum(u8) {
+        none,
+        _,
+    };
+
+    const CreateJSFunctionOptions = struct {
+        implementation_visibility: ImplementationVisibility = .public,
+        intrinsic: Intrinsic = .none,
+        constructor: ?*const JSHostFunctionType = null,
+        domjit: ?*const anyopaque = null,
+    };
+
+    extern fn JSFunction__createFromZig(
+        global: *JSGlobalObject,
+        fn_name: bun.String,
+        implementation: *const JSHostFunctionType,
+        arg_count: u32,
+        implementation_visibility: ImplementationVisibility,
+        intrinsic: Intrinsic,
+        constructor: ?*const JSHostFunctionType,
+        domjit: ?*const anyopaque,
+    ) JSValue;
+
+    pub fn create(
+        global: *JSGlobalObject,
+        fn_name: anytype,
+        implementation: *const JSHostFunctionType,
+        arg_count: u32,
+        options: CreateJSFunctionOptions,
+    ) JSValue {
+        return JSFunction__createFromZig(
+            global,
+            switch (@TypeOf(fn_name)) {
+                bun.String => fn_name,
+                else => bun.String.init(fn_name),
+            },
+            implementation,
+            arg_count,
+            options.implementation_visibility,
+            options.intrinsic,
+            options.constructor,
+            options.domjit,
+        );
+    }
 
     pub fn optimizeSoon(value: JSValue) void {
         cppFn("optimizeSoon", .{value});
     }
-    // pub fn toString(this: *JSFunction, globalThis: *JSGlobalObject) *const JSString {
-    //     return cppFn("toString", .{ this, globalThis });
-    // }
 
     extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
 
@@ -2521,8 +2548,6 @@ pub const JSFunction = extern struct {
 
     pub const Extern = [_][]const u8{
         "fromString",
-        // "createFromSourceCode",
-
         "getName",
         "displayName",
         "calculatedDisplayName",
@@ -6055,4 +6080,7 @@ pub const ScriptExecutionStatus = enum(i32) {
 
 comptime {
     _ = bun.String.BunString__getStringWidth;
+    // this file is gennerated, but cant be placed in the build/codegen folder
+    // because zig will complain about outside-of-module stuff
+    _ = @import("./GeneratedJS2Native.zig");
 }

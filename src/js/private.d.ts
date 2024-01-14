@@ -51,8 +51,8 @@ type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), 
     filename: string,
     options:
       | (WatchOptions & {
-          encoding: "buffer";
-        })
+        encoding: "buffer";
+      })
       | "buffer",
     listener?: BunWatchListener<Buffer>,
   ): BunFSWatcher;
@@ -221,3 +221,6 @@ interface CommonJSModuleRecord {
   paths: string[];
   require: typeof require;
 }
+
+declare function $cpp(filename: string, symbol: string): any;
+declare function $zig(filename: string, symbol: string): any;

@@ -16,7 +16,7 @@ const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
-const { parseArgs } = $lazy("util");
+const parseArgs = $zig("parse_args.zig", "getParseArgsFunction");
 
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;
@@ -69,7 +69,7 @@ function debuglog(set) {
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      debugs[set] = function () { };
     }
   }
   return debugs[set];

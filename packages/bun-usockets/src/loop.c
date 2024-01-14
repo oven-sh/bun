@@ -197,6 +197,12 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     loop->data.post_cb(loop);
 }
 
+#ifdef WIN32
+#define us_ioctl ioctlsocket
+#else
+#define us_ioctl ioctl
+#endif
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -328,7 +334,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
                 }
 
-                int estimated_socket_recv_buf_remaining = INT_MIN;
                 size_t repeat_recv_count = 0;
 
                 do {
@@ -339,7 +344,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         
                         // rare case: we're reading a lot of data, there's more to be read, and either:
-                        // - the socket has hung up, so we will never get more data from it
+                        // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
                         if (
@@ -347,35 +352,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                             (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) && 
                             !us_socket_is_closed(0, s)
                         ) {
-                            // get how much data is left in the socket's receive buffer
-                            // but only do this once per socket per loop iteration
-                            if (estimated_socket_recv_buf_remaining == INT_MIN) {
-                                #ifdef WIN32
-                                #define us_ioctl ioctlsocket
-                                #else
-                                #define us_ioctl ioctl
-                                #endif
+                            repeat_recv_count += error == 0;
 
-                                // ioctl will usually over-estimate the amount of data left in the socket's receive buffer
-                                if (us_ioctl(us_poll_fd(&s->p), FIONREAD, &estimated_socket_recv_buf_remaining) == -1) {
-                                    // if there is any error, ensure we don't try to read again
-                                    estimated_socket_recv_buf_remaining = -1;
-                                }
-                                
-                                #undef us_ioctl
-                            } else {
-                                estimated_socket_recv_buf_remaining = estimated_socket_recv_buf_remaining >= length ? estimated_socket_recv_buf_remaining - length : 0;
-                            }
-
-                            
-                            if (estimated_socket_recv_buf_remaining > 0) {
-                                repeat_recv_count += error == 0;
-
-                                // When not hung up, read a maximum of 10 times to avoid starving other sockets
-                                if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
-                                    continue;
-                                }
-                                
+                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                            // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT 
+                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                                continue;
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
@@ -418,3 +400,5 @@ void us_loop_integrate(struct us_loop_t *loop) {
 void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
+
+#undef us_ioctl

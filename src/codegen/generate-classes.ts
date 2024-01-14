@@ -2096,26 +2096,12 @@ if (!process.env.ONLY_ZIG) {
 
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
-    classes.map(a =>
-      [
-        `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
-        !a.noConstructor && Object.keys(a.klass).length > 0
-          ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)}Constructor;`
-          : "",
-      ].join("\n"),
-    ),
+    classes.map(a => [`std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`].join("\n")),
   );
 
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
-    classes.map(a =>
-      [
-        `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
-        !a.noConstructor && Object.keys(a.klass).length > 0
-          ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;`
-          : ``,
-      ].join("\n"),
-    ),
+    classes.map(a => [`std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`].join("\n")),
   );
 
   await writeIfNotChanged(

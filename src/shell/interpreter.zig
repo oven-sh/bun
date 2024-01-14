@@ -2634,7 +2634,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                             log("EXPANDED REDIRECT: {s}\n", .{this.redirection_file.items[0..]});
                             const perm = 0o666;
-                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT, perm)) {
+                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC, perm)) {
                                 .err => |e| {
                                     const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     return this.writeFailingError(buf, 1);
@@ -3061,7 +3061,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                             log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                             const perm = 0o666;
-                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT, perm)) {
+                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC, perm)) {
                                 .err => |e| {
                                     const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     return cmd.writeFailingError(buf, 1);

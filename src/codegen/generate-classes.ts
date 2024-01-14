@@ -1969,8 +1969,12 @@ for (const file of files) {
   const result = require(path.resolve(file));
   if (!(result?.default?.length ?? 0)) continue;
   console.log("Found", result.default.length, "classes from", file);
-  for (let { name } of result.default) {
-    console.log(`  - ${name}`);
+  for (let { name, proto = {}, klass = {} } of result.default) {
+    let protoProps = Object.keys(proto).length ? `${Object.keys(proto).length} fields` : "";
+    let klassProps = Object.keys(klass).length ? `${Object.keys(klass).length} class fields` : "";
+    let props = [protoProps, klassProps].filter(Boolean).join(", ");
+    if (props.length) props = ` (${props})`;
+    console.log(`  - ${name}` + props);
   }
 
   classes.push(...result.default);

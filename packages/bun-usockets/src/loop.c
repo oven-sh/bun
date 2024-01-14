@@ -326,24 +326,35 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
                 }
 
-                int length = bsd_recv(us_poll_fd(&s->p), s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, 0);
-                if (length > 0) {
-                    s = s->context->on_data(s, s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
-                } else if (!length) {
-                    if (us_socket_is_shut_down(0, s)) {
-                        /* We got FIN back after sending it */
-                        /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
+                do {
+                    int length = bsd_recv(us_poll_fd(&s->p), s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, MSG_DONTWAIT);
+
+                    if (length > 0) {
+                        s = s->context->on_data(s, s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        
+                        // rare case: the socket hung up, but there's more data to be read
+                        // we need to read all the data before closing the socket
+                        if (s && length == LIBUS_RECV_BUFFER_LENGTH && error && !us_socket_is_closed(0, s)) {
+                            continue;
+                        }
+                    } else if (!length) {
+                        if (us_socket_is_shut_down(0, s)) {
+                            /* We got FIN back after sending it */
+                            /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
+                            s = us_socket_close(0, s, 0, NULL);
+                        } else {
+                            /* We got FIN, so stop polling for readable */
+                            us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                            s = s->context->on_end(s);
+                        }
+                    } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                        /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, 0, NULL);
-                    } else {
-                        /* We got FIN, so stop polling for readable */
-                        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                        s = s->context->on_end(s);
+                        return;
                     }
-                } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                    /* Todo: decide also here what kind of reason we should give */
-                    s = us_socket_close(0, s, 0, NULL);
-                    return;
-                }
+
+                    break;
+                } while (1);
             }
 
             /* Such as epollerr epollhup */

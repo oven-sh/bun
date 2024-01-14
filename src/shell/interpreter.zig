@@ -566,7 +566,22 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
             var out_lex_result: ?bun.shell.LexResult = null;
-            const script = try ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result);
+            const script = ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result) catch |err| {
+                if (err == bun.shell.ParseError.Lex) {
+                    std.debug.assert(out_lex_result != null);
+                    const str = out_lex_result.?.combineErrors(arena.allocator());
+                    bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), str });
+                    bun.Global.exit(1);
+                }
+
+                if (out_parser) |*p| {
+                    const errstr = p.combineErrors();
+                    bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), errstr });
+                    bun.Global.exit(1);
+                }
+
+                return err;
+            };
             const script_heap = try arena.allocator().create(ast.Script);
             script_heap.* = script;
             var interp = try ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs);

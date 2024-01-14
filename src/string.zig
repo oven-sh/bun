@@ -496,6 +496,7 @@ pub const String = extern struct {
     }
 
     pub fn toErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
         return JSC__createError(globalObject, this);
     }
 
@@ -1138,15 +1139,14 @@ pub const String = extern struct {
     }
 
     pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var str: String = String.dead;
-
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        str = args[0].toBunString(globalObject);
+        const str = args[0].toBunString(globalObject);
+        defer str.deref();
 
         if (str.isEmpty()) {
             return JSC.jsNumber(@as(i32, 0));

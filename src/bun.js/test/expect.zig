@@ -4357,7 +4357,8 @@ pub const Expect = struct {
         if (pass or silent) return pass;
 
         // handle failure
-        var message_text: bun.String = undefined;
+        var message_text: bun.String = bun.String.dead;
+        defer message_text.deref();
         if (message.isUndefined()) {
             message_text = bun.String.static("No message was specified for this matcher.");
         } else if (message.isString()) {

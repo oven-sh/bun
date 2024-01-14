@@ -145,7 +145,8 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.toBunString(global);
+        const file_path = path_value.toBunString(global);
+        defer file_path.deref();
 
         if (file_path.length() == 0) {
             log.addError(
@@ -178,18 +179,22 @@ pub const PluginRunner = struct {
 
                 const namespace_str = namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("node");
                 }
 
@@ -200,6 +205,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.init("file");
         };
+        defer user_namespace.deref();
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
@@ -275,14 +281,17 @@ pub const PluginRunner = struct {
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("node");
                 }
 
@@ -293,6 +302,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.static("file");
         };
+        defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by JSC
         const combined_string = std.fmt.allocPrint(

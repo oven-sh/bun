@@ -2117,7 +2117,8 @@ pub const H2FrameParser = struct {
             const payload = array_buffer.slice();
             this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
-            var zig_str = bun_str.toUTF8(bun.default_allocator);
+            defer bun_str.deref();
+            var zig_str = bun_str.toUTF8WithoutRef(bun.default_allocator);
             defer zig_str.deinit();
             const payload = zig_str.slice();
             this.sendData(stream_id, payload, close and !stream.waitForTrailers);

@@ -4277,6 +4277,9 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
+    /// Increments the reference count
+    ///
+    /// **You must call `.deref()` or it will leak memory**
     pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
         return bun.String.fromJS(this, globalObject);
     }
@@ -4380,7 +4383,7 @@ pub const JSValue = enum(JSValueReprInt) {
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        return this.toSliceCloneWithAllocator(globalThis, globalThis.allocator());
+        return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
     /// On exception or out of memory, this returns null, to make exception checks clearer.
@@ -4732,6 +4735,24 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("getUnixTimestamp", .{
             this,
         });
+    }
+
+    pub const StringFormatter = struct {
+        value: JSC.JSValue,
+        globalObject: *JSC.JSGlobalObject,
+
+        pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const str = this.value.toBunString(this.globalObject);
+            defer str.deref();
+            try str.format(text, opts, writer);
+        }
+    };
+
+    pub fn fmtString(this: JSValue, globalObject: *JSC.JSGlobalObject) StringFormatter {
+        return .{
+            .value = this,
+            .globalObject = globalObject,
+        };
     }
 
     pub fn toFmt(

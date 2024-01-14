@@ -918,6 +918,7 @@ pub const Blob = struct {
 
                 if (len < 256 * 1024) {
                     const str = data.toBunString(globalThis);
+                    defer str.deref();
 
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -1292,25 +1293,27 @@ pub const Blob = struct {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
             return null;
         }
-
-        const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-            globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-            return null;
-        };
-
-        blob = get(globalThis, args[0], false, true) catch |err| {
-            if (err == error.InvalidArguments) {
-                globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+        {
+            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
+                globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 return null;
-            }
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            };
+            defer name_value_str.deref();
 
-        if (blob.store) |store_| {
-            store_.data.bytes.stored_name = bun.PathString.init(
-                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-            );
+            blob = get(globalThis, args[0], false, true) catch |err| {
+                if (err == error.InvalidArguments) {
+                    globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                    return null;
+                }
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+
+            if (blob.store) |store_| {
+                store_.data.bytes.stored_name = bun.PathString.init(
+                    (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                );
+            }
         }
 
         if (args.len > 2) {

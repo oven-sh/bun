@@ -408,6 +408,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.latin1ByteLength();
@@ -461,6 +463,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.utf16ByteLength();

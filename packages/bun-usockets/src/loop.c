@@ -326,17 +326,57 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
                 }
 
+                int estimated_socket_recv_buf_remaining = INT_MIN;
+                size_t repeat_recv_count = 0;
+
                 do {
-                    int length = bsd_recv(us_poll_fd(&s->p), s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, MSG_DONTWAIT);
+                    const struct us_loop_t* loop = s->context->loop;
+                    int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, MSG_DONTWAIT);
 
                     if (length > 0) {
-                        s = s->context->on_data(s, s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         
-                        // rare case: the socket hung up, but there's more data to be read
-                        // we need to read all the data before closing the socket
-                        if (s && length == LIBUS_RECV_BUFFER_LENGTH && error && !us_socket_is_closed(0, s)) {
-                            continue;
+                        // rare case: we're reading a lot of data, there's more to be read, and either:
+                        // - the socket has hung up, so we will never get more data from it
+                        // - the event loop isn't very busy, so we can read multiple times in a row
+                        #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        if (
+                            s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH && 
+                            (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) && 
+                            !us_socket_is_closed(0, s)
+                        ) {
+                            // get how much data is left in the socket's receive buffer
+                            // but only do this once per socket per loop iteration
+                            if (estimated_socket_recv_buf_remaining == INT_MIN) {
+                                #ifdef WIN32
+                                #define us_ioctl ioctlsocket
+                                #else
+                                #define us_ioctl ioctl
+                                #endif
+
+                                // ioctl will usually over-estimate the amount of data left in the socket's receive buffer
+                                if (us_ioctl(us_poll_fd(&s->p), FIONREAD, &estimated_socket_recv_buf_remaining) == -1) {
+                                    // if there is any error, ensure we don't try to read again
+                                    estimated_socket_recv_buf_remaining = -1;
+                                }
+                                
+                                #undef us_ioctl
+                            } else {
+                                estimated_socket_recv_buf_remaining = estimated_socket_recv_buf_remaining >= length ? estimated_socket_recv_buf_remaining - length : 0;
+                            }
+
+                            
+                            if (estimated_socket_recv_buf_remaining > 0) {
+                                repeat_recv_count += error == 0;
+
+                                // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                                if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                                    continue;
+                                }
+                                
+                            }
                         }
+                        #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                     } else if (!length) {
                         if (us_socket_is_shut_down(0, s)) {
                             /* We got FIN back after sending it */

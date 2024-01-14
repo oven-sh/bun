@@ -2621,10 +2621,10 @@ pub const VirtualMachine = struct {
         }
 
         const NoisyBuiltinFunctionMap = bun.ComptimeStringMap(void, .{
+            .{"asyncModuleEvaluation"},
             .{"link"},
             .{"linkAndEvaluateModule"},
             .{"moduleEvaluation"},
-            .{"asyncModuleEvaluation"},
             .{"processTicksAndRejections"},
         });
 

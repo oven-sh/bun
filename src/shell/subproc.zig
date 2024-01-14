@@ -661,7 +661,10 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return;
                     },
                     else => {
-                        const slice = result.slice();
+                        const slice = switch (result) {
+                            .into_array => this.fifo.buf[0..result.into_array.len],
+                            else => result.slice(),
+                        };
                         log("buffered output ({s}) onRead: {s}", .{ @tagName(this.out_type), slice });
                         this.internal_buffer.len += @as(u32, @truncate(slice.len));
                         if (slice.len > 0)

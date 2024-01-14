@@ -454,9 +454,11 @@ function generatePrototypeHeader(typename) {
     };`;
 }
 
-function generateConstructorHeader(typeName) {
+function generateConstructorHeader(typeName, doesConstructorHaveAnyFields) {
   const name = constructorName(typeName);
 
+  // we use a single shared isosubspace for constructors since they will rarely
+  // ever be created multiple times per VM and have no fields themselves
   return `
   class ${name} final : public JSC::InternalFunction {
     public:
@@ -475,18 +477,19 @@ function generateConstructorHeader(typeName) {
 
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
         {
-            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-                return nullptr;
-            return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
-                vm,
-                [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}Constructor.get(); },
-                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(
-                  typeName,
-                )}Constructor = std::forward<decltype(space)>(space); },
-                [](auto& spaces) { return spaces.${subspaceFor(typeName)}Constructor.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(
-                  typeName,
-                )}Constructor = std::forward<decltype(space)>(space); });
+          if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+
+          return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
+              vm,
+              [](auto& spaces) { return spaces.${clientSubspaceFor("BunClass")}Constructor.get(); },
+              [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(
+                "BunClass",
+              )}Constructor = std::forward<decltype(space)>(space); },
+              [](auto& spaces) { return spaces.${subspaceFor("BunClass")}Constructor.get(); },
+              [](auto& spaces, auto&& space) { spaces.${subspaceFor(
+                "BunClass",
+              )}Constructor = std::forward<decltype(space)>(space); });
         }
 
 
@@ -1089,7 +1092,10 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
-  var { klass, proto, JSType = "ObjectType", values = [], callbacks = {} } = obj;
+  var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
+
+  if (zigOnly) return "";
+
   const name = className(typeName);
 
   const DECLARE_VISIT_CHILDREN =
@@ -1462,10 +1468,12 @@ function generateHeader(typeName, obj) {
 }
 
 function generateImpl(typeName, obj) {
+  if (obj.zigOnly) return "";
+
   const proto = obj.proto;
   return [
     generatePrototypeHeader(typeName),
-    !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
+    !obj.noConstructor ? generateConstructorHeader(typeName, Object.keys(obj.klass).length > 0).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     generateClassImpl(typeName, obj).trim(),
@@ -1798,7 +1806,9 @@ ${[...exports]
 `;
 }
 
-function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {} }) {
+function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zigOnly = false }) {
+  if (zigOnly) return "";
+
   return `
   JSC::Structure* ${className(typeName)}Structure() { return m_${className(
     typeName,
@@ -1813,7 +1823,9 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {} }) 
     `.trim();
 }
 
-function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noConstructor = false }) {
+function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noConstructor = false, zigOnly = false }) {
+  if (zigOnly) return "";
+
   return `
           m_${className(typeName)}.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -1965,6 +1977,16 @@ for (const file of files) {
 }
 classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 
+// sort all the prototype keys and klass keys
+for (const obj of classes) {
+  let { klass = {}, proto = {} } = obj;
+
+  klass = Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b)));
+  proto = Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b)));
+  obj.klass = klass;
+  obj.proto = proto;
+}
+
 const GENERATED_CLASSES_FOOTER = `
 
 class StructuredCloneableSerialize {
@@ -2077,7 +2099,9 @@ if (!process.env.ONLY_ZIG) {
     classes.map(a =>
       [
         `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
-        !a.noConstructor ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)}Constructor;` : "",
+        !a.noConstructor && Object.keys(a.klass).length > 0
+          ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)}Constructor;`
+          : "",
       ].join("\n"),
     ),
   );
@@ -2087,7 +2111,9 @@ if (!process.env.ONLY_ZIG) {
     classes.map(a =>
       [
         `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
-        !a.noConstructor ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;` : ``,
+        !a.noConstructor && Object.keys(a.klass).length > 0
+          ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;`
+          : ``,
       ].join("\n"),
     ),
   );

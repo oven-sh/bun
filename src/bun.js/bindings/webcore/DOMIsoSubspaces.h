@@ -16,6 +16,7 @@ class DOMIsoSubspaces {
 public:
     DOMIsoSubspaces() = default;
     /*-- BUN --*/
+    std::unique_ptr<IsoSubspace> m_subspaceForBunClassConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForWrappingFunction;

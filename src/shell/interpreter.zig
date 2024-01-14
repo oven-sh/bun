@@ -978,6 +978,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             // @panic("FIXME ZACK FIX THIS!!");
                             var io: IO = .{};
                             io.stdout = .pipe;
+                            io.stderr = this.base.shell.io.stderr;
                             const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit);
                             var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst.script, Script.ParentPtr.init(this), io);
                             this.child_state = .{
@@ -998,6 +999,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             if (is_cmd_subst) {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
+                                io.stderr = this.base.shell.io.stderr;
                                 const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit);
                                 var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst.script, Script.ParentPtr.init(this), io);
                                 this.child_state = .{

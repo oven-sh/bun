@@ -793,13 +793,19 @@ pub const Parser = struct {
         var has_comma = false;
         var has_glob_syntax = false;
         {
-            while (if (self.inside_subshell == null)
-                !self.match_any_comptime(&.{ .Delimit, .Eof })
-            else
-                !self.match_any(&.{ .Delimit, .Eof, self.inside_subshell.?.closing_tok() }))
-            {
+            while (switch (self.peek()) {
+                .Delimit => brk: {
+                    _ = self.expect(.Delimit);
+                    break :brk false;
+                },
+                .Eof, .Semicolon => false,
+                else => |t| brk: {
+                    if (self.inside_subshell != null and self.inside_subshell.?.closing_tok() == t) break :brk false;
+                    break :brk true;
+                },
+            }) {
                 const next = self.peek_n(1);
-                const next_delimits = next == .Delimit or next == .Eof or (self.inside_subshell != null and next == self.inside_subshell.?.closing_tok());
+                const next_delimits = self.delimits(next);
                 const peeked = self.peek();
                 const should_break = next_delimits;
                 switch (peeked) {
@@ -808,7 +814,7 @@ pub const Parser = struct {
                         _ = self.expect(.Asterisk);
                         try atoms.append(.asterisk);
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             break;
                         }
                     },
@@ -817,7 +823,7 @@ pub const Parser = struct {
                         _ = self.expect(.DoubleAsterisk);
                         try atoms.append(.double_asterisk);
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             break;
                         }
                     },
@@ -827,7 +833,7 @@ pub const Parser = struct {
                         try atoms.append(.brace_begin);
                         // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             if (should_break) break;
                         }
                     },
@@ -836,7 +842,7 @@ pub const Parser = struct {
                         _ = self.expect(.BraceEnd);
                         try atoms.append(.brace_end);
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             break;
                         }
                     },
@@ -845,7 +851,7 @@ pub const Parser = struct {
                         _ = self.expect(.Comma);
                         try atoms.append(.comma);
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             if (should_break) break;
                         }
                     },
@@ -859,8 +865,8 @@ pub const Parser = struct {
                             .quoted = is_quoted,
                         } });
                         self.continue_from_subparser(&subparser);
-                        if (next_delimits) {
-                            _ = self.expect_delimit();
+                        if (self.delimits(self.peek())) {
+                            _ = self.match(.Delimit);
                             if (should_break) break;
                         }
                     },
@@ -869,7 +875,7 @@ pub const Parser = struct {
                         const txt = self.text(txtrng);
                         try atoms.append(.{ .Text = txt });
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             if (should_break) break;
                         }
                     },
@@ -878,7 +884,7 @@ pub const Parser = struct {
                         const txt = self.text(txtrng);
                         try atoms.append(.{ .Var = txt });
                         if (next_delimits) {
-                            _ = self.expect_delimit();
+                            _ = self.match(.Delimit);
                             if (should_break) break;
                         }
                     },
@@ -945,9 +951,13 @@ pub const Parser = struct {
         unreachable;
     }
 
+    fn delimits(self: *Parser, tok: Token) bool {
+        return tok == .Delimit or tok == .Semicolon or tok == .Eof or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
+    }
+
     fn expect_delimit(self: *Parser) Token {
-        std.debug.assert(.Delimit == @as(TokenTag, self.peek()) or .Eof == @as(TokenTag, self.peek()) or (self.inside_subshell != null and @as(TokenTag, self.peek()) == self.inside_subshell.?.closing_tok()));
-        if (self.check(.Delimit) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
+        std.debug.assert(self.delimits(self.peek()));
+        if (self.check(.Delimit) or self.check(.Semicolon) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
             return self.advance();
         }
         unreachable;
@@ -1357,6 +1367,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                                 continue;
                             }
 
+                            // const snapshot = self.make_snapshot();
                             // Handle variable
                             try self.break_word(false);
                             if (self.eat_js_obj_ref()) |ref| {
@@ -1367,7 +1378,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                                 try self.tokens.append(ref);
                             } else {
                                 const var_tok = try self.eat_var();
-                                try self.tokens.append(.{ .Var = var_tok });
+                                // empty var
+                                if (var_tok.start == var_tok.end) {
+                                    try self.appendCharToStrPool('$');
+                                    try self.break_word(false);
+                                } else {
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                }
                             }
                             self.word_start = self.j;
                             continue;

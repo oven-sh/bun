@@ -134,8 +134,9 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  // TODO This sometimes fails
   test("redirect stderr", async () => {
-    const buffer = Buffer.alloc(1024, 0);
+    const buffer = Buffer.alloc(128, 0);
     const code = /* ts */ `
     for (let i = 0; i < 10; i++) {
       console.error('LMAO')
@@ -144,6 +145,7 @@ describe("bunshell", () => {
 
     await $`${BUN} -e "${code}" 2> ${buffer}`;
 
+    console.log(buffer);
     expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(
       `LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`,
     );
@@ -373,9 +375,9 @@ describe("deno_task", () => {
 
     await TestBuilder.command`VAR=1 && echo $VAR$VAR`.stdout("11\n").run();
 
-    await TestBuilder.command`VAR=1 && echo Test$VAR && echo $(echo "Test: $VAR") ; echo CommandSub$($VAR); echo $ ; echo \$VAR`
+    await TestBuilder.command`VAR=1 && echo Test$VAR && echo $(echo "Test: $VAR") ; echo CommandSub$($VAR) ; echo $ ; echo \\$VAR`
       .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
-      .stderr("1: command not found\n")
+      .stderr("bunsh: command not found: 1\n")
       .run();
   });
 });

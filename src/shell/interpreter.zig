@@ -342,6 +342,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 this.cwd_fd = new_cwd_fd;
 
+                this.export_env.put("OLDPWD", this.prev_cwd) catch bun.outOfMemory();
+                this.export_env.put("PWD", this.cwd) catch bun.outOfMemory();
+
                 return Maybe(void).success;
             }
 
@@ -487,7 +490,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 allocator.destroy(interpreter);
             }
 
-            const export_env = brk: {
+            var export_env = brk: {
                 var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
                 errdefer {
                     export_env.deinit();
@@ -523,6 +526,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     // return ShellError.Init;
                 },
             };
+
+            export_env.put("PWD", cwd) catch bun.outOfMemory();
+            export_env.put("OLDPWD", "/") catch bun.outOfMemory();
 
             const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                 .result => |fd| fd,
@@ -2619,11 +2625,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.io.to_subproc_stdio(&spawn_args.stdio);
 
                 if (this.node.redirect_file) |redirect| {
-                    const fd: u32 = if (this.node.redirect.stdout) bun.STDOUT_FD else (if (this.node.redirect.stdin) bun.STDIN_FD else bun.STDERR_FD);
                     const in_cmd_subst = false;
 
                     if (comptime in_cmd_subst) {
-                        spawn_args.stdio[fd] = .ignore;
+                        setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, .ignore);
                     } else switch (redirect) {
                         .jsbuf => |val| {
                             // JS values in here is probably a bug
@@ -2638,21 +2643,45 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     .from_jsc = true,
                                 } };
 
-                                spawn_args.stdio[fd] = stdio;
+                                setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
-                                if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, fd, &spawn_args.stdio)) {
-                                    @panic("FIXME OOPS");
+                                if (this.node.redirect.stdin) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
+                                        @panic("FIXME OOPS");
+                                    }
+                                }
+                                if (this.node.redirect.stdout) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
+                                        @panic("FIXME OOPS");
+                                    }
+                                }
+                                if (this.node.redirect.stderr) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
+                                        @panic("FIXME OOPS");
+                                    }
                                 }
                             } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], this.base.interpreter.global)) |rstream| {
                                 const stdio: bun.shell.subproc.Stdio = .{
                                     .pipe = rstream,
                                 };
 
-                                spawn_args.stdio[fd] = stdio;
+                                setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                                 req.getBodyValue().toBlobIfPossible();
-                                if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), fd, &spawn_args.stdio)) {
-                                    @panic("FIXME OOPS");
+                                if (this.node.redirect.stdin) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDIN_FD, &spawn_args.stdio)) {
+                                        @panic("FIXME OOPS");
+                                    }
+                                }
+                                if (this.node.redirect.stdout) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDOUT_FD, &spawn_args.stdio)) {
+                                        @panic("FIXME OOPS");
+                                    }
+                                }
+                                if (this.node.redirect.stderr) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDERR_FD, &spawn_args.stdio)) {
+                                        @panic("FIXME OOPS");
+                                    }
                                 }
                             } else {
                                 @panic("FIXME Unhandled");
@@ -2662,7 +2691,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                             log("EXPANDED REDIRECT: {s}\n", .{this.redirection_file.items[0..]});
                             const perm = 0o666;
-                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC, perm)) {
+                            const extra: bun.Mode = if (this.node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
+                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
                                 .err => |e| {
                                     const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     return this.writeFailingError(buf, 1);
@@ -2670,7 +2700,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .result => |f| f,
                             };
                             this.redirection_fd = redirfd;
-                            spawn_args.stdio[fd] = .{ .fd = redirfd };
+                            setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, .{ .fd = redirfd });
                         },
                     }
                 }
@@ -2694,6 +2724,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {
                 //     this.cmd.?.stdout.pipe.buffer.watch();
                 // }
+            }
+
+            fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.Cmd.RedirectFlags, val: shell.subproc.Stdio) void {
+                if (flags.stdin) {
+                    stdio.*[bun.STDIN_FD] = val;
+                }
+
+                if (flags.stdout) {
+                    stdio.*[bun.STDOUT_FD] = val;
+                }
+
+                if (flags.stderr) {
+                    stdio.*[bun.STDERR_FD] = val;
+                }
             }
 
             /// Returns null if stdout is buffered
@@ -3089,7 +3133,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                             log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                             const perm = 0o666;
-                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC, perm)) {
+                            const extra: bun.Mode = if (node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
+                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
                                 .err => |e| {
                                     const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     return cmd.writeFailingError(buf, 1);

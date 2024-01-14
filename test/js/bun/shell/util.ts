@@ -1,6 +1,8 @@
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 import { ShellOutput } from "bun";
 import { ShellPromise } from "bun";
+import { tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 declare module "bun" {
   // Define the additional methods
@@ -42,6 +44,8 @@ export class TestBuilder {
   private expected_error: string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
 
+  private tempdir: string | undefined = undefined;
+
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
 
@@ -78,6 +82,11 @@ export class TestBuilder {
     return this;
   }
 
+  ensureTempDir(): this {
+    this.getTempDir();
+    return this;
+  }
+
   error(expected?: string | boolean): this {
     if (expected === undefined || expected === true) {
       this.expected_error = true;
@@ -95,8 +104,20 @@ export class TestBuilder {
   }
 
   fileEquals(filename: string, expected: string): this {
+    this.getTempDir();
     this.file_equals[filename] = expected;
     return this;
+  }
+
+  getTempDir(): string {
+    if (this.tempdir === undefined) {
+      this.tempdir = tempDirWithFiles(generateRandomString(8), {});
+      if (this.promise.type === "ok") {
+        this.promise.val.cwd(this.tempdir!);
+      }
+      return this.tempdir!;
+    }
+    return this.tempdir;
   }
 
   async run(): Promise<undefined> {
@@ -119,7 +140,8 @@ export class TestBuilder {
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {
-      const actual = await Bun.file(filename).text();
+      console.log("Filename", this.tempdir!, filename);
+      const actual = await Bun.file(join(this.tempdir!, filename)).text();
       expect(actual).toEqual(expected);
     }
 
@@ -160,4 +182,15 @@ export class TestBuilder {
   //   }
   //   await doTest(this);
   // }
+}
+function generateRandomString(length: number): string {
+  const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  const charactersLength = characters.length;
+
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+
+  return result;
 }

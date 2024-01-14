@@ -34,6 +34,9 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const bundler = bun.bundler;
 
+const Path = @import("../resolver/resolve_path.zig");
+const Fs = @import("../fs.zig");
+const Package = @import("../install/lockfile.zig").Package;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
@@ -54,6 +57,11 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+
+pub fn initializeStore() void {
+    bun.JSAst.Expr.Data.Store.create(default_allocator);
+    bun.JSAst.Stmt.Data.Store.create(default_allocator);
+}
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -1010,6 +1018,70 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    fn findWorkspaceRoot(ctx: *Command.Context) !Package.WorkspaceMap {
+        var package_json_cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var workdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var workdir: []const u8 = try std.os.getcwd(workdir_buf[0..]);
+
+        while (true) {
+            // std.debug.print("workdir: {s}\n", .{workdir});
+            const parent_trimmed = strings.withoutTrailingSlash(workdir);
+            var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            @memcpy(buf2[0..parent_trimmed.len], parent_trimmed);
+            buf2[parent_trimmed.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+            buf2[parent_trimmed.len + "/package.json".len] = 0;
+
+            const json_file = std.fs.cwd().openFileZ(
+                buf2[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
+                .{ .mode = .read_only },
+            ) catch {
+                workdir = std.fs.path.dirname(workdir) orelse return error.MissingPackageJSON;
+                continue;
+            };
+            defer json_file.close();
+
+            // std.debug.print("found package.json at {s}\n", .{workdir});
+
+            const json_stat_size = try json_file.getEndPos();
+            const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
+            defer ctx.allocator.free(json_buf);
+            const json_len = try json_file.preadAll(json_buf, 0);
+            const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
+            const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+            initializeStore();
+            const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
+            if (json.asProperty("workspaces")) |prop| {
+                // std.debug.print("package.json has workspace property\n", .{});
+                const json_array = switch (prop.expr.data) {
+                    .e_array => |arr| arr,
+                    .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
+                        .e_array => |arr| arr,
+                        else => break,
+                    } else break,
+                    else => break,
+                };
+                var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
+                _ = Package.processWorkspaceNamesArray(
+                    &workspace_names,
+                    ctx.allocator,
+                    ctx.log,
+                    json_array,
+                    &json_source,
+                    prop.loc,
+                    null,
+                ) catch |err| {
+                    // std.debug.print("error: {s}\n", .{@errorName(err)});
+                    // break;
+                    return err;
+                };
+
+                return workspace_names;
+            }
+        }
+
+        return error.MissingPackageJSON;
+    }
+
     pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
         var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
@@ -1026,50 +1098,129 @@ pub const RunCommand = struct {
 
         const passthrough = ctx.passthrough;
         const force_using_bun = ctx.debug.run_in_bun;
+
         // is there a --workspace flag set?
         if (ctx.run_options.hasWorkspace()) {
             var manager = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
-            var load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
 
             if (load_lockfile == .not_found) {
-                var root = Lockfile.Package{};
-                try manager.lockfile.initEmpty(ctx.allocator);
-                try root.parseMain(
-                    manager.lockfile,
-                    ctx.allocator,
-                    ctx.log,
-                    // people should be able to use `bun run --workspace` from
-                    // directories which do not immediately contain a
-                    // package.json or bun.lockb
-                    //
-                    //
-                    // for example, if I'm in bun/src, i should be able to run
-                    //
-                    // > bun run --workspace=test foo
-                    //
-                    // see also https://github.com/oven-sh/bun/blob/fdb095a32f542e109c278d02f9bbca4552ffde97/src/install/install.zig#L6080-L6118
-                    package_json_source,
-                    Features.main,
-                );
+                std.debug.print("no lockfile found\n", .{});
+                // if there is no lockfile, search for a package.json with a workspace decl
 
-                _ = try manager.lockfile.appendPackage(root);
-            }
-
-            if (manager.lockfile.workspace_paths.get(bun.hash(ctx.run_options.workspace))) |path_ptr| {
-                const path = manager.lockfile.str(path_ptr);
-                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const package_json_path = Path.joinZBuf(
-                    &local_buf,
-                    &[_]string{ path, "package.json" },
-                    .auto,
-                );
-                // check if package.json exists!
-                // if it does exist, then let's set cwd
-                std.os.chdir(path) catch |err| {
-                    // print some message saying we couldn't change directory
-                    Global.crash();
+                const wsmap = findWorkspaceRoot(&ctx) catch |err| {
+                    if (err == error.MissingPackageJSON) {
+                        Output.err("error", "no package.json found", .{});
+                        Global.crash();
+                    }
+                    std.debug.print("error: {s}\n", .{@errorName(err)});
+                    return false;
                 };
-            } // else if it's not found, try the passed in directory as a package.json
+
+                initializeStore();
+                for (wsmap.keys()) |path| {
+                    var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                    const pkgstring = "/package.json";
+                    @memcpy(local_buf[0..path.len], path);
+                    local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
+                    local_buf[path.len + pkgstring.len] = 0;
+
+                    std.debug.print("checking package.json at: {s}\n", .{local_buf[0 .. path.len + pkgstring.len :0]});
+
+                    const json_file = std.fs.cwd().openFileZ(
+                        local_buf[0 .. path.len + pkgstring.len :0].ptr,
+                        .{ .mode = .read_only },
+                    ) catch {
+                        std.debug.print("error opening package.json\n", .{});
+                        continue;
+                    };
+                    defer json_file.close();
+
+                    // std.debug.print("found package.json at {s}\n", .{workdir});
+
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
+                    defer ctx.allocator.free(json_buf);
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    var local_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const json_path = try bun.getFdPath(json_file.handle, &local_buf2);
+                    const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                    initializeStore();
+                    const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                    if (json.asProperty("name")) |prop| {
+                        // std.debug.print("package.json has workspace property\n", .{});
+                        const name = switch (prop.expr.data) {
+                            .e_string => |str| str.data,
+                            else => {
+                                // fail stating that name is not a stringo
+                                Output.err("error", "package.json name is not a string", .{});
+                                continue;
+                            },
+                        };
+                        // check if this is the workspace where we want to run the command
+
+                        std.debug.print("package name: {s}\n", .{name});
+                        if (strings.eql(name, ctx.run_options.workspace)) {
+                            std.os.chdir(path) catch |err| {
+                                // print some message saying we couldn't change directory
+                                Output.err("error", "failed to change directory to target workspace: {s}", .{@errorName(err)});
+                                Global.crash();
+                            };
+                            std.debug.print("changed directory to {s}\n", .{path});
+                            break;
+                        }
+                    }
+                }
+
+                // defer file.close();
+                // const bytes = try file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize));
+                // defer ctx.allocator.free(bytes);
+                // const source = logger.Source.initPathString("", bytes);
+
+                // var root = Lockfile.Package{};
+                // try manager.lockfile.initEmpty(ctx.allocator);
+                // try root.parseMain(
+                //     manager.lockfile,
+                //     ctx.allocator,
+                //     ctx.log,
+                //     // people should be able to use `bun run --workspace` from
+                //     // directories which do not immediately contain a
+                //     // package.json or bun.lockb
+                //     //
+                //     //
+                //     // for example, if I'm in bun/src, i should be able to run
+                //     //
+                //     // > bun run --workspace=test foo
+                //     //
+                //     // see also https://github.com/oven-sh/bun/blob/fdb095a32f542e109c278d02f9bbca4552ffde97/src/install/install.zig#L6080-L6118
+                //     source,
+
+                //     Features.main,
+                // );
+
+                // _ = try manager.lockfile.appendPackage(root);
+            } else {
+                std.debug.print("found lockfile\n", .{});
+
+                // if (manager.lockfile.workspace_paths.get(bun.hash(ctx.run_options.workspace))) |path_ptr| {
+                //     const path = manager.lockfile.str(path_ptr);
+                //     var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                //     const package_json_path = Path.joinZBuf(
+                //         &local_buf,
+                //         &[_]string{ path, "package.json" },
+                //         .auto,
+                //     );
+                //     _ = package_json_path; // autofix
+                //     // check if package.json exists!
+                //     // if it does exist, then let's set cwd
+                //     std.os.chdir(path) catch |err| {
+                //         _ = err; // autofix
+
+                //         // print some message saying we couldn't change directory
+                //         Global.crash();
+                //     };
+                // } // else if it's not found, try the passed in directory as a package.json
+            }
         }
 
         // This doesn't cover every case
@@ -1340,6 +1491,9 @@ pub const RunCommand = struct {
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
+            // var workdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            // const workdir: []const u8 = try std.os.getcwd(workdir_buf[0..]);
+            // Output.err("error", "Current working directory: {s}", .{workdir});
             Global.exit(1);
         }
 

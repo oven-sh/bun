@@ -39,6 +39,7 @@ export class TestBuilder {
   private expected_stderr: string = "";
   private expected_exit_code: number = 0;
   private expected_error: string | boolean | undefined = undefined;
+  private file_equals: { [filename: string]: string } = {};
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -86,11 +87,17 @@ export class TestBuilder {
     return this;
   }
 
+  fileEquals(filename: string, expected: string): this {
+    this.file_equals[filename] = expected;
+    return this;
+  }
+
   async run(): Promise<ShellOutput | undefined> {
     if (this.promise.type === "err") {
       const err = this.promise.val;
       if (this.expected_error === undefined) throw err;
       if (this.expected_error === true) return undefined;
+      if (this.expected_error === false) expect(err).toBeUndefined();
       if (typeof this.expected_error === "string") {
         expect(err.message).toEqual(this.expected_error);
       }
@@ -103,6 +110,11 @@ export class TestBuilder {
     if (this.expected_stdout !== undefined) expect(stdout.toString()).toEqual(this.expected_stdout);
     if (this.expected_stderr !== undefined) expect(stderr.toString()).toEqual(this.expected_stderr);
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
+
+    for (const [filename, expected] of Object.entries(this.file_equals)) {
+      const actual = await Bun.file(filename).text();
+      expect(actual).toEqual(expected);
+    }
     return output;
   }
 }

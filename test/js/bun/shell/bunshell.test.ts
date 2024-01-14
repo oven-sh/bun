@@ -81,9 +81,10 @@ describe("bunshell", () => {
     //
     test("varname fails", async () => {
       const whatsupbro = "元気かい、兄弟";
-      const { stdout, stderr } = await $`${whatsupbro}=NICE; echo $${whatsupbro}`;
-      expect(stdout.toString()).toEqual("\n");
-      expect(stderr.toString()).toEqual(`bunsh: command not found: ${whatsupbro}=NICE\n`);
+      await TestBuilder.command`${whatsupbro}=NICE; echo $${whatsupbro}`
+        .stdout("$元気かい、兄弟\n")
+        .stderr("bunsh: command not found: 元気かい、兄弟=NICE\n")
+        .run();
     });
 
     test("var value", async () => {

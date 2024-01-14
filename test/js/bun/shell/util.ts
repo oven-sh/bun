@@ -34,6 +34,7 @@ export const sortedShellOutput = (output: string): string[] =>
 
 export class TestBuilder {
   private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
+  private _testName: string | undefined = undefined;
 
   private expected_stdout: string = "";
   private expected_stderr: string = "";
@@ -55,10 +56,16 @@ export class TestBuilder {
     try {
       const promise = Bun.$(strings, ...expressions);
       const This = new this({ type: "ok", val: promise });
+      This._testName = strings.join("");
       return This;
     } catch (err) {
       return new this({ type: "err", val: err as Error });
     }
+  }
+
+  testName(name: string): this {
+    this._testName = name;
+    return this;
   }
 
   stdout(expected: string): this {
@@ -92,7 +99,7 @@ export class TestBuilder {
     return this;
   }
 
-  async run(): Promise<ShellOutput | undefined> {
+  async run(): Promise<undefined> {
     if (this.promise.type === "err") {
       const err = this.promise.val;
       if (this.expected_error === undefined) throw err;
@@ -115,6 +122,42 @@ export class TestBuilder {
       const actual = await Bun.file(filename).text();
       expect(actual).toEqual(expected);
     }
-    return output;
+
+    // return output;
   }
+
+  // async run(): Promise<undefined> {
+  //   async function doTest(tb: TestBuilder) {
+  //     if (tb.promise.type === "err") {
+  //       const err = tb.promise.val;
+  //       if (tb.expected_error === undefined) throw err;
+  //       if (tb.expected_error === true) return undefined;
+  //       if (tb.expected_error === false) expect(err).toBeUndefined();
+  //       if (typeof tb.expected_error === "string") {
+  //         expect(err.message).toEqual(tb.expected_error);
+  //       }
+  //       return undefined;
+  //     }
+
+  //     const output = await tb.promise.val;
+
+  //     const { stdout, stderr, exitCode } = output!;
+  //     if (tb.expected_stdout !== undefined) expect(stdout.toString()).toEqual(tb.expected_stdout);
+  //     if (tb.expected_stderr !== undefined) expect(stderr.toString()).toEqual(tb.expected_stderr);
+  //     if (tb.expected_exit_code !== undefined) expect(exitCode).toEqual(tb.expected_exit_code);
+
+  //     for (const [filename, expected] of Object.entries(tb.file_equals)) {
+  //       const actual = await Bun.file(filename).text();
+  //       expect(actual).toEqual(expected);
+  //     }
+  //     return output;
+  //   }
+
+  //   if (this._testName !== undefined) {
+  //     test(this._testName, async () => {
+  //       await doTest(this);
+  //     });
+  //   }
+  //   await doTest(this);
+  // }
 }

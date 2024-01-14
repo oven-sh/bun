@@ -31,6 +31,11 @@ export function shellTemplateFunction(strings: TemplateStringsArray) {
       return this._core.stdin;
     }
 
+    cwd(newCwd: string): this {
+      this._core.setCwd(newCwd);
+      return this;
+    }
+
     run() {
       if (this._core.isRunning()) return;
       console.log("Running");

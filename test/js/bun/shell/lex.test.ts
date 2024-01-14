@@ -10,6 +10,15 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("var edgecase", () => {
+    expect(JSON.parse($.lex`$PWD/test.txt`)).toEqual([
+      { "Var": "PWD" },
+      { "Text": "/test.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
   test("vars", () => {
     const expected = [
       { "Text": "next" },

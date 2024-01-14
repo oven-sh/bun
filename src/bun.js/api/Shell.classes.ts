@@ -38,6 +38,10 @@ export default [
         fn: "getBufferedStderr",
         length: 0,
       },
+      setCwd: {
+        fn: "setCwd",
+        length: 1,
+      },
     },
   }),
 ];

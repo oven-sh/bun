@@ -2525,12 +2525,10 @@ pub const VirtualMachine = struct {
         const stack = trace.frames();
         if (stack.len > 0) {
             var vm = VirtualMachine.get();
-            var i: i16 = 0;
             const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
             const dir = vm.bundler.fs.top_level_dir;
 
-            while (i < stack.len) : (i += 1) {
-                const frame = stack[@as(usize, @intCast(i))];
+            for (stack) |frame| {
                 const file_slice = frame.source_url.toUTF8(bun.default_allocator);
                 defer file_slice.deinit();
                 const func_slice = frame.function_name.toUTF8(bun.default_allocator);
@@ -2620,6 +2618,14 @@ pub const VirtualMachine = struct {
             }
         }
 
+        const NoisyBuiltinFunctionMap = bun.ComptimeStringMap(void, .{
+            .{"asyncModuleEvaluation"},
+            .{"link"},
+            .{"linkAndEvaluateModule"},
+            .{"moduleEvaluation"},
+            .{"processTicksAndRejections"},
+        });
+
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
@@ -2632,7 +2638,7 @@ pub const VirtualMachine = struct {
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation")) {
+                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                     start_index = 0;
                     break;
                 }
@@ -2640,9 +2646,7 @@ pub const VirtualMachine = struct {
 
             if (start_index) |k| {
                 var j = k;
-                var i: usize = k;
-                while (i < frames.len) : (i += 1) {
-                    const frame = frames[i];
+                for (frames[k..]) |frame| {
                     if (frame.source_url.eqlComptime("bun:wrap") or
                         frame.function_name.eqlComptime("::bunternal::"))
                     {
@@ -2650,8 +2654,9 @@ pub const VirtualMachine = struct {
                     }
 
                     // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                    if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation"))
+                    if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                         continue;
+                    }
 
                     frames[j] = frame;
                     j += 1;
@@ -2666,7 +2671,11 @@ pub const VirtualMachine = struct {
         var top = &frames[0];
         if (this.hide_bun_stackframes) {
             for (frames) |*frame| {
-                if (frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:") or frame.source_url.isEmpty()) {
+                if (frame.source_url.hasPrefixComptime("bun:") or
+                    frame.source_url.hasPrefixComptime("node:") or
+                    frame.source_url.isEmpty() or
+                    frame.source_url.eqlComptime("native"))
+                {
                     continue;
                 }
 

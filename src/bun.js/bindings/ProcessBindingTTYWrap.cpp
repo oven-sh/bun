@@ -153,7 +153,36 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     }
 
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd.asNumber(), mode.asNumber());
+    int err = Bun__ttySetMode(fd.asNumber(), mode.toInt32(globalObject));
+    return JSValue::encode(jsNumber(err));
+}
+
+JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto argCount = callFrame->argumentCount();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (argCount == 0) {
+        JSC::throwTypeError(globalObject, throwScope, "setRawMode requires 1 argument (a number)"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
+    if (UNLIKELY(!ttyWrap)) {
+        JSC::throwTypeError(globalObject, throwScope, "TTY.setRawMode expects a TTYWrapObject as this"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    int fd = ttyWrap->fd;
+    JSValue mode = callFrame->argument(0);
+    if (!mode.isNumber()) {
+        throwTypeError(globalObject, throwScope, "mode must be a number"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
+    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject));
     return JSValue::encode(jsNumber(err));
 }
 
@@ -224,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
 
 static const HashTableValue TTYWrapPrototypeValues[] = {
     { "getWindowSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionGetWindowSize, 1 } },
-    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTTYSetMode, 0 } },
+    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionSetMode, 0 } },
 };
 
 class TTYWrapPrototype final : public JSC::JSNonFinalObject {
@@ -372,7 +401,7 @@ JSValue createBunTTYFunctions(JSC::JSGlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 0);
 

@@ -253,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
 
 static const HashTableValue TTYWrapPrototypeValues[] = {
     { "getWindowSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionGetWindowSize, 1 } },
-    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionSetRawMode, 0 } },
+    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionSetMode, 0 } },
 };
 
 class TTYWrapPrototype final : public JSC::JSNonFinalObject {

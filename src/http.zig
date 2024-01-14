@@ -115,16 +115,6 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
-pub fn canUseBrotli() bool {
-    if (Environment.isMac) {
-        if (bun.CompressionFramework.isAvailable()) {
-            return true;
-        }
-    }
-
-    return bun.brotli.hasBrotli();
-}
-
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,

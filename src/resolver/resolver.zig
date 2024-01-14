@@ -566,7 +566,10 @@ pub const Resolver = struct {
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
-                this.allocator,
+
+                // This cannot be the threadlocal allocator. It goes to the HTTP thread.
+                bun.default_allocator,
+
                 .{},
                 this.env_loader.?,
             ) catch @panic("Failed to initialize package manager");

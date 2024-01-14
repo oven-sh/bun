@@ -1655,6 +1655,7 @@ pub const Arguments = struct {
                     if (next_val.isString()) {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
+                        defer str.deref();
                         const utf8 = str.utf8();
                         if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
                         if (strings.eqlComptime(utf8, "file")) break :link_type .file;

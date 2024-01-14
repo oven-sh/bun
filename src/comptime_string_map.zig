@@ -172,6 +172,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
 
             const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            defer str.deref();
             return getWithEql(str, @import("root").bun.String.eqlComptime);
         }
 
@@ -184,6 +185,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
 
             const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            defer str.deref();
             return str.inMapCaseInsensitive(@This());
         }
 

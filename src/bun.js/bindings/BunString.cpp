@@ -102,16 +102,17 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
 
-    if (str.isNull()) {
-        // failure to convert to string
+    if (UNLIKELY(str.isNull())) {
         return { BunStringTag::Dead };
     }
 
-    if (str.length() == 0) {
+    if (UNLIKELY(str.length() == 0)) {
         return { BunStringTag::Empty };
     }
 
-    return { BunStringTag::WTFStringImpl, { .wtf = str.impl() } };
+    auto impl = str.releaseImpl();
+
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
 extern "C" void BunString__toThreadSafe(BunString* str)

@@ -687,7 +687,7 @@ pub const Parser = struct {
 
         const name = try self.parse_atom() orelse {
             if (assigns.items.len == 0) {
-                try self.add_error("expected a command or assignment", .{});
+                try self.add_error("expected a command or assignment but got: \"{s}\"", .{@tagName(self.peek())});
                 return ParseError.Expected;
             }
             return .{ .assigns = assigns.items[0..] };
@@ -1148,6 +1148,36 @@ pub const Token = union(TokenTag) {
         end: u32,
     };
 
+    pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
+        switch (self) {
+            .Pipe => "`|`",
+            .DoublePipe => "`||`",
+            .Ampersand => "`&`",
+            .DoubleAmpersand => "`&&`",
+            .Redirect => "`>`",
+            .Dollar => "`$`",
+            .Asterisk => "`*`",
+            .DoubleAsterisk => "`**`",
+            .Eq => "`+`",
+            .Semicolon => "`;`",
+            .Newline => "`\\n`",
+            // Comment,
+            .BraceBegin => "`{`",
+            .Comma => "`,`",
+            .BraceEnd => "`}`",
+            .CmdSubstBegin => "`$(`",
+            .CmdSubstQuoted => "CmdSubstQuoted",
+            .CmdSubstEnd => "`)`",
+            .OpenParen => "`(`",
+            .CloseParen => "`)",
+            .Var => strpool[self.Var.start..self.Var.end],
+            .Text => strpool[self.Text.start..self.Text.end],
+            .JSObjRef => "JSObjRef",
+            .Delimit => "Delimit",
+            .Eof => "EOF",
+        }
+    }
+
     pub fn debug(self: Token, buf: []const u8) void {
         switch (self) {
             .Var => |txt| {
@@ -1487,6 +1517,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                                 self.add_error("Unexpected EOF");
                                 return;
                             };
+                            if (!next.escaped and next.char == '&') {
+                                self.add_error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.");
+                                return;
+                            }
                             if (next.escaped or next.char != '|') {
                                 try self.tokens.append(.Pipe);
                             } else if (next.char == '|') {

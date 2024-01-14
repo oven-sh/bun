@@ -2381,9 +2381,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             // Get the node to expand otherwise go straight to
                             // `expanding_args` state
                             const node_to_expand = brk: {
-                                if (this.node.redirect_file) |file| {
-                                    break :brk &file.atom;
-                                }
+                                if (this.node.redirect_file != null and this.node.redirect_file.? == .atom) break :brk &this.node.redirect_file.?.atom;
                                 this.state = .{
                                     .expanding_args = .{
                                         .expansion = undefined,

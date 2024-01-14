@@ -410,7 +410,7 @@ describe("deno_task", () => {
   });
 
   test("pipeline", async () => {
-    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
       .run();
 
@@ -420,34 +420,36 @@ describe("deno_task", () => {
     //   .stdout("1 2\n")
     //   .run();
 
-    // await TestBuilder.command`echo 2 | echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1\n")
-    //   .run();
+    await TestBuilder.command`echo 2 | echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+      .stdout("1\n")
+      .run();
 
-    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1\n")
-    //   .stderr("2\n")
-    //   .run();
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+      .stdout("1\n")
+      .stderr("2\n")
+      .run();
 
-    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1\n2\n")
-    //   .run();
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+      // .stdout("1\n2\n")
+      .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
+      .run();
 
-    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e --unstable 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
+    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
     //   .stderr("2\n1\n")
     //   .run();
 
-    // await TestBuilder.command`echo 1 |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1\n")
-    //   .run();
+    await TestBuilder.command`echo 1 |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+      // .stdout("1\n")
+      .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
+      .run();
 
-    // await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)' > output.txt`
-    //   .fileEquals("output.txt", "1\n")
-    //   .run();
+    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
+      .fileEquals("output.txt", "1\n")
+      .run();
 
-    // await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)' 2> output.txt`
-    //   .fileEquals("output.txt", "1\n")
-    //   .run();
+    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
+      .fileEquals("output.txt", "1\n")
+      .run();
   });
 });
 

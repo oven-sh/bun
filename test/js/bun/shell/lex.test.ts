@@ -648,8 +648,12 @@ describe("lex shell", () => {
 
     test("Unexpected ')'", async () => {
       await TestBuilder.command`echo )`.error("Unexpected ')'").run();
-      await TestBuilder.command`"echo (echo hi)"`.error(false).run();
-      await TestBuilder.command`echo "()"`.error(false).run();
+      await TestBuilder.command`echo (echo hi)`
+        .error(
+          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
+        )
+        .run();
+      await TestBuilder.command`echo "()"`.stdout("()\n").run();
     });
 
     test("Unexpected EOF", async () => {
@@ -659,13 +663,25 @@ describe("lex shell", () => {
 
     test("Unclosed subshell", async () => {
       await TestBuilder.command`echo hi && $(echo uh oh`.error("Unclosed command substitution").run();
-      await TestBuilder.command`echo hi && $(echo uh oh)`.error(false).run();
+      await TestBuilder.command`echo hi && $(echo uh oh)`
+        .stdout("hi\n")
+        .stderr("bunsh: command not found: uh\n")
+        .exitCode(1)
+        .run();
 
       await TestBuilder.command`echo hi && \`echo uh oh`.error("Unclosed command substitution").run();
-      await TestBuilder.command`echo hi && \`echo uh oh\``.error(false).run();
+      await TestBuilder.command`echo hi && \`echo uh oh\``
+        .stdout("hi\n")
+        .stderr("bunsh: command not found: uh\n")
+        .exitCode(1)
+        .run();
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
-      await TestBuilder.command`echo hi && (echo uh oh)`.error(false).run();
+      await TestBuilder.command`echo hi && (echo uh oh)`
+        .error(
+          "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",
+        )
+        .run();
     });
   });
 });

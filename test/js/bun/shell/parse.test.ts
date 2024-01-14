@@ -495,7 +495,7 @@ describe("parse shell", () => {
 describe("parse shell invalid input", () => {
   test("invalid js obj", async () => {
     const file = new Uint8Array(420);
-    await TestBuilder.command`${file} | cat`.error("expected a command or assignment").run();
+    await TestBuilder.command`${file} | cat`.error(`expected a command or assignment but got: "JSObjRef"`).run();
   });
 
   test("subshell", async () => {

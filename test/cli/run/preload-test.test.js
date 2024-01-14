@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";

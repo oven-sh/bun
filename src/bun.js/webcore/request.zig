@@ -328,7 +328,7 @@ pub const Request = struct {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
-                    const fmt = strings.HostFormatter{
+                    const fmt = bun.fmt.HostFormatter{
                         .is_https = this.https,
                         .host = host,
                     };
@@ -355,7 +355,7 @@ pub const Request = struct {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
-                    const fmt = strings.HostFormatter{
+                    const fmt = bun.fmt.HostFormatter{
                         .is_https = this.https,
                         .host = host,
                     };
@@ -487,7 +487,7 @@ pub const Request = struct {
                 _ = req.body.unref();
                 return null;
             };
-            req.url = str.dupeRef();
+            req.url = str;
 
             if (!req.url.isEmpty())
                 fields.insert(.url);
@@ -588,7 +588,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis).dupeRef();
+                    req.url = bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -601,7 +601,7 @@ pub const Request = struct {
                         _ = req.body.unref();
                         return null;
                     };
-                    req.url = str.dupeRef();
+                    req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }

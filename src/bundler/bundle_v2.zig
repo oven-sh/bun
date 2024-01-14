@@ -774,8 +774,9 @@ pub const BundleV2 = struct {
 
         {
             // Add the runtime
+            const rt = ParseTask.getRuntimeSource(this.bundler.options.target);
             try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
-                .source = ParseTask.runtime_source,
+                .source = rt.source,
                 .loader = .js,
                 .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
             });
@@ -784,7 +785,7 @@ pub const BundleV2 = struct {
             this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
             this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get()) catch unreachable;
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
-            runtime_parse_task.* = ParseTask.runtime;
+            runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
             runtime_parse_task.task = .{
                 .callback = &ParseTask.callback,
@@ -1474,8 +1475,8 @@ pub const BundleV2 = struct {
                             // unknown at this point:
                             .contents_or_fd = .{
                                 .fd = .{
-                                    .dir = 0,
-                                    .file = 0,
+                                    .dir = .zero,
+                                    .file = .zero,
                                 },
                             },
                             .side_effects = _resolver.SideEffects.has_side_effects,
@@ -1860,6 +1861,7 @@ pub const BundleV2 = struct {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -1874,6 +1876,7 @@ pub const BundleV2 = struct {
                         import_record.path.namespace = "bun";
                         import_record.tag = .bun_test;
                         import_record.path.text = "test";
+                        import_record.is_external_without_side_effects = true;
                         continue;
                     }
                 }
@@ -1882,6 +1885,7 @@ pub const BundleV2 = struct {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
+                    import_record.is_external_without_side_effects = true;
 
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;
@@ -1967,6 +1971,7 @@ pub const BundleV2 = struct {
                 if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
                     import_record.path = resolve_result.path_pair.primary;
                 }
+                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
                 continue;
             }
 
@@ -2083,7 +2088,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (this.bun_watcher != null) {
-                    if (empty_result.watcher_data.fd > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
+                    if (empty_result.watcher_data.fd.int() > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
                         this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
@@ -2102,7 +2107,7 @@ pub const BundleV2 = struct {
                 {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
-                        if (result.watcher_data.fd > 0 and result.watcher_data.fd != bun.invalid_fd) {
+                        if (result.watcher_data.fd.int() > 0 and result.watcher_data.fd != bun.invalid_fd) {
                             this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
@@ -2309,26 +2314,77 @@ pub const ParseTask = struct {
         };
     }
 
-    pub const runtime = ParseTask{
-        .ctx = undefined,
-        .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
-        .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
-        .jsx = options.JSX.Pragma{
-            .parse = false,
-            // .supports_react_refresh = false,
-        },
-        .contents_or_fd = .{
-            .contents = @as(string, @embedFile("../runtime.js")),
-        },
-        .source_index = Index.runtime,
-        .loader = Loader.js,
+    const RuntimeSource = struct {
+        parse_task: ParseTask,
+        source: Logger.Source,
     };
-    pub const runtime_source = Logger.Source{
-        .path = ParseTask.runtime.path,
-        .key_path = ParseTask.runtime.path,
-        .contents = ParseTask.runtime.contents_or_fd.contents,
-        .index = Index.runtime,
-    };
+
+    fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
+        // When the `require` identifier is visited, it is replaced with e_require_call_target
+        // and then that is either replaced with the module itself, or an import to the
+        // runtime here.
+        const runtime_require = switch (target) {
+            // __require is intentionally not implemented here, as we
+            // always inline 'import.meta.require' and 'import.meta.resolveSync'
+            // Omitting it here acts as an extra assertion.
+            .bun, .bun_macro => "",
+
+            .node =>
+            \\import { createRequire } from "node:module";
+            \\export var __require = /* @__PURE__ */ createRequire(import.meta.url);
+            ,
+
+            // Copied from esbuild's runtime.go:
+            //
+            // > This fallback "require" function exists so that "typeof require" can
+            // > naturally be "function" even in non-CommonJS environments since esbuild
+            // > emulates a CommonJS environment (issue #1202). However, people want this
+            // > shim to fall back to "globalThis.require" even if it's defined later
+            // > (including property accesses such as "require.resolve") so we need to
+            // > use a proxy (issue #1614).
+            //
+            // When bundling to node, esbuild picks this code path as well, but `globalThis.require`
+            // is not always defined there. The `createRequire` call approach is more reliable.
+            else =>
+            \\export var __require = /* @__PURE__ */ (x =>
+            \\	typeof require !== 'undefined' ? require :
+            \\	typeof Proxy !== 'undefined' ? new Proxy(x, {
+            \\		get: (a, b) => (typeof require !== 'undefined' ? require : a)[b]
+            \\	}) : x
+            \\)(function (x) {
+            \\	if (typeof require !== 'undefined') return require.apply(this, arguments)
+            \\	throw Error('Dynamic require of "' + x + '" is not supported')
+            \\});
+        };
+        const runtime_code = @embedFile("../runtime.js") ++ runtime_require;
+
+        const parse_task = ParseTask{
+            .ctx = undefined,
+            .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
+            .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
+            .jsx = options.JSX.Pragma{
+                .parse = false,
+                // .supports_react_refresh = false,
+            },
+            .contents_or_fd = .{
+                .contents = runtime_code,
+            },
+            .source_index = Index.runtime,
+            .loader = Loader.js,
+        };
+        const source = Logger.Source{
+            .path = parse_task.path,
+            .key_path = parse_task.path,
+            .contents = parse_task.contents_or_fd.contents,
+            .index = Index.runtime,
+        };
+        return .{ .parse_task = parse_task, .source = source };
+    }
+    fn getRuntimeSource(target: options.Target) RuntimeSource {
+        return switch (target) {
+            inline else => |t| comptime getRuntimeSourceComptime(t),
+        };
+    }
 
     pub const Result = struct {
         task: EventLoop.Task = undefined,
@@ -2344,8 +2400,8 @@ pub const ParseTask = struct {
         },
 
         const WatcherData = struct {
-            fd: bun.StoredFileDescriptorType = 0,
-            dir_fd: bun.StoredFileDescriptorType = 0,
+            fd: bun.StoredFileDescriptorType = .zero,
+            dir_fd: bun.StoredFileDescriptorType = .zero,
             package_json: ?*PackageJSON = null,
         };
 
@@ -2500,7 +2556,7 @@ pub const ParseTask = struct {
                                 allocator,
                                 bundler.fs,
                                 override_pathZ,
-                                0,
+                                .zero,
                                 false,
                                 null,
                             );
@@ -2523,7 +2579,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (task.contents_or_fd.fd.file > 0)
+                    if (task.contents_or_fd.fd.file.int() > 0)
                         task.contents_or_fd.fd.file
                     else
                         null,
@@ -2554,18 +2610,18 @@ pub const ParseTask = struct {
             },
             .contents => |contents| CacheEntry{
                 .contents = contents,
-                .fd = 0,
+                .fd = .zero,
             },
         };
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd > 2 and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd.int() > 2 and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }
 
-        if (!will_close_file_descriptor and entry.fd > 2) task.contents_or_fd = .{
+        if (!will_close_file_descriptor and entry.fd.int() > 2) task.contents_or_fd = .{
             .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,
@@ -2593,7 +2649,7 @@ pub const ParseTask = struct {
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.legacy_transform_require_to_import = false;
         opts.features.allow_runtime = !source.index.isRuntime();
-        opts.features.dynamic_require = target.isBun();
+        opts.features.use_import_meta_require = target.isBun();
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
@@ -2664,8 +2720,8 @@ pub const ParseTask = struct {
                 0,
 
             .watcher_data = .{
-                .fd = if (task.contents_or_fd == .fd and !will_close_file_descriptor) task.contents_or_fd.fd.file else 0,
-                .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else 0,
+                .fd = if (task.contents_or_fd == .fd and !will_close_file_descriptor) task.contents_or_fd.fd.file else .zero,
+                .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else .zero,
             },
         };
     }
@@ -2698,8 +2754,8 @@ pub const ParseTask = struct {
                             .empty = .{
                                 .source_index = this.source_index,
                                 .watcher_data = .{
-                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else 0,
-                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else 0,
+                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else .zero,
+                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else .zero,
                                 },
                             },
                         };
@@ -2711,8 +2767,8 @@ pub const ParseTask = struct {
                             .empty = .{
                                 .source_index = this.source_index,
                                 .watcher_data = .{
-                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else 0,
-                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else 0,
+                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else .zero,
+                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else .zero,
                                 },
                             },
                         };
@@ -2944,7 +3000,7 @@ pub const Graph = struct {
     pub const InputFile = struct {
         source: Logger.Source,
         loader: options.Loader = options.Loader.file,
-        side_effects: _resolver.SideEffects = _resolver.SideEffects.has_side_effects,
+        side_effects: _resolver.SideEffects,
         additional_files: BabyList(AdditionalFile) = .{},
         unique_key_for_additional_file: string = "",
         content_hash_for_additional_file: u64 = 0,
@@ -3114,7 +3170,8 @@ const LinkerGraph = struct {
         name: []const u8,
         count: u32,
     ) !void {
-        if (count > 0) debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
+        if (count == 0) return;
+        debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
         const ref = graph.runtimeFunction(name);
         try graph.generateSymbolImportAndUse(
@@ -3927,11 +3984,15 @@ const LinkerContext = struct {
                 chunk.template = PathTemplate.file;
                 if (this.resolver.opts.entry_naming.len > 0)
                     chunk.template.data = this.resolver.opts.entry_naming;
+
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
 
-                var dir = std.fs.cwd().openDir(pathname.dir, .{}) catch |err| {
+                // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
+                const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
+
+                var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
                     try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
                     return error.FailedToOpenEntryPointDirectory;
                 };
@@ -4711,7 +4772,7 @@ const LinkerContext = struct {
                     var count: usize = 0;
                     if (is_entry_point and this.options.output_format == .esm) {
                         for (aliases) |alias| {
-                            count += std.fmt.count("export_{}", .{strings.fmtIdentifier(alias)});
+                            count += std.fmt.count("export_{}", .{bun.fmt.fmtIdentifier(alias)});
                         }
                     }
 
@@ -4748,7 +4809,7 @@ const LinkerContext = struct {
                     const copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
 
                     for (aliases, copies) |alias, *copy| {
-                        const original_name = builder.fmt("export_{}", .{strings.fmtIdentifier(alias)});
+                        const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
                         copy.* = this.graph.generateNewSymbol(source_index, .other, original_name);
                     }
                     this.graph.meta.items(.cjs_export_copies)[id] = copies;
@@ -4949,9 +5010,7 @@ const LinkerContext = struct {
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
                             // This is an external import. Check if it will be a "require()" call.
-                            if (kind == .require or !output_format.keepES6ImportExportSyntax() or
-                                (kind == .dynamic))
-                            {
+                            if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
                                 if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
                                     // If the CommonJS module was converted to ESM
                                     // and the developer `import("cjs_module")`, then
@@ -4967,8 +5026,9 @@ const LinkerContext = struct {
                                 } else {
 
                                     // We should use "__require" instead of "require" if we're not
-                                    // generating a CommonJS output file, since it won't exist otherwise
-                                    if (shouldCallRuntimeRequire(output_format)) {
+                                    // generating a CommonJS output file, since it won't exist otherwise.
+                                    // Disabled for target bun because `import.meta.require` will be inlined.
+                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
                                         record.calls_runtime_require = true;
                                         runtime_require_uses += 1;
                                     }
@@ -4986,6 +5046,7 @@ const LinkerContext = struct {
                                     // - The "default" and "__esModule" exports must not be accessed
                                     //
                                     if (kind != .require and
+                                        false and // TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
                                         (kind != .stmt or
                                         record.contains_import_star or
                                         record.contains_default_alias or
@@ -5071,7 +5132,6 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
-
                         "__toESM",
                         to_esm_uses,
                     ) catch unreachable;
@@ -5090,8 +5150,6 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
-
-                        // TODO: refactor this runtime symbol
                         "__require",
                         runtime_require_uses,
                     ) catch unreachable;
@@ -6386,7 +6444,7 @@ const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         const result = c.generateCodeForFileInChunkJS(
             &buffer_writer,
@@ -6434,7 +6492,7 @@ const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const indent: usize = 0;
@@ -8114,7 +8172,7 @@ const LinkerContext = struct {
         part_range: PartRange,
         toCommonJSRef: Ref,
         toESMRef: Ref,
-        runtimeRequireRef: Ref,
+        runtimeRequireRef: ?Ref,
         stmts: *StmtList,
         allocator: std.mem.Allocator,
         temp_allocator: std.mem.Allocator,

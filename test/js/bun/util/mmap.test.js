@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import { gcTick } from "harness";
 

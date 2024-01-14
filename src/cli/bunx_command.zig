@@ -97,7 +97,7 @@ pub const BunxCommand = struct {
                     const bin_dir = try std.os.openat(dir_fd, dir_name, std.os.O.RDONLY, 0);
                     defer std.os.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir };
-                    var iterator = @import("../bun.js/node/dir_iterator.zig").iterate(dir);
+                    var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {
@@ -245,7 +245,7 @@ pub const BunxCommand = struct {
         else
             update_request.name;
 
-        // fast path: they're actually using this interchangably with `bun run`
+        // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         var this_bundler: bun.Bundler = undefined;
         var ORIGINAL_PATH: string = "";

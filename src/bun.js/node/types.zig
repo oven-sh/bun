@@ -136,7 +136,7 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -144,7 +144,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
-                        .fd = @intCast(bun.toFD(fd)),
+                        .fd = fd,
                     },
                 },
             };
@@ -245,7 +245,8 @@ pub const StringOrBuffer = union(enum) {
             return try allocator.dupe(u8, array_buffer.byteSlice());
         }
 
-        var str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        defer str.deref();
 
         const result = try str.toOwnedSlice(allocator);
         defer globalObject.vm().reportExtraMemory(result.len);
@@ -322,9 +323,12 @@ pub const StringOrBuffer = union(enum) {
     ) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var str = bun.String.tryFromJS(value, global) orelse return null;
+                const str = bun.String.tryFromJS(value, global) orelse return null;
+
                 if (is_async) {
-                    var sliced = str.toThreadSafeSlice(allocator);
+                    defer str.deref();
+                    var possible_clone = str;
+                    var sliced = possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
@@ -333,7 +337,6 @@ pub const StringOrBuffer = union(enum) {
 
                     return StringOrBuffer{ .threadsafe_string = sliced };
                 } else {
-                    str.ref();
                     return StringOrBuffer{ .string = str.toSlice(allocator) };
                 }
             },
@@ -376,6 +379,7 @@ pub const StringOrBuffer = union(enum) {
         }
 
         var str = bun.String.tryFromJS(value, global) orelse return null;
+        defer str.deref();
         if (str.isEmpty()) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
         }
@@ -639,7 +643,7 @@ pub const PathLike = union(enum) {
         return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSlice {
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
@@ -698,6 +702,7 @@ pub const PathLike = union(enum) {
             JSC.JSValue.JSType.DerivedStringObject,
             => {
                 var str = arg.toBunString(ctx);
+                defer str.deref();
 
                 arguments.eat();
 
@@ -1439,7 +1444,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+        const S = if (!Environment.isWindows) os.system.S else bun.C.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
@@ -2404,7 +2409,7 @@ pub const Process = struct {
         const vm = globalObject.bunVM();
 
         if (vm.worker) |worker| {
-            // was explicitly overriden for the worker?
+            // was explicitly overridden for the worker?
             if (worker.execArgv) |execArgv| {
                 const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
                 for (0..execArgv.len) |i| {

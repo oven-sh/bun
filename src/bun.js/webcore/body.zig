@@ -476,7 +476,6 @@ pub const Body = struct {
                     };
                 }
 
-                str.ref();
                 std.debug.assert(str.tag == .WTFStringImpl);
 
                 return Body.Value{

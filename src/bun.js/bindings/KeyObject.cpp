@@ -2943,9 +2943,6 @@ JSC::EncodedJSValue KeyObject__SymmetricKeySize(JSC::JSGlobalObject* globalObjec
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-}
-
-namespace Bun {
 JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject) {
     VM&vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
@@ -2978,4 +2975,5 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject) {
 
     return obj;
 }
-}
+
+} // namespace WebCore

@@ -413,6 +413,7 @@ jobs:
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
         run: |
           try {
             $ErrorActionPreference = "SilentlyContinue"

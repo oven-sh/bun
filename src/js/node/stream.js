@@ -12,7 +12,7 @@ const {
   emitReadable: _emitReadable,
   onEofChunk,
   EE,
-} = $cpp("JSReadableHelper.cpp", "WebCore::createNodeStreamBinding");
+} = $cpp("JSReadableHelper.cpp", "createNodeStreamBinding");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -184,15 +184,15 @@ var require_util = __commonJS({
   "node_modules/readable-stream/lib/ours/util.js"(exports, module) {
     "use strict";
 
-    var AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    var AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
     var isBlob =
       typeof Blob !== "undefined"
         ? function isBlob2(b) {
-            return b instanceof Blob;
-          }
+          return b instanceof Blob;
+        }
         : function isBlob2(b) {
-            return false;
-          };
+          return false;
+        };
     var AggregateError = class extends Error {
       constructor(errors) {
         if (!Array.isArray(errors)) {
@@ -244,7 +244,7 @@ var require_util = __commonJS({
         });
       },
       debuglog() {
-        return function () {};
+        return function () { };
       },
       format(format, ...args) {
         return format.replace(/%([sdifj])/g, function (...[_unused, type]) {
@@ -542,10 +542,10 @@ var require_errors = __commonJS({
         var _value$constructor;
         const type =
           value !== null &&
-          value !== void 0 &&
-          (_value$constructor = value.constructor) !== null &&
-          _value$constructor !== void 0 &&
-          _value$constructor.name
+            value !== void 0 &&
+            (_value$constructor = value.constructor) !== null &&
+            _value$constructor !== void 0 &&
+            _value$constructor.name
             ? `instance of ${value.constructor.name}`
             : `type ${typeof value}`;
         return `Expected ${input} to be returned from the "${name}" function but got ${type}.`;
@@ -1004,7 +1004,7 @@ var require_utils = __commonJS({
         typeof stream._consuming === "boolean" &&
         typeof stream._dumped === "boolean" &&
         ((_stream$req = stream.req) === null || _stream$req === void 0 ? void 0 : _stream$req.upgradeOrConnect) ===
-          void 0
+        void 0
       );
     }
     function willEmitClose(stream) {
@@ -1051,20 +1051,20 @@ var require_utils = __commonJS({
                   : stream.writableErrored) !== null && _ref4 !== void 0
                 ? _ref4
                 : (_stream$_readableStat3 = stream._readableState) === null || _stream$_readableStat3 === void 0
-                ? void 0
-                : _stream$_readableStat3.errorEmitted) !== null && _ref3 !== void 0
+                  ? void 0
+                  : _stream$_readableStat3.errorEmitted) !== null && _ref3 !== void 0
               ? _ref3
               : (_stream$_writableStat3 = stream._writableState) === null || _stream$_writableStat3 === void 0
-              ? void 0
-              : _stream$_writableStat3.errorEmitted) !== null && _ref2 !== void 0
+                ? void 0
+                : _stream$_writableStat3.errorEmitted) !== null && _ref2 !== void 0
             ? _ref2
             : (_stream$_readableStat4 = stream._readableState) === null || _stream$_readableStat4 === void 0
-            ? void 0
-            : _stream$_readableStat4.errored) !== null && _ref !== void 0
+              ? void 0
+              : _stream$_readableStat4.errored) !== null && _ref !== void 0
           ? _ref
           : (_stream$_writableStat4 = stream._writableState) === null || _stream$_writableStat4 === void 0
-          ? void 0
-          : _stream$_writableStat4.errored)
+            ? void 0
+            : _stream$_writableStat4.errored)
       );
     }
     module.exports = {
@@ -1122,7 +1122,7 @@ var require_end_of_stream = __commonJS({
     function isRequest(stream) {
       return stream.setHeader && typeof stream.abort === "function";
     }
-    var nop = () => {};
+    var nop = () => { };
     function eos(stream, options, callback) {
       var _options$readable, _options$writable;
       if (arguments.length === 2) {
@@ -1366,8 +1366,8 @@ var require_operators = __commonJS({
         options === null || options === void 0
           ? void 0
           : (_options$signal2 = options.signal) === null || _options$signal2 === void 0
-          ? void 0
-          : _options$signal2.addEventListener("abort", abort);
+            ? void 0
+            : _options$signal2.addEventListener("abort", abort);
         let next;
         let resume;
         let done = false;
@@ -1421,8 +1421,8 @@ var require_operators = __commonJS({
             options === null || options === void 0
               ? void 0
               : (_options$signal3 = options.signal) === null || _options$signal3 === void 0
-              ? void 0
-              : _options$signal3.removeEventListener("abort", abort);
+                ? void 0
+                : _options$signal3.removeEventListener("abort", abort);
           }
         }
         pump();
@@ -1559,7 +1559,7 @@ var require_operators = __commonJS({
         const err = new AbortError(void 0, {
           cause: options.signal.reason,
         });
-        this.once("error", () => {});
+        this.once("error", () => { });
         await finished(this.destroy(err));
         throw err;
       }
@@ -2218,7 +2218,7 @@ var require_from = __commonJS({
         }
       }
       async function next() {
-        for (;;) {
+        for (; ;) {
           try {
             const { value, done } = isAsync ? await iterator.next() : iterator.next();
             if (done) {
@@ -2536,7 +2536,7 @@ var require_readable = __commonJS({
     } = require_errors();
     var { validateObject } = require_validators();
     var from = require_from();
-    var nop = () => {};
+    var nop = () => { };
     var { errorOrDestroy } = destroyImpl;
 
     Readable.prototype.destroy = destroyImpl.destroy;
@@ -3341,7 +3341,7 @@ var require_readable = __commonJS({
           cleanup();
           // This is a protection against non-standard, legacy streams
           // that happen to emit an error event again after finished is called.
-          streamReadable.on("error", () => {});
+          streamReadable.on("error", () => { });
           if (error) return controller.error(error);
           controller.close();
         });
@@ -3453,7 +3453,7 @@ var require_writable = __commonJS({
     ObjectSetPrototypeOf(Writable, Stream);
     module.exports = Writable;
 
-    function nop() {}
+    function nop() { }
     var kOnFinished = Symbol2("kOnFinished");
     function WritableState(options, stream, isDuplex) {
       if (typeof isDuplex !== "boolean") isDuplex = stream instanceof require_duplex();
@@ -3728,10 +3728,10 @@ var require_writable = __commonJS({
         const callback = state.allNoop
           ? nop
           : err => {
-              for (let n = i; n < buffered.length; ++n) {
-                buffered[n].callback(err);
-              }
-            };
+            for (let n = i; n < buffered.length; ++n) {
+              buffered[n].callback(err);
+            }
+          };
         const chunks = state.allNoop && i === 0 ? buffered : ArrayPrototypeSlice(buffered, i);
         chunks.allBuffers = state.allBuffers;
         doWrite(stream, state, true, state.length, chunks, "", callback);
@@ -4057,11 +4057,11 @@ var require_duplexify = __commonJS({
     var isBlob =
       typeof Blob !== "undefined"
         ? function isBlob2(b) {
-            return b instanceof Blob;
-          }
+          return b instanceof Blob;
+        }
         : function isBlob2(b) {
-            return false;
-          };
+          return false;
+        };
     var { FunctionPrototypeCall } = require_primordials();
     class Duplexify extends Duplex {
       constructor(options) {
@@ -4199,7 +4199,7 @@ var require_duplexify = __commonJS({
         return (d = new Duplexify({
           objectMode: true,
           writable: false,
-          read() {},
+          read() { },
         }));
       }
       throw new ERR_INVALID_ARG_TYPE(

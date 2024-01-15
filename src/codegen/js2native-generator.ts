@@ -3,7 +3,7 @@
 //
 // For the actual parsing, see replacements.ts
 
-import path from "path";
+import path, { basename } from "path";
 import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
 
 //
@@ -112,6 +112,10 @@ export function getJS2NativeCPP() {
   return [
     `#pragma once`,
     ...files.map(filename => `#include ${JSON.stringify(filename)}`),
+    'namespace JS2NativeGenerated {',
+    "using namespace Bun;",
+    "using namespace JSC;",
+    "using namespace WebCore;",
     ...nativeCalls
       .filter(x => x.type === "zig")
       .map(call => `extern "C" JSC::EncodedJSValue ${symbol(call)}(Zig::GlobalObject*);`),
@@ -120,9 +124,9 @@ export function getJS2NativeCPP() {
         return [
           x.type === "zig"
             ? `extern "C" JSC::EncodedJSValue ${symbol({
-                type: "zig",
-                symbol: x.symbol_taget,
-              })}(JSC::JSGlobalObject*, JSC::CallFrame*);`
+              type: "zig",
+              symbol: x.symbol_taget,
+            })}(JSC::JSGlobalObject*, JSC::CallFrame*);`
             : "",
           `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
           `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
@@ -137,6 +141,7 @@ export function getJS2NativeCPP() {
     "static JS2NativeFunction js2nativePointers[] = {",
     ...nativeCalls.map(x => `  ${cppPointer(x)},`),
     "};",
+    "};",
     "#define JS2NATIVE_COUNT " + nativeCalls.length,
   ].join("\n");
 }
@@ -149,8 +154,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
       .filter(x => x.type === "zig")
       .flatMap(call => [
         `export fn ${symbol(call)}(global: *JSC.JSGlobalObject) JSC.JSValue {`,
-        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${
-          call.symbol
+        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${call.symbol
         }(global);`,
         "}",
       ]),
@@ -161,8 +165,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
           type: "zig",
           symbol: x.symbol_taget,
         })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) JSC.JSValue {`,
-        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))}).${
-          x.symbol_taget
+        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))}).${x.symbol_taget
         }(global, call_frame);`,
         "}",
       ]),
@@ -170,4 +173,12 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
     ...nativeCalls.filter(x => x.type === "zig").flatMap(call => `  _ = &${symbol(call)};`),
     "}",
   ].join("\n");
+}
+
+export function getJS2NativeDTS() {
+  return [
+    'declare type NativeFilenameCPP = ' + sourceFiles.filter(x => x.endsWith("cpp")).map(x => JSON.stringify(basename(x))).join('|'),
+    'declare type NativeFilenameZig = ' + sourceFiles.filter(x => x.endsWith("zig")).map(x => JSON.stringify(basename(x))).join('|'),
+    '',
+  ].join('\n')
 }

@@ -136,7 +136,6 @@ using namespace JSC;
     macro(join) \
     macro(kind) \
     macro(lazy) \
-    macro(native) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
     macro(localStreams) \

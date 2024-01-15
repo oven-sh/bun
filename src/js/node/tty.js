@@ -2,7 +2,7 @@ const {
   setRawMode: ttySetMode,
   isatty,
   getWindowSize: _getWindowSize,
-} = $cpp("ProcessBindingTTYWrap.cpp", "Bun::createBunTTYFunctions");
+} = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 // primordials
 const NumberIsInteger = Number.isInteger;

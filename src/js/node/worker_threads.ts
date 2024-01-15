@@ -10,7 +10,7 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-let [_workerData, _threadId, _receiveMessageOnPort] = $cpp("Worker.cpp", "WebCore::createNodeWorkerThreadsBinding");
+let [_workerData, _threadId, _receiveMessageOnPort] = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -139,19 +139,19 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "close", {
-    value() {},
+    value() { },
   });
 
   Object.defineProperty(fake, "start", {
-    value() {},
+    value() { },
   });
 
   Object.defineProperty(fake, "unref", {
-    value() {},
+    value() { },
   });
 
   Object.defineProperty(fake, "ref", {
-    value() {},
+    value() { },
   });
 
   Object.defineProperty(fake, "hasRef", {
@@ -161,7 +161,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "setEncoding", {
-    value() {},
+    value() { },
   });
 
   Object.defineProperty(fake, "addEventListener", {

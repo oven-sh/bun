@@ -1,9 +1,18 @@
 // This script is run when you change anything in src/js/*
+//
+// Originally, the builtin bundler only supported function files, but then the module files were
+// added to this, which has made this entire setup extremely convoluted and a mess.
+//
+// One day, this entire setup should be rewritten, but also it would be cool if Bun natively
+// supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
+// library, instead of RegExp hacks.
+//
+// For explanation on this, please nag @paperdave to write documentation on how everything works.
 import fs from "fs";
-import { writeFile, rm, mkdir } from "fs/promises";
+import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { cap, declareASCIILiteral, readdirRecursive, resolveSyncOrNull, writeIfNotChanged } from "./helpers";
+import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { define } from "./replacements";
@@ -14,10 +23,16 @@ const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
+const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production")
+console.time(timeString);
+
 if (!CMAKE_BUILD_ROOT) {
   console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR>");
   process.exit(1);
 }
+
+globalThis.CMAKE_BUILD_ROOT = CMAKE_BUILD_ROOT;
+const bundleBuiltinFunctions = require('./bundle-functions').bundleBuiltinFunctions;
 
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
@@ -33,19 +48,19 @@ function mark(log: string) {
 }
 
 const {
-  //
   moduleList,
   nativeModuleIds,
   nativeModuleEnumToId,
   nativeModuleEnums,
   requireTransformer,
 } = createInternalModuleRegistry(BASE);
+globalThis.requireTransformer = requireTransformer;
 
 // these logs surround a very weird issue where writing files and then bundling sometimes doesn't
 // work, so i have lot of debug logs that blow up the console because not sure what is going on.
 // that is also the reason for using `retry` when theoretically writing a file the first time
 // should actually write the file.
-const verbose = Bun.env.VERBOSE ? console.log : () => {};
+const verbose = Bun.env.VERBOSE ? console.log : () => { };
 async function retry(n, fn) {
   var err;
   while (n > 0) {
@@ -88,12 +103,12 @@ for (let i = 0; i < moduleList.length; i++) {
 
     const processed = sliceSourceCode(
       "{" +
-        input
-          .replace(
-            /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
-            stmt => (importStatements.push(stmt), ""),
-          )
-          .replace(/export\s*{\s*}\s*;/g, ""),
+      input
+        .replace(
+          /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
+          stmt => (importStatements.push(stmt), ""),
+        )
+        .replace(/export\s*{\s*}\s*;/g, ""),
       true,
       x => requireTransformer(x, moduleList[i]),
     );
@@ -155,8 +170,6 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
 
 mark("Preprocess modules");
 
-await Bun.sleep(10);
-
 // directory caching stuff breaks this sometimes. CLI rules
 const config_cli = [
   process.execPath,
@@ -190,21 +203,6 @@ if (out.exitCode !== 0) {
   process.exit(out.exitCode);
 }
 
-// const config = ({ debug }: { debug?: boolean }) =>
-//   ({
-//     entrypoints: bundledEntryPoints,
-//     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
-//     minify: { syntax: !debug, whitespace: false },
-//     root: TMP_DIR,
-//     target: "bun",
-//     external: builtinModules,
-//     define: {
-//       ...define,
-//       IS_BUN_DEVELOPMENT: String(!!debug),
-//       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
-//     },
-//   } satisfies BuildConfig);
-
 mark("Bundle modules");
 
 const outputs = new Map();
@@ -218,32 +216,24 @@ for (const entrypoint of bundledEntryPoints) {
   let usesAssert = output.includes("$assert");
   captured =
     captured
-      .replace(
-        `var __require = (id) => {
-  return import.meta.require(id);
-};`,
-        "",
-      )
-      .replace(/var\s*__require\s*=\s*\(?id\)?\s*=>\s*{\s*return\s*import.meta.require\(id\)\s*};?/, "")
-      .replace(/var __require=\(?id\)?=>import.meta.require\(id\);?/, "")
       .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
       .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
       .replace(/]\s*,\s*__debug_end__\)/g, ")")
-      // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
+      .replace(/return \$\nexport /, 'return')
       .replace(/__intrinsic__/g, "@") + "\n";
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +
-      (usesDebug
-        ? createLogClientJS(
-            file_path.replace(".js", ""),
-            idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
-          )
-        : "") +
-      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
+    (usesDebug
+      ? createLogClientJS(
+        file_path.replace(".js", ""),
+        idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
+      )
+      : "") +
+    (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
   );
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -276,6 +266,12 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
+await bundleBuiltinFunctions({
+  requireTransformer
+});
+
+mark("Bundle Functions");
+
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
@@ -286,12 +282,11 @@ writeIfNotChanged(
 // actually use this enum but it's probably a good thing to include.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+enum.h"),
-  `${
-    moduleList
-      .map((id, n) => {
-        return `${idToEnumName(id)} = ${n},`;
-      })
-      .join("\n") + "\n"
+  `${moduleList
+    .map((id, n) => {
+      return `${idToEnumName(id)} = ${n},`;
+    })
+    .join("\n") + "\n"
   }
 `,
 );
@@ -305,16 +300,16 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
   switch (id) {
     // JS internal modules
     ${moduleList
-      .map((id, n) => {
-        return `case Field::${idToEnumName(id)}: {
+    .map((id, n) => {
+      return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-          id.replace(/\.[mc]?[tj]s$/, ".js"),
-        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-          .replace(/\.[mc]?[tj]s$/, "")
-          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+        id.replace(/\.[mc]?[tj]s$/, ".js"),
+      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+        .replace(/\.[mc]?[tj]s$/, "")
+        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
-      })
-      .join("\n    ")}
+    })
+    .join("\n    ")}
     default: {
       __builtin_unreachable();
     }
@@ -374,8 +369,8 @@ pub const ResolvedSourceTag = enum(u32) {
 ${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
     // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
-  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
-  .join("\n")}
+    .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
+    .join("\n")}
 };
 `,
 );
@@ -401,8 +396,8 @@ ${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("
     // They also have bit 10 set to differentiate them from JS builtins.
     NativeModuleFlag = (1 << 10) | (1 << 9),
 ${Object.entries(nativeModuleEnumToId)
-  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
-  .join("\n")}
+    .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
+    .join("\n")}
 };
 
 `,
@@ -423,3 +418,12 @@ const js2nativeZigPath = path.join(import.meta.dir, "../bun.js/bindings/Generate
 writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
 
 mark("Generate Code");
+
+console.log('');
+console.timeEnd(timeString);
+console.log(
+  `  %s kb`,
+  Math.floor((moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3)).length, 0) + globalThis.internalFunctionJSSize) / 1000),
+)
+console.log(`  %s internal modules`, moduleList.length);
+console.log(`  %s internal functions across %s files`, globalThis.internalFunctionCount, globalThis.internalFunctionFileCount);

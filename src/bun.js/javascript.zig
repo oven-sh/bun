@@ -776,6 +776,11 @@ pub const VirtualMachine = struct {
                 JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
             }
 
+            // Only allowed for testing
+            if (map.get("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING") != null) {
+                ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
+
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
             } else if (strings.eqlComptime(gc_level, "2")) {

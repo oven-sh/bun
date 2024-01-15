@@ -5600,6 +5600,18 @@ pub const JSArray = struct {
     pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {
         return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis, arguments.len, @as(?[*]const JSC.C.JSObjectRef, @ptrCast(arguments.ptr)), null));
     }
+
+    /// Must be called with a tuple of JSValue
+    pub inline fn createComptime(
+        global: *JSGlobalObject,
+        items: anytype,
+    ) JSValue {
+        const a = JSValue.createEmptyArray(global, comptime items.len);
+        inline for (items, 0..) |item, i| {
+            a.putIndex(global, i, item);
+        }
+        return a;
+    }
 };
 
 const private = struct {
@@ -6079,7 +6091,6 @@ pub const ScriptExecutionStatus = enum(i32) {
 };
 
 comptime {
-    _ = bun.String.BunString__getStringWidth;
     // this file is gennerated, but cant be placed in the build/codegen folder
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");

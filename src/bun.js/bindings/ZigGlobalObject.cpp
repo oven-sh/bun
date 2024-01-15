@@ -1593,76 +1593,6 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 // it is moved to JS2Native.cpp, and is called $cpp and $zig
 // see <todo>.md for more information
 
-//         if (string == "internal/http2"_s) {
-//             auto* obj = constructEmptyObject(globalObject);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "H2FrameParser"_s)), JSValue::decode(H2FrameParser__getConstructor(globalObject)), 0);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getPackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getPackedSettings"_s, BUN__HTTP2_getPackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getUnpackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getUnpackedSettings"_s, BUN__HTTP2__getUnpackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             return JSValue::encode(obj);
-//         }
-//         if (string == "internal/tls"_s) {
-            // auto* obj = constructEmptyObject(globalObject);
-
-            // auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
-            // // expose for tests in debug mode only
-            // // #ifndef BUN_DEBUG
-            // //             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
-            // //             if (!isBuiltin) {
-            // //                 return JSC::JSValue::encode(JSC::jsUndefined());
-            // //             }
-            // // #endif
-            // struct us_cert_string_t* out;
-            // auto size = us_raw_root_certs(&out);
-            // if (size < 0) {
-            //     return JSValue::encode(JSC::jsUndefined());
-            // }
-            // auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-            // for (auto i = 0; i < size; i++) {
-            //     auto raw = out[i];
-            //     auto str = WTF::String::fromUTF8(raw.str, raw.len);
-            //     rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
-            // }
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
-
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
-            // return JSValue::encode(obj);
-//         }
-
-//         if (string == "vm"_s) {
-//             auto* obj = constructEmptyObject(globalObject);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
-//                 reinterpret_cast<Zig::GlobalObject*>(globalObject)->NodeVMScript(), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInNewContext"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "runInNewContext"_s, vmModuleRunInNewContext, ImplementationVisibility::Public), 0);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
-//             return JSValue::encode(obj);
-//         }
-
-//         if (string == "unstable_syntaxHighlight"_s) {
-//             JSFunction* syntaxHighlight = JSFunction::create(vm, globalObject, 1, "syntaxHighlight"_s, BunInternalFunction__syntaxHighlighter, ImplementationVisibility::Public);
-
-//             return JSValue::encode(syntaxHighlight);
-//         }
-
 //         if (UNLIKELY(string == "noop"_s)) {
 //             auto* obj = constructEmptyObject(globalObject);
 //             obj->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getterSetter"_s)), JSC::CustomGetterSetter::create(vm, noop_getter, noop_setter), 0);
@@ -3353,8 +3283,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
                 String(), functionStartDirectStream, ImplementationVisibility::Public),
             PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0 },
 
-        GlobalPropertyInfo { builtinNames.nativePrivateName(),
-            JSC::JSFunction::create(vm, this, 0, "@native"_s, JS2Native::jsDollarNative, ImplementationVisibility::Public),
+        GlobalPropertyInfo { builtinNames.lazyPrivateName(),
+            JSC::JSFunction::create(vm, this, 0, "@lazy"_s, JS2Native::jsDollarLazy, ImplementationVisibility::Public),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 },
 
         GlobalPropertyInfo(builtinNames.makeThisTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeThisTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),

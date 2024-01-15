@@ -13,26 +13,27 @@ using namespace JSC;
 
 extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 
-JSC::JSValue createNodeTLSBinding(Zig::GlobalObject*) {
-  auto* obj = constructEmptyObject(globalObject);
+JSC::JSValue createNodeTLSBinding(Zig::GlobalObject* globalObject) {
+    VM& vm = globalObject->vm();
+    auto* obj = constructEmptyObject(globalObject);
 
-  struct us_cert_string_t* out;
-  auto size = us_raw_root_certs(&out);
-  if (size < 0) {
-      return JSValue::encode(JSC::jsUndefined());
-  }
-  auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-  for (auto i = 0; i < size; i++) {
-      auto raw = out[i];
-      auto str = WTF::String::fromUTF8(raw.str, raw.len);
-      rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
-  }
-  obj->putDirect(
+    struct us_cert_string_t* out;
+    auto size = us_raw_root_certs(&out);
+    if (size < 0) {
+        return jsUndefined();
+    }
+    auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+    for (auto i = 0; i < size; i++) {
+        auto raw = out[i];
+        auto str = WTF::String::fromUTF8(raw.str, raw.len);
+        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+    }
+    obj->putDirect(
       vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
 
-  obj->putDirect(
+    obj->putDirect(
       vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
-  return JSValue::encode(obj);
+    return obj;
 }
 
 } // namespace Bun

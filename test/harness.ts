@@ -1,5 +1,6 @@
-import { gc as bunGC, stdout, unsafe, which } from "bun";
+import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
+
 export const bunEnv: any = {
   ...process.env,
   GITHUB_ACTIONS: "false",

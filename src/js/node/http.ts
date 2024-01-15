@@ -7,7 +7,7 @@ const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
-} = $cpp("NodeHTTP.cpp", "Bun::createNodeHTTPInternalBinding");
+} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
 
 const GlobalPromise = globalThis.Promise;
 
@@ -51,15 +51,15 @@ function isIPv6(input) {
   const v6Seg = "(?:[0-9a-fA-F]{1,4})";
   const IPv6Reg = new RegExp(
     "^(" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
-      `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(%[0-9a-zA-Z-.:]{1,})?$",
+    `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
+    `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
+    `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
+    `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
+    `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
+    `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
+    `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
+    `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
+    ")(%[0-9a-zA-Z-.:]{1,})?$",
   );
 
   return IPv6Reg.test(input);
@@ -72,7 +72,7 @@ const { URL } = globalThis;
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
-const nop = () => {};
+const nop = () => { };
 
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
@@ -160,9 +160,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _destroy(err, callback) {}
+  _destroy(err, callback) { }
 
-  _final(callback) {}
+  _final(callback) { }
 
   get localAddress() {
     return "127.0.0.1";
@@ -180,7 +180,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(size) {}
+  _read(size) { }
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -191,7 +191,7 @@ var FakeSocket = class Socket extends Duplex {
     }
   }
 
-  ref() {}
+  ref() { }
 
   get remoteAddress() {
     return this.address()?.address;
@@ -220,9 +220,9 @@ var FakeSocket = class Socket extends Duplex {
     this.address().family = val;
   }
 
-  resetAndDestroy() {}
+  resetAndDestroy() { }
 
-  setKeepAlive(enable = false, initialDelay = 0) {}
+  setKeepAlive(enable = false, initialDelay = 0) { }
 
   setNoDelay(noDelay = true) {
     return this;
@@ -232,9 +232,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  unref() {}
+  unref() { }
 
-  _write(chunk, encoding, callback) {}
+  _write(chunk, encoding, callback) { }
 };
 
 function createServer(options, callback) {
@@ -583,7 +583,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 
   return this;
 };
-Server.prototype.setTimeout = function (msecs, callback) {};
+Server.prototype.setTimeout = function (msecs, callback) { };
 
 function assignHeadersSlow(object, req) {
   const headers = req.headers;
@@ -914,14 +914,14 @@ Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
 Object.setPrototypeOf(OutgoingMessage, Writable);
 
 // Express "compress" package uses this
-OutgoingMessage.prototype._implicitHeader = function () {};
+OutgoingMessage.prototype._implicitHeader = function () { };
 
 OutgoingMessage.prototype.appendHeader = function (name, value) {
   var headers = (this[headersSymbol] ??= new Headers());
   headers.append(name, value);
 };
 
-OutgoingMessage.prototype.flushHeaders = function () {};
+OutgoingMessage.prototype.flushHeaders = function () { };
 
 OutgoingMessage.prototype.getHeader = function (name) {
   return getHeader(this[headersSymbol], name);
@@ -1257,7 +1257,7 @@ ServerResponse.prototype.appendHeader = function (name, value) {
   headers.append(name, value);
 };
 
-ServerResponse.prototype.flushHeaders = function () {};
+ServerResponse.prototype.flushHeaders = function () { };
 
 ServerResponse.prototype.getHeader = function (name) {
   return getHeader(this[headersSymbol], name);
@@ -1549,7 +1549,7 @@ class ClientRequest extends OutgoingMessage {
     this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =
-      options.host =
+        options.host =
         validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
 
     // const setHost = options.setHost === undefined || Boolean(options.setHost);

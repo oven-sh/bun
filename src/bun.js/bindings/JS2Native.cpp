@@ -38,14 +38,14 @@ enum ReadableStreamTag : int32_t {
     Bytes = 4,
 };
 
-// This is the implementation of the generated $native
-JSC_DEFINE_HOST_FUNCTION(jsDollarNative, (JSC::JSGlobalObject *lexicalGlobalObject, JSC::CallFrame* callFrame))
+// This is the implementation of the generated $lazy
+JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject *lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
   JSC::JSValue target = callFrame->uncheckedArgument(0);
 
   int id = target.asInt32();
   if (LIKELY(id < 0)) {
-    return JSValue::encode(js2nativePointers[-id - 1](
+    return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](
       static_cast<Zig::GlobalObject*>(lexicalGlobalObject))
     );
   }
@@ -72,20 +72,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarNative, (JSC::JSGlobalObject *lexicalGlobalObje
   CRASH_WITH_INFO("Invalid call to @native. This should never be reached and is a bug in Bun or you got a handle to our internal code.");
 #endif
 }
-
-// the following two are only exposed when you pass BUN_EXPOSE_DEBUG_INTERNALS
-// they are a runtime-version of $cpp and $zig which do the string lookup later
-
-JSC_DEFINE_HOST_FUNCTION(jsDollarCpp, (JSC::JSGlobalObject *lexicalGlobalObject, JSC::CallFrame* callFrame)) {
-// 
-  return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsDollarZig, (JSC::JSGlobalObject *lexicalGlobalObject, JSC::CallFrame* callFrame)) {
-// 
-  return JSValue::encode(jsUndefined());
-}
-
 
 } // namespace JS2Native
 } // namespace Bun

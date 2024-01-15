@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 
@@ -10,6 +11,6 @@ JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable);
 JSC_DECLARE_HOST_FUNCTION(jsReadable_onEofChunk);
 JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable_);
 
-JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

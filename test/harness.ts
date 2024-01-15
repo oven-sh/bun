@@ -85,24 +85,30 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
+type DirectoryTree = {
+  [name: string]: string | DirectoryTree;
+};
+
+export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   var fs = require("fs");
   var path = require("path");
   var { tmpdir } = require("os");
 
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
-  for (const [name, contents] of Object.entries(files)) {
-    if (typeof contents === "object") {
-      for (const [_name, _contents] of Object.entries(contents)) {
-        fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
-        fs.writeFileSync(path.join(dir, name, _name), _contents);
+  function makeTree(base: string, tree: DirectoryTree) {
+    for (const [name, contents] of Object.entries(tree)) {
+      if (typeof contents === "object") {
+        fs.mkdirSync(path.join(base, name), { recursive: true });
+        makeTree(path.join(base, name), contents);
+        continue;
       }
-      continue;
+      fs.mkdirSync(path.dirname(path.join(base, name)), { recursive: true });
+      fs.writeFileSync(path.join(base, name), contents);
     }
-    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
-    fs.writeFileSync(path.join(dir, name), contents);
   }
-  return dir;
+
+  const base = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
+  makeTree(base, files);
+  return base;
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {

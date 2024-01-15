@@ -157,6 +157,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
         }
     };
+    const global_handle = struct {
+        fn get() GlobalHandle {
+            return switch (EventLoopKind) {
+                .js => bun.shell.GlobalJS.init(JSC.VirtualMachine.get().global),
+                .mini => bun.shell.GlobalMini.init(bun.JSC.MiniEventLoop.global),
+            };
+        }
+    };
 
     const EventLoopTask = switch (EventLoopKind) {
         .js => JSC.ConcurrentTask,
@@ -4201,9 +4209,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             this.queueBlockingOutputImpl(blocking_output, !need_to_write_to_stdout_with_io);
                             if (!need_to_write_to_stdout_with_io) return; // yield execution
                         } else {
-                            if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |tesfsdfe| {
-                                _ = tesfsdfe; // autofix
-                                @panic("FIXME TODO");
+                            if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |theerr| {
+                                global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(theerr));
                             }
                         }
                     }
@@ -4226,9 +4233,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     defer output.deinit();
 
                     if (this.bltn.writeNoIO(.stdout, output.items[0..]).asErr()) |e| {
-                        _ = e; // autofix
-
-                        @panic("FIXME uh oh");
+                        global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                        return;
                     }
 
                     return this.next();
@@ -5854,9 +5860,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 exec.err = err;
                                 const error_string = this.bltn.taskErrorToString(.rm, err);
                                 if (!this.bltn.stderr.needsIO()) {
-                                    switch (this.bltn.writeNoIO(.stderr, error_string)) {
-                                        .result => {},
-                                        .err => @panic("FIXME TODO"),
+                                    if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |e| {
+                                        global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                                        return;
                                     }
                                 } else {
                                     const bo = BlockingOutput{
@@ -5890,9 +5896,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
                     if (!this.bltn.stdout.needsIO()) {
                         if (this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items[0..]).asErr()) |err| {
-                            _ = err; // autofix
-
-                            @panic("FIXME TODO");
+                            global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(err));
+                            return;
                         }
                         // _ = this.state.exec.output_done.fetchAdd(1, .SeqCst);
                         _ = this.state.exec.incrementOutputCount(.output_done);

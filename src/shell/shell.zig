@@ -39,6 +39,12 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
+    pub fn newSys(e: Syscall.Error) @This() {
+        return .{
+            .sys = e,
+        };
+    }
+
     pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
         switch (this) {
             .sys => {

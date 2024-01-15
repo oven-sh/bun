@@ -37,6 +37,15 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  test("invalid js obj", async () => {
+    const lol = {
+      hi: "lmao",
+    };
+    await TestBuilder.command`echo foo > ${lol}`.error("Invalid JS object used in shell: [object Object]").run();
+    const r = new RegExp("hi");
+    await TestBuilder.command`echo foo > ${r}`.error("Invalid JS object used in shell: /hi/").run();
+  });
+
   test("empty_input", async () => {
     await TestBuilder.command``.run();
     await TestBuilder.command`     `.run();
@@ -117,7 +126,7 @@ describe("bunshell", () => {
         const buffer = new Uint8Array(8192);
         const result = await $`echo ${loneSurrogate} > ${buffer}`;
       });
-      expect(err?.message).toEqual("bunshell: invalid string");
+      expect(err?.message).toEqual("Shell script string contains invalid UTF-16");
     });
 
     test("invalid surrogate pair fails", async () => {
@@ -126,7 +135,7 @@ describe("bunshell", () => {
         const buffer = new Uint8Array(8192);
         const result = $`echo ${loneSurrogate} > ${buffer}`;
       });
-      expect(err?.message).toEqual("bunshell: invalid string");
+      expect(err?.message).toEqual("Shell script string contains invalid UTF-16");
     });
   });
 

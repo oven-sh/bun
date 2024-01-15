@@ -2513,7 +2513,7 @@ pub fn shellCmdFromJS(
     while (string_iter.next()) |js_value| {
         defer i += 1;
         if (!try appendJSValueStr(allocator, globalThis, js_value, out_script)) {
-            globalThis.throw("bunshell: invalid string", .{});
+            globalThis.throw("Shell script string contains invalid UTF-16", .{});
             return false;
         }
         // const str = js_value.getZigString(globalThis);
@@ -2565,13 +2565,17 @@ pub fn shellCmdFromJS(
 
                 if (template_value.isString()) {
                     if (!try appendJSValueStr(allocator, globalThis, template_value, out_script)) {
-                        globalThis.throw("bunshell: invalid string", .{});
+                        globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         return false;
                     }
                     continue;
                 }
 
-                @panic("Unsupported FIXME handle error nicely");
+                const str = template_value.toBunString(globalThis);
+                const slice = str.toSlice(bun.default_allocator);
+                defer slice.deinit();
+                globalThis.throw("Invalid JS object used in shell: {s}", .{slice.slice()});
+                return false;
             }
         }
     }

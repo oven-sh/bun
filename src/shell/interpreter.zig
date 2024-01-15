@@ -2632,6 +2632,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn onBufferedWriterDone(this: *Cmd, e: ?Syscall.Error) void {
+                if (e) |err| {
+                    global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(err));
+                    return;
+                }
                 std.debug.assert(this.state == .waiting_write_err);
                 this.state = .{ .err = e };
                 this.next();
@@ -2728,8 +2732,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         switch (this.exec.bltn.start()) {
                             .result => {},
                             .err => |e| {
-                                _ = e;
-                                @panic("FIXME TODO HANDLE THIS!");
+                                const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bunsh: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toSystemError().message }) catch bun.outOfMemory();
+                                this.writeFailingError(buf, 1);
+                                return;
                             },
                         }
                         return;
@@ -2782,17 +2787,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                                 if (this.node.redirect.stdin) {
                                     if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
-                                        @panic("FIXME OOPS");
+                                        return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
                                     if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
-                                        @panic("FIXME OOPS");
+                                        return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
                                     if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
-                                        @panic("FIXME OOPS");
+                                        return;
                                     }
                                 }
                             } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], this.base.interpreter.global)) |rstream| {
@@ -2805,21 +2810,25 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 req.getBodyValue().toBlobIfPossible();
                                 if (this.node.redirect.stdin) {
                                     if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDIN_FD, &spawn_args.stdio)) {
-                                        @panic("FIXME OOPS");
+                                        return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
                                     if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDOUT_FD, &spawn_args.stdio)) {
-                                        @panic("FIXME OOPS");
+                                        return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
                                     if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDERR_FD, &spawn_args.stdio)) {
-                                        @panic("FIXME OOPS");
+                                        return;
                                     }
                                 }
                             } else {
-                                @panic("FIXME Unhandled");
+                                const jsval = this.base.interpreter.jsobjs[val.idx];
+                                const slice = jsval.toBunString(global_handle.get().globalThis).toSlice(bun.default_allocator);
+                                defer slice.deinit();
+                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {s}", .{slice.slice()});
+                                return;
                             }
                         },
                         .atom => {
@@ -2855,8 +2864,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const subproc = switch (Subprocess.spawnAsync(this.base.interpreter.global, spawn_args, &this.exec.subproc.child)) {
                     .result => this.exec.subproc.child,
                     .err => |e| {
-                        _ = e; // autofix
-                        @panic("FIXME handle this");
+                        global_handle.get().actuallyThrow(e);
+                        return;
                     },
                 };
                 subproc.ref();
@@ -3367,8 +3376,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 cmd.exec.bltn.stderr = .{ .fd = redirfd };
                             }
                         },
-                        .jsbuf => {
-                            if (comptime EventLoopKind == .mini) @panic("FIXME TODO");
+                        .jsbuf => |val| {
+                            if (comptime EventLoopKind == .mini) @panic("This should nevver happened");
                             if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(interpreter.global)) |buf| {
                                 const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
                                     .array_buffer = buf,
@@ -3390,7 +3399,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 _ = blob;
                                 @panic("FIXME TODO HANDLE BLOB");
                             } else {
-                                @panic("FIXME TODO Unhandled");
+                                const jsval = cmd.base.interpreter.jsobjs[val.idx];
+                                const slice = jsval.toBunString(global_handle.get().globalThis).toSlice(bun.default_allocator);
+                                defer slice.deinit();
+                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {s}", .{slice.slice()});
+                                return .yield;
                             }
                         },
                     }

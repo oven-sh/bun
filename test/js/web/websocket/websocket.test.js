@@ -429,6 +429,32 @@ describe("WebSocket", () => {
     ws.close();
     gc(true);
   });
+
+  it("should report failing connection request to onerror/onclose", async () => {
+    let did_report_error = false;
+    let did_report_close = false;
+
+    try {
+      await new Promise((resolve, reject) => {
+        const ws = new WebSocket(`wss://somerandomdomain.dev`, {});
+        let timeout = setTimeout(() => { reject.call(); }, 500);
+
+        ws.onclose = () => {
+          did_report_close = true;
+          clearTimeout(timeout);
+          resolve.call();
+        };
+
+        ws.onerror = () => {
+          did_report_error = true;
+        };
+      });
+    } finally {}
+
+
+    expect(did_report_error).toBe(true);
+    expect(did_report_close).toBe(true);
+  });
 });
 
 describe("websocket in subprocess", () => {

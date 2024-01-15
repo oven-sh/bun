@@ -160,17 +160,17 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-        "(IS_BUN_DEVELOPMENT?$assert(" +
-        checkSlice.result.slice(1, -1) +
-        "," +
-        JSON.stringify(
-          checkSlice.result
-            .slice(1, -1)
-            .replace(/__intrinsic__/g, "$")
-            .trim(),
-        ) +
-        extraArgs +
-        "):void 0)",
+          "(IS_BUN_DEVELOPMENT?$assert(" +
+          checkSlice.result.slice(1, -1) +
+          "," +
+          JSON.stringify(
+            checkSlice.result
+              .slice(1, -1)
+              .replace(/__intrinsic__/g, "$")
+              .trim(),
+          ) +
+          extraArgs +
+          "):void 0)",
         rest2,
         true,
       ];
@@ -181,7 +181,13 @@ export function applyReplacements(src: string, length: number) {
       const inner = sliceSourceCode(rest, true);
       let args;
       try {
-        const str = "[" + inner.result.slice(1, -1).replaceAll("'", '"').replace(/,[\s\n]*$/s, '') + "]";
+        const str =
+          "[" +
+          inner.result
+            .slice(1, -1)
+            .replaceAll("'", '"')
+            .replace(/,[\s\n]*$/s, "") +
+          "]";
         args = JSON.parse(str);
       } catch {
         throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);

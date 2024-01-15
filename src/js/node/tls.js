@@ -426,7 +426,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     // only for debug purposes so we just mock for now
-    enableTrace() { }
+    enableTrace() {}
 
     setServername(name) {
       if (this.isServer) {

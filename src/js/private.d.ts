@@ -53,8 +53,8 @@ type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), 
     filename: string,
     options:
       | (WatchOptions & {
-        encoding: "buffer";
-      })
+          encoding: "buffer";
+        })
       | "buffer",
     listener?: BunWatchListener<Buffer>,
   ): BunFSWatcher;
@@ -217,5 +217,13 @@ interface CommonJSModuleRecord {
 
 declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
 declare function $zig<T = any>(filename: NativeFilenameZig, symbol: string): T;
-declare function $newCppFunction<T = (...args: any) => any>(filename: NativeFilenameCPP, symbol: string, argCount: number): T;
-declare function $newZigFunction<T = (...args: any) => any>(filename: NativeFilenameZig, symbol: string, argCount: number): T;
+declare function $newCppFunction<T = (...args: any) => any>(
+  filename: NativeFilenameCPP,
+  symbol: string,
+  argCount: number,
+): T;
+declare function $newZigFunction<T = (...args: any) => any>(
+  filename: NativeFilenameZig,
+  symbol: string,
+  argCount: number,
+): T;

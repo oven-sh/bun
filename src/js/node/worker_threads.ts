@@ -139,19 +139,19 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "close", {
-    value() { },
+    value() {},
   });
 
   Object.defineProperty(fake, "start", {
-    value() { },
+    value() {},
   });
 
   Object.defineProperty(fake, "unref", {
-    value() { },
+    value() {},
   });
 
   Object.defineProperty(fake, "ref", {
-    value() { },
+    value() {},
   });
 
   Object.defineProperty(fake, "hasRef", {
@@ -161,7 +161,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "setEncoding", {
-    value() { },
+    value() {},
   });
 
   Object.defineProperty(fake, "addEventListener", {

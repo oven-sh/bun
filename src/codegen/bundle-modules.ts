@@ -23,7 +23,7 @@ const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
-const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production")
+const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
 if (!CMAKE_BUILD_ROOT) {
@@ -32,7 +32,7 @@ if (!CMAKE_BUILD_ROOT) {
 }
 
 globalThis.CMAKE_BUILD_ROOT = CMAKE_BUILD_ROOT;
-const bundleBuiltinFunctions = require('./bundle-functions').bundleBuiltinFunctions;
+const bundleBuiltinFunctions = require("./bundle-functions").bundleBuiltinFunctions;
 
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
@@ -47,20 +47,15 @@ function mark(log: string) {
   start = now;
 }
 
-const {
-  moduleList,
-  nativeModuleIds,
-  nativeModuleEnumToId,
-  nativeModuleEnums,
-  requireTransformer,
-} = createInternalModuleRegistry(BASE);
+const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer } =
+  createInternalModuleRegistry(BASE);
 globalThis.requireTransformer = requireTransformer;
 
 // these logs surround a very weird issue where writing files and then bundling sometimes doesn't
 // work, so i have lot of debug logs that blow up the console because not sure what is going on.
 // that is also the reason for using `retry` when theoretically writing a file the first time
 // should actually write the file.
-const verbose = Bun.env.VERBOSE ? console.log : () => { };
+const verbose = Bun.env.VERBOSE ? console.log : () => {};
 async function retry(n, fn) {
   var err;
   while (n > 0) {
@@ -103,12 +98,12 @@ for (let i = 0; i < moduleList.length; i++) {
 
     const processed = sliceSourceCode(
       "{" +
-      input
-        .replace(
-          /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
-          stmt => (importStatements.push(stmt), ""),
-        )
-        .replace(/export\s*{\s*}\s*;/g, ""),
+        input
+          .replace(
+            /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
+            stmt => (importStatements.push(stmt), ""),
+          )
+          .replace(/export\s*{\s*}\s*;/g, ""),
       true,
       x => requireTransformer(x, moduleList[i]),
     );
@@ -222,18 +217,18 @@ for (const entrypoint of bundledEntryPoints) {
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
-      .replace(/return \$\nexport /, 'return')
+      .replace(/return \$\nexport /, "return")
       .replace(/__intrinsic__/g, "@") + "\n";
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +
-    (usesDebug
-      ? createLogClientJS(
-        file_path.replace(".js", ""),
-        idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
-      )
-      : "") +
-    (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
+      (usesDebug
+        ? createLogClientJS(
+            file_path.replace(".js", ""),
+            idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
+          )
+        : "") +
+      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
   );
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -267,7 +262,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
 }
 
 await bundleBuiltinFunctions({
-  requireTransformer
+  requireTransformer,
 });
 
 mark("Bundle Functions");
@@ -282,11 +277,12 @@ writeIfNotChanged(
 // actually use this enum but it's probably a good thing to include.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+enum.h"),
-  `${moduleList
-    .map((id, n) => {
-      return `${idToEnumName(id)} = ${n},`;
-    })
-    .join("\n") + "\n"
+  `${
+    moduleList
+      .map((id, n) => {
+        return `${idToEnumName(id)} = ${n},`;
+      })
+      .join("\n") + "\n"
   }
 `,
 );
@@ -300,16 +296,16 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
   switch (id) {
     // JS internal modules
     ${moduleList
-    .map((id, n) => {
-      return `case Field::${idToEnumName(id)}: {
+      .map((id, n) => {
+        return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-        id.replace(/\.[mc]?[tj]s$/, ".js"),
-      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-        .replace(/\.[mc]?[tj]s$/, "")
-        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+          id.replace(/\.[mc]?[tj]s$/, ".js"),
+        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+          .replace(/\.[mc]?[tj]s$/, "")
+          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
-    })
-    .join("\n    ")}
+      })
+      .join("\n    ")}
     default: {
       __builtin_unreachable();
     }
@@ -369,8 +365,8 @@ pub const ResolvedSourceTag = enum(u32) {
 ${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
     // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
-    .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
-    .join("\n")}
+  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
+  .join("\n")}
 };
 `,
 );
@@ -396,8 +392,8 @@ ${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("
     // They also have bit 10 set to differentiate them from JS builtins.
     NativeModuleFlag = (1 << 10) | (1 << 9),
 ${Object.entries(nativeModuleEnumToId)
-    .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
-    .join("\n")}
+  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
+  .join("\n")}
 };
 
 `,
@@ -419,11 +415,17 @@ writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
 
 mark("Generate Code");
 
-console.log('');
+console.log("");
 console.timeEnd(timeString);
 console.log(
   `  %s kb`,
-  Math.floor((moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3)).length, 0) + globalThis.internalFunctionJSSize) / 1000),
-)
+  Math.floor(
+    (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3)).length, 0) + globalThis.internalFunctionJSSize) / 1000,
+  ),
+);
 console.log(`  %s internal modules`, moduleList.length);
-console.log(`  %s internal functions across %s files`, globalThis.internalFunctionCount, globalThis.internalFunctionFileCount);
+console.log(
+  `  %s internal functions across %s files`,
+  globalThis.internalFunctionCount,
+  globalThis.internalFunctionFileCount,
+);

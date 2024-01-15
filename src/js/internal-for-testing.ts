@@ -6,11 +6,9 @@
 // $ BUN_GARBAGE_COLLECTOR_LEVEL=0 BUN_EXPOSE_TESTING_INTERNALS=1 bun test
 
 export const quickAndDirtyJavaScriptSyntaxHighlighter = //
-  $newZigFunction(
-    "fmt.zig",
-    "QuickAndDirtyJavaScriptSyntaxHighlighter.jsFunctionSyntaxHighlight",
-    2,
-  ) as (code: string) => string;
+  $newZigFunction("fmt.zig", "QuickAndDirtyJavaScriptSyntaxHighlighter.jsFunctionSyntaxHighlight", 2) as (
+    code: string,
+  ) => string;
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 

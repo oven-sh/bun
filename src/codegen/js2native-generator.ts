@@ -129,9 +129,9 @@ export function getJS2NativeCPP() {
         return [
           x.type === "zig"
             ? `extern "C" JSC::EncodedJSValue ${symbol({
-              type: "zig",
-              symbol: x.symbol_taget,
-            })}(JSC::JSGlobalObject*, JSC::CallFrame*);`
+                type: "zig",
+                symbol: x.symbol_taget,
+              })}(JSC::JSGlobalObject*, JSC::CallFrame*);`
             : "",
           `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
           `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
@@ -159,7 +159,8 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
       .filter(x => x.type === "zig")
       .flatMap(call => [
         `export fn ${symbol(call)}(global: *JSC.JSGlobalObject) JSC.JSValue {`,
-        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${call.symbol
+        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${
+          call.symbol
         }(global);`,
         "}",
       ]),
@@ -170,7 +171,8 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
           type: "zig",
           symbol: x.symbol_taget,
         })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) JSC.JSValue {`,
-        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))}).${x.symbol_taget
+        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))}).${
+          x.symbol_taget
         }(global, call_frame);`,
         "}",
       ]),
@@ -183,15 +185,15 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
 export function getJS2NativeDTS() {
   return [
     "declare type NativeFilenameCPP = " +
-    sourceFiles
-      .filter(x => x.endsWith("cpp"))
-      .map(x => JSON.stringify(basename(x)))
-      .join("|"),
+      sourceFiles
+        .filter(x => x.endsWith("cpp"))
+        .map(x => JSON.stringify(basename(x)))
+        .join("|"),
     "declare type NativeFilenameZig = " +
-    sourceFiles
-      .filter(x => x.endsWith("zig"))
-      .map(x => JSON.stringify(basename(x)))
-      .join("|"),
+      sourceFiles
+        .filter(x => x.endsWith("zig"))
+        .map(x => JSON.stringify(basename(x)))
+        .join("|"),
     "",
   ].join("\n");
 }

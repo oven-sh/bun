@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { SQL } from 'bun:internal-for-testing';
+import { SQL } from "bun:internal-for-testing";
 
 const dbPath = import.meta.dir + "/northwind.testdb";
 

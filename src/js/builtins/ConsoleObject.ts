@@ -790,7 +790,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
   const isArray = v => $isJSArray(v) || $isTypedArrayView(v) || isBuffer(v);
 
-  function noop() { }
+  function noop() {}
 
   for (const method of Reflect.ownKeys(consoleMethods)) Console.prototype[method] = consoleMethods[method];
 

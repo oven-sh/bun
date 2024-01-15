@@ -366,7 +366,7 @@ type Settings = {
   maxHeaderSize: number;
 };
 
-class Http2Session extends EventEmitter { }
+class Http2Session extends EventEmitter {}
 
 function streamErrorFromCode(code: number) {
   const error = new Error(`Stream closed with error code ${code}`);
@@ -1086,16 +1086,16 @@ class ClientHttp2Session extends Http2Session {
         protocol,
         options
           ? {
-            host: url.hostname,
-            port,
-            ALPNProtocols: ["h2", "http/1.1"],
-            ...options,
-          }
+              host: url.hostname,
+              port,
+              ALPNProtocols: ["h2", "http/1.1"],
+              ...options,
+            }
           : {
-            host: url.hostname,
-            port,
-            ALPNProtocols: ["h2", "http/1.1"],
-          },
+              host: url.hostname,
+              port,
+              ALPNProtocols: ["h2", "http/1.1"],
+            },
         this.#onConnect.bind(this),
       );
       this[bunHTTP2Socket] = socket;

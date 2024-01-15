@@ -171,6 +171,33 @@ console.log(addon);
 
 In the bundler, `.node` files are handled using the [`file`](#file) loader.
 
+### `sqlite`
+
+**SQLite loader**. `with { "type": "sqlite" }` import attribute
+
+In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](/docs/api/sqlite.md).
+
+```ts
+import db from "./my.db" with {type: "sqlite"};
+```
+
+This is only supported when the `target` is `bun`.
+
+By default, the database is external to the bundle (so that you can potentially use a database loaded elsewhere), so the database file on-disk won't be bundled into the final output.
+
+You can change this behavior with the `"embed"` attribute:
+
+```ts
+// embed the database into the bundle
+import db from "./my.db" with {type: "sqlite", embed: "true"};
+```
+
+When using a [standalone executable](/docs/bundler/executables), the database is embedded into the single-file executable by default.
+
+Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
+
+````ts
+
 ### `file`
 
 **File loader**. Default for all unrecognized file types.
@@ -180,7 +207,7 @@ The file loader resolves the import as a _path/URL_ to the imported file. It's c
 ```ts#logo.ts
 import logo from "./logo.svg";
 console.log(logo);
-```
+````
 
 _In the runtime_, Bun checks that the `logo.svg` file exists and converts it to an absolute path to the location of `logo.svg` on disk.
 

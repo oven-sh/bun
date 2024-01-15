@@ -18,6 +18,10 @@
 #ifndef UWS_HTTPPARSER_H
 #define UWS_HTTPPARSER_H
 
+#ifndef UWS_HTTP_MAX_HEADERS_COUNT
+#define UWS_HTTP_MAX_HEADERS_COUNT 100
+#endif
+
 // todo: HttpParser is in need of a few clean-ups and refactorings
 
 /* The HTTP parser is an independent module subject to unit testing / fuzz testing */
@@ -26,6 +30,8 @@
 #include <cstring>
 #include <algorithm>
 #include <climits>
+#include <string_view>
+#include <map>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
 
@@ -46,11 +52,10 @@ namespace uWS
         friend struct HttpParser;
 
     private:
-        const static int MAX_HEADERS = 50;
         struct Header
         {
             std::string_view key, value;
-        } headers[MAX_HEADERS];
+        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
         bool ancientHttp;
         unsigned int querySeparator;
         bool didYield;
@@ -199,29 +204,25 @@ namespace uWS
 
     private:
         std::string fallback;
-        /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
-        unsigned int remainingStreamingBytes = 0;
+         /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
+        uint64_t remainingStreamingBytes = 0;
 
         const size_t MAX_FALLBACK_SIZE = 1024 * 4;
 
         /* Returns UINT_MAX on error. Maximum 999999999 is allowed. */
-        static unsigned int toUnsignedInteger(std::string_view str)
-        {
-            /* We assume at least 32-bit integer giving us safely 999999999 (9 number of 9s) */
-            if (str.length() > 9)
-            {
+        static uint64_t toUnsignedInteger(std::string_view str) {
+            /* We assume at least 64-bit integer giving us safely 999999999999999999 (18 number of 9s) */
+            if (str.length() > 18) {
                 return UINT_MAX;
             }
 
-            unsigned int unsignedIntegerValue = 0;
-            for (char c : str)
-            {
+            uint64_t unsignedIntegerValue = 0;
+            for (char c : str) {
                 /* As long as the letter is 0-9 we cannot overflow. */
-                if (c < '0' || c > '9')
-                {
+                if (c < '0' || c > '9') {
                     return UINT_MAX;
                 }
-                unsignedIntegerValue = unsignedIntegerValue * 10u + ((unsigned int)c - (unsigned int)'0');
+                unsignedIntegerValue = unsignedIntegerValue * 10ull + ((unsigned int) c - (unsigned int) '0');
             }
             return unsignedIntegerValue;
         }
@@ -386,7 +387,7 @@ namespace uWS
             }
             headers++;
 
-            for (unsigned int i = 1; i < HttpRequest::MAX_HEADERS - 1; i++)
+            for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++)
             {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
@@ -473,7 +474,7 @@ namespace uWS
          * From here we return either [consumed, user] for "keep going",
          * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
          * or [whatever, fullptr] for "break and close me, I am a parser error!" */
-        template <int CONSUME_MINIMALLY>
+        template<int CONSUME_MINIMALLY>
         std::pair<unsigned int, void *> fenceAndConsumePostPadded(char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler)
         {
 
@@ -591,7 +592,7 @@ namespace uWS
 
                     if (!CONSUME_MINIMALLY)
                     {
-                        unsigned int emittable = std::min<unsigned int>(remainingStreamingBytes, length);
+                        unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                         dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                         remainingStreamingBytes -= emittable;
 
@@ -654,8 +655,8 @@ namespace uWS
                     {
                         void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
-                        data += remainingStreamingBytes;
-                        length -= remainingStreamingBytes;
+                        data += (unsigned int) remainingStreamingBytes;
+                        length -= (unsigned int) remainingStreamingBytes;
 
                         remainingStreamingBytes = 0;
 
@@ -665,8 +666,8 @@ namespace uWS
                         } else {
                             void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
-                            data += remainingStreamingBytes;
-                            length -= remainingStreamingBytes;
+                            data += (unsigned int) remainingStreamingBytes;
+                            length -= (unsigned int) remainingStreamingBytes;
 
                             remainingStreamingBytes = 0;
 

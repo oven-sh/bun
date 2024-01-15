@@ -455,7 +455,12 @@ const TablePrinter = struct {
 
         var stack_fallback = std.heap.stackFallback(@sizeOf(Column) * 16, this.globalObject.allocator());
         var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
-        defer columns.deinit();
+        defer {
+            for (columns.items) |*col| {
+                col.name.deref();
+            }
+            columns.deinit();
+        }
 
         // create the first column " " which is always present
         columns.appendAssumeCapacity(.{
@@ -1674,10 +1679,11 @@ pub const Formatter = struct {
                 this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
             },
             .String => {
-                var str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
+                const str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
                     writer.failed = true;
                     return;
                 };
+                defer str.deref();
                 this.addForNewLine(str.length());
 
                 if (this.quote_strings and jsType != .RegExpObject) {
@@ -1812,7 +1818,7 @@ pub const Formatter = struct {
                 );
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
-                    writer.print("{}", .{result.toBunString(this.globalThis)});
+                    writer.print("{}", .{result.fmtString(this.globalThis)});
                 } else {
                     this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }

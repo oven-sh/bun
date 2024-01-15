@@ -153,14 +153,14 @@ void us_loop_run(struct us_loop_t *loop) {
                 }
 #ifdef LIBUS_USE_EPOLL
                 int events = loop->ready_polls[loop->current_ready_poll].events;
-                int error = loop->ready_polls[loop->current_ready_poll].events & (EPOLLERR | EPOLLHUP);
+                const int error = events & (EPOLLERR | EPOLLHUP);
 #else
                 /* EVFILT_READ, EVFILT_TIME, EVFILT_USER are all mapped to LIBUS_SOCKET_READABLE */
                 int events = LIBUS_SOCKET_READABLE;
                 if (loop->ready_polls[loop->current_ready_poll].filter == EVFILT_WRITE) {
                     events = LIBUS_SOCKET_WRITABLE;
                 }
-                int error = loop->ready_polls[loop->current_ready_poll].flags & (EV_ERROR | EV_EOF);
+                const int error = loop->ready_polls[loop->current_ready_poll].flags & (EV_ERROR | EV_EOF);
 #endif
                 /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
                 events &= us_poll_events(poll);
@@ -396,6 +396,7 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
     cb->loop = loop;
     cb->cb_expects_the_loop = 0;
     cb->leave_poll_ready = 0;
+    cb->has_added_timer_to_event_loop = 0;
 
     return (struct us_timer_t *) cb;
 }
@@ -445,6 +446,14 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
     };
 
     timerfd_settime(us_poll_fd((struct us_poll_t *) t), 0, &timer_spec, NULL);
+
+    // Avoid the system call overhead of re-adding this timer to the event loop only to receive EEXIST
+    if (internal_cb->loop->data.sweep_timer == t) {
+        if (internal_cb->has_added_timer_to_event_loop) {
+            return;
+        }
+        internal_cb->has_added_timer_to_event_loop = 1;
+    }
     us_poll_start((struct us_poll_t *) t, internal_cb->loop, LIBUS_SOCKET_READABLE);
 }
 #else

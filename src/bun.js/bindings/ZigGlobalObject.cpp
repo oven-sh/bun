@@ -3831,7 +3831,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
-    JSValue value1, JSValue value2)
+    JSValue sourceValue, JSValue value2)
 {
     JSC::VM& vm = globalObject->vm();
 
@@ -3846,7 +3846,11 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);
-    auto source = Bun::toString(globalObject, value1);
+    auto sourceString = sourceValue.isString()
+        ? sourceValue.toWTFString(globalObject)
+        : String("undefined"_s); // WASM entry point expet "undefined" as the referrer.
+
+    auto source = Bun::toString(sourceString);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;

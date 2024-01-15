@@ -314,6 +314,9 @@ public:
 
     /* Adds the corresponding entires in matching tree and handler list */
     void add(std::vector<std::string> methods, std::string pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
+        /* First remove existing handler */
+        remove(methods[0], pattern, priority);
+
         for (std::string method : methods) {
             /* Lookup method */
             Node *node = getNode(&root, method, false);

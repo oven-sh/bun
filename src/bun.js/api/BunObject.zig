@@ -762,7 +762,18 @@ fn doResolve(
         }
     }
 
-    return doResolveWithArgs(globalThis, specifier.toBunString(globalThis), from.toBunString(globalThis), exception, is_esm, false);
+    const specifier_str = specifier.toBunString(globalThis);
+    defer specifier_str.deref();
+    const from_str = from.toBunString(globalThis);
+    defer from_str.deref();
+    return doResolveWithArgs(
+        globalThis,
+        specifier_str,
+        from_str,
+        exception,
+        is_esm,
+        false,
+    );
 }
 
 fn doResolveWithArgs(
@@ -857,9 +868,16 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
-    const value = doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
+    const source_str = source.toBunString(global);
+    defer source_str.deref();
+
+    const value = doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, exception_[0].?.value());
     };
+
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
@@ -871,7 +889,14 @@ export fn Bun__resolveSync(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
-    return doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
+
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
+    const source_str = source.toBunString(global);
+    defer source_str.deref();
+
+    return doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -883,8 +908,11 @@ export fn Bun__resolveSyncWithSource(
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
     const exception = &exception_;
-    return doResolveWithArgs(global, specifier.toBunString(global), source.*, exception, is_esm, true) orelse {
+    return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }

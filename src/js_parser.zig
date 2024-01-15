@@ -8799,7 +8799,7 @@ fn NewParser_(
                     if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
                         try p.log.addError(
                             p.source,
-                            item.alias_loc,
+                            item.name.loc,
                             "sqlite imports only support the \"default\" or \"db\" imports",
                         );
                         break;

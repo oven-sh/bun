@@ -51,8 +51,8 @@ type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), 
     filename: string,
     options:
       | (WatchOptions & {
-        encoding: "buffer";
-      })
+          encoding: "buffer";
+        })
       | "buffer",
     listener?: BunWatchListener<Buffer>,
   ): BunFSWatcher;

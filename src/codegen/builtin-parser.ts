@@ -7,10 +7,10 @@ function escapeRegex(str: string) {
 function createStopRegex(allow_comma: boolean) {
   return new RegExp(
     "((?:[(,=;:{]|return|\\=\\>)\\s*)\\/[^\\/\\*]|\\/\\*|\\/\\/|['\"}`\\)" +
-    (allow_comma ? "," : "") +
-    "]|(?<!\\$)\\brequire\\(|(" +
-    function_replacements.map(x => escapeRegex(x) + "\\(").join('|') +
-    ")",
+      (allow_comma ? "," : "") +
+      "]|(?<!\\$)\\brequire\\(|(" +
+      function_replacements.map(x => escapeRegex(x) + "\\(").join("|") +
+      ")",
   );
 }
 

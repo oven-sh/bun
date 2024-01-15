@@ -81,7 +81,7 @@ function bound(obj) {
     availableParallelism: () => navigator.hardwareConcurrency,
     arch: () => process.arch,
     cpus: lazyCpus(obj),
-    endianness: () => 'LE',
+    endianness: () => "LE",
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),
     homedir: obj.homedir.bind(obj),
@@ -96,10 +96,13 @@ function bound(obj) {
     },
     totalmem: obj.totalmem.bind(obj),
     type: () =>
-      process.platform === "win32" ? "Windows_NT"
-        : process.platform === "darwin" ? "Darwin"
-          : process.platform === "linux" ? "Linux"
-            : process.platform,
+      process.platform === "win32"
+        ? "Windows_NT"
+        : process.platform === "darwin"
+        ? "Darwin"
+        : process.platform === "linux"
+        ? "Linux"
+        : process.platform,
     uptime: obj.uptime.bind(obj),
     userInfo: obj.userInfo.bind(obj),
     version: obj.version.bind(obj),

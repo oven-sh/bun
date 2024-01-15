@@ -92,6 +92,8 @@ export function readdirRecursiveWithExclusionsAndExtensionsSync(
     const fullPath = path.join(dir, entry.name);
     return entry.isDirectory()
       ? readdirRecursiveWithExclusionsAndExtensionsSync(fullPath, exclusions, exts)
-      : exts.includes(path.extname(fullPath)) ? fullPath : [];
+      : exts.includes(path.extname(fullPath))
+      ? fullPath
+      : [];
   });
 }

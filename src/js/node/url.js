@@ -562,7 +562,7 @@ Url.prototype.resolveObject = function (relative) {
     result.protocol = relative.protocol;
     if (!relative.host && !hostlessProtocol[relative.protocol]) {
       var relPath = (relative.pathname || "").split("/");
-      while (relPath.length && !(relative.host = relPath.shift())) { }
+      while (relPath.length && !(relative.host = relPath.shift())) {}
       if (!relative.host) {
         relative.host = "";
       }

@@ -32,7 +32,7 @@ const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetString
 var isWritable;
 
 var { inspect } = Bun;
-var debug = process.env.BUN_JS_DEBUG ? console.log : () => { };
+var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 
 // ----------------------------------------------------------------------------
 // Section: Preamble
@@ -2525,9 +2525,9 @@ Interface.prototype.question = function question(query, options, cb) {
     cb =
       typeof cb === "function"
         ? answer => {
-          cleanup();
-          return originalCb(answer);
-        }
+            cleanup();
+            return originalCb(answer);
+          }
         : cleanup;
   }
 

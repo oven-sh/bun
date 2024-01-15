@@ -1,7 +1,7 @@
 const {
   setRawMode: ttySetMode,
   isatty,
-  getWindowSize: _getWindowSize
+  getWindowSize: _getWindowSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "Bun::createBunTTYFunctions");
 
 // primordials

@@ -67,8 +67,13 @@ export function registerNativeCall(
 ) {
   const resolved_filename = resolveNativeFileId(call_type, filename);
 
+  const maybe_wrapped_symbol = create_fn_len != null ? "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_") : symbol;
+
   const existing = nativeCalls.find(
-    call => call.type === call_type && call.filename === resolved_filename && call.symbol === symbol,
+    call =>
+      call.is_wrapped == (create_fn_len != null) &&
+      call.filename === resolved_filename &&
+      call.symbol === maybe_wrapped_symbol,
   );
   if (existing) {
     return existing.id;
@@ -79,7 +84,7 @@ export function registerNativeCall(
     id,
     type: create_fn_len != null ? "cpp" : call_type,
     filename: resolved_filename,
-    symbol: create_fn_len != null ? "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_") : symbol,
+    symbol: maybe_wrapped_symbol,
     is_wrapped: create_fn_len != null,
   });
   if (create_fn_len != null) {
@@ -112,7 +117,7 @@ export function getJS2NativeCPP() {
   return [
     `#pragma once`,
     ...files.map(filename => `#include ${JSON.stringify(filename)}`),
-    'namespace JS2NativeGenerated {',
+    "namespace JS2NativeGenerated {",
     "using namespace Bun;",
     "using namespace JSC;",
     "using namespace WebCore;",
@@ -177,8 +182,16 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
 
 export function getJS2NativeDTS() {
   return [
-    'declare type NativeFilenameCPP = ' + sourceFiles.filter(x => x.endsWith("cpp")).map(x => JSON.stringify(basename(x))).join('|'),
-    'declare type NativeFilenameZig = ' + sourceFiles.filter(x => x.endsWith("zig")).map(x => JSON.stringify(basename(x))).join('|'),
-    '',
-  ].join('\n')
+    "declare type NativeFilenameCPP = " +
+    sourceFiles
+      .filter(x => x.endsWith("cpp"))
+      .map(x => JSON.stringify(basename(x)))
+      .join("|"),
+    "declare type NativeFilenameZig = " +
+    sourceFiles
+      .filter(x => x.endsWith("zig"))
+      .map(x => JSON.stringify(basename(x)))
+      .join("|"),
+    "",
+  ].join("\n");
 }

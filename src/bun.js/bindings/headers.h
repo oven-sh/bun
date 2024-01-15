@@ -580,10 +580,6 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC__JSGlobalObj
 
 #endif
 
-#pragma mark - Bun__Path
-
-CPP_DECL JSC__JSValue Bun__Path__create(JSC__JSGlobalObject* arg0, bool arg1);
-
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue Bun__Path__basename(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);

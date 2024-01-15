@@ -2,14 +2,11 @@ import type { Dirent } from "fs";
 
 // Hardcoded module "node:fs/promises"
 const constants = $processBindingConstants.fs;
-
-var fs = Bun.fs();
+const fs = $zig("node_fs_binding.zig", "createBinding");
 
 // note: this is not quite the same as how node does it
 // in some cases, node swaps around arguments or makes small tweaks to the return type
 // this is just better than nothing.
-const notrace = "::bunternal::";
-
 function watch(
   filename: string | Buffer | URL,
   options: { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal } = {},
@@ -118,7 +115,7 @@ class Dir {
     if (c) process.nextTick(c, null, this.readSync());
     return Promise.resolve(this.readSync());
   }
-  closeSync() {}
+  closeSync() { }
   close(c) {
     if (c) process.nextTick(c);
     return Promise.resolve();
@@ -136,6 +133,9 @@ async function opendir(dir: string) {
 }
 
 export default {
+  // reusing a different private symbol
+  $lazy: fs,
+
   access: fs.access.bind(fs),
   appendFile: fs.appendFile.bind(fs),
   close: fs.close.bind(fs),
@@ -190,6 +190,5 @@ export default {
   },
   constants,
   watch,
-
   opendir,
 };

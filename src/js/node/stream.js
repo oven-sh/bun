@@ -5198,7 +5198,8 @@ var require_stream = __commonJS({
  *
  */
 function createNativeStreamReadable(nativeType, Readable) {
-  var [pull, start, cancel, setClose, deinit, updateRef, drainFn] = $native(nativeType);
+  $assert(typeof nativeType === 'number' && nativeType >= 0);
+  var [pull, start, cancel, setClose, deinit, updateRef, drainFn] = $lazy(nativeType);
 
   var closer = [false];
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {

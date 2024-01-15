@@ -885,7 +885,7 @@ comptime {
     @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
 }
 
-const Bun = @import("../api/bun.zig");
+const Bun = bun.JSC.API.Bun;
 pub const BunTimer = Bun.Timer;
 pub const Formatter = ConsoleObject.Formatter;
 pub const HTTPServerRequestContext = JSC.API.HTTPServer.RequestContext;

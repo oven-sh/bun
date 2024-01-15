@@ -33,8 +33,6 @@
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump) \
-    macro(_Os) \
-    macro(_Path) \
     macro(allocUnsafe) \
     macro(build) \
     macro(connect) \
@@ -43,7 +41,6 @@
     macro(fs) \
     macro(gc) \
     macro(generateHeapSnapshot) \
-    macro(getImportedStyles) \
     macro(gunzipSync) \
     macro(gzipSync) \
     macro(indexOfLine) \

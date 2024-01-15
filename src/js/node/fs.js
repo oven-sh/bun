@@ -5,10 +5,13 @@ const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 
+// reusing a different private symbol
+// this points to `node_fs_binding.zig`'s `createBinding` function.
+const fs = promises.$lazy;
+const constants = $processBindingConstants.fs;
+
 var _writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
 var _fs = Symbol.for("#fs");
-
-const constants = $processBindingConstants.fs;
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
@@ -20,7 +23,6 @@ function ensureCallback(callback) {
   return callback;
 }
 
-var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
   #watcher;
   #listener;
@@ -35,7 +37,7 @@ class FSWatcher extends EventEmitter {
     }
 
     if (typeof listener !== "function") {
-      listener = () => {};
+      listener = () => { };
     }
 
     this.#listener = listener;
@@ -85,7 +87,7 @@ class FSWatcher extends EventEmitter {
   }
 
   // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
-  start() {}
+  start() { }
 }
 
 /** Implemented in `node_fs_stat_watcher.zig` */
@@ -108,7 +110,7 @@ class StatWatcher extends EventEmitter {
   }
 
   // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
-  start() {}
+  start() { }
 
   stop() {
     this._handle?.close();
@@ -125,8 +127,8 @@ class StatWatcher extends EventEmitter {
 }
 
 var access = function access(...args) {
-    callbackify(fs.access, args);
-  },
+  callbackify(fs.access, args);
+},
   appendFile = function appendFile(...args) {
     callbackify(fs.appendFile, args);
   },
@@ -989,7 +991,7 @@ Object.defineProperties(WriteStreamPrototype, {
 WriteStreamPrototype.destroySoon = WriteStreamPrototype.end;
 
 // noop, node has deprecated this
-WriteStreamPrototype.open = function open() {};
+WriteStreamPrototype.open = function open() { };
 
 WriteStreamPrototype[writeStreamPathFastPathCallSymbol] = function WriteStreamPathFastPathCallSymbol(
   readStream,
@@ -1102,12 +1104,12 @@ WriteStreamPrototype.write = function write(chunk, encoding, cb) {
   var native = this.pos === undefined;
   const callback = native
     ? (err, bytes) => {
-        this[kIoDone] = false;
-        WriteStream_handleWrite.$call(this, err, bytes);
-        this.emit(kIoDone);
-        if (cb) !err ? cb() : cb(err);
-      }
-    : () => {};
+      this[kIoDone] = false;
+      WriteStream_handleWrite.$call(this, err, bytes);
+      this.emit(kIoDone);
+      if (cb) !err ? cb() : cb(err);
+    }
+    : () => { };
   this[kIoDone] = true;
   if (this._write) {
     return this._write(chunk, encoding, callback);

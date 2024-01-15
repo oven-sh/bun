@@ -192,7 +192,7 @@ You can change this behavior with the `"embed"` attribute:
 import db from "./my.db" with {type: "sqlite", embed: "true"};
 ```
 
-When using a [standalone executable](/docs/bundler/executables), the database is embedded into the single-file executable by default.
+When using a [standalone executable](/docs/bundler/executables), the database is embedded into the single-file executable.
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 

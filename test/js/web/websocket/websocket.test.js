@@ -438,7 +438,9 @@ describe("WebSocket", () => {
       const url = `wss://some-random-domain.smth`;
       await new Promise((resolve, reject) => {
         const ws = new WebSocket(url, {});
-        let timeout = setTimeout(() => { reject.call(); }, 500);
+        let timeout = setTimeout(() => {
+          reject.call();
+        }, 500);
 
         ws.onclose = () => {
           did_report_close = true;
@@ -450,8 +452,8 @@ describe("WebSocket", () => {
           did_report_error = true;
         };
       });
-    } finally {}
-
+    } finally {
+    }
 
     expect(did_report_error).toBe(true);
     expect(did_report_close).toBe(true);

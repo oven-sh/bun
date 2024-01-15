@@ -1,15 +1,13 @@
 // Hardcoded module "node:http"
-// const EventEmitter = require("node:events");
-// const { isTypedArray } = require("node:util/types");
-// const { Duplex, Readable, Writable } = require("node:stream");
+const EventEmitter = require("node:events");
+const { isTypedArray } = require("node:util/types");
+const { Duplex, Readable, Writable } = require("node:stream");
 
-// const {
-//   getHeader,
-//   setHeader,
-//   assignHeaders: assignHeadersFast,
-// } = $cpp("NodeHTTP.cpp", "Bun::createNodeHTTPInternalBinding");
-
-console.log($cpp("NodeHTTP.cpp", "Bun::createNodeHTTPInternalBinding"));
+const {
+  getHeader,
+  setHeader,
+  assignHeaders: assignHeadersFast,
+} = $cpp("NodeHTTP.cpp", "Bun::createNodeHTTPInternalBinding");
 
 const GlobalPromise = globalThis.Promise;
 

@@ -27,10 +27,12 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+
 var isWritable;
 
 var { inspect } = Bun;
-var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
+var debug = process.env.BUN_JS_DEBUG ? console.log : () => { };
 
 // ----------------------------------------------------------------------------
 // Section: Preamble
@@ -113,7 +115,6 @@ var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, Strin
 // Section: "Internal" modules
 // ----------------------------------------------------------------------------
 
-var internalGetStringWidth = $lazy("getStringWidth");
 /**
  * Returns the number of columns required to display the given string.
  */
@@ -2524,9 +2525,9 @@ Interface.prototype.question = function question(query, options, cb) {
     cb =
       typeof cb === "function"
         ? answer => {
-            cleanup();
-            return originalCb(answer);
-          }
+          cleanup();
+          return originalCb(answer);
+        }
         : cleanup;
   }
 

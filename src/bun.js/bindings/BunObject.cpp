@@ -486,24 +486,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionHashCode,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::JSValue stringToHash = callFrame->argument(0);
-    JSC::JSString* str = stringToHash.toStringOrNull(globalObject);
-    if (!str) {
-        return JSC::JSValue::encode(jsNumber(0));
-    }
-
-    auto view = str->value(globalObject);
-    return JSC::JSValue::encode(jsNumber(view.hash()));
-}
-
 /* Source for BunObject.lut.h
 @begin bunObjectTable
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
-    DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump  BunObject_callback_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump    DontEnum|DontDelete|Function 1
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_getter_wrap_FileSystemRouter                              DontDelete|PropertyCallback
     Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
@@ -517,11 +503,8 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
-    _Os                                            BunObject_callback__Os                                              DontEnum|DontDelete|Function 1
-    _Path                                          BunObject_callback__Path                                            DontEnum|DontDelete|Function 1
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
-    assetPrefix                                    BunObject_getter_wrap_assetPrefix                                   DontEnum|DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 1
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
@@ -536,10 +519,8 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     fetch                                          Bun__fetch                                                          ReadOnly|DontDelete|Function 1
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
-    fs                                             BunObject_callback_fs                                               DontEnum|DontDelete|Function 1
     gc                                             BunObject_callback_gc                                               DontDelete|Function 1
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
-    getImportedStyles                              BunObject_callback_getImportedStyles                                DontEnum|DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
@@ -579,7 +560,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
-    stringHashCode                                 functionHashCode                                                    DontDelete|Function 1
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1

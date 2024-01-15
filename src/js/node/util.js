@@ -16,7 +16,7 @@ const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
-const parseArgs = $zig("parse_args.zig", "getParseArgsFunction");
+const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
 
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;

@@ -152,7 +152,6 @@ using namespace Bun;
 extern "C" JSC__JSValue Bun__NodeUtil__jsParseArgs(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue H2FrameParser__getConstructor(Zig::GlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue BUN__HTTP2__getUnpackedSettings(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue BUN__HTTP2_getPackedSettings(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -1590,89 +1589,9 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
     return true;
 }
 
-static NeverDestroyed<const String> pathToFileURLString(MAKE_STATIC_STRING_IMPL("pathToFileURL"));
-static NeverDestroyed<const String> fileURLToPathString(MAKE_STATIC_STRING_IMPL("fileURLToPath"));
-
-extern "C" JSC_DECLARE_HOST_FUNCTION(BunString__getStringWidth);
-
-extern "C" EncodedJSValue BunInternalFunction__syntaxHighlighter(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
-
 // If you are looking for $lazy / functionLazyLoad
 // it is moved to JS2Native.cpp, and is called $cpp and $zig
-
-
-//         if (string == "getStringWidth"_s) {
-//             return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 1, "getStringWidth"_s, BunString__getStringWidth, ImplementationVisibility::Public));
-//         }
-
-//         if (string == "pathToFileURL"_s) {
-//             return JSValue::encode(
-//                 JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic));
-//         }
-
-//         if (string == "fileURLToPath"_s) {
-//             return JSValue::encode(
-//                 JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
-//         }
-
-//         if (string == "bun:stream"_s) {
-//             auto* obj = constructEmptyObject(globalObject);
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "maybeReadMore"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "maybeReadMore"_s, jsReadable_maybeReadMore, ImplementationVisibility::Public), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "resume"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "resume"_s, jsReadable_resume, ImplementationVisibility::Public), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable, ImplementationVisibility::Public), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
-//                 JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
-//             return JSValue::encode(obj);
-//         }
-//         if (string == "events"_s) {
-//             return JSValue::encode(WebCore::JSEventEmitter::getConstructor(vm, globalObject));
-//         }
-
-//         if (string == "internal/crypto"_s) {
-//             // auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
-//             // bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
-//             // if (!isBuiltin) {
-//             //     return JSC::JSValue::encode(JSC::jsUndefined());
-//             // }
-//             auto* obj = constructEmptyObject(globalObject);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, KeyObject__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, KeyObject__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyDetails"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyDetails"_s, KeyObject_AsymmetricKeyDetails, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, KeyObject__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, KeyObject__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPrivateKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPrivateKey"_s, KeyObject__createPrivateKey, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeySync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeySync"_s, KeyObject__generateKeySync, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeyPairSync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeyPairSync"_s, KeyObject__generateKeyPairSync, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "sign"_s)), JSC::JSFunction::create(vm, globalObject, 3, "sign"_s, KeyObject__Sign, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "verify"_s)), JSC::JSFunction::create(vm, globalObject, 4, "verify"_s, KeyObject__Verify, ImplementationVisibility::Public, NoIntrinsic), 0);
-
-//             return JSValue::encode(obj);
-//         }
+// see <todo>.md for more information
 
 //         if (string == "internal/http2"_s) {
 //             auto* obj = constructEmptyObject(globalObject);
@@ -1688,33 +1607,33 @@ extern "C" EncodedJSValue BunInternalFunction__syntaxHighlighter(JSGlobalObject*
 //             return JSValue::encode(obj);
 //         }
 //         if (string == "internal/tls"_s) {
-//             auto* obj = constructEmptyObject(globalObject);
+            // auto* obj = constructEmptyObject(globalObject);
 
-//             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
-//             // expose for tests in debug mode only
-//             // #ifndef BUN_DEBUG
-//             //             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
-//             //             if (!isBuiltin) {
-//             //                 return JSC::JSValue::encode(JSC::jsUndefined());
-//             //             }
-//             // #endif
-//             struct us_cert_string_t* out;
-//             auto size = us_raw_root_certs(&out);
-//             if (size < 0) {
-//                 return JSValue::encode(JSC::jsUndefined());
-//             }
-//             auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-//             for (auto i = 0; i < size; i++) {
-//                 auto raw = out[i];
-//                 auto str = WTF::String::fromUTF8(raw.str, raw.len);
-//                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
-//             }
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
+            // auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+            // // expose for tests in debug mode only
+            // // #ifndef BUN_DEBUG
+            // //             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            // //             if (!isBuiltin) {
+            // //                 return JSC::JSValue::encode(JSC::jsUndefined());
+            // //             }
+            // // #endif
+            // struct us_cert_string_t* out;
+            // auto size = us_raw_root_certs(&out);
+            // if (size < 0) {
+            //     return JSValue::encode(JSC::jsUndefined());
+            // }
+            // auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+            // for (auto i = 0; i < size; i++) {
+            //     auto raw = out[i];
+            //     auto str = WTF::String::fromUTF8(raw.str, raw.len);
+            //     rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+            // }
+            // obj->putDirect(
+            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
 
-//             obj->putDirect(
-//                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
-//             return JSValue::encode(obj);
+            // obj->putDirect(
+            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
+            // return JSValue::encode(obj);
 //         }
 
 //         if (string == "vm"_s) {
@@ -1736,22 +1655,6 @@ extern "C" EncodedJSValue BunInternalFunction__syntaxHighlighter(JSGlobalObject*
 //                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
 //                 JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
 //             return JSValue::encode(obj);
-//         }
-
-//         if (string == "async_hooks"_s) {
-            // auto* obj = constructEmptyObject(globalObject);
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setAsyncHooksEnabled"_s)),
-            //     JSC::JSFunction::create(vm, globalObject, 0, "setAsyncHooksEnabled"_s, asyncHooksSetEnabled, ImplementationVisibility::Public), 0);
-
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "cleanupLater"_s)),
-            //     JSC::JSFunction::create(vm, globalObject, 0, "cleanupLater"_s, asyncHooksCleanupLater, ImplementationVisibility::Public), 0);
-            // return JSValue::encode(obj);
-//         }
-
-//         if (string == "tty"_s) {
-//             return JSValue::encode(Bun::createBunTTYFunctions(lexicalGlobalObject));
 //         }
 
 //         if (string == "unstable_syntaxHighlight"_s) {

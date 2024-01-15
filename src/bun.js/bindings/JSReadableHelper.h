@@ -10,4 +10,6 @@ JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable);
 JSC_DECLARE_HOST_FUNCTION(jsReadable_onEofChunk);
 JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable_);
 
+JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject);
+
 } // namespace WebCore

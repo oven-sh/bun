@@ -771,7 +771,3 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
     result.put(globalThis, ZigString.static("positionals"), state.positionals);
     return result;
 }
-
-pub fn getParseArgsFunction(global: *bun.JSC.JSGlobalObject) JSValue {
-    return bun.JSC.JSFunction.create(global, "parseArgs", parseArgs, 1, .{});
-}

@@ -562,7 +562,7 @@ Url.prototype.resolveObject = function (relative) {
     result.protocol = relative.protocol;
     if (!relative.host && !hostlessProtocol[relative.protocol]) {
       var relPath = (relative.pathname || "").split("/");
-      while (relPath.length && !(relative.host = relPath.shift())) {}
+      while (relPath.length && !(relative.host = relPath.shift())) { }
       if (!relative.host) {
         relative.host = "";
       }
@@ -822,9 +822,6 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-const pathToFileURL = $lazy("pathToFileURL");
-const fileURLToPath = $lazy("fileURLToPath");
-
 export default {
   parse: urlParse,
   resolve: urlResolve,
@@ -833,7 +830,7 @@ export default {
   Url,
   URLSearchParams,
   URL,
-  pathToFileURL,
-  fileURLToPath,
+  pathToFileURL: Bun.pathToFileURL,
+  fileURLToPath: Bun.fileURLToPath,
   urlToHttpOptions,
 };

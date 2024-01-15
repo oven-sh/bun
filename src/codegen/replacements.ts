@@ -126,6 +126,15 @@ export interface ReplacementRule {
   global?: boolean;
 }
 
+export const function_replacements = [
+  '$debug',
+  '$assert',
+  '$zig',
+  '$newZigFunction',
+  '$cpp',
+  '$newCppFunction',
+];
+
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
   let slice = src.slice(0, length);
@@ -135,7 +144,7 @@ export function applyReplacements(src: string, length: number) {
     slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
   }
   let match;
-  if ((match = slice.match(/__intrinsic__(debug|assert|zig|cpp)$/)) && rest.startsWith("(")) {
+  if ((match = slice.match(/__intrinsic__(debug|assert|zig|cpp|newZigFunction|newCppFunction)$/)) && rest.startsWith("(")) {
     const name = match[1];
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);
@@ -169,7 +178,10 @@ export function applyReplacements(src: string, length: number) {
         rest2,
         true,
       ];
-    } else if (name == 'zig' || name == 'cpp') {
+    } else if (['zig', 'cpp', 'newZigFunction', 'newCppFunction'].includes(name)) {
+      const kind = name.includes('ig') ? 'zig' : 'cpp';
+      const is_create_fn = name.startsWith('new');
+
       const inner = sliceSourceCode(rest, true);
       let args;
       try {
@@ -177,14 +189,19 @@ export function applyReplacements(src: string, length: number) {
       } catch {
         throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
       }
-      if (args.length != 2
+      if (args.length != (is_create_fn ? 3 : 2)
         || typeof args[0] !== 'string'
         || typeof args[1] !== 'string'
+        || (is_create_fn && typeof args[2] !== 'number')
       ) {
-        throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+        if (is_create_fn) {
+          throw new Error(`$${name} takes three arguments, but got '$${name}${inner.result}'`);
+        } else {
+          throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+        }
       }
 
-      const id = registerNativeCall(name, args[0], args[1]);
+      const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
 
       return [
         slice.slice(0, match.index) + "__intrinsic__native(" + id + ")",

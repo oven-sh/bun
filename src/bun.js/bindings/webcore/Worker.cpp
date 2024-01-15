@@ -63,6 +63,7 @@
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
+#include "JSBroadcastChannel.h"
 
 namespace WebCore {
 
@@ -457,7 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(jsUndefined());
 }
 
-JSValue createWorkerThreadsBinding(Zig::GlobalObject* globalObject)
+JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM&vm = globalObject->vm();
 

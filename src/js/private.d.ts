@@ -199,16 +199,12 @@ interface BunLazyModules {
     isatty: (fd: number) => boolean;
     getWindowSize: (fd: number, out: number[2]) => boolean;
   };
-  "getStringWidth": (str: string) => number;
 
   // ReadableStream related
   [1]: any;
   [2]: any;
   [4]: any;
 }
-
-/** Assign to this variable in src/js/{bun,node,thirdparty} to act as module.exports */
-declare var $exports: any;
 
 interface CommonJSModuleRecord {
   $require(id: string, mod: any): any;
@@ -222,5 +218,7 @@ interface CommonJSModuleRecord {
   require: typeof require;
 }
 
-declare function $cpp(filename: string, symbol: string): any;
-declare function $zig(filename: string, symbol: string): any;
+declare function $cpp(filename: NativeFilenameCPP, symbol: string): any;
+declare function $zig(filename: NativeFilenameZig, symbol: string): any;
+declare function $newCppFunction(filename: NativeFilenameCPP, symbol: string): any;
+declare function $newZigFunction(filename: NativeFilenameZig, symbol: string): any;

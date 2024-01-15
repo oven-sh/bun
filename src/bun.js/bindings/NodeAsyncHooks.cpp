@@ -10,7 +10,6 @@ namespace Bun {
 
 using namespace JSC;
  
-// $lazy("async_hooks").cleanupLater
 JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // assumptions and notes:

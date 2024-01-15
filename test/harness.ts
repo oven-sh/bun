@@ -175,6 +175,10 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
   };
 }
 
+export function randomPort(): number {
+  return 1024 + Math.floor(Math.random() * 65535);
+}
+
 expect.extend({
   toRun(cmds: string[]) {
     const result = Bun.spawnSync({

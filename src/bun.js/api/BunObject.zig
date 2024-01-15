@@ -915,7 +915,7 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
 extern fn dump_zone_malloc_stats() void;
 
-pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+export fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
     if (comptime bun.is_heap_breakdown_enabled) {
         dump_zone_malloc_stats();
@@ -2964,6 +2964,7 @@ const UnsafeObject = struct {
             .gcAggressionLevel = &gcAggressionLevel,
             .segfault = &__debug__doSegfault,
             .arrayBufferToString = &arrayBufferToString,
+            .mimallocDump = &dump_mimalloc,
         };
         inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
             object.put(

@@ -1119,8 +1119,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 switch (GlobWalker.init(&this.child_state.glob.walker, &arena, pattern, false, false, false, false, false) catch bun.outOfMemory()) {
                     .result => {},
                     .err => |e| {
-                        std.debug.print("THE ERROR: {any}\n", .{e});
-                        @panic("FIXME TODO HANDLE ERRORS!");
+                        global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                        return;
                     },
                 }
 
@@ -1308,7 +1308,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 if (task.err != null) {
-                    @panic("FIXME Handle errors");
+                    switch (task.err.?) {
+                        .syscall => global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(task.err.?.syscall)),
+                        .unknown => |errtag| {
+                            global_handle.get().actuallyThrow(.{
+                                .custom = bun.default_allocator.dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
+                            });
+                        },
+                    }
                 }
 
                 for (task.result.items) |sentinel_str| {

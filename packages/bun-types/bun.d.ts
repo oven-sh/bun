@@ -65,6 +65,17 @@ declare module "bun" {
      * @param newCwd - The new working directory
      */
     cwd(newCwd: string): this;
+    /**
+     * Set environment variables for the shell.
+     * @param newEnv - The new environment variables
+     *
+     * @example
+     * ```ts
+     * await $`echo $FOO`.env({ ...process.env, FOO: "LOL!" })
+     * expect(stdout.toString()).toBe("LOL!");
+     * ```
+     */
+    env(newEnv: Record<string, string>): this;
   }
 
   export interface Shell {

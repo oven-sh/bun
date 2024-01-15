@@ -584,9 +584,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             const export_env = brk: {
                 var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
-                errdefer {
-                    export_env.deinit();
-                }
+                // This will be set by in the shell builtin to `process.env`
+                if (EventLoopKind == .js) break :brk export_env;
 
                 var env_loader: *bun.DotEnv.Loader = env_loader: {
                     if (comptime EventLoopKind == .js) {
@@ -799,6 +798,40 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 },
                 .result => {},
             }
+            return .undefined;
+        }
+
+        pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const value1 = callframe.argument(0);
+            if (!value1.isObject()) {
+                globalThis.throwInvalidArguments("env must be an object", .{});
+                return .undefined;
+            }
+
+            var object_iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = false,
+                .include_value = true,
+            }).init(globalThis, value1.asObjectRef());
+            defer object_iter.deinit();
+
+            this.root_shell.export_env.clearRetainingCapacity();
+            this.root_shell.export_env.ensureTotalCapacity(object_iter.len) catch bun.outOfMemory();
+
+            // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+            // PATH = "";
+
+            while (object_iter.next()) |key| {
+                const keyslice = key.toOwnedSlice(this.arena.allocator()) catch bun.outOfMemory();
+                var value = object_iter.value;
+                if (value == .undefined) continue;
+
+                const value_str = value.getZigString(globalThis);
+                const slice = value_str.toSlice(bun.default_allocator);
+                defer slice.deinit();
+                const dupedz = this.arena.allocator().dupeZ(u8, slice.slice()) catch bun.outOfMemory();
+                this.root_shell.export_env.put(keyslice, dupedz) catch bun.outOfMemory();
+            }
+
             return .undefined;
         }
 

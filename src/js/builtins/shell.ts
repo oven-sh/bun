@@ -36,6 +36,11 @@ export function shellTemplateFunction(strings: TemplateStringsArray) {
       return this;
     }
 
+    env(newEnv: Record<string, string>): this {
+      this._core.setEnv(newEnv);
+      return this;
+    }
+
     run() {
       if (this._core.isRunning()) return;
       console.log("Running");
@@ -52,6 +57,7 @@ export function shellTemplateFunction(strings: TemplateStringsArray) {
 
   // console.log("Expressions", expressions, typeof expressions);
   const core = new Bun.ShellInterpreter(...arguments);
+  core.setEnv(process.env);
   let resolve_: Resolve;
   let reject_: Resolve;
   const promise = new ShellPromise((res, rej) => {

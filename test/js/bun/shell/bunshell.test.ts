@@ -536,6 +536,33 @@ describe("deno_task", () => {
       .stdout(`$TEMP_DIR\n$TEMP_DIR/sub_dir\n$TEMP_DIR\n`)
       .run();
   });
+
+  test("change env", async () => {
+    {
+      const { stdout } = await $`echo $FOO`.env({ FOO: "bar" });
+      expect(stdout.toString()).toEqual("bar\n");
+    }
+
+    {
+      const { stdout } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
+        ...process.env,
+        FOO: "bar",
+      });
+      expect(JSON.parse(stdout.toString())).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+    }
+
+    {
+      const { stdout } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
+        FOO: "bar",
+      });
+      expect(JSON.parse(stdout.toString())).toEqual({
+        // bun sets NODE_ENV=development if it isn't set
+        NODE_ENV: "development",
+        BUN_DEBUG_QUIET_LOGS: "1",
+        FOO: "bar",
+      });
+    }
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

@@ -42,6 +42,10 @@ export default [
         fn: "setCwd",
         length: 1,
       },
+      setEnv: {
+        fn: "setEnv",
+        length: 1,
+      },
     },
   }),
 ];

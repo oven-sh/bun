@@ -86,6 +86,18 @@ console.log(myEmbeddedDb.query("select * from users LIMIT 1").get());
 
 This database is read-write, but all changes are lost when the executable exits (since it's stored in memory).
 
+### Embedding N-API Addons
+
+As of Bun v1.0.23, you can embed `.node` files into executables.
+
+```js
+const addon = require("./addon.node");
+
+console.log(addon.hello());
+```
+
+Unfortunately, if you're using `@mapbox/node-pre-gyp` or other similar tools, you'll need to make sure the `.node` file is directly required or it won't bundle correctly.
+
 ## Minification
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.

@@ -57,7 +57,7 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
     $argumentCount(),
     // the object containing a "type" attribute, if they passed one
     // maybe this will be "paths" in the future too.
-    $argument(1),
+    arguments[1],
   );
 
   // -1 means we need to lookup the module from the ESM registry.

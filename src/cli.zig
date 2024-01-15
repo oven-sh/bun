@@ -21,6 +21,8 @@ const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 
+const Package = @import("install/lockfile.zig").Package;
+
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -148,6 +150,7 @@ pub const Arguments = struct {
     const base_params_ = [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+        clap.parseParam("-w, --workspace <STR>             Run a script from a workspace member package") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
@@ -196,7 +199,6 @@ pub const Arguments = struct {
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-        clap.parseParam("-w, --workspace <STR>             Run a script from a workspace member package") catch unreachable,
     };
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -367,6 +369,92 @@ pub const Arguments = struct {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
+    fn findWorkspaceRoot(allocator: std.mem.Allocator, log: *logger.Log, workspace_map: *Package.WorkspaceMap, workdir_: []const u8) !void {
+        var workdir = workdir_;
+        var package_json_cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        while (true) : (workdir = std.fs.path.dirname(workdir) orelse return error.MissingPackageJSON) {
+            const parent_trimmed = strings.withoutTrailingSlash(workdir);
+            var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            @memcpy(buf2[0..parent_trimmed.len], parent_trimmed);
+            buf2[parent_trimmed.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+            buf2[parent_trimmed.len + "/package.json".len] = 0;
+
+            const json_file = std.fs.cwd().openFileZ(
+                buf2[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
+                .{ .mode = .read_only },
+            ) catch continue;
+            defer json_file.close();
+
+            const json_stat_size = try json_file.getEndPos();
+            const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+            defer allocator.free(json_buf);
+            const json_len = try json_file.preadAll(json_buf, 0);
+            const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
+            const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+            const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
+
+            const prop = json.asProperty("workspaces") orelse continue;
+
+            const json_array = switch (prop.expr.data) {
+                .e_array => |arr| arr,
+                .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
+                    .e_array => |arr| arr,
+                    else => break,
+                } else break,
+                else => break,
+            };
+            _ = Package.processWorkspaceNamesArray(
+                workspace_map,
+                allocator,
+                log,
+                json_array,
+                &json_source,
+                prop.loc,
+                null,
+            ) catch |err| {
+                return err;
+            };
+            return;
+        }
+
+        return error.MissingPackageJSON;
+    }
+
+    fn packageMatchesName(allocator: std.mem.Allocator, log: *logger.Log, path: []const u8, target_name: []const u8) !bool {
+        var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+        const pkgstring = "/package.json";
+        @memcpy(local_buf[0..path.len], path);
+        local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
+        local_buf[path.len + pkgstring.len] = 0;
+
+        const json_file = std.fs.cwd().openFileZ(
+            local_buf[0 .. path.len + pkgstring.len :0].ptr,
+            .{ .mode = .read_only },
+        ) catch {
+            return false;
+        };
+        defer json_file.close();
+
+        const json_stat_size = try json_file.getEndPos();
+        const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+        defer allocator.free(json_buf);
+        const json_len = try json_file.preadAll(json_buf, 0);
+        var local_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const json_path = try bun.getFdPath(json_file.handle, &local_buf2);
+        const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+        const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
+        const prop = json.asProperty("name") orelse return false;
+        const name = switch (prop.expr.data) {
+            .e_string => |str| str.data,
+            else => {
+                Output.err("error", "package.json name is not a string", .{});
+                return false;
+            },
+        };
+        return strings.eql(name, target_name); 
+    }
+
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
         const params_to_parse = comptime cmd.params();
@@ -415,6 +503,51 @@ pub const Arguments = struct {
             };
         } else {
             cwd = try bun.getcwdAlloc(allocator);
+        }
+
+        if (args.option("--workspace")) |package_name| {
+            // TODO in the future we can try loading the lockfile to get the workspace information more quickly
+            // var manager = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
+            // const load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            // if (load_lockfile == .not_found) {
+
+            bun.JSAst.Expr.Data.Store.create(default_allocator);
+            bun.JSAst.Stmt.Data.Store.create(default_allocator);
+
+            var wsmap = Package.WorkspaceMap.init(allocator);
+            defer wsmap.deinit();
+            // find the root package.json of the workspace and load the child packages into workspace map
+            findWorkspaceRoot(allocator, ctx.log, &wsmap, cwd) catch |err| {
+                Output.prettyErrorln("error resolving --workspace: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+
+            var found = false;
+            for (wsmap.keys()) |path| {
+                // check if the package at the path matches the name provided as an argument
+                const matches = packageMatchesName(allocator, ctx.log, path, package_name) catch |err| {
+                    Output.prettyErrorln("error resolving --workspace: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+                if (matches) {
+                    cwd = try allocator.dupe(u8, path);
+                    found = true;
+                    break;
+                }
+            }
+
+            bun.JSAst.Expr.Data.Store.reset();
+            bun.JSAst.Stmt.Data.Store.reset();
+
+            // if we didn't find a package with the name provided, try to resolve it as a path
+            if (!found) {
+                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const out = std.os.realpath(package_name, &outbuf) catch {
+                    Output.prettyErrorln("error resolving --workspace: no package found with name {s}", .{package_name});
+                    Global.exit(1);
+                };
+                cwd = try allocator.dupe(u8, out);
+            }
         }
 
         if (cmd == .TestCommand) {
@@ -517,10 +650,6 @@ pub const Arguments = struct {
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
-
-            if (comptime cmd == .RunCommand) {
-                ctx.run_options.workspace = args.option("--workspace") orelse "";
-            }
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
@@ -1091,18 +1220,9 @@ pub const Command = struct {
         test_options: TestOptions = TestOptions{},
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
-        run_options: RunOptions = RunOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
-
-        pub const RunOptions = struct {
-            workspace: []const u8 = "",
-
-            pub fn hasWorkspace(this: *const RunOptions) bool {
-                return this.workspace.len > 0;
-            }
-        };
 
         pub const BundlerOptions = struct {
             compile: bool = false,

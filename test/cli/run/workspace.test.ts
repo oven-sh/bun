@@ -16,7 +16,7 @@ beforeAll(() => {
         "package.json": JSON.stringify({
           "name": "a",
           "scripts": {
-          "present": "echo 1234",
+            "present": "echo 1234",
           },
         }),
       },
@@ -24,17 +24,14 @@ beforeAll(() => {
         "package.json": JSON.stringify({
           "name": "b",
           "scripts": {
-          "present": "echo 4321",
+            "present": "echo 4321",
           },
         }),
       },
     },
     "package.json": JSON.stringify({
       "name": "ws",
-      "workspaces": [
-        "packages/a",
-        "packages/b",
-      ],
+      "workspaces": ["packages/a", "packages/b"],
     }),
   });
   cwd_packages = path.join(cwd_root, "packages");

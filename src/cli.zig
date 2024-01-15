@@ -452,7 +452,7 @@ pub const Arguments = struct {
                 return false;
             },
         };
-        return strings.eql(name, target_name); 
+        return strings.eql(name, target_name);
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {

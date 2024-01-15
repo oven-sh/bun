@@ -1593,23 +1593,6 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 // it is moved to JS2Native.cpp, and is called $cpp and $zig
 // see <todo>.md for more information
 
-//         if (UNLIKELY(string == "noop"_s)) {
-//             auto* obj = constructEmptyObject(globalObject);
-//             obj->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getterSetter"_s)), JSC::CustomGetterSetter::create(vm, noop_getter, noop_setter), 0);
-//             Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, reinterpret_cast<Zig::GlobalObject*>(globalObject), 0, String(), functionNoop, JSC::NoIntrinsic);
-//             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "function"_s)), function, 0);
-//             obj->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "functionRegular"_s), 1, functionNoop, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-//             obj->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callback"_s), 1, functionCallback, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-//             return JSC::JSValue::encode(obj);
-//         }
-
-//         return JSC::JSValue::encode(JSC::jsUndefined());
-
-//         break;
-//     }
-//     }
-// }
-
 static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

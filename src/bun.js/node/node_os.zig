@@ -12,7 +12,7 @@ const heap_allocator = bun.default_allocator;
 
 pub const OS = struct {
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const module = JSC.JSValue.createEmptyObject(globalObject, 22);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 16);
 
         module.put(globalObject, JSC.ZigString.static("cpus"), JSC.NewFunction(globalObject, JSC.ZigString.static("cpus"), 0, cpus, true));
         module.put(globalObject, JSC.ZigString.static("freemem"), JSC.NewFunction(globalObject, JSC.ZigString.static("freemem"), 0, freemem, true));
@@ -33,9 +33,6 @@ pub const OS = struct {
 
         return module;
     }
-
-    // pub const EOL: []const u8 = if (Environment.isWindows) "\r\n" else "\n";
-    // pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
     const CPUTimes = struct {
         user: u64 = 0,

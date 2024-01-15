@@ -649,7 +649,6 @@ const ParseArgsState = struct {
     }
 };
 
-///
 pub fn parseArgs(
     globalThis: *JSGlobalObject,
     callframe: *JSC.CallFrame,

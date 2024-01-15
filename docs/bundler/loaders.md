@@ -196,8 +196,6 @@ When using a [standalone executable](/docs/bundler/executables), the database is
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
-````ts
-
 ### `file`
 
 **File loader**. Default for all unrecognized file types.
@@ -207,7 +205,7 @@ The file loader resolves the import as a _path/URL_ to the imported file. It's c
 ```ts#logo.ts
 import logo from "./logo.svg";
 console.log(logo);
-````
+```
 
 _In the runtime_, Bun checks that the `logo.svg` file exists and converts it to an absolute path to the location of `logo.svg` on disk.
 

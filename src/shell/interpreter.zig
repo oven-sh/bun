@@ -83,6 +83,12 @@ pub const StateKind = enum(u8) {
 
 pub const CopyOnWriteMap = struct {};
 
+pub const CoroutineResult = enum {
+    /// it's okay for the caller to continue its execution
+    cont,
+    yield,
+};
+
 pub const IO = struct {
     stdin: Kind = .{ .std = .{} },
     stdout: Kind = .{ .std = .{} },
@@ -365,6 +371,75 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
                 return "unknown";
             }
+
+            pub fn writeFailingError(
+                this: *ShellState,
+                buf: []const u8,
+                ctx: anytype,
+                comptime handleIOWrite: fn (
+                    c: @TypeOf(ctx),
+                    bufw: BufferedWriter,
+                ) void,
+            ) CoroutineResult {
+                const IOWriteFn = struct {
+                    pub fn run(c: @TypeOf(ctx), bufw: BufferedWriter) void {
+                        handleIOWrite(c, bufw);
+                    }
+                };
+
+                switch (this.writeIO(.stderr, buf, ctx, IOWriteFn.run)) {
+                    .cont => {
+                        ctx.parent.childDone(ctx, 1);
+                        return .yield;
+                    },
+                    .yield => return .yield,
+                }
+            }
+
+            pub fn writeIO(
+                this: *ShellState,
+                comptime iotype: @Type(.EnumLiteral),
+                buf: []const u8,
+                ctx: anytype,
+                comptime handleIOWrite: fn (
+                    c: @TypeOf(ctx),
+                    bufw: BufferedWriter,
+                ) void,
+            ) CoroutineResult {
+                const io: *IO.Kind = &@field(this.io, @tagName(iotype));
+
+                switch (io.*) {
+                    .std => |val| {
+                        const bw = BufferedWriter{
+                            .fd = if (iotype == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
+                            .remain = buf,
+                            .parent = BufferedWriter.ParentPtr.init(ctx),
+                            .bytelist = val.captured,
+                        };
+                        handleIOWrite(ctx, bw);
+                        return .yield;
+                    },
+                    .fd => {
+                        const bw = BufferedWriter{
+                            .fd = if (iotype == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
+                            .remain = buf,
+                            .parent = BufferedWriter.ParentPtr.init(ctx),
+                        };
+                        handleIOWrite(ctx, bw);
+                        return .yield;
+                    },
+                    .pipe => {
+                        const bufio: *bun.ByteList = &@field(this, "buffered_" ++ @tagName(iotype));
+                        bufio.append(bun.default_allocator, buf) catch bun.outOfMemory();
+                        // this.parent.childDone(this, 1);
+                        return .cont;
+                    },
+                    .ignore => {
+                        // this.parent.childDone(this, 1);
+                        return .cont;
+                    },
+                }
+            }
         };
 
         pub usingnamespace JSC.Codegen.JSShellInterpreter;
@@ -501,7 +576,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 allocator.destroy(interpreter);
             }
 
-            var export_env = brk: {
+            const export_env = brk: {
                 var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
                 errdefer {
                     export_env.deinit();
@@ -533,8 +608,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 },
             };
 
-            export_env.put("PWD", cwd) catch bun.outOfMemory();
-            export_env.put("OLDPWD", "/") catch bun.outOfMemory();
+            // export_env.put("PWD", cwd) catch bun.outOfMemory();
+            // export_env.put("OLDPWD", "/") catch bun.outOfMemory();
 
             const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                 .result => |fd| fd,
@@ -1984,6 +2059,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             cmds: ?[]CmdOrResult,
             pipes: ?[]Pipe,
             io: IO,
+            state: union(enum) {
+                idle,
+                executing,
+                waiting_write_err: BufferedWriter,
+                done,
+            } = .idle,
 
             const TrackedFd = struct {
                 fd: bun.FileDescriptor,
@@ -2012,15 +2093,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 parent: ParentPtr,
                 io: IO,
             ) *Pipeline {
-                var pipeline = interpreter.allocator.create(Pipeline) catch |err| {
-                    std.debug.print("Ruh roh: {any}\n", .{err});
-                    @panic("Ruh roh");
+                var pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
+                pipeline.* = .{
+                    .base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state },
+                    .node = node,
+                    .parent = parent,
+                    .exited_count = 0,
+                    .io = io,
+                    .cmds = null,
+                    .pipes = null,
                 };
-                pipeline.base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state };
-                pipeline.node = node;
-                pipeline.parent = parent;
-                pipeline.exited_count = 0;
-                pipeline.io = io;
 
                 const cmd_count = brk: {
                     var i: u32 = 0;
@@ -2036,14 +2118,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 if (cmd_count > 1) {
                     var pipes_set: u32 = 0;
-                    Pipeline.initializePipes(pipes, &pipes_set) catch {
+                    if (Pipeline.initializePipes(pipes, &pipes_set).asErr()) |err| {
                         for (pipes[0..pipes_set]) |*pipe| {
                             closefd(pipe[0]);
                             closefd(pipe[1]);
                         }
-                        // FIXME this should really return an error
-                        @panic("Ruh roh");
-                    };
+                        const system_err = err.toSystemError();
+                        pipeline.writeFailingError("bunsh: {s}\n", .{system_err.message}, 1);
+                        return pipeline;
+                    }
                 }
 
                 var i: u32 = 0;
@@ -2071,8 +2154,24 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return pipeline;
             }
 
+            pub fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype, exit_code: u8) void {
+                _ = exit_code; // autofix
+
+                const HandleIOWrite = struct {
+                    fn run(pipeline: *Pipeline, bufw: BufferedWriter) void {
+                        pipeline.state = .{ .waiting_write_err = bufw };
+                        pipeline.state.waiting_write_err.writeIfPossible(false);
+                    }
+                };
+
+                const buf = std.fmt.allocPrint(this.base.interpreter.arena.allocator(), fmt, args) catch bun.outOfMemory();
+                _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run);
+            }
+
             pub fn start(this: *Pipeline) void {
+                if (this.state == .waiting_write_err or this.state == .done) return;
                 const cmds = this.cmds orelse {
+                    this.state = .done;
                     this.parent.childDone(this, 0);
                     return;
                 };
@@ -2082,6 +2181,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
                 log("pipeline start {x} (count={d})", .{ @intFromPtr(this), this.node.items.len });
                 if (this.node.items.len == 0) {
+                    this.state = .done;
                     this.parent.childDone(this, 0);
                     return;
                 }
@@ -2101,6 +2201,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         stdout.close();
                     }
                 }
+            }
+
+            pub fn onBufferedWriterDone(this: *Pipeline, err: ?Syscall.Error) void {
+                if (comptime bun.Environment.allow_assert) {
+                    std.debug.assert(this.state == .waiting_write_err);
+                }
+
+                if (err) |e| {
+                    global_handle.get().actuallyThrow(shell.ShellErr.newSys(e));
+                    return;
+                }
+
+                this.state = .done;
+                this.parent.childDone(this, 0);
             }
 
             pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: u8) void {
@@ -2132,6 +2246,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             break;
                         }
                     }
+                    this.state = .done;
                     this.parent.childDone(this, last_exit_code);
                     return;
                 }
@@ -2154,11 +2269,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.base.interpreter.allocator.destroy(this);
             }
 
-            fn initializePipes(pipes: []Pipe, set_count: *u32) !void {
+            fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
                 for (pipes) |*pipe| {
-                    pipe.* = try std.os.pipe();
+                    pipe.* = switch (Syscall.pipe()) {
+                        .err => |e| return .{ .err = e },
+                        .result => |p| p,
+                    };
                     set_count.* += 1;
                 }
+                return Maybe(void).success;
             }
 
             fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) IO.Kind {
@@ -2343,28 +2462,36 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub fn writeFailingError(this: *Cmd, buf: []const u8, exit_code: u8) void {
                 _ = exit_code; // autofix
 
-                switch (this.base.shell.io.stderr) {
-                    .std => |val| {
-                        this.state = .{ .waiting_write_err = BufferedWriter{
-                            .fd = bun.STDERR_FD,
-                            .remain = buf,
-                            .parent = BufferedWriter.ParentPtr.init(this),
-                            .bytelist = val.captured,
-                        } };
-                        this.state.waiting_write_err.writeIfPossible(false);
-                    },
-                    .fd => {
-                        this.state = .{ .waiting_write_err = BufferedWriter{
-                            .fd = bun.STDERR_FD,
-                            .remain = buf,
-                            .parent = BufferedWriter.ParentPtr.init(this),
-                        } };
-                        this.state.waiting_write_err.writeIfPossible(false);
-                    },
-                    .pipe, .ignore => {
-                        this.parent.childDone(this, 1);
-                    },
-                }
+                const HandleIOWrite = struct {
+                    fn run(cmd: *Cmd, bufw: BufferedWriter) void {
+                        cmd.state = .{ .waiting_write_err = bufw };
+                        cmd.state.waiting_write_err.writeIfPossible(false);
+                    }
+                };
+                _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run);
+
+                // switch (this.base.shell.io.stderr) {
+                //     .std => |val| {
+                //         this.state = .{ .waiting_write_err = BufferedWriter{
+                //             .fd = bun.STDERR_FD,
+                //             .remain = buf,
+                //             .parent = BufferedWriter.ParentPtr.init(this),
+                //             .bytelist = val.captured,
+                //         } };
+                //         this.state.waiting_write_err.writeIfPossible(false);
+                //     },
+                //     .fd => {
+                //         this.state = .{ .waiting_write_err = BufferedWriter{
+                //             .fd = bun.STDERR_FD,
+                //             .remain = buf,
+                //             .parent = BufferedWriter.ParentPtr.init(this),
+                //         } };
+                //         this.state.waiting_write_err.writeIfPossible(false);
+                //     },
+                //     .pipe, .ignore => {
+                //         this.parent.childDone(this, 1);
+                //     },
+                // }
                 return;
             }
 
@@ -2577,7 +2704,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             },
                             .result => |fd| fd,
                         };
-                        _ = Builtin.init(
+                        const coro_result = Builtin.init(
                             this,
                             this.base.interpreter,
                             b,
@@ -2590,6 +2717,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             &this.io,
                             false,
                         );
+                        if (coro_result == .yield) return;
 
                         if (comptime bun.Environment.allow_assert) {
                             std.debug.assert(this.exec == .bltn);
@@ -2695,6 +2823,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             }
                         },
                         .atom => {
+                            if (this.redirection_file.items.len == 0) {
+                                const buf = std.fmt.allocPrint(spawn_args.arena.allocator(), "bunsh: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"}) catch bun.outOfMemory();
+                                this.writeFailingError(buf, 1);
+                                return;
+                            }
                             const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                             log("EXPANDED REDIRECT: {s}\n", .{this.redirection_file.items[0..]});
                             const perm = 0o666;
@@ -3096,97 +3229,27 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 cwd: bun.FileDescriptor,
                 io_: *IO,
                 comptime in_cmd_subst: bool,
-            ) void {
+            ) CoroutineResult {
                 const io = io_.*;
 
-                var stdin: Builtin.BuiltinIO = switch (io.stdin) {
+                const stdin: Builtin.BuiltinIO = switch (io.stdin) {
                     .std => .{ .fd = bun.STDIN_FD },
                     .fd => |fd| .{ .fd = fd },
                     .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
                     .ignore => .ignore,
                 };
-                var stdout: Builtin.BuiltinIO = switch (io.stdout) {
+                const stdout: Builtin.BuiltinIO = switch (io.stdout) {
                     .std => if (io.stdout.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stdout, .bytelist = bytelist } } else .{ .fd = bun.STDOUT_FD },
                     .fd => |fd| .{ .fd = fd },
                     .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
                     .ignore => .ignore,
                 };
-                var stderr: Builtin.BuiltinIO = switch (io.stderr) {
+                const stderr: Builtin.BuiltinIO = switch (io.stderr) {
                     .std => if (io.stderr.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stderr, .bytelist = bytelist } } else .{ .fd = bun.STDERR_FD },
                     .fd => |fd| .{ .fd = fd },
                     .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
                     .ignore => .ignore,
                 };
-
-                if (node.redirect_file) |file| brk: {
-                    if (comptime in_cmd_subst) {
-                        if (node.redirect.stdin) {
-                            stdin = .ignore;
-                        }
-
-                        if (node.redirect.stdout) {
-                            stdout = .ignore;
-                        }
-
-                        if (node.redirect.stderr) {
-                            stdout = .ignore;
-                        }
-
-                        break :brk;
-                    }
-
-                    switch (file) {
-                        .atom => {
-                            const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
-                            log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
-                            const perm = 0o666;
-                            const extra: bun.Mode = if (node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
-                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
-                                .err => |e| {
-                                    const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
-                                    return cmd.writeFailingError(buf, 1);
-                                },
-                                .result => |f| f,
-                            };
-                            cmd.redirection_fd = redirfd;
-                            if (node.redirect.stdin) {
-                                stdin = .{ .fd = redirfd };
-                            }
-                            if (node.redirect.stdout) {
-                                stdout = .{ .fd = redirfd };
-                            }
-                            if (node.redirect.stderr) {
-                                stderr = .{ .fd = redirfd };
-                            }
-                        },
-                        .jsbuf => {
-                            if (comptime EventLoopKind == .mini) @panic("FIXME TODO");
-                            if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(interpreter.global)) |buf| {
-                                const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
-                                    .array_buffer = buf,
-                                    .held = JSC.Strong.create(buf.value, interpreter.global),
-                                }, .i = 0 } };
-
-                                if (node.redirect.stdin) {
-                                    stdin = builtinio;
-                                }
-
-                                if (node.redirect.stdout) {
-                                    stdout = builtinio;
-                                }
-
-                                if (node.redirect.stderr) {
-                                    stderr = builtinio;
-                                }
-                            } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
-                                _ = blob;
-                                @panic("FIXME TODO HANDLE BLOB");
-                            } else {
-                                @panic("FIXME TODO Unhandled");
-                            }
-                        },
-                    }
-                }
 
                 cmd.exec = .{ .bltn = Builtin{
                     .kind = kind,
@@ -3256,6 +3319,84 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         };
                     },
                 }
+
+                if (node.redirect_file) |file| brk: {
+                    if (comptime in_cmd_subst) {
+                        if (node.redirect.stdin) {
+                            stdin = .ignore;
+                        }
+
+                        if (node.redirect.stdout) {
+                            stdout = .ignore;
+                        }
+
+                        if (node.redirect.stderr) {
+                            stdout = .ignore;
+                        }
+
+                        break :brk;
+                    }
+
+                    switch (file) {
+                        .atom => {
+                            if (cmd.redirection_file.items.len == 0) {
+                                const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: ambiguous redirect: at `{s}`\n", .{@tagName(kind)}) catch bun.outOfMemory();
+                                cmd.writeFailingError(buf, 1);
+                                return .yield;
+                            }
+                            const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
+                            log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
+                            const perm = 0o666;
+                            const extra: bun.Mode = if (node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
+                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
+                                .err => |e| {
+                                    const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
+                                    cmd.writeFailingError(buf, 1);
+                                    return .yield;
+                                },
+                                .result => |f| f,
+                            };
+                            cmd.redirection_fd = redirfd;
+                            if (node.redirect.stdin) {
+                                cmd.exec.bltn.stdin = .{ .fd = redirfd };
+                            }
+                            if (node.redirect.stdout) {
+                                cmd.exec.bltn.stdout = .{ .fd = redirfd };
+                            }
+                            if (node.redirect.stderr) {
+                                cmd.exec.bltn.stderr = .{ .fd = redirfd };
+                            }
+                        },
+                        .jsbuf => {
+                            if (comptime EventLoopKind == .mini) @panic("FIXME TODO");
+                            if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(interpreter.global)) |buf| {
+                                const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
+                                    .array_buffer = buf,
+                                    .held = JSC.Strong.create(buf.value, interpreter.global),
+                                }, .i = 0 } };
+
+                                if (node.redirect.stdin) {
+                                    cmd.exec.bltn.stdin = builtinio;
+                                }
+
+                                if (node.redirect.stdout) {
+                                    cmd.exec.bltn.stdout = builtinio;
+                                }
+
+                                if (node.redirect.stderr) {
+                                    cmd.exec.bltn.stderr = builtinio;
+                                }
+                            } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                                _ = blob;
+                                @panic("FIXME TODO HANDLE BLOB");
+                            } else {
+                                @panic("FIXME TODO Unhandled");
+                            }
+                        },
+                    }
+                }
+
+                return .cont;
             }
 
             pub inline fn parentCmd(this: *Builtin) *Cmd {
@@ -6531,6 +6672,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const print = bun.Output.scoped(.BufferedWriter, false);
             const CmdJs = bun.shell.Interpreter.Cmd;
             const CmdMini = bun.shell.InterpreterMini.Cmd;
+            const PipelineJs = bun.shell.Interpreter.Pipeline;
+            const PipelineMini = bun.shell.InterpreterMini.Pipeline;
             const BuiltinJs = bun.shell.Interpreter.Builtin;
             const BuiltinMini = bun.shell.InterpreterMini.Builtin;
 
@@ -6554,6 +6697,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     BuiltinMini.Ls,
                     CmdJs,
                     CmdMini,
+                    PipelineJs,
+                    PipelineMini,
                 };
                 ptr: Repr,
                 pub const Repr = TaggedPointerUnion(Types);

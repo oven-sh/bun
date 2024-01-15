@@ -126,6 +126,7 @@ pub const Tag = enum(u8) {
 
     uv_spawn,
     uv_pipe,
+    pipe,
 
     WriteFile,
     NtQueryDirectoryFile,
@@ -1679,6 +1680,18 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         }
         return Maybe(void).success;
     }
+}
+
+pub fn pipe() Maybe([2]bun.FileDescriptor) {
+    var fds: [2]bun.FileDescriptor = undefined;
+    const rc = system.pipe(&fds);
+    if (Maybe([2]bun.FileDescriptor).errnoSys(
+        rc,
+        .pipe,
+    )) |err| {
+        return err;
+    }
+    return .{ .result = fds };
 }
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {

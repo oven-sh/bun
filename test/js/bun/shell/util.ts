@@ -58,6 +58,7 @@ export class TestBuilder {
 
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
+      console.info("Cmd", strings.join(""));
       const promise = Bun.$(strings, ...expressions);
       const This = new this({ type: "ok", val: promise });
       This._testName = strings.join("");

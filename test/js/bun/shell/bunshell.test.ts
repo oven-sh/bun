@@ -516,10 +516,7 @@ describe("deno_task", () => {
     //   .run();
 
     // zero arguments after re-direct
-    await TestBuilder.command`echo 1 > $EMPTY`
-      .stderr("redirect path must be 1 argument, but found 0\n")
-      .exitCode(1)
-      .run();
+    await TestBuilder.command`echo 1 > $EMPTY`.stderr("bunsh: ambiguous redirect: at `echo`\n").exitCode(1).run();
   });
 });
 

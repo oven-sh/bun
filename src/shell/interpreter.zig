@@ -324,6 +324,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         new_cwd_,
                     }, .auto);
 
+                    // remove trailing separator
+                    if (cwd_str.len > 1 and cwd_str[cwd_str.len - 1] == '/') {
+                        ResolvePath.join_buf[cwd_str.len - 1] = 0;
+                        break :brk ResolvePath.join_buf[0 .. cwd_str.len - 1 :0];
+                    }
+
                     break :brk cwd_str;
                 };
 

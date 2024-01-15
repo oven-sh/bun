@@ -3,6 +3,7 @@ import { ShellOutput } from "bun";
 import { ShellPromise } from "bun";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
+import * as fs from "node:fs";
 
 declare module "bun" {
   // Define the additional methods
@@ -66,6 +67,18 @@ export class TestBuilder {
     } catch (err) {
       return new this({ type: "err", val: err as Error });
     }
+  }
+
+  directory(path: string): this {
+    const tempdir = this.getTempDir();
+    fs.mkdirSync(join(tempdir, path), { recursive: true });
+    return this;
+  }
+
+  file(path: string, contents: string): this {
+    const tempdir = this.getTempDir();
+    fs.writeFileSync(join(tempdir, path), contents);
+    return this;
   }
 
   testName(name: string): this {
@@ -136,8 +149,11 @@ export class TestBuilder {
     const output = await this.promise.val;
 
     const { stdout, stderr, exitCode } = output!;
-    if (this.expected_stdout !== undefined) expect(stdout.toString()).toEqual(this.expected_stdout);
-    if (this.expected_stderr !== undefined) expect(stderr.toString()).toEqual(this.expected_stderr);
+    const tempdir = this.tempdir || "NO_TEMP_DIR";
+    if (this.expected_stdout !== undefined)
+      expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
+    if (this.expected_stderr !== undefined)
+      expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {

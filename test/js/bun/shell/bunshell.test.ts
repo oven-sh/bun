@@ -527,6 +527,15 @@ describe("deno_task", () => {
     // zero arguments after re-direct
     await TestBuilder.command`echo 1 > $EMPTY`.stderr("bunsh: ambiguous redirect: at `echo`\n").exitCode(1).run();
   });
+
+  test("pwd", async () => {
+    await TestBuilder.command`pwd && cd sub_dir && pwd && cd ../ && pwd`
+      .directory("sub_dir")
+      .file("file.txt", "test")
+      // $TEMP_DIR gets replaced with the actual temp dir by the test runner
+      .stdout(`$TEMP_DIR\n$TEMP_DIR/sub_dir\n$TEMP_DIR\n`)
+      .run();
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

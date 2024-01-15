@@ -34,9 +34,6 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const bundler = bun.bundler;
 
-const Path = @import("../resolver/resolve_path.zig");
-const Fs = @import("../fs.zig");
-const Package = @import("../install/lockfile.zig").Package;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
@@ -57,11 +54,6 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-
-pub fn initializeStore() void {
-    bun.JSAst.Expr.Data.Store.create(default_allocator);
-    bun.JSAst.Stmt.Data.Store.create(default_allocator);
-}
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -1302,9 +1294,6 @@ pub const RunCommand = struct {
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
-            // var workdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            // const workdir: []const u8 = try std.os.getcwd(workdir_buf[0..]);
-            // Output.err("error", "Current working directory: {s}", .{workdir});
             Global.exit(1);
         }
 

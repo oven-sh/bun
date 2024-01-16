@@ -1,7 +1,7 @@
 // Reimplementation of https://nodejs.org/api/events.html
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 const SymbolFor = Symbol.for;
 

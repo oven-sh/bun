@@ -226,5 +226,6 @@
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
   "typescript.tsdk": "node_modules/typescript/lib",
-  "cmake.configureOnOpen": false
+  "cmake.configureOnOpen": false,
+  "git.ignoreLimitWarning": true
 }

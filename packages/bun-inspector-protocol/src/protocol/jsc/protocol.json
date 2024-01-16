@@ -2751,6 +2751,12 @@
               "type": "boolean",
               "optional": true,
               "description": "Whether the expression should be considered to be in a user gesture or not."
+            },
+            {
+              "name": "awaitPromise",
+              "type": "boolean",
+              "optional": true,
+              "description": "Whether to automatically await returned promise."
             }
           ],
           "returns": [
@@ -2761,7 +2767,8 @@
               "optional": true,
               "description": "True if the result was thrown during the evaluation."
             }
-          ]
+          ],
+          "async": true
         },
         {
           "name": "getPreview",

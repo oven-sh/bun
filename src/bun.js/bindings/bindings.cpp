@@ -4814,10 +4814,6 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-
-            if (key.len == 0)
-                return true;
-
             JSC::JSValue propertyValue = JSValue();
 
             if (objectToUse == object) {

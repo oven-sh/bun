@@ -241,3 +241,6 @@ myCustomName {
   "1": 42,
   length: 1,
 }
+{
+  "": "",
+}

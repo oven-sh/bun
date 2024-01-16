@@ -511,7 +511,6 @@ pub const Arguments = struct {
             cwd = try bun.getcwd(&cwd_buf);
         }
 
-
         const filters = args.options("--filter");
         if (filters.len > 0) {
             // TODO in the future we can try loading the lockfile to get the workspace information more quickly

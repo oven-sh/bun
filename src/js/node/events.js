@@ -1,8 +1,10 @@
 // Reimplementation of https://nodejs.org/api/events.html
+
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 const SymbolFor = Symbol.for;
+
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
@@ -354,9 +356,52 @@ function once(emitter, type, options) {
   });
 }
 
-function on(emitter, type, options) {
-  var { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = options || {};
-  throwNotImplemented("events.on", 2679);
+async function* on(emitter, event, options = {}) {
+  const signal = options.signal;
+  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
+
+  const { FixedQueue } = require("internal/fixed_queue");
+  const unconsumedPromises = new FixedQueue();
+  const unconsumedEvents = new FixedQueue();
+  const unconsumedErrors = new FixedQueue();
+  let done = false;
+
+  emitter.on(event, ev => {
+    if (!unconsumedPromises.isEmpty()) {
+      const { resolve } = unconsumedPromises.shift();
+      return resolve([ev]);
+    }
+    unconsumedEvents.push([ev]);
+  });
+  emitter.on("error", ex => {
+    if (!unconsumedPromises.isEmpty()) {
+      const { reject } = unconsumedPromises.shift();
+      return reject(ex);
+    }
+    unconsumedErrors.push(ex);
+  });
+  signal?.addEventListener("abort", () => {
+    emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
+  });
+
+  for (const evName of options?.close || []) {
+    emitter.on(evName, () => {
+      emitter.emit(event, undefined);
+      done = true;
+    });
+  }
+
+  while (!done) {
+    if (!unconsumedEvents.isEmpty()) {
+      yield Promise.$resolve(unconsumedEvents.shift());
+    }
+    if (!unconsumedErrors.isEmpty()) {
+      yield Promise.$reject(unconsumedErrors.shift());
+    }
+    const { promise, reject, resolve } = $newPromiseCapability(Promise);
+    unconsumedPromises.push({ reject, resolve });
+    yield promise;
+  }
 }
 
 function getEventListeners(emitter, type) {

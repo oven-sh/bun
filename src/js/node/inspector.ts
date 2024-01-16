@@ -1,6 +1,6 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
 // This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("$shared");
+const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const EventEmitter = require("node:events");
 
 function open() {

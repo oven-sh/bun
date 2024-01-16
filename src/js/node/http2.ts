@@ -3,7 +3,7 @@
 const { isTypedArray } = require("node:util/types");
 
 // This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("$shared");
+const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 const tls = require("node:tls");
 const net = require("node:net");

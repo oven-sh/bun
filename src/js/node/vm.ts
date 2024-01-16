@@ -1,5 +1,5 @@
 // Hardcoded module "node:vm"
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 const vm = $lazy("vm");
 

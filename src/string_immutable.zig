@@ -5637,3 +5637,22 @@ pub fn visibleUTF16Width(input: []const u16) usize {
 pub fn visibleLatin1Width(input: []const u8) usize {
     return visibleASCIIWidth(input);
 }
+
+pub const QuoteEscapeFormat = struct {
+    data: []const u8,
+
+    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
+            try writer.writeAll(self.data[i..j]);
+            try writer.writeAll(switch (self.data[j]) {
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\\' => "\\\\",
+                else => unreachable,
+            });
+        }
+        if (i == self.data.len) return;
+        try writer.writeAll(self.data[i..]);
+    }
+};

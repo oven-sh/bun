@@ -2502,6 +2502,7 @@ const ParsedPath = struct {
     loc: logger.Loc,
     text: string,
     is_macro: bool,
+    import_tag: ImportRecord.Tag = .none,
 };
 
 const StrictModeFeature = enum {
@@ -8779,9 +8780,32 @@ fn NewParser_(
                 item_refs.shrinkAndFree(stmt.items.len + @as(usize, @intFromBool(stmt.default_name != null)));
             }
 
+            if (path.import_tag != .none) {
+                try p.validateSQLiteImportType(path.import_tag, &stmt);
+            }
+
             // Track the items for this namespace
             try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
             return p.s(stmt, loc);
+        }
+
+        fn validateSQLiteImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
+            @setCold(true);
+
+            if (import_tag == .with_type_sqlite or import_tag == .with_type_sqlite_embedded) {
+                p.import_records.items[stmt.import_record_index].tag = import_tag;
+
+                for (stmt.items) |*item| {
+                    if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
+                        try p.log.addError(
+                            p.source,
+                            item.name.loc,
+                            "sqlite imports only support the \"default\" or \"db\" imports",
+                        );
+                        break;
+                    }
+                }
+            }
         }
 
         // This is the type parameter declarations that go with other symbol
@@ -9409,6 +9433,8 @@ fn NewParser_(
 
                             if (path.is_macro) {
                                 try p.log.addError(p.source, path.loc, "cannot use macro in export statement");
+                            } else if (path.import_tag != .none) {
+                                try p.log.addError(p.source, loc, "cannot use export statement with \"type\" attribute");
                             }
 
                             if (comptime track_symbol_usage_during_parse_pass) {
@@ -9449,6 +9475,8 @@ fn NewParser_(
 
                                 if (parsedPath.is_macro) {
                                     try p.log.addError(p.source, loc, "export from cannot be used with \"type\": \"macro\"");
+                                } else if (parsedPath.import_tag != .none) {
+                                    try p.log.addError(p.source, loc, "export from cannot be used with \"type\" attribute");
                                 }
 
                                 const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
@@ -11463,6 +11491,7 @@ fn NewParser_(
                 .loc = p.lexer.loc(),
                 .text = p.lexer.string_literal_slice,
                 .is_macro = false,
+                .import_tag = .none,
             };
 
             if (p.lexer.token == .t_no_substitution_template_literal) {
@@ -11483,28 +11512,68 @@ fn NewParser_(
                 try p.lexer.next();
                 try p.lexer.expect(.t_open_brace);
 
+                const SupportedAttribute = enum {
+                    type,
+                    embed,
+                };
+
+                var has_seen_embed_true = false;
+
                 while (p.lexer.token != .t_close_brace) {
-                    const is_type_flag = brk: {
+                    const supported_attribute: ?SupportedAttribute = brk: {
                         // Parse the key
                         if (p.lexer.isIdentifierOrKeyword()) {
-                            break :brk strings.eqlComptime(p.lexer.identifier, "type");
+                            if (strings.eqlComptime(p.lexer.identifier, "type")) {
+                                break :brk .type;
+                            }
+
+                            if (strings.eqlComptime(p.lexer.identifier, "embed")) {
+                                break :brk .embed;
+                            }
                         } else if (p.lexer.token == .t_string_literal) {
-                            break :brk p.lexer.string_literal_is_ascii and strings.eqlComptime(p.lexer.string_literal_slice, "type");
+                            if (p.lexer.string_literal_is_ascii) {
+                                if (strings.eqlComptime(p.lexer.string_literal_slice, "type")) {
+                                    break :brk .type;
+                                }
+
+                                if (strings.eqlComptime(p.lexer.string_literal_slice, "embed")) {
+                                    break :brk .embed;
+                                }
+                            }
                         } else {
                             try p.lexer.expect(.t_identifier);
                         }
 
-                        break :brk false;
+                        break :brk null;
                     };
 
                     try p.lexer.next();
                     try p.lexer.expect(.t_colon);
 
                     try p.lexer.expect(.t_string_literal);
-                    if (is_type_flag and
-                        p.lexer.string_literal_is_ascii and strings.eqlComptime(p.lexer.string_literal_slice, "macro"))
-                    {
-                        path.is_macro = true;
+                    if (p.lexer.string_literal_is_ascii) {
+                        if (supported_attribute) |attr| {
+                            switch (attr) {
+                                .type => {
+                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "macro")) {
+                                        path.is_macro = true;
+                                    } else if (strings.eqlComptime(p.lexer.string_literal_slice, "sqlite")) {
+                                        path.import_tag = .with_type_sqlite;
+                                        if (has_seen_embed_true) {
+                                            path.import_tag = .with_type_sqlite_embedded;
+                                        }
+                                    }
+                                },
+                                .embed => {
+                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "true")) {
+                                        has_seen_embed_true = true;
+                                        if (path.import_tag == .with_type_sqlite) {
+                                            path.import_tag = .with_type_sqlite_embedded;
+                                        }
+                                    }
+                                },
+                            }
+                        }
                     }
 
                     if (p.lexer.token != .t_comma) {

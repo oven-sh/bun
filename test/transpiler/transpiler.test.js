@@ -3321,6 +3321,31 @@ console.log("boop");
     ts.expectPrinted("a<b>", "a");
     expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);
   });
+
+  const expectCapturePrintedSnapshot = (code) => {
+    const y = parsed((`(async() => {${code}})()`), false, false);
+    expect(y).toEndWith('})();\n')
+    const of_relevance = y.slice(y.indexOf('() => {') + 9, y.lastIndexOf('})();') - 1).trim()
+      .split('\n').map(x => x.trim()).filter(x => x.length > 0).join('\n');
+    expect(of_relevance).toMatchSnapshot();
+  };
+
+
+  it('using statements work right', () => {
+    expectCapturePrintedSnapshot(`using x = a;`);
+    expectCapturePrintedSnapshot(`await using x = a;`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for (await using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) c(a)`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for (await using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
+
+  })
 });
 
 describe("await can only be used inside an async function message", () => {

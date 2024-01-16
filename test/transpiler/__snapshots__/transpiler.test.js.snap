@@ -1,0 +1,144 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Bun.Transpiler using statements work right 1`] = `
+"let __bun_temp_ref_1$ = [];
+try {
+const x = __using_529a37f12b2c8c15(__bun_temp_ref_1$, a, 0);
+} catch (__bun_temp_ref_2$) {
+var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+__callDispose_310508800abb3edb(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 2`] = `
+"let __bun_temp_ref_1$ = [];
+try {
+const x = __using_529a37f12b2c8c15(__bun_temp_ref_1$, a, 1);
+} catch (__bun_temp_ref_2$) {
+var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+var __bun_temp_ref_5$ = __callDispose_310508800abb3edb(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+__bun_temp_ref_5$ && await __bun_temp_ref_5$;
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 3`] = `
+"for (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 0);
+c(a);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+__callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 4`] = `
+"for await (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 0);
+c(a);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+__callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 5`] = `
+"for (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 1);
+c(a);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+var __bun_temp_ref_6$ = __callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 6`] = `
+"for await (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 1);
+c(a);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+var __bun_temp_ref_6$ = __callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 7`] = `
+"for (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 0);
+c(a);
+a(c);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+__callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 8`] = `
+"for await (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 0);
+c(a);
+a(c);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+__callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 9`] = `
+"for (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 1);
+c(a);
+a(c);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+var __bun_temp_ref_6$ = __callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+}
+}"
+`;
+
+exports[`Bun.Transpiler using statements work right 10`] = `
+"for await (const __bun_temp_ref_1$ of b) {
+let __bun_temp_ref_2$ = [];
+try {
+const a = __using_529a37f12b2c8c15(__bun_temp_ref_2$, __bun_temp_ref_1$, 1);
+c(a);
+a(c);
+} catch (__bun_temp_ref_3$) {
+var __bun_temp_ref_4$ = __bun_temp_ref_3$, __bun_temp_ref_5$ = 1;
+} finally {
+var __bun_temp_ref_6$ = __callDispose_310508800abb3edb(__bun_temp_ref_2$, __bun_temp_ref_4$, __bun_temp_ref_5$);
+__bun_temp_ref_6$ && await __bun_temp_ref_6$;
+}
+}"
+`;

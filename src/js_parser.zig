@@ -3211,7 +3211,49 @@ pub const Parser = struct {
             ) catch unreachable;
         }
 
-        if (!p.options.tree_shaking) {
+        // When "using" declarations appear at the top level, we change all TDZ
+        // variables in the top-level scope into "var" so that they aren't harmed
+        // when they are moved into the try/catch statement that lowering will
+        // generate.
+        //
+        // This is necessary because exported function declarations must be hoisted
+        // outside of the try/catch statement because they can be evaluated before
+        // this module is evaluated due to ESM cross-file function hoisting. And
+        // these function bodies might reference anything else in this scope, which
+        // must still work when those things are moved inside a try/catch statement.
+        //
+        // Before:
+        //
+        //   using foo = get()
+        //   export function fn() {
+        //     return [foo, new Bar]
+        //   }
+        //   class Bar {}
+        //
+        // After ("fn" is hoisted, "Bar" is converted to "var"):
+        //
+        //   export function fn() {
+        //     return [foo, new Bar]
+        //   }
+        //   try {
+        //     var foo = get();
+        //     var Bar = class {};
+        //   } catch (_) {
+        //     ...
+        //   } finally {
+        //     ...
+        //   }
+        //
+        // This is also necessary because other code might be appended to the code
+        // that we're processing and expect to be able to access top-level variables.
+        p.will_wrap_module_in_try_catch_for_using = p.shouldLowerUsingDeclarations(stmts);
+
+        // Note that top-level lowered "using" declarations disable tree-shaking
+        // because we only do tree-shaking on top-level statements and lowering
+        // a top-level "using" declaration moves all top-level statements into a
+        // nested scope.
+        if (!p.options.tree_shaking or p.will_wrap_module_in_try_catch_for_using) {
+            // When tree shaking is disabled, everything comes in a single part
             try p.appendPart(&parts, stmts);
         } else {
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
@@ -4158,6 +4200,7 @@ const ParseStatementOptions = struct {
     is_using_statement: bool = false,
     is_name_optional: bool = false, // For "export default" pseudo-statements,
     is_typescript_declare: bool = false,
+    is_for_loop_init: bool = false,
 
     pub fn hasDecorators(self: *ParseStatementOptions) bool {
         const decs = self.ts_decorators orelse return false;
@@ -9871,7 +9914,10 @@ fn NewParser_(
                         // for (;)
                         .t_semicolon => {},
                         else => {
-                            var stmtOpts = ParseStatementOptions{ .lexical_decl = .allow_all };
+                            var stmtOpts = ParseStatementOptions{
+                                .lexical_decl = .allow_all,
+                                .is_for_loop_init = true,
+                            };
 
                             const res = try p.parseExprOrLetStmt(&stmtOpts);
                             switch (res.stmt_or_expr) {
@@ -10899,7 +10945,7 @@ fn NewParser_(
                     // p.markSyntaxFeature(.using, token_range.loc);
                     opts.is_using_statement = true;
                     const decls = try p.parseAndDeclareDecls(.constant, opts);
-                    if (true) { // TODO: !opts.isForLoopInit
+                    if (!opts.is_for_loop_init) {
                         try p.requireInitializers(.k_using, decls.items);
                     }
                     return ExprOrLetStmt{
@@ -10938,7 +10984,7 @@ fn NewParser_(
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
                         const decls = try p.parseAndDeclareDecls(.constant, opts);
-                        if (true) { // TODO: !opts.isForLoopInit
+                        if (!opts.is_for_loop_init) {
                             try p.requireInitializers(.k_await_using, decls.items);
                         }
                         return ExprOrLetStmt{
@@ -18907,10 +18953,6 @@ fn NewParser_(
                                     data.init = relocated;
                                 }
                             }
-
-                            // Handle "for (using x of y)" and "for (await using x of y)"
-                            if (for_init.data.s_local.kind == .k_using and p.options.features.lower_using) {}
-                            // TODO(@paperdave)!nomerge
                         }
                     }
 
@@ -18926,7 +18968,6 @@ fn NewParser_(
 
                         // Check for a variable initializer
                         if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
-
                             // Lower for-in variable initializers in case the output is used in strict mode
                             var local = data.init.data.s_local;
                             if (local.decls.len == 1) {
@@ -18944,9 +18985,7 @@ fn NewParser_(
                                     }
                                 }
                             }
-                        }
 
-                        if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
                             const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
                             if (relocate.stmt) |relocated_stmt| {
                                 data.init = relocated_stmt;
@@ -18961,10 +19000,56 @@ fn NewParser_(
                     data.value = p.visitExpr(data.value);
                     data.body = p.visitLoopBody(data.body);
 
-                    if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
-                        const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
-                        if (relocate.stmt) |relocated_stmt| {
-                            data.init = relocated_stmt;
+                    if (data.init.data == .s_local) {
+                        if (data.init.data.s_local.kind == .k_var) {
+                            const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls.slice(), RelocateVars.Mode.for_in_or_for_of);
+                            if (relocate.stmt) |relocated_stmt| {
+                                data.init = relocated_stmt;
+                            }
+                        }
+
+                        // Handle "for (using x of y)" and "for (await using x of y)"
+                        if (data.init.data.s_local.kind.isUsing() and p.options.features.lower_using) {
+                            // fn lowerUsingDeclarationInForOf()
+                            const loc = data.init.loc;
+                            const init2 = data.init.data.s_local;
+                            const binding = init2.decls.at(0).binding;
+                            var id = binding.data.b_identifier;
+                            const temp_ref = p.generateTempRef(p.symbols.items[id.ref.inner_index].original_name);
+
+                            const first = p.s(S.Local{
+                                .kind = init2.kind,
+                                .decls = bindings: {
+                                    const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                                    decls[0] = .{
+                                        .binding = p.b(B.Identifier{ .ref = id.ref }, loc),
+                                        .value = p.newExpr(E.Identifier{ .ref = temp_ref }, loc),
+                                    };
+                                    break :bindings G.Decl.List.init(decls);
+                                },
+                            }, loc);
+
+                            const length = if (data.body.data == .s_block) data.body.data.s_block.stmts.len else 1;
+                            const statements = p.allocator.alloc(Stmt, 1 + length) catch bun.outOfMemory();
+                            statements[0] = first;
+                            if (data.body.data == .s_block) {
+                                @memcpy(statements[1..], data.body.data.s_block.stmts);
+                            } else {
+                                statements[1] = data.body;
+                            }
+
+                            var ctx = try P.LowerUsingDeclarationsContext.init(p);
+                            ctx.scanStmts(p, statements);
+                            const visited_stmts = ctx.finalize(p, statements, p.will_wrap_module_in_try_catch_for_using and p.current_scope.parent == null);
+                            if (data.body.data == .s_block) {
+                                data.body.data.s_block.stmts = visited_stmts.items;
+                            } else {
+                                data.body = p.s(S.Block{
+                                    .stmts = visited_stmts.items,
+                                }, loc);
+                            }
+                            id.ref = temp_ref;
+                            init2.kind = .k_const;
                         }
                     }
                 },
@@ -21648,39 +21733,20 @@ fn NewParser_(
             p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
         }
 
-        const GenerateTempRefKind = enum {
-            needs_declare,
-            no_declare,
-            // This is used when the generated temporary may a) be used inside of a loop
-            // body and b) may be used inside of a closure. In that case we can't use
-            // "var" for the temporary and we can't declare the temporary at the top of
-            // the enclosing function. Instead, we need to use "let" and we need to
-            // declare the temporary in the enclosing block (so it's inside of the loop
-            // body).
-            needs_declare_may_be_captured_in_loop,
-        };
-
-        pub fn generateTempRef(p: *P, comptime declare_kind: GenerateTempRefKind, comptime default_name: ?string) Ref {
+        /// When not transpiling we dont use the renamer, so our solution is to generate really
+        /// hard to collide with variables, instead of actually making things collision free
+        pub fn generateTempRef(p: *P, default_name: ?string) Ref {
             var scope = p.current_scope;
-            if (declare_kind != .needs_declare_may_be_captured_in_loop) {
-                while (scope.kindStopsHoisting()) {
-                    scope = scope.parent.?;
-                }
-            }
 
-            const name = default_name orelse {
+            const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
-                @compileError("TODO: generateTempRef with null name");
+                break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();
             };
             const ref = p.newSymbol(.other, name) catch bun.outOfMemory();
 
-            if (declare_kind == .needs_declare_may_be_captured_in_loop and !scope.kindStopsHoisting()) {
-                @compileError("TODO: generateTempRef with needs_declare_may_be_captured_in_loop");
-            } else if (declare_kind != .no_declare) {
-                p.temp_refs_to_declare.append(p.allocator, .{
-                    .ref = ref,
-                });
-            }
+            p.temp_refs_to_declare.append(p.allocator, .{
+                .ref = ref,
+            }) catch bun.outOfMemory();
 
             scope.generated.append(p.allocator, &.{ref}) catch bun.outOfMemory();
 
@@ -21715,13 +21781,7 @@ fn NewParser_(
             pub fn init(p: *P) !LowerUsingDeclarationsContext {
                 return LowerUsingDeclarationsContext{
                     .first_using_loc = logger.Loc.Empty,
-                    .stack_ref = try p.newSymbol(.other, if (p.willUseRenamer())
-                        "__stack"
-                    else brk: {
-                        // TODO: this is stupid
-                        defer p.temp_ref_count += 1;
-                        break :brk std.fmt.allocPrint(p.allocator, "__stack__{d}", .{p.temp_ref_count}) catch bun.outOfMemory();
-                    }),
+                    .stack_ref = p.generateTempRef("__stack"),
                     .has_await_using = false,
                 };
             }
@@ -21829,9 +21889,9 @@ fn NewParser_(
                 // TODO(@paperdave): leak
                 const non_exported_statements = stmts[0..end];
 
-                const caught_ref = p.newSymbol(.other, "_catch") catch bun.outOfMemory();
-                const err_ref = p.newSymbol(.other, "_err") catch bun.outOfMemory();
-                const has_err_ref = p.newSymbol(.other, "_hasErr") catch bun.outOfMemory();
+                const caught_ref = p.generateTempRef("_catch");
+                const err_ref = p.generateTempRef("_err");
+                const has_err_ref = p.generateTempRef("_hasErr");
 
                 var scope = p.current_scope;
                 while (!scope.kindStopsHoisting()) {
@@ -21878,7 +21938,7 @@ fn NewParser_(
 
                 const finally_stmts = finally: {
                     if (ctx.has_await_using) {
-                        const promise_ref = p.generateTempRef(.no_declare, "_promise");
+                        const promise_ref = p.generateTempRef("_promise");
                         scope.generated.append(p.allocator, &.{promise_ref}) catch bun.outOfMemory();
                         p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = promise_ref });
 

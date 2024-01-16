@@ -99,10 +99,10 @@ function bound(obj) {
       process.platform === "win32"
         ? "Windows_NT"
         : process.platform === "darwin"
-        ? "Darwin"
-        : process.platform === "linux"
-        ? "Linux"
-        : process.platform,
+          ? "Darwin"
+          : process.platform === "linux"
+            ? "Linux"
+            : process.platform,
     uptime: obj.uptime.bind(obj),
     userInfo: obj.userInfo.bind(obj),
     version: obj.version.bind(obj),

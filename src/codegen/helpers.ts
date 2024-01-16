@@ -93,7 +93,7 @@ export function readdirRecursiveWithExclusionsAndExtensionsSync(
     return entry.isDirectory()
       ? readdirRecursiveWithExclusionsAndExtensionsSync(fullPath, exclusions, exts)
       : exts.includes(path.extname(fullPath))
-      ? fullPath
-      : [];
+        ? fullPath
+        : [];
   });
 }

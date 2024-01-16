@@ -175,9 +175,10 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 // do not allow the bundler to rename a symbol to $
 ($);
 
-$$capture_start$$(${fn.async ? "async " : ""}${useThis
-        ? `function(${fn.params.join(",")})`
-        : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
+$$capture_start$$(${fn.async ? "async " : ""}${
+        useThis
+          ? `function(${fn.params.join(",")})`
+          : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
       } {${fn.source}}).$$capture_end$$;
 `,
     );
@@ -201,11 +202,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${useThis
       (fn.directives.sloppy
         ? captured
         : captured.replace(
-          /function\s*\(.*?\)\s*{/,
-          '$&"use strict";' +
-          (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
-          (usesAssert ? createAssertClientJS(fn.name) : ""),
-        )
+            /function\s*\(.*?\)\s*{/,
+            '$&"use strict";' +
+              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+              (usesAssert ? createAssertClientJS(fn.name) : ""),
+          )
       )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@") + "\n";
@@ -289,11 +290,13 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
       const name = `${lowerBasename}${cap(fn.name)}Code`;
       bundledCPP += `// ${fn.name}
     const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
-    const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"
-        };
+    const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${
+      fn.directives.alwaysInline ? "Always" : "None"
+    };
     const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
-    const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility
-        };
+    const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${
+      fn.visibility
+    };
     const int s_${name}Length = ${fn.source.length};
     const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
     const char s_${name}Bytes[${count}] = ${code};
@@ -365,8 +368,8 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
       bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
         Zig::GlobalObject::GlobalPropertyInfo( \\
             clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(
-        basename,
-      )}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+              basename,
+            )}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
       #undef DECLARE_GLOBAL_STATIC
       `;

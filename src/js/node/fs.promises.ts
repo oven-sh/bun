@@ -133,7 +133,7 @@ class Dir {
     if (c) process.nextTick(c, null, this.readSync());
     return Promise.resolve(this.readSync());
   }
-  closeSync() { }
+  closeSync() {}
   close(c) {
     if (c) process.nextTick(c);
     return Promise.resolve();

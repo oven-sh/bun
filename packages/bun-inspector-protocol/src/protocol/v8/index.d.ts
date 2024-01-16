@@ -812,7 +812,8 @@ export namespace V8 {
       | "WarnSameSiteLaxCrossDowngradeLax"
       | "WarnAttributeValueExceedsMaxSize"
       | "WarnDomainNonASCII"
-      | "WarnThirdPartyPhaseout";
+      | "WarnThirdPartyPhaseout"
+      | "WarnCrossSiteRedirectDowngradeChangesInclusion";
     export type CookieOperation = "SetCookie" | "ReadCookie";
     /**
      * This information is currently necessary, as the front-end has a difficult
@@ -865,6 +866,7 @@ export namespace V8 {
       | "Script"
       | "ServiceWorker"
       | "SharedWorker"
+      | "SpeculationRules"
       | "Stylesheet"
       | "Track"
       | "Video"
@@ -1091,6 +1093,16 @@ export namespace V8 {
     export type BounceTrackingIssueDetails = {
       trackingSites: string[];
     };
+    /**
+     * This issue warns about third-party sites that are accessing cookies on the
+     * current page, and have been permitted due to having a global metadata grant.
+     * Note that in this context 'site' means eTLD+1. For example, if the URL
+     * `https://example.test:80/web_page` was accessing cookies, the site reported
+     * would be `example.test`.
+     */
+    export type CookieDeprecationMetadataIssueDetails = {
+      allowedSites: string[];
+    };
     export type ClientHintIssueReason = "MetaTagAllowListInvalidOrigin" | "MetaTagModifiedHTML";
     export type FederatedAuthRequestIssueDetails = {
       federatedAuthRequestIssueReason: FederatedAuthRequestIssueReason;
@@ -1130,6 +1142,8 @@ export namespace V8 {
       | "IdTokenHttpNotFound"
       | "IdTokenNoResponse"
       | "IdTokenInvalidResponse"
+      | "IdTokenIdpErrorResponse"
+      | "IdTokenCrossSiteIdpErrorResponse"
       | "IdTokenInvalidRequest"
       | "IdTokenInvalidContentType"
       | "ErrorIdToken"
@@ -1234,6 +1248,7 @@ export namespace V8 {
       | "ClientHintIssue"
       | "FederatedAuthRequestIssue"
       | "BounceTrackingIssue"
+      | "CookieDeprecationMetadataIssue"
       | "StylesheetLoadingIssue"
       | "FederatedAuthUserInfoRequestIssue"
       | "PropertyRuleIssue";
@@ -1259,6 +1274,7 @@ export namespace V8 {
       clientHintIssueDetails?: ClientHintIssueDetails | undefined;
       federatedAuthRequestIssueDetails?: FederatedAuthRequestIssueDetails | undefined;
       bounceTrackingIssueDetails?: BounceTrackingIssueDetails | undefined;
+      cookieDeprecationMetadataIssueDetails?: CookieDeprecationMetadataIssueDetails | undefined;
       stylesheetLoadingIssueDetails?: StylesheetLoadingIssueDetails | undefined;
       propertyRuleIssueDetails?: PropertyRuleIssueDetails | undefined;
       federatedAuthUserInfoRequestIssueDetails?: FederatedAuthUserInfoRequestIssueDetails | undefined;
@@ -1472,6 +1488,10 @@ export namespace V8 {
        * The filling strategy
        */
       fillingStrategy: FillingStrategy;
+      /**
+       * The form field's DOM node
+       */
+      fieldId: DOM.BackendNodeId;
     };
     /**
      * Emitted when an address form is filled.
@@ -1703,6 +1723,7 @@ export namespace V8 {
       | "audioCapture"
       | "backgroundSync"
       | "backgroundFetch"
+      | "capturedSurfaceControl"
       | "clipboardReadWrite"
       | "clipboardSanitizedWrite"
       | "displayCapture"
@@ -1729,7 +1750,7 @@ export namespace V8 {
     export type PermissionSetting = "granted" | "denied" | "prompt";
     /**
      * Definition of PermissionDescriptor defined in the Permissions API:
-     * https://w3c.github.io/permissions/#dictdef-permissiondescriptor.
+     * https://w3c.github.io/permissions/#dom-permissiondescriptor.
      */
     export type PermissionDescriptor = {
       /**
@@ -3083,6 +3104,10 @@ export namespace V8 {
        */
       familyName: string;
       /**
+       * Font's PostScript name reported by platform.
+       */
+      postScriptName: string;
+      /**
        * Indicates if the font was downloaded or resolved locally.
        */
       isCustomFont: boolean;
@@ -3213,6 +3238,28 @@ export namespace V8 {
       syntax: string;
     };
     /**
+     * CSS font-palette-values rule representation.
+     */
+    export type CSSFontPaletteValuesRule = {
+      /**
+       * The css style sheet identifier (absent for user agent stylesheet and user-specified
+       * stylesheet rules) this rule came from.
+       */
+      styleSheetId?: StyleSheetId | undefined;
+      /**
+       * Parent stylesheet's origin.
+       */
+      origin: StyleSheetOrigin;
+      /**
+       * Associated font palette name.
+       */
+      fontPaletteName: Value;
+      /**
+       * Associated style declaration.
+       */
+      style: CSSStyle;
+    };
+    /**
      * CSS property at-rule representation.
      */
     export type CSSPropertyRule = {
@@ -3335,6 +3382,12 @@ export namespace V8 {
        * Text position of a new rule in the target style sheet.
        */
       location: SourceRange;
+      /**
+       * NodeId for the DOM node in whose context custom property declarations for registered properties should be
+       * validated. If omitted, declarations in the new rule text can only be validated statically, which may produce
+       * incorrect results if the declaration contains a var() for example.
+       */
+      nodeForPropertySyntaxValidation?: DOM.NodeId | undefined;
     };
     /**
      * Inserts a new rule with the given `ruleText` in a stylesheet with given `styleSheetId`, at the
@@ -3552,6 +3605,10 @@ export namespace V8 {
        * A list of CSS property registrations matching this node.
        */
       cssPropertyRegistrations?: CSSPropertyRegistration[] | undefined;
+      /**
+       * A font-palette-values rule matching this node.
+       */
+      cssFontPaletteValuesRule?: CSSFontPaletteValuesRule | undefined;
       /**
        * Id of the first parent element that does not have display: contents.
        */
@@ -3838,6 +3895,12 @@ export namespace V8 {
      */
     export type SetStyleTextsRequest = {
       edits: StyleDeclarationEdit[];
+      /**
+       * NodeId for the DOM node in whose context custom property declarations for registered properties should be
+       * validated. If omitted, declarations in the new rule text can only be validated statically, which may produce
+       * incorrect results if the declaration contains a var() for example.
+       */
+      nodeForPropertySyntaxValidation?: DOM.NodeId | undefined;
     };
     /**
      * Applies specified style edits one after another in the given order.
@@ -6666,6 +6729,12 @@ export namespace V8 {
        */
       maskLength: number;
     };
+    export type DevicePosture = {
+      /**
+       * Current posture of the device
+       */
+      type: "continuous" | "folded";
+    };
     export type MediaFeature = {
       name: string;
       value: string;
@@ -6705,6 +6774,44 @@ export namespace V8 {
       mobile: boolean;
       bitness?: string | undefined;
       wow64?: boolean | undefined;
+    };
+    /**
+     * Used to specify sensor types to emulate.
+     * See https://w3c.github.io/sensors/#automation for more information.
+     */
+    export type SensorType =
+      | "absolute-orientation"
+      | "accelerometer"
+      | "ambient-light"
+      | "gravity"
+      | "gyroscope"
+      | "linear-acceleration"
+      | "magnetometer"
+      | "proximity"
+      | "relative-orientation";
+    export type SensorMetadata = {
+      available?: boolean | undefined;
+      minimumFrequency?: number | undefined;
+      maximumFrequency?: number | undefined;
+    };
+    export type SensorReadingSingle = {
+      value: number;
+    };
+    export type SensorReadingXYZ = {
+      x: number;
+      y: number;
+      z: number;
+    };
+    export type SensorReadingQuaternion = {
+      x: number;
+      y: number;
+      z: number;
+      w: number;
+    };
+    export type SensorReading = {
+      single?: SensorReadingSingle | undefined;
+      xyz?: SensorReadingXYZ | undefined;
+      quaternion?: SensorReadingQuaternion | undefined;
     };
     /**
      * Enum of image types that can be disabled.
@@ -6886,6 +6993,11 @@ export namespace V8 {
        * is turned-off.
        */
       displayFeature?: DisplayFeature | undefined;
+      /**
+       * If set, the posture of a foldable device. If not set the posture is set
+       * to continuous.
+       */
+      devicePosture?: DevicePosture | undefined;
     };
     /**
      * Overrides the values of device screen dimensions (window.screen.width, window.screen.height,
@@ -7010,6 +7122,57 @@ export namespace V8 {
      * @response `Emulation.setGeolocationOverride`
      */
     export type SetGeolocationOverrideResponse = {};
+    /**
+     * undefined
+     * @request `Emulation.getOverriddenSensorInformation`
+     */
+    export type GetOverriddenSensorInformationRequest = {
+      type: SensorType;
+    };
+    /**
+     * undefined
+     * @response `Emulation.getOverriddenSensorInformation`
+     */
+    export type GetOverriddenSensorInformationResponse = {
+      requestedSamplingFrequency: number;
+    };
+    /**
+     * Overrides a platform sensor of a given type. If |enabled| is true, calls to
+     * Sensor.start() will use a virtual sensor as backend rather than fetching
+     * data from a real hardware sensor. Otherwise, existing virtual
+     * sensor-backend Sensor objects will fire an error event and new calls to
+     * Sensor.start() will attempt to use a real sensor instead.
+     * @request `Emulation.setSensorOverrideEnabled`
+     */
+    export type SetSensorOverrideEnabledRequest = {
+      enabled: boolean;
+      type: SensorType;
+      metadata?: SensorMetadata | undefined;
+    };
+    /**
+     * Overrides a platform sensor of a given type. If |enabled| is true, calls to
+     * Sensor.start() will use a virtual sensor as backend rather than fetching
+     * data from a real hardware sensor. Otherwise, existing virtual
+     * sensor-backend Sensor objects will fire an error event and new calls to
+     * Sensor.start() will attempt to use a real sensor instead.
+     * @response `Emulation.setSensorOverrideEnabled`
+     */
+    export type SetSensorOverrideEnabledResponse = {};
+    /**
+     * Updates the sensor readings reported by a sensor type previously overriden
+     * by setSensorOverrideEnabled.
+     * @request `Emulation.setSensorOverrideReadings`
+     */
+    export type SetSensorOverrideReadingsRequest = {
+      type: SensorType;
+      reading: SensorReading;
+    };
+    /**
+     * Updates the sensor readings reported by a sensor type previously overriden
+     * by setSensorOverrideEnabled.
+     * @response `Emulation.setSensorOverrideReadings`
+     */
+    export type SetSensorOverrideReadingsResponse = {};
     /**
      * Overrides the Idle state.
      * @request `Emulation.setIdleOverride`
@@ -7231,7 +7394,7 @@ export namespace V8 {
        */
       userAgent: string;
       /**
-       * Browser langugage to emulate.
+       * Browser language to emulate.
        */
       acceptLanguage?: string | undefined;
       /**
@@ -7313,9 +7476,13 @@ export namespace V8 {
      */
     export type LoginState = "SignIn" | "SignUp";
     /**
-     * Whether the dialog shown is an account chooser or an auto re-authentication dialog.
+     * The types of FedCM dialogs.
      */
-    export type DialogType = "AccountChooser" | "AutoReauthn" | "ConfirmIdpLogin";
+    export type DialogType = "AccountChooser" | "AutoReauthn" | "ConfirmIdpLogin" | "Error";
+    /**
+     * The buttons on the FedCM dialog.
+     */
+    export type DialogButton = "ConfirmIdpLoginContinue" | "ErrorGotIt" | "ErrorMoreDetails";
     /**
      * Corresponds to IdentityRequestAccount
      */
@@ -7348,6 +7515,14 @@ export namespace V8 {
        */
       title: string;
       subtitle?: string | undefined;
+    };
+    /**
+     * Triggered when a dialog is closed, either by user action, JS abort,
+     * or a command below.
+     * @event `FedCm.dialogClosed`
+     */
+    export type DialogClosedEvent = {
+      dialogId: string;
     };
     /**
      * undefined
@@ -7390,19 +7565,18 @@ export namespace V8 {
      */
     export type SelectAccountResponse = {};
     /**
-     * Only valid if the dialog type is ConfirmIdpLogin. Acts as if the user had
-     * clicked the continue button.
-     * @request `FedCm.confirmIdpLogin`
+     * undefined
+     * @request `FedCm.clickDialogButton`
      */
-    export type ConfirmIdpLoginRequest = {
+    export type ClickDialogButtonRequest = {
       dialogId: string;
+      dialogButton: DialogButton;
     };
     /**
-     * Only valid if the dialog type is ConfirmIdpLogin. Acts as if the user had
-     * clicked the continue button.
-     * @response `FedCm.confirmIdpLogin`
+     * undefined
+     * @response `FedCm.clickDialogButton`
      */
-    export type ConfirmIdpLoginResponse = {};
+    export type ClickDialogButtonResponse = {};
     /**
      * undefined
      * @request `FedCm.dismissDialog`
@@ -9967,6 +10141,23 @@ export namespace V8 {
        */
       outlineColor?: DOM.RGBA | undefined;
     };
+    /**
+     * Configuration for Window Controls Overlay
+     */
+    export type WindowControlsOverlayConfig = {
+      /**
+       * Whether the title bar CSS should be shown when emulating the Window Controls Overlay.
+       */
+      showCSS: boolean;
+      /**
+       * Seleted platforms to show the overlay.
+       */
+      selectedPlatform: string;
+      /**
+       * The theme color defined in app manifest.
+       */
+      themeColor: string;
+    };
     export type ContainerQueryHighlightConfig = {
       /**
        * A descriptor for the highlight appearance of container query containers.
@@ -10564,6 +10755,21 @@ export namespace V8 {
      * @response `Overlay.setShowIsolatedElements`
      */
     export type SetShowIsolatedElementsResponse = {};
+    /**
+     * Show Window Controls Overlay for PWA
+     * @request `Overlay.setShowWindowControlsOverlay`
+     */
+    export type SetShowWindowControlsOverlayRequest = {
+      /**
+       * Window Controls Overlay data, null means hide Window Controls Overlay
+       */
+      windowControlsOverlayConfig?: WindowControlsOverlayConfig | undefined;
+    };
+    /**
+     * Show Window Controls Overlay for PWA
+     * @response `Overlay.setShowWindowControlsOverlay`
+     */
+    export type SetShowWindowControlsOverlayResponse = {};
   }
   export namespace Page {
     /**
@@ -10622,6 +10828,7 @@ export namespace V8 {
       | "bluetooth"
       | "browsing-topics"
       | "camera"
+      | "captured-surface-control"
       | "ch-dpr"
       | "ch-device-memory"
       | "ch-downlink"
@@ -10677,6 +10884,7 @@ export namespace V8 {
       | "private-aggregation"
       | "private-state-token-issuance"
       | "private-state-token-redemption"
+      | "publickey-credentials-create"
       | "publickey-credentials-get"
       | "run-ad-auction"
       | "screen-wake-lock"
@@ -10686,10 +10894,13 @@ export namespace V8 {
       | "shared-storage-select-url"
       | "smart-card"
       | "storage-access"
+      | "sub-apps"
       | "sync-xhr"
       | "unload"
       | "usb"
+      | "usb-unrestricted"
       | "vertical-scroll"
+      | "web-printing"
       | "web-share"
       | "window-management"
       | "window-placement"
@@ -11307,6 +11518,9 @@ export namespace V8 {
       | "WebRTCSticky"
       | "WebTransportSticky"
       | "WebSocketSticky"
+      | "SmartCard"
+      | "LiveMediaStreamTrack"
+      | "UnloadHandler"
       | "ContentSecurityHandler"
       | "ContentWebAuthenticationAPI"
       | "ContentFileChooser"
@@ -11336,6 +11550,24 @@ export namespace V8 {
      * Types of not restored reasons for back-forward cache.
      */
     export type BackForwardCacheNotRestoredReasonType = "SupportPending" | "PageSupportNeeded" | "Circumstantial";
+    export type BackForwardCacheBlockingDetails = {
+      /**
+       * Url of the file where blockage happened. Optional because of tests.
+       */
+      url?: string | undefined;
+      /**
+       * Function name where blockage happened. Optional because of anonymous functions and tests.
+       */
+      function?: string | undefined;
+      /**
+       * Line number in the script (0-based).
+       */
+      lineNumber: number;
+      /**
+       * Column number in the script (0-based).
+       */
+      columnNumber: number;
+    };
     export type BackForwardCacheNotRestoredExplanation = {
       /**
        * Type of the reason
@@ -11351,6 +11583,7 @@ export namespace V8 {
        * - EmbedderExtensionSentMessageToCachedFrame: the extension ID.
        */
       context?: string | undefined;
+      details?: BackForwardCacheBlockingDetails[] | undefined;
     };
     export type BackForwardCacheNotRestoredExplanationTree = {
       /**
@@ -12055,25 +12288,6 @@ export namespace V8 {
       adScriptId?: AdScriptId | undefined;
     };
     /**
-     * Returns all browser cookies for the page and all of its subframes. Depending
-     * on the backend support, will return detailed cookie information in the
-     * `cookies` field.
-     * @request `Page.getCookies`
-     */
-    export type GetCookiesRequest = {};
-    /**
-     * Returns all browser cookies for the page and all of its subframes. Depending
-     * on the backend support, will return detailed cookie information in the
-     * `cookies` field.
-     * @response `Page.getCookies`
-     */
-    export type GetCookiesResponse = {
-      /**
-       * Array of cookie objects.
-       */
-      cookies: Network.Cookie[];
-    };
-    /**
      * Returns present frame tree structure.
      * @request `Page.getFrameTree`
      */
@@ -12360,6 +12574,10 @@ export namespace V8 {
        * Whether or not to generate tagged (accessible) PDF. Defaults to embedder choice.
        */
       generateTaggedPDF?: boolean | undefined;
+      /**
+       * Whether or not to embed the document outline into the PDF.
+       */
+      generateDocumentOutline?: boolean | undefined;
     };
     /**
      * Print page as PDF.
@@ -13313,7 +13531,6 @@ export namespace V8 {
       | "MemoryPressureOnTrigger"
       | "MemoryPressureAfterTriggered"
       | "PrerenderingDisabledByDevTools"
-      | "ResourceLoadBlockedByClient"
       | "SpeculationRuleRemoved"
       | "ActivatedWithAuxiliaryBrowsingContexts"
       | "MaxNumOfRunningEagerPrerendersExceeded"
@@ -13339,7 +13556,8 @@ export namespace V8 {
       | "PrefetchFailedNetError"
       | "PrefetchFailedNon2XX"
       | "PrefetchFailedPerPageLimitExceeded"
-      | "PrefetchEvicted"
+      | "PrefetchEvictedAfterCandidateRemoved"
+      | "PrefetchEvictedForNewerPrefetch"
       | "PrefetchHeldback"
       | "PrefetchIneligibleRetryAfter"
       | "PrefetchIsPrivacyDecoy"
@@ -13362,6 +13580,14 @@ export namespace V8 {
       | "PrefetchResponseUsed"
       | "PrefetchSuccessfulButNotUsed"
       | "PrefetchNotUsedProbeFailed";
+    /**
+     * Information of headers to be displayed when the header mismatch occurred.
+     */
+    export type PrerenderMismatchedHeaders = {
+      headerName: string;
+      initialValue?: string | undefined;
+      activationValue?: string | undefined;
+    };
     /**
      * Upsert. Currently, it is only emitted when a rule set added.
      * @event `Preload.ruleSetUpdated`
@@ -13415,6 +13641,7 @@ export namespace V8 {
        * that is incompatible with prerender and has caused the cancellation of the attempt.
        */
       disallowedMojoInterface?: string | undefined;
+      mismatchedHeaders?: PrerenderMismatchedHeaders[] | undefined;
     };
     /**
      * Send a list of sources for all preloading attempts in a document.
@@ -13837,6 +14064,7 @@ export namespace V8 {
       scriptResponseTime?: number | undefined;
       controlledClients?: Target.TargetID[] | undefined;
       targetId?: Target.TargetID | undefined;
+      routerRules?: string | undefined;
     };
     /**
      * ServiceWorker error message.
@@ -14241,6 +14469,17 @@ export namespace V8 {
       key: string;
       values: string[];
     };
+    export type AttributionReportingFilterConfig = {
+      filterValues: AttributionReportingFilterDataEntry[];
+      /**
+       * duration in seconds
+       */
+      lookbackWindow?: number | undefined;
+    };
+    export type AttributionReportingFilterPair = {
+      filters: AttributionReportingFilterConfig[];
+      notFilters: AttributionReportingFilterConfig[];
+    };
     export type AttributionReportingAggregationKeysEntry = {
       key: string;
       value: UnsignedInt128AsBase16;
@@ -14255,13 +14494,22 @@ export namespace V8 {
        */
       ends: number[];
     };
+    export type AttributionReportingTriggerSpec = {
+      /**
+       * number instead of integer because not all uint32 can be represented by
+       * int
+       */
+      triggerData: number[];
+      eventReportWindows: AttributionReportingEventReportWindows;
+    };
+    export type AttributionReportingTriggerDataMatching = "exact" | "modulus";
     export type AttributionReportingSourceRegistration = {
       time: Network.TimeSinceEpoch;
       /**
        * duration in seconds
        */
       expiry: number;
-      eventReportWindows: AttributionReportingEventReportWindows;
+      triggerSpecs: AttributionReportingTriggerSpec[];
       /**
        * duration in seconds
        */
@@ -14275,6 +14523,7 @@ export namespace V8 {
       filterData: AttributionReportingFilterDataEntry[];
       aggregationKeys: AttributionReportingAggregationKeysEntry[];
       debugKey?: UnsignedInt64AsBase10 | undefined;
+      triggerDataMatching: AttributionReportingTriggerDataMatching;
     };
     export type AttributionReportingSourceRegistrationResult =
       | "success"
@@ -14289,6 +14538,77 @@ export namespace V8 {
       | "destinationBothLimitsReached"
       | "reportingOriginsPerSiteLimitReached"
       | "exceedsMaxChannelCapacity";
+    export type AttributionReportingSourceRegistrationTimeConfig = "include" | "exclude";
+    export type AttributionReportingAggregatableValueEntry = {
+      key: string;
+      /**
+       * number instead of integer because not all uint32 can be represented by
+       * int
+       */
+      value: number;
+    };
+    export type AttributionReportingEventTriggerData = {
+      data: UnsignedInt64AsBase10;
+      priority: SignedInt64AsBase10;
+      dedupKey?: UnsignedInt64AsBase10 | undefined;
+      filters: AttributionReportingFilterPair;
+    };
+    export type AttributionReportingAggregatableTriggerData = {
+      keyPiece: UnsignedInt128AsBase16;
+      sourceKeys: string[];
+      filters: AttributionReportingFilterPair;
+    };
+    export type AttributionReportingAggregatableDedupKey = {
+      dedupKey?: UnsignedInt64AsBase10 | undefined;
+      filters: AttributionReportingFilterPair;
+    };
+    export type AttributionReportingTriggerRegistration = {
+      filters: AttributionReportingFilterPair;
+      debugKey?: UnsignedInt64AsBase10 | undefined;
+      aggregatableDedupKeys: AttributionReportingAggregatableDedupKey[];
+      eventTriggerData: AttributionReportingEventTriggerData[];
+      aggregatableTriggerData: AttributionReportingAggregatableTriggerData[];
+      aggregatableValues: AttributionReportingAggregatableValueEntry[];
+      debugReporting: boolean;
+      aggregationCoordinatorOrigin?: string | undefined;
+      sourceRegistrationTimeConfig: AttributionReportingSourceRegistrationTimeConfig;
+      triggerContextId?: string | undefined;
+    };
+    export type AttributionReportingEventLevelResult =
+      | "success"
+      | "successDroppedLowerPriority"
+      | "internalError"
+      | "noCapacityForAttributionDestination"
+      | "noMatchingSources"
+      | "deduplicated"
+      | "excessiveAttributions"
+      | "priorityTooLow"
+      | "neverAttributedSource"
+      | "excessiveReportingOrigins"
+      | "noMatchingSourceFilterData"
+      | "prohibitedByBrowserPolicy"
+      | "noMatchingConfigurations"
+      | "excessiveReports"
+      | "falselyAttributedSource"
+      | "reportWindowPassed"
+      | "notRegistered"
+      | "reportWindowNotStarted"
+      | "noMatchingTriggerData";
+    export type AttributionReportingAggregatableResult =
+      | "success"
+      | "internalError"
+      | "noCapacityForAttributionDestination"
+      | "noMatchingSources"
+      | "excessiveAttributions"
+      | "excessiveReportingOrigins"
+      | "noHistograms"
+      | "insufficientBudget"
+      | "noMatchingSourceFilterData"
+      | "notRegistered"
+      | "prohibitedByBrowserPolicy"
+      | "deduplicated"
+      | "reportWindowPassed"
+      | "excessiveReports";
     /**
      * A cache's contents have been modified.
      * @event `Storage.cacheStorageContentUpdated`
@@ -14426,13 +14746,21 @@ export namespace V8 {
       bucketId: string;
     };
     /**
-     * TODO(crbug.com/1458532): Add other Attribution Reporting events, e.g.
-     * trigger registration.
+     * undefined
      * @event `Storage.attributionReportingSourceRegistered`
      */
     export type AttributionReportingSourceRegisteredEvent = {
       registration: AttributionReportingSourceRegistration;
       result: AttributionReportingSourceRegistrationResult;
+    };
+    /**
+     * undefined
+     * @event `Storage.attributionReportingTriggerRegistered`
+     */
+    export type AttributionReportingTriggerRegisteredEvent = {
+      registration: AttributionReportingTriggerRegistration;
+      eventLevel: AttributionReportingEventLevelResult;
+      aggregatable: AttributionReportingAggregatableResult;
     };
     /**
      * Returns a storage key given a frame id.
@@ -16297,6 +16625,18 @@ export namespace V8 {
        * Defaults to false.
        */
       isUserVerified?: boolean | undefined;
+      /**
+       * Credentials created by this authenticator will have the backup
+       * eligibility (BE) flag set to this value. Defaults to false.
+       * https://w3c.github.io/webauthn/#sctn-credential-backup
+       */
+      defaultBackupEligibility?: boolean | undefined;
+      /**
+       * Credentials created by this authenticator will have the backup state
+       * (BS) flag set to this value. Defaults to false.
+       * https://w3c.github.io/webauthn/#sctn-credential-backup
+       */
+      defaultBackupState?: boolean | undefined;
     };
     export type Credential = {
       credentialId: string;
@@ -16569,6 +16909,7 @@ export namespace V8 {
     "DOMStorage.domStorageItemsCleared": DOMStorage.DomStorageItemsClearedEvent;
     "Emulation.virtualTimeBudgetExpired": Emulation.VirtualTimeBudgetExpiredEvent;
     "FedCm.dialogShown": FedCm.DialogShownEvent;
+    "FedCm.dialogClosed": FedCm.DialogClosedEvent;
     "Fetch.requestPaused": Fetch.RequestPausedEvent;
     "Fetch.authRequired": Fetch.AuthRequiredEvent;
     "Input.dragIntercepted": Input.DragInterceptedEvent;
@@ -16633,6 +16974,7 @@ export namespace V8 {
     "Storage.storageBucketCreatedOrUpdated": Storage.StorageBucketCreatedOrUpdatedEvent;
     "Storage.storageBucketDeleted": Storage.StorageBucketDeletedEvent;
     "Storage.attributionReportingSourceRegistered": Storage.AttributionReportingSourceRegisteredEvent;
+    "Storage.attributionReportingTriggerRegistered": Storage.AttributionReportingTriggerRegisteredEvent;
     "Target.attachedToTarget": Target.AttachedToTargetEvent;
     "Target.detachedFromTarget": Target.DetachedFromTargetEvent;
     "Target.receivedMessageFromTarget": Target.ReceivedMessageFromTargetEvent;
@@ -16845,6 +17187,9 @@ export namespace V8 {
     "Emulation.setEmulatedMedia": Emulation.SetEmulatedMediaRequest;
     "Emulation.setEmulatedVisionDeficiency": Emulation.SetEmulatedVisionDeficiencyRequest;
     "Emulation.setGeolocationOverride": Emulation.SetGeolocationOverrideRequest;
+    "Emulation.getOverriddenSensorInformation": Emulation.GetOverriddenSensorInformationRequest;
+    "Emulation.setSensorOverrideEnabled": Emulation.SetSensorOverrideEnabledRequest;
+    "Emulation.setSensorOverrideReadings": Emulation.SetSensorOverrideReadingsRequest;
     "Emulation.setIdleOverride": Emulation.SetIdleOverrideRequest;
     "Emulation.clearIdleOverride": Emulation.ClearIdleOverrideRequest;
     "Emulation.setNavigatorOverrides": Emulation.SetNavigatorOverridesRequest;
@@ -16865,7 +17210,7 @@ export namespace V8 {
     "FedCm.enable": FedCm.EnableRequest;
     "FedCm.disable": FedCm.DisableRequest;
     "FedCm.selectAccount": FedCm.SelectAccountRequest;
-    "FedCm.confirmIdpLogin": FedCm.ConfirmIdpLoginRequest;
+    "FedCm.clickDialogButton": FedCm.ClickDialogButtonRequest;
     "FedCm.dismissDialog": FedCm.DismissDialogRequest;
     "FedCm.resetCooldown": FedCm.ResetCooldownRequest;
     "Fetch.disable": Fetch.DisableRequest;
@@ -16949,6 +17294,7 @@ export namespace V8 {
     "Overlay.setShowViewportSizeOnResize": Overlay.SetShowViewportSizeOnResizeRequest;
     "Overlay.setShowHinge": Overlay.SetShowHingeRequest;
     "Overlay.setShowIsolatedElements": Overlay.SetShowIsolatedElementsRequest;
+    "Overlay.setShowWindowControlsOverlay": Overlay.SetShowWindowControlsOverlayRequest;
     "Page.addScriptToEvaluateOnLoad": Page.AddScriptToEvaluateOnLoadRequest;
     "Page.addScriptToEvaluateOnNewDocument": Page.AddScriptToEvaluateOnNewDocumentRequest;
     "Page.bringToFront": Page.BringToFrontRequest;
@@ -16966,7 +17312,6 @@ export namespace V8 {
     "Page.getManifestIcons": Page.GetManifestIconsRequest;
     "Page.getAppId": Page.GetAppIdRequest;
     "Page.getAdScriptId": Page.GetAdScriptIdRequest;
-    "Page.getCookies": Page.GetCookiesRequest;
     "Page.getFrameTree": Page.GetFrameTreeRequest;
     "Page.getLayoutMetrics": Page.GetLayoutMetricsRequest;
     "Page.getNavigationHistory": Page.GetNavigationHistoryRequest;
@@ -17296,6 +17641,9 @@ export namespace V8 {
     "Emulation.setEmulatedMedia": Emulation.SetEmulatedMediaResponse;
     "Emulation.setEmulatedVisionDeficiency": Emulation.SetEmulatedVisionDeficiencyResponse;
     "Emulation.setGeolocationOverride": Emulation.SetGeolocationOverrideResponse;
+    "Emulation.getOverriddenSensorInformation": Emulation.GetOverriddenSensorInformationResponse;
+    "Emulation.setSensorOverrideEnabled": Emulation.SetSensorOverrideEnabledResponse;
+    "Emulation.setSensorOverrideReadings": Emulation.SetSensorOverrideReadingsResponse;
     "Emulation.setIdleOverride": Emulation.SetIdleOverrideResponse;
     "Emulation.clearIdleOverride": Emulation.ClearIdleOverrideResponse;
     "Emulation.setNavigatorOverrides": Emulation.SetNavigatorOverridesResponse;
@@ -17316,7 +17664,7 @@ export namespace V8 {
     "FedCm.enable": FedCm.EnableResponse;
     "FedCm.disable": FedCm.DisableResponse;
     "FedCm.selectAccount": FedCm.SelectAccountResponse;
-    "FedCm.confirmIdpLogin": FedCm.ConfirmIdpLoginResponse;
+    "FedCm.clickDialogButton": FedCm.ClickDialogButtonResponse;
     "FedCm.dismissDialog": FedCm.DismissDialogResponse;
     "FedCm.resetCooldown": FedCm.ResetCooldownResponse;
     "Fetch.disable": Fetch.DisableResponse;
@@ -17400,6 +17748,7 @@ export namespace V8 {
     "Overlay.setShowViewportSizeOnResize": Overlay.SetShowViewportSizeOnResizeResponse;
     "Overlay.setShowHinge": Overlay.SetShowHingeResponse;
     "Overlay.setShowIsolatedElements": Overlay.SetShowIsolatedElementsResponse;
+    "Overlay.setShowWindowControlsOverlay": Overlay.SetShowWindowControlsOverlayResponse;
     "Page.addScriptToEvaluateOnLoad": Page.AddScriptToEvaluateOnLoadResponse;
     "Page.addScriptToEvaluateOnNewDocument": Page.AddScriptToEvaluateOnNewDocumentResponse;
     "Page.bringToFront": Page.BringToFrontResponse;
@@ -17417,7 +17766,6 @@ export namespace V8 {
     "Page.getManifestIcons": Page.GetManifestIconsResponse;
     "Page.getAppId": Page.GetAppIdResponse;
     "Page.getAdScriptId": Page.GetAdScriptIdResponse;
-    "Page.getCookies": Page.GetCookiesResponse;
     "Page.getFrameTree": Page.GetFrameTreeResponse;
     "Page.getLayoutMetrics": Page.GetLayoutMetricsResponse;
     "Page.getNavigationHistory": Page.GetNavigationHistoryResponse;

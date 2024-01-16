@@ -598,7 +598,8 @@ ReadStream = (function (InternalReadStream) {
       var { stream: ptr } = native;
 
       super(ptr, {
-        ...options,
+        // Deconstruct only if options is an object
+        ...(typeof options === "object" ? options : {}),
         encoding,
         autoDestroy,
         autoClose,

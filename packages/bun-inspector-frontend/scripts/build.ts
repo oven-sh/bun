@@ -3,11 +3,11 @@ import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from "fs";
 import { join } from "path";
 
 try {
-  const basePath = join(import.meta.dir, "../../src/bun.js/WebKit/Source/WebInspectorUI/UserInterface");
+  const basePath = join(import.meta.dir, "../../../src/bun.js/WebKit/Source/WebInspectorUI/UserInterface");
   const htmlPath = join(basePath, "Main.html");
   const backendCommands = join(
     import.meta.dir,
-    "../../src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/DerivedSources/inspector/InspectorBackendCommands.js",
+    "../../../src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/DerivedSources/inspector/InspectorBackendCommands.js",
   );
   const scriptsToBundle = [];
   const stylesToBundle = [];

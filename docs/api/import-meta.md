@@ -23,6 +23,11 @@ import.meta.resolveSync("zod")
 
 ---
 
+- `import.meta.dirname`
+- An alias to `import.meta.dir`, for Node.js compatibility
+
+---
+
 - `import.meta.file`
 - The name of the current file, e.g. `index.tsx`
 
@@ -30,6 +35,16 @@ import.meta.resolveSync("zod")
 
 - `import.meta.path`
 - Absolute path to the current file, e.g. `/path/to/project/index.tx`. Equivalent to `__filename` in CommonJS modules (and Node.js)
+
+---
+
+- `import.meta.filename`
+- An alias to `import.meta.path`, for Node.js compatibility
+
+---
+
+- `import.meta.url`
+- A string url to the current file, e.g. `file:///path/to/project/index.tx`
 
 ---
 

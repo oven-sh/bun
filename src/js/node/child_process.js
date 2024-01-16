@@ -356,41 +356,41 @@ function execFile(file, args, options, callback) {
             ArrayPrototypePush.$call(_stdout, chunk);
           }
         : encoding
-        ? function onChildStdoutEncoded(chunk) {
-            stdoutLen += chunk.length;
+          ? function onChildStdoutEncoded(chunk) {
+              stdoutLen += chunk.length;
 
-            if (stdoutLen * 4 > maxBuffer) {
-              const encoding = child.stdout.readableEncoding;
-              const actualLen = Buffer.byteLength(chunk, encoding);
-              if (encodedStdoutLen === undefined) {
-                for (let i = 0; i < _stdout.length; i++) {
-                  encodedStdoutLen += Buffer.byteLength(_stdout[i], encoding);
+              if (stdoutLen * 4 > maxBuffer) {
+                const encoding = child.stdout.readableEncoding;
+                const actualLen = Buffer.byteLength(chunk, encoding);
+                if (encodedStdoutLen === undefined) {
+                  for (let i = 0; i < _stdout.length; i++) {
+                    encodedStdoutLen += Buffer.byteLength(_stdout[i], encoding);
+                  }
+                } else {
+                  encodedStdoutLen += actualLen;
                 }
+                const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
+                ArrayPrototypePush.$call(_stdout, StringPrototypeSlice.$apply(chunk, 0, truncatedLen));
+
+                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
+                kill();
               } else {
-                encodedStdoutLen += actualLen;
+                ArrayPrototypePush.$call(_stdout, chunk);
               }
-              const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
-              ArrayPrototypePush.$call(_stdout, StringPrototypeSlice.$apply(chunk, 0, truncatedLen));
-
-              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-              kill();
-            } else {
-              ArrayPrototypePush.$call(_stdout, chunk);
             }
-          }
-        : function onChildStdoutRaw(chunk) {
-            stdoutLen += chunk.length;
+          : function onChildStdoutRaw(chunk) {
+              stdoutLen += chunk.length;
 
-            if (stdoutLen > maxBuffer) {
-              const truncatedLen = maxBuffer - (stdoutLen - chunk.length);
-              ArrayPrototypePush.$call(_stdout, chunk.slice(0, truncatedLen));
+              if (stdoutLen > maxBuffer) {
+                const truncatedLen = maxBuffer - (stdoutLen - chunk.length);
+                ArrayPrototypePush.$call(_stdout, chunk.slice(0, truncatedLen));
 
-              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
-              kill();
-            } else {
-              ArrayPrototypePush.$call(_stdout, chunk);
-            }
-          },
+                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
+                kill();
+              } else {
+                ArrayPrototypePush.$call(_stdout, chunk);
+              }
+            },
     );
   }
 
@@ -404,41 +404,41 @@ function execFile(file, args, options, callback) {
             ArrayPrototypePush.$call(_stderr, chunk);
           }
         : encoding
-        ? function onChildStderrEncoded(chunk) {
-            stderrLen += chunk.length;
+          ? function onChildStderrEncoded(chunk) {
+              stderrLen += chunk.length;
 
-            if (stderrLen * 4 > maxBuffer) {
-              const encoding = child.stderr.readableEncoding;
-              const actualLen = Buffer.byteLength(chunk, encoding);
-              if (encodedStderrLen === undefined) {
-                for (let i = 0; i < _stderr.length; i++) {
-                  encodedStderrLen += Buffer.byteLength(_stderr[i], encoding);
+              if (stderrLen * 4 > maxBuffer) {
+                const encoding = child.stderr.readableEncoding;
+                const actualLen = Buffer.byteLength(chunk, encoding);
+                if (encodedStderrLen === undefined) {
+                  for (let i = 0; i < _stderr.length; i++) {
+                    encodedStderrLen += Buffer.byteLength(_stderr[i], encoding);
+                  }
+                } else {
+                  encodedStderrLen += actualLen;
                 }
+                const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
+                ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
+
+                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
+                kill();
               } else {
-                encodedStderrLen += actualLen;
+                ArrayPrototypePush.$call(_stderr, chunk);
               }
-              const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
-              ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
-
-              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-              kill();
-            } else {
-              ArrayPrototypePush.$call(_stderr, chunk);
             }
-          }
-        : function onChildStderrRaw(chunk) {
-            stderrLen += chunk.length;
+          : function onChildStderrRaw(chunk) {
+              stderrLen += chunk.length;
 
-            if (stderrLen > maxBuffer) {
-              const truncatedLen = maxBuffer - (stderrLen - chunk.length);
-              ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
+              if (stderrLen > maxBuffer) {
+                const truncatedLen = maxBuffer - (stderrLen - chunk.length);
+                ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
 
-              ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
-              kill();
-            } else {
-              ArrayPrototypePush.$call(_stderr, chunk);
-            }
-          },
+                ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
+                kill();
+              } else {
+                ArrayPrototypePush.$call(_stderr, chunk);
+              }
+            },
     );
   }
 

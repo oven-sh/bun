@@ -1013,10 +1013,10 @@ class _Writable extends EventEmitter {
       typeof arg1 === "function"
         ? arg1
         : typeof arg2 === "function"
-        ? arg2
-        : typeof arg3 === "function"
-        ? arg3
-        : void 0;
+          ? arg2
+          : typeof arg3 === "function"
+            ? arg3
+            : void 0;
     if (this.writableEnded) {
       if (callback) {
         callback();
@@ -5038,10 +5038,10 @@ const _globalThis =
   typeof globalThis !== "undefined"
     ? globalThis
     : typeof self !== "undefined"
-    ? self
-    : typeof global !== "undefined"
-    ? global
-    : {};
+      ? self
+      : typeof global !== "undefined"
+        ? global
+        : {};
 const globalKey = "__unctx__";
 const defaultNamespace = _globalThis[globalKey] || (_globalThis[globalKey] = createNamespace());
 const getContext = (key, opts = {}) => defaultNamespace.get(key, opts);

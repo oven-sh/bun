@@ -234,10 +234,10 @@ describe("tcp socket binaryType", () => {
                 (type === "arraybuffer"
                   ? ArrayBuffer
                   : type === "uint8array"
-                  ? Uint8Array
-                  : type === "buffer"
-                  ? Buffer
-                  : Error),
+                    ? Uint8Array
+                    : type === "buffer"
+                      ? Buffer
+                      : Error),
             ).toBe(true);
             const msg = `${socket.data.isServer ? "server:" : "client:"} Hello World! ${socket.data.counter++}`;
             socket.data.sendQueue.push(msg);

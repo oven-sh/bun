@@ -1042,20 +1042,20 @@ var require_utils = __commonJS({
                   : stream.writableErrored) !== null && _ref4 !== void 0
                 ? _ref4
                 : (_stream$_readableStat3 = stream._readableState) === null || _stream$_readableStat3 === void 0
-                ? void 0
-                : _stream$_readableStat3.errorEmitted) !== null && _ref3 !== void 0
+                  ? void 0
+                  : _stream$_readableStat3.errorEmitted) !== null && _ref3 !== void 0
               ? _ref3
               : (_stream$_writableStat3 = stream._writableState) === null || _stream$_writableStat3 === void 0
-              ? void 0
-              : _stream$_writableStat3.errorEmitted) !== null && _ref2 !== void 0
+                ? void 0
+                : _stream$_writableStat3.errorEmitted) !== null && _ref2 !== void 0
             ? _ref2
             : (_stream$_readableStat4 = stream._readableState) === null || _stream$_readableStat4 === void 0
-            ? void 0
-            : _stream$_readableStat4.errored) !== null && _ref !== void 0
+              ? void 0
+              : _stream$_readableStat4.errored) !== null && _ref !== void 0
           ? _ref
           : (_stream$_writableStat4 = stream._writableState) === null || _stream$_writableStat4 === void 0
-          ? void 0
-          : _stream$_writableStat4.errored)
+            ? void 0
+            : _stream$_writableStat4.errored)
       );
     }
     module.exports = {
@@ -1357,8 +1357,8 @@ var require_operators = __commonJS({
         options === null || options === void 0
           ? void 0
           : (_options$signal2 = options.signal) === null || _options$signal2 === void 0
-          ? void 0
-          : _options$signal2.addEventListener("abort", abort);
+            ? void 0
+            : _options$signal2.addEventListener("abort", abort);
         let next;
         let resume;
         let done = false;
@@ -1412,8 +1412,8 @@ var require_operators = __commonJS({
             options === null || options === void 0
               ? void 0
               : (_options$signal3 = options.signal) === null || _options$signal3 === void 0
-              ? void 0
-              : _options$signal3.removeEventListener("abort", abort);
+                ? void 0
+                : _options$signal3.removeEventListener("abort", abort);
           }
         }
         pump();

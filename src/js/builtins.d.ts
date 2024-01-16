@@ -465,8 +465,8 @@ type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReaction
 type PromiseFieldToValue<X extends PromiseFieldType, V> = X extends typeof $promiseFieldFlags
   ? number
   : X extends typeof $promiseFieldReactionsOrResult
-  ? V | any
-  : any;
+    ? V | any
+    : any;
 type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals

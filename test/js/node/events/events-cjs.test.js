@@ -76,8 +76,11 @@ test("events.on with AbortController", () => {
 test("readline.createInterface", async () => {
   const { createInterface } = require("node:readline");
   const { createReadStream } = require("node:fs");
+  const path = require("node:path");
 
-  const interfaced = createInterface(createReadStream("js/node/child_process/fixtures/child-process-echo-options.js"));
+  const fpath = path.join(__filename, "..", "..", "child_process", "fixtures", "child-process-echo-options.js");
+  console.log(fpath);
+  const interfaced = createInterface(createReadStream(fpath));
   const output = [];
 
   try {

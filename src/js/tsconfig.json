@@ -8,6 +8,7 @@
     "emitDeclarationOnly": false,
     "paths": {
       "$shared": ["./internal/shared.ts"], //deprecated
+      "$fixed_queue": ["./internal/fixed_queue.ts"], //deprecated
       "internal/*": ["./internal/*"] //deprecated
     }
   },

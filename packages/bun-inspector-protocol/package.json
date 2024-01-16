@@ -1,7 +1,11 @@
 {
+  "private": true,
   "name": "bun-inspector-protocol",
   "version": "0.0.1",
-  "dependencies": {
-    "ws": "^8.13.0"
+  "peerDependencies": {
+    "ws": "^8.16.0"
+  },
+  "scripts": {
+    "generate-protocol": "bun scripts/generate-protocol.ts"
   }
 }

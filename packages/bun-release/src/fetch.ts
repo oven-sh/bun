@@ -1,4 +1,4 @@
-import { debug, isDebug } from "./console";
+import { debug } from "./console";
 
 export const fetch = "fetch" in globalThis ? webFetch : nodeFetch;
 
@@ -6,7 +6,7 @@ type Options = RequestInit & { assert?: boolean };
 
 async function webFetch(url: string, options: Options = {}): Promise<Response> {
   debug("fetch request", url, options);
-  const response = await globalThis.fetch(url, options, { verbose: isDebug });
+  const response = await globalThis.fetch(url, options);
   debug("fetch response", response);
   if (options?.assert !== false && !isOk(response.status)) {
     try {

@@ -1,6 +1,6 @@
 {
-  "name": "bun-release-action",
   "private": true,
+  "name": "bun-release",
   "dependencies": {
     "aws4fetch": "^1.0.17",
     "esbuild": "^0.17.3",
@@ -8,12 +8,9 @@
     "octokit": "^2.0.14"
   },
   "devDependencies": {
-    "@octokit/types": "^8.1.1",
-    "bun-types": "^0.4.0",
-    "prettier": "^2.8.2"
+    "@octokit/types": "^8.1.1"
   },
   "scripts": {
-    "format": "prettier --write src scripts",
     "get-version": "bun scripts/get-version.ts",
     "upload-npm": "bun scripts/upload-npm.ts",
     "upload-assets": "bun scripts/upload-assets.ts",

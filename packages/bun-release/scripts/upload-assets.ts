@@ -24,12 +24,12 @@ for (const { name, browser_download_url } of assets) {
   }
   const response = await fetch(browser_download_url);
   const buffer = Buffer.from(await response.arrayBuffer());
-  existing.set(name, await hash(buffer));
+  existing.set(name, hash(buffer));
 }
 const updated: Map<string, string> = new Map();
 for (const path of paths) {
   const name = basename(path);
-  updated.set(name, await hash(path));
+  updated.set(name, hash(path));
 }
 log(
   "Unchanged hashes:\n",

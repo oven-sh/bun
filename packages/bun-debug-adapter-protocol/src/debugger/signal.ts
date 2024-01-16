@@ -16,7 +16,7 @@ export type UnixSignalEventMap = {
 /**
  * Starts a server that listens for signals on a UNIX domain socket.
  */
-export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
+export class UnixSignal extends EventEmitter {
   #path: string;
   #server: Server;
   #ready: Promise<void>;
@@ -79,7 +79,7 @@ function parseUnixPath(path: string | URL): string {
     return path;
   }
   try {
-    const { pathname } = new URL(path);
+    const { pathname } = new URL(`${path}`);
     return pathname;
   } catch {
     throw new Error(`Invalid UNIX path: ${path}`);

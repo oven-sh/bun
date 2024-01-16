@@ -90,7 +90,7 @@ function injectDebugTerminal(terminal: vscode.Terminal): void {
   }
 
   const { env } = creationOptions as vscode.TerminalOptions;
-  if (env["BUN_INSPECT"]) {
+  if (env?.["BUN_INSPECT"]) {
     return;
   }
 

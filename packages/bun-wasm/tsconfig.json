@@ -1,23 +1,9 @@
 {
-  "compilerOptions": {
-    "moduleResolution": "node",
-    "target": "esnext",
-    "module": "esnext",
-    "declaration": true,
-    "esModuleInterop": true,
-    "isolatedModules": false,
-    "skipLibCheck": true,
-    "emitDeclarationOnly": true,
-    "strict": true,
-    "outDir": ".",
-    "baseUrl": ".",
-    "types": ["node"]
-  },
+  "extends": "../../tsconfig.base.json",
   "include": [
     "./node_modules/peechy",
     "./schema.d.ts",
     "./index.ts",
     "./schema.js"
   ],
-  "exclude": []
 }

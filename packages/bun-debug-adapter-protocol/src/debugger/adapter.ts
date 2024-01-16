@@ -1,11 +1,11 @@
 import type { DAP } from "../protocol";
-import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
-import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector";
-// @ts-ignore
-import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
+import type { JSC } from "../../../bun-inspector-protocol";
+import type { InspectorEventMap } from "../../../bun-inspector-protocol";
+import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol";
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { Location, SourceMap } from "./sourcemap";
+import type { Location } from "./sourcemap";
+import { SourceMap } from "./sourcemap";
 import { EventEmitter } from "node:events";
 import { UnixSignal, randomUnixPath } from "./signal";
 
@@ -99,7 +99,7 @@ type LaunchRequest = DAP.LaunchRequest & {
   program?: string;
   args?: string[];
   cwd?: string;
-  env?: Record<string, string>;
+  env?: NodeJS.ProcessEnv;
   strictEnv?: boolean;
   stopOnEntry?: boolean;
   noDebug?: boolean;
@@ -197,7 +197,7 @@ const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
 
 let threadId = 1;
 
-export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
+export class DebugAdapter extends EventEmitter implements IDebugAdapter {
   #threadId: number;
   #inspector: WebSocketInspector;
   #process?: ChildProcess;
@@ -224,7 +224,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#inspector.emit = (event, ...args) => {
       let sent = false;
       sent ||= emit(event, ...args);
-      sent ||= this.emit(event, ...(args as any));
+      sent ||= this.emit(event as any, ...(args as any));
       return sent;
     };
     this.#sourceId = 1;
@@ -456,7 +456,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       program,
       args = [],
       cwd,
-      env = {},
+      env = {} as NodeJS.ProcessEnv,
       strictEnv = false,
       watchMode = false,
       stopOnEntry = false,
@@ -526,7 +526,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     command: string;
     args?: string[];
     cwd?: string;
-    env?: Record<string, string | undefined>;
+    env?: NodeJS.ProcessEnv;
     isDebugee?: boolean;
   }): Promise<boolean> {
     const { command, args = [], cwd, env, isDebugee } = options;

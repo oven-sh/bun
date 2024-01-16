@@ -1,7 +1,6 @@
 // Accelerate VLQ decoding with a lookup table
 const vlqTable = new Uint8Array(128);
-const vlqChars =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const vlqChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 vlqTable.fill(0xff);
 for (let i = 0; i < vlqChars.length; i++) vlqTable[vlqChars.charCodeAt(i)] = i;
 
@@ -10,10 +9,7 @@ export function parseSourceMap(json) {
     throw new Error("Invalid source map");
   }
 
-  if (
-    !(json.sources instanceof Array) ||
-    json.sources.some((x) => typeof x !== "string")
-  ) {
+  if (!(json.sources instanceof Array) || json.sources.some(x => typeof x !== "string")) {
     throw new Error("Invalid source map");
   }
 
@@ -147,8 +143,7 @@ export function decodeMappings(mappings, sourcesCount) {
         // Read the original source
         const originalSourceDelta = decodeVLQ();
         originalSource += originalSourceDelta;
-        if (originalSource < 0 || originalSource >= sourcesCount)
-          decodeError("Invalid original source");
+        if (originalSource < 0 || originalSource >= sourcesCount) decodeError("Invalid original source");
 
         // Read the original line
         const originalLineDelta = decodeVLQ();
@@ -211,11 +206,7 @@ export function decodeMappings(mappings, sourcesCount) {
   return data.subarray(0, dataLength);
 }
 
-export function remapPosition(
-  decodedMappings: Int32Array,
-  line: number,
-  column: number,
-) {
+export function remapPosition(decodedMappings: Int32Array, line: number, column: number) {
   if (!(decodedMappings instanceof Int32Array)) {
     throw new Error("decodedMappings must be an Int32Array");
   }
@@ -231,7 +222,7 @@ export function remapPosition(
   if (decodedMappings.length === 0 || line < 0 || column < 0) return null;
 
   const index = indexOfMapping(decodedMappings, line, column);
-  if (index === -1) return null;
+  if (index === null || index === -1) return null;
 
   return [decodedMappings[index + 3] + 1, decodedMappings[index + 4]];
 }
@@ -260,7 +251,7 @@ export function fetchMappings(file, signal) {
     return sourceMappings.get(file);
   }
 
-  return fetchRemoteSourceMap(file, signal).then((json) => {
+  return fetchRemoteSourceMap(file, signal).then(json => {
     if (!json) return null;
     const { data } = parseSourceMap(json);
     sourceMappings.set(file, data);
@@ -282,14 +273,14 @@ export function fetchAllMappings(files, signal) {
   for (const [file, indices] of [...map.entries()]) {
     const mapped = fetchMappings(file, signal);
     if (mapped?.then) {
-      var resolvers = [];
+      var resolvers: ((resolve: unknown) => void)[] = [];
       for (let i = 0; i < indices.length; i++) {
         results[indices[i]] = new Promise((resolve, reject) => {
-          resolvers[i] = (res) => resolve(res ? [res, i] : null);
+          resolvers[i] = res => resolve(res ? [res, i] : null);
         });
       }
 
-      mapped.finally((a) => {
+      mapped.finally(a => {
         for (let resolve of resolvers) {
           try {
             resolve(a);
@@ -298,7 +289,7 @@ export function fetchAllMappings(files, signal) {
           }
         }
         resolvers.length = 0;
-        resolvers = null;
+        resolvers = null!;
       });
     } else {
       for (let i = 0; i < indices.length; i++) {
@@ -320,10 +311,7 @@ function indexOfMapping(mappings: Int32Array, line: number, column: number) {
     var i = index + step;
     // this multiply is slow but it's okay for now
     var j = i * 6;
-    if (
-      mappings[j] < line ||
-      (mappings[j] == line && mappings[j + 1] <= column)
-    ) {
+    if (mappings[j] < line || (mappings[j] == line && mappings[j + 1] <= column)) {
       index = i + 1;
       count -= step + 1;
     } else {

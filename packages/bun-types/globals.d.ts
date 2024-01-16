@@ -66,14 +66,8 @@ declare var ReadableStream: typeof globalThis extends {
   ? T
   : {
       prototype: ReadableStream;
-      new <R = any>(
-        underlyingSource?: Bun.UnderlyingSource<R>,
-        strategy?: QueuingStrategy<R>,
-      ): ReadableStream<R>;
-      new <R = any>(
-        underlyingSource?: Bun.DirectUnderlyingSource<R>,
-        strategy?: QueuingStrategy<R>,
-      ): ReadableStream<R>;
+      new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+      new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     };
 
 interface WritableStream<W = any> extends Bun._WritableStream<W> {}
@@ -84,10 +78,7 @@ declare var WritableStream: typeof globalThis extends {
   ? T
   : {
       prototype: WritableStream;
-      new <W = any>(
-        underlyingSink?: Bun.UnderlyingSink<W>,
-        strategy?: QueuingStrategy<W>,
-      ): WritableStream<W>;
+      new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
     };
 
 declare namespace Bun {
@@ -106,43 +97,23 @@ declare namespace Bun {
     | "win32"
     | "cygwin"
     | "netbsd";
-  type Architecture =
-    | "arm"
-    | "arm64"
-    | "ia32"
-    | "mips"
-    | "mipsel"
-    | "ppc"
-    | "ppc64"
-    | "s390"
-    | "s390x"
-    | "x64";
+  type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
   type MultipleResolveType = "resolve" | "reject";
   type BeforeExitListener = (code: number) => void;
   type DisconnectListener = () => void;
   type ExitListener = (code: number) => void;
   type RejectionHandledListener = (promise: Promise<unknown>) => void;
-  type UncaughtExceptionListener = (
-    error: Error,
-    origin: UncaughtExceptionOrigin,
-  ) => void;
+  type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
   /**
    * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
    * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
    */
-  type UnhandledRejectionListener = (
-    reason: unknown,
-    promise: Promise<unknown>,
-  ) => void;
+  type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
   type WarningListener = (warning: Error) => void;
   type MessageListener = (message: unknown, sendHandle: unknown) => void;
   type SignalsListener = (signal: NodeJS.Signals) => void;
-  type MultipleResolveListener = (
-    type: MultipleResolveType,
-    promise: Promise<unknown>,
-    value: unknown,
-  ) => void;
+  type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
   type BlobPart = string | Blob | BufferSource;
   type TimerHandler = (...args: any[]) => void;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
@@ -400,10 +371,7 @@ declare namespace Bun {
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/structuredClone)
  */
-declare function structuredClone<T>(
-  value: T,
-  options?: Bun.StructuredSerializeOptions,
-): T;
+declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeOptions): T;
 
 //
 
@@ -492,10 +460,7 @@ declare namespace Bun {
     /**
      * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
      */
-    env?:
-      | Record<string, string>
-      | (typeof import("node:worker_threads"))["SHARE_ENV"]
-      | undefined;
+    env?: Record<string, string> | typeof import("node:worker_threads")["SHARE_ENV"] | undefined;
 
     /**
      * In Bun, this does nothing.
@@ -574,9 +539,7 @@ declare namespace Bun {
 }
 
 declare namespace Bun {
-  type _Worker = typeof globalThis extends { onerror: any; Worker: infer T }
-    ? T
-    : Bun.Worker;
+  type _Worker = typeof globalThis extends { onerror: any; Worker: infer T } ? T : Bun.Worker;
 }
 interface Worker extends Bun._Worker {}
 declare var Worker: typeof globalThis extends {
@@ -586,10 +549,7 @@ declare var Worker: typeof globalThis extends {
   ? T
   : {
       prototype: Worker;
-      new (
-        scriptURL: string | URL,
-        options?: Bun.WorkerOptions | undefined,
-      ): Worker;
+      new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
       /**
        * This is the cloned value of the `data` property passed to `new Worker()`
        *
@@ -667,18 +627,8 @@ interface Headers {
 }
 
 declare namespace Bun {
-  type HeadersInit =
-    | Headers
-    | Record<string, string>
-    | Array<[string, string]>
-    | IterableIterator<[string, string]>;
-  type ResponseType =
-    | "basic"
-    | "cors"
-    | "default"
-    | "error"
-    | "opaque"
-    | "opaqueredirect";
+  type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
+  type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
   type FormDataEntryValue = File | string;
 }
 
@@ -705,11 +655,7 @@ declare var File: typeof globalThis extends { onerror: any; File: infer T }
        * @param `name` - The name of the file
        * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
        */
-      new (
-        parts: Bun.BlobPart[],
-        name: string,
-        options?: BlobPropertyBag & { lastModified?: Date | number },
-      ): File;
+      new (parts: Bun.BlobPart[], name: string, options?: BlobPropertyBag & { lastModified?: Date | number }): File;
     };
 
 declare namespace Bun {
@@ -799,49 +745,51 @@ interface FetchRequestInit extends RequestInit {
   };
 }
 
-declare namespace Bun {
-  type _WebSocket = typeof globalThis extends {
-    onerror: any;
-    WebSocket: infer T;
-  }
-    ? T
-    : import("ws").WebSocket;
-}
-interface WebSocket extends Bun._WebSocket {}
-declare var WebSocket: typeof globalThis extends {
-  onerror: any;
-  WebSocket: infer T;
-}
-  ? T
-  : typeof import("ws");
+// FIXME: This breaks stuff, e.g. https://github.com/oven-sh/bun/issues/8081
 
-declare namespace Bun {
-  type _Crypto = typeof globalThis extends {
-    onerror: any;
-    Crypto: infer T;
-  }
-    ? T
-    : import("crypto").webcrypto.Crypto;
-}
+// declare namespace Bun {
+//   type _WebSocket = typeof globalThis extends {
+//     onerror: any;
+//     WebSocket: infer T;
+//   }
+//     ? T
+//     : import("ws").WebSocket;
+// }
+// interface WebSocket extends Bun._WebSocket {}
+// declare var WebSocket: typeof globalThis extends {
+//   onerror: any;
+//   WebSocket: infer T;
+// }
+//   ? T
+//   : typeof import("ws");
 
-interface Crypto extends Bun._Crypto {}
+// declare namespace Bun {
+//   type _Crypto = typeof globalThis extends {
+//     onerror: any;
+//     Crypto: infer T;
+//   }
+//     ? T
+//     : import("crypto").webcrypto.Crypto;
+// }
 
-declare var Crypto: typeof globalThis extends {
-  onerror: any;
-  Crypto: infer T;
-}
-  ? T
-  : {
-      prototype: Crypto;
-      new (): Crypto;
-    };
+// interface Crypto extends Bun._Crypto {}
 
-declare var crypto: typeof globalThis extends {
-  onerror: any;
-  crypto: infer T;
-}
-  ? T
-  : Crypto;
+// declare var Crypto: typeof globalThis extends {
+//   onerror: any;
+//   Crypto: infer T;
+// }
+//   ? T
+//   : {
+//       prototype: Crypto;
+//       new (): Crypto;
+//     };
+
+// declare var crypto: typeof globalThis extends {
+//   onerror: any;
+//   crypto: infer T;
+// }
+//   ? T
+//   : Crypto;
 
 /**
  * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All
@@ -868,10 +816,7 @@ declare namespace Bun {
      * @param src The text to encode.
      * @param dest The array to hold the encode result.
      */
-    encodeInto(
-      src?: string,
-      dest?: Bun.BufferSource,
-    ): import("util").EncodeIntoResult;
+    encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
   }
 
   type _TextEncoder = typeof globalThis extends {
@@ -896,10 +841,7 @@ declare var TextEncoder: typeof globalThis extends {
   ? T
   : {
       prototype: TextEncoder;
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): TextEncoder;
+      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
     };
 
 interface TextDecoder extends Bun._TextDecoder {}
@@ -910,10 +852,7 @@ declare var TextDecoder: typeof globalThis extends {
   ? T
   : {
       prototype: TextDecoder;
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): TextDecoder;
+      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
     };
 
 /**
@@ -1036,10 +975,7 @@ declare function fetch(request: Request, init?: RequestInit): Promise<Response>;
  *
  * @returns A promise that resolves to {@link Response} object.
  */
-declare function fetch(
-  url: string | URL | Request,
-  init?: FetchRequestInit,
-): Promise<Response>;
+declare function fetch(url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;
 /**
@@ -1075,30 +1011,19 @@ declare function clearImmediate(id?: number | Timer): void;
  * Run a function immediately after main event loop is vacant
  * @param handler function to call
  */
-declare function setImmediate(
-  handler: Bun.TimerHandler,
-  ...arguments: any[]
-): Timer;
+declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): Timer;
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
  * @param interval milliseconds to wait between calls
  */
-declare function setInterval(
-  handler: Bun.TimerHandler,
-  interval?: number,
-  ...arguments: any[]
-): Timer;
+declare function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
 /**
  * Run a function after `timeout` (milliseconds)
  * @param handler function to call
  * @param timeout milliseconds to wait between calls
  */
-declare function setTimeout(
-  handler: Bun.TimerHandler,
-  timeout?: number,
-  ...arguments: any[]
-): Timer;
+declare function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
 
 declare namespace Bun {
   type _Event = typeof globalThis extends { onerror: any; Event: any }
@@ -1358,22 +1283,14 @@ declare var MessageEvent: typeof globalThis extends {
   ? T
   : {
       prototype: MessageEvent;
-      new <T>(
-        type: string,
-        eventInitDict?: Bun.MessageEventInit<T>,
-      ): MessageEvent<T>;
+      new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
     };
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */
   readonly detail: T;
   /** @deprecated */
-  initCustomEvent(
-    type: string,
-    bubbles?: boolean,
-    cancelable?: boolean,
-    detail?: T,
-  ): void;
+  initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void;
 }
 
 declare var CustomEvent: {
@@ -1382,9 +1299,7 @@ declare var CustomEvent: {
 };
 
 declare namespace Bun {
-  type _URL = typeof globalThis extends { onerror: any; URL: infer T }
-    ? T
-    : import("url").URL;
+  type _URL = typeof globalThis extends { onerror: any; URL: infer T } ? T : import("url").URL;
 }
 /**
  * The URL interface represents an object providing static methods used for
@@ -1429,14 +1344,7 @@ declare var URLSearchParams: typeof globalThis extends {
   ? T
   : {
       prototype: URLSearchParams;
-      new (
-        init?:
-          | string
-          | string[][]
-          | Record<string, string>
-          | URLSearchParams
-          | undefined,
-      ): URLSearchParams;
+      new (init?: string | string[][] | Record<string, string> | URLSearchParams | undefined): URLSearchParams;
       toString(): string;
     };
 
@@ -1519,9 +1427,7 @@ declare var Loader: {
       fetch: Promise<any>;
       instantiate: Promise<any>;
       satisfy: Promise<any>;
-      dependencies: Array<
-        (typeof Loader)["registry"] extends Map<any, infer V> ? V : any
-      >;
+      dependencies: Array<(typeof Loader)["registry"] extends Map<any, infer V> ? V : any>;
       /**
        * Your application will probably crash if you mess with this.
        */
@@ -1613,9 +1519,7 @@ interface ReadableStreamDefaultController<R = any> {
 
 interface ReadableStreamDirectController {
   close(error?: Error): void;
-  write(
-    data: Bun.BufferSource | ArrayBuffer | string,
-  ): number | Promise<number>;
+  write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
   flush(): number | Promise<number>;
   start(): void;
@@ -1626,16 +1530,13 @@ declare var ReadableStreamDefaultController: {
   new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStreamDefaultReader<R = any>
-  extends ReadableStreamGenericReader {
+interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
   read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
   /**
    * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
    * Will only return a promise if the data is not immediately available.
    */
-  readMany():
-    | Promise<Bun.ReadableStreamDefaultReadManyResult<R>>
-    | Bun.ReadableStreamDefaultReadManyResult<R>;
+  readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
   releaseLock(): void;
 }
 
@@ -1709,10 +1610,7 @@ declare namespace Bun {
   }
 
   interface TransformerTransformCallback<I, O> {
-    (
-      chunk: I,
-      controller: TransformStreamDefaultController<O>,
-    ): void | PromiseLike<void>;
+    (chunk: I, controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
   }
 
   interface UnderlyingSinkAbortCallback {
@@ -1728,10 +1626,7 @@ declare namespace Bun {
   }
 
   interface UnderlyingSinkWriteCallback<W> {
-    (
-      chunk: W,
-      controller: WritableStreamDefaultController,
-    ): void | PromiseLike<void>;
+    (chunk: W, controller: WritableStreamDefaultController): void | PromiseLike<void>;
   }
 
   interface UnderlyingSourceCancelCallback {
@@ -1759,9 +1654,7 @@ declare namespace Bun {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
-    pull: (
-      controller: ReadableStreamDirectController,
-    ) => void | PromiseLike<void>;
+    pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";
   }
 
@@ -2009,9 +1902,7 @@ interface ErrorConstructor {
    *
    * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
    */
-  prepareStackTrace?:
-    | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
-    | undefined;
+  prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
 
   stackTraceLimit: number;
 }
@@ -2049,11 +1940,7 @@ declare namespace Bun {
     type ImportExportKind = "function" | "global" | "memory" | "table";
     type TableKind = "anyfunc" | "externref";
     // eslint-disable-next-line @typescript-eslint/ban-types
-    type ExportValue =
-      | Function
-      | Global
-      | WebAssembly.Memory
-      | WebAssembly.Table;
+    type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
     type Exports = Record<string, ExportValue>;
     type ImportValue = ExportValue | number;
     type Imports = Record<string, ModuleImports>;
@@ -2203,13 +2090,10 @@ declare namespace WebAssembly {
   interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap>
     extends Bun.WebAssembly.GlobalDescriptor<T> {}
   interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor {}
-  interface ModuleExportDescriptor
-    extends Bun.WebAssembly.ModuleExportDescriptor {}
-  interface ModuleImportDescriptor
-    extends Bun.WebAssembly.ModuleImportDescriptor {}
+  interface ModuleExportDescriptor extends Bun.WebAssembly.ModuleExportDescriptor {}
+  interface ModuleImportDescriptor extends Bun.WebAssembly.ModuleImportDescriptor {}
   interface TableDescriptor extends Bun.WebAssembly.TableDescriptor {}
-  interface WebAssemblyInstantiatedSource
-    extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
+  interface WebAssemblyInstantiatedSource extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
 
   interface LinkError extends Bun.WebAssembly._LinkError {}
   var LinkError: {
@@ -2237,8 +2121,7 @@ declare namespace WebAssembly {
     (message?: string): RuntimeError;
   };
 
-  interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-    extends Bun.WebAssembly._Global<T> {}
+  interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap> extends Bun.WebAssembly._Global<T> {}
   var Global: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Global: infer T };
@@ -2279,10 +2162,7 @@ declare namespace WebAssembly {
         prototype: Module;
         new (bytes: Bun.BufferSource): Module;
         /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
-        customSections(
-          moduleObject: Module,
-          sectionName: string,
-        ): ArrayBuffer[];
+        customSections(moduleObject: Module, sectionName: string): ArrayBuffer[];
         /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
         exports(moduleObject: Module): ModuleExportDescriptor[];
         /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
@@ -2298,18 +2178,13 @@ declare namespace WebAssembly {
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compile) */
   function compile(bytes: Bun.BufferSource): Promise<Module>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compileStreaming) */
-  function compileStreaming(
-    source: Response | PromiseLike<Response>,
-  ): Promise<Module>;
+  function compileStreaming(source: Response | PromiseLike<Response>): Promise<Module>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/instantiate) */
   function instantiate(
     bytes: Bun.BufferSource,
     importObject?: Bun.WebAssembly.Imports,
   ): Promise<WebAssemblyInstantiatedSource>;
-  function instantiate(
-    moduleObject: Module,
-    importObject?: Bun.WebAssembly.Imports,
-  ): Promise<Instance>;
+  function instantiate(moduleObject: Module, importObject?: Bun.WebAssembly.Imports): Promise<Instance>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/instantiateStreaming) */
   function instantiateStreaming(
     source: Response | PromiseLike<Response>,
@@ -2437,10 +2312,7 @@ declare var EventSource: typeof globalThis extends {
   ? T
   : {
       prototype: EventSource;
-      new (
-        url: string | URL,
-        eventSourceInitDict?: EventSourceInit,
-      ): EventSource;
+      new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
       readonly CLOSED: number;
       readonly CONNECTING: number;
       readonly OPEN: number;
@@ -2514,9 +2386,7 @@ declare namespace Bun {
      */
     formData(): Promise<FormData>;
   }
-  type _Blob = typeof globalThis extends { onerror: any; Blob: infer T }
-    ? T
-    : Blob;
+  type _Blob = typeof globalThis extends { onerror: any; Blob: infer T } ? T : Blob;
 }
 
 interface Blob extends Bun._Blob {}
@@ -2537,18 +2407,10 @@ declare var Blob: typeof globalThis extends {
     };
 
 declare namespace Bun {
-  type _RequestInit = typeof globalThis extends { onerror: any }
-    ? {}
-    : import("undici-types").RequestInit;
-  type _ResponseInit = typeof globalThis extends { onerror: any }
-    ? {}
-    : import("undici-types").ResponseInit;
-  type _Request = typeof globalThis extends { onerror: any }
-    ? {}
-    : import("undici-types").Request;
-  type _Response = typeof globalThis extends { onerror: any }
-    ? {}
-    : import("undici-types").Response;
+  type _RequestInit = typeof globalThis extends { onerror: any } ? {} : import("undici-types").RequestInit;
+  type _ResponseInit = typeof globalThis extends { onerror: any } ? {} : import("undici-types").ResponseInit;
+  type _Request = typeof globalThis extends { onerror: any } ? {} : import("undici-types").Request;
+  type _Response = typeof globalThis extends { onerror: any } ? {} : import("undici-types").Response;
 }
 interface ResponseInit extends Bun._ResponseInit {}
 interface RequestInit extends Bun._RequestInit {}
@@ -2566,9 +2428,7 @@ declare var Request: typeof globalThis extends {
     };
 
 declare namespace Bun {
-  type _File = typeof globalThis extends { onerror: any }
-    ? {}
-    : import("node:buffer").File;
+  type _File = typeof globalThis extends { onerror: any } ? {} : import("node:buffer").File;
 }
 
 declare namespace Bun {
@@ -2593,10 +2453,7 @@ declare var Response: typeof globalThis extends {
   ? T
   : {
       prototype: Response;
-      new (
-        body?: Bun.BodyInit | null | undefined,
-        init?: Bun.ResponseInit | undefined,
-      ): Response;
+      new (body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined): Response;
 
       /**
        * Create a new {@link Response} with a JSON body
@@ -2647,9 +2504,7 @@ declare var Response: typeof globalThis extends {
     };
 
 declare namespace Bun {
-  type _FormData = typeof globalThis extends { onerror: any; FormData: infer T }
-    ? T
-    : import("undici-types").FormData;
+  type _FormData = typeof globalThis extends { onerror: any; FormData: infer T } ? T : import("undici-types").FormData;
 }
 interface FormData extends Bun._FormData {}
 declare var FormData: typeof globalThis extends {
@@ -2660,9 +2515,7 @@ declare var FormData: typeof globalThis extends {
   : typeof import("undici-types").FormData;
 
 declare namespace Bun {
-  type _Headers = typeof globalThis extends { onerror: any; Headers: infer T }
-    ? T
-    : import("undici-types").Headers;
+  type _Headers = typeof globalThis extends { onerror: any; Headers: infer T } ? T : import("undici-types").Headers;
 }
 interface Headers extends Bun._Headers {}
 declare var Headers: typeof globalThis extends {
@@ -2762,11 +2615,7 @@ declare var AbortSignal: typeof globalThis extends {
 declare namespace Bun {
   type ArrayBufferView = TypedArray | DataView;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type BlobOrStringOrBuffer =
-    | string
-    | NodeJS.TypedArray
-    | ArrayBufferLike
-    | Blob;
+  type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
 }
 

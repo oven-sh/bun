@@ -95,7 +95,7 @@ async function buildModule(
   }
   const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
   const cwd = join("npm", module);
-  write(join(cwd, exe), await bun.async("arraybuffer"));
+  write(join(cwd, exe), new Uint8Array(await bun.async("arraybuffer")));
   chmod(join(cwd, exe), 0o755);
   writeJson(join(cwd, "package.json"), {
     name: module,

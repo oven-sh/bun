@@ -1,15 +1,5 @@
-import {
-  normalizedFilename,
-  StackFrameIdentifier,
-  thisCwd,
-  StackFrameScope,
-} from "./index";
-import type {
-  JSException,
-  JSException as JSExceptionType,
-  Message,
-  Problems,
-} from "../../src/api/schema";
+import { normalizedFilename, StackFrameIdentifier, thisCwd, StackFrameScope } from "./index";
+import type { JSException, JSException as JSExceptionType, Message, Problems } from "../../src/api/schema";
 
 export function problemsToMarkdown(problems: Problems) {
   var markdown = "";
@@ -27,14 +17,14 @@ export function problemsToMarkdown(problems: Problems) {
 export function messagesToMarkdown(messages: Message[]): string {
   return messages
     .map(messageToMarkdown)
-    .map((a) => a.trim())
+    .map(a => a.trim())
     .join("\n");
 }
 
 export function exceptionsToMarkdown(exceptions: JSExceptionType[]): string {
   return exceptions
     .map(exceptionToMarkdown)
-    .map((a) => a.trim())
+    .map(a => a.trim())
     .join("\n");
 }
 
@@ -67,17 +57,13 @@ function exceptionToMarkdown(exception: JSException): string {
     markdown += `**${name}**\n`;
   }
 
-  if (stack.frames.length > 0) {
+  if (stack && stack.frames.length > 0) {
     var frames = stack.frames;
     if (stack.source_lines.length > 0) {
       const {
         file: _file = "",
         function_name = "",
-        position: {
-          line = -1,
-          column_start: column = -1,
-          column_stop: columnEnd = column,
-        } = {
+        position: { line = -1, column_start: column = -1, column_stop: columnEnd = column } = {
           line: -1,
           column_start: -1,
           column_stop: -1,
@@ -114,23 +100,17 @@ function exceptionToMarkdown(exception: JSException): string {
           markdown += "\n```";
           markdown += extname;
           markdown += "\n";
-          stack.source_lines.forEach((sourceLine) => {
+          stack.source_lines.forEach(sourceLine => {
             const lineText = sourceLine.text.trimEnd();
             markdown += lineText + "\n";
             if (sourceLine.line === line && stack.source_lines.length > 1) {
               // the comment should start at the first non-whitespace character
               // ideally it should be length the original line
               // but it may not be
-              var prefix = "".padStart(
-                lineText.length - lineText.trimStart().length,
-                " ",
-              );
+              var prefix = "".padStart(lineText.length - lineText.trimStart().length, " ");
 
-              prefix +=
-                "/* ".padEnd(column - 1 - prefix.length, " ") +
-                "^ happened here ";
-              markdown +=
-                prefix.padEnd(Math.max(lineText.length, 1) - 1, " ") + "*/\n";
+              prefix += "/* ".padEnd(column - 1 - prefix.length, " ") + "^ happened here ";
+              markdown += prefix.padEnd(Math.max(lineText.length, 1) - 1, " ") + "*/\n";
             }
           });
           markdown = markdown.trimEnd() + "\n```";
@@ -240,11 +220,9 @@ function messageToMarkdown(message: Message): string {
 
     if (message.data.location.line_text.length) {
       const extnameI = message.data.location.file.lastIndexOf(".");
-      const extname =
-        extnameI > -1 ? message.data.location.file.slice(extnameI + 1) : "";
+      const extname = extnameI > -1 ? message.data.location.file.slice(extnameI + 1) : "";
 
-      markdown +=
-        "\n```" + extname + "\n" + message.data.location.line_text + "\n```\n";
+      markdown += "\n```" + extname + "\n" + message.data.location.line_text + "\n```\n";
     } else {
       markdown += "\n";
     }
@@ -257,15 +235,15 @@ function messageToMarkdown(message: Message): string {
   return markdown;
 }
 
-export const withBunInfo = (text) => {
+export const withBunInfo = text => {
   const bunInfo = getBunInfo();
 
   const trimmed = text.trim();
 
   if (bunInfo && "then" in bunInfo) {
     return bunInfo.then(
-      (info) => {
-        const markdown = bunInfoToMarkdown(info).trim();
+      info => {
+        const markdown = bunInfoToMarkdown(info)?.trim() ?? "";
         return trimmed + "\n" + markdown + "\n";
       },
       () => trimmed + "\n",
@@ -273,7 +251,7 @@ export const withBunInfo = (text) => {
   }
 
   if (bunInfo) {
-    const markdown = bunInfoToMarkdown(bunInfo).trim();
+    const markdown = bunInfoToMarkdown(bunInfo)?.trim() ?? "";
 
     return trimmed + "\n" + markdown + "\n";
   }
@@ -379,8 +357,8 @@ function getBunInfo() {
       Accept: "application/json",
     },
   })
-    .then((resp) => resp.json())
-    .then((bunInfo) => {
+    .then(resp => resp.json())
+    .then(bunInfo => {
       clearTimeout(id);
       bunInfoMemoized = bunInfo;
       if ("sessionStorage" in globalThis) {

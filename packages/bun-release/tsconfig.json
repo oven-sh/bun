@@ -1,17 +1,4 @@
 {
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "ESNext",
-    "target": "ESNext",
-    "moduleResolution": "node",
-    "types": ["bun-types"],
-    "esModuleInterop": true,
-    "allowJs": true,
-    "strict": true,
-    "resolveJsonModule": true
-  },
-  "include": [
-    "src",
-    "scripts"
-  ]
+  "extends": "../../tsconfig.base.json",
+  "include": [".", "../../packages/bun-types"],
 }

@@ -186,7 +186,7 @@ async function download<V>(url: string): Promise<V> {
   if (!response.ok) {
     throw new Error(`${response.status}: ${url}`);
   }
-  return response.json();
+  return response.json() as V;
 }
 
 function toTitle(name: string): string {

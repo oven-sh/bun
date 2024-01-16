@@ -19,8 +19,7 @@ declare module "bun:test" {
   /**
    * -- Mocks --
    */
-  export interface Mock<T extends AnyFunction>
-    extends JestMock.MockInstance<T> {
+  export interface Mock<T extends AnyFunction> extends JestMock.MockInstance<T> {
     (...args: Parameters<T>): ReturnType<T>;
   }
   type _Mock<T extends AnyFunction> = Mock<T>;
@@ -213,25 +212,13 @@ declare module "bun:test" {
 
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
-    ): (
-      label: string,
-      fn: (...args: [...T]) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
+    ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T extends any[]>(
       table: readonly T[],
-    ): (
-      label: string,
-      fn: (...args: Readonly<T>) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
+    ): (label: string, fn: (...args: Readonly<T>) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T>(
       table: T[],
-    ): (
-      label: string,
-      fn: (...args: T[]) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
+    ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
   }
   /**
    * Describes a group of related tests.
@@ -266,11 +253,7 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function beforeAll(
-    fn:
-      | (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void),
-  ): void;
+  export function beforeAll(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   /**
    * Runs a function before each test.
    *
@@ -281,11 +264,7 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function beforeEach(
-    fn:
-      | (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void),
-  ): void;
+  export function beforeEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   /**
    * Runs a function, once, after all the tests.
    *
@@ -302,11 +281,7 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function afterAll(
-    fn:
-      | (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void),
-  ): void;
+  export function afterAll(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   /**
    * Runs a function after each test.
    *
@@ -315,11 +290,7 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function afterEach(
-    fn:
-      | (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void),
-  ): void;
+  export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.
@@ -369,9 +340,7 @@ declare module "bun:test" {
   export interface Test {
     (
       label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       /**
        * - If a `number`, sets the timeout for the test in milliseconds.
        * - If an `object`, sets the options for the test.
@@ -390,9 +359,7 @@ declare module "bun:test" {
      */
     only(
       label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
     /**
@@ -404,9 +371,7 @@ declare module "bun:test" {
      */
     skip(
       label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
     /**
@@ -423,9 +388,7 @@ declare module "bun:test" {
      */
     todo(
       label: string,
-      fn?:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
     /**
@@ -439,9 +402,7 @@ declare module "bun:test" {
       condition: boolean,
     ): (
       label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ) => void;
     /**
@@ -453,9 +414,7 @@ declare module "bun:test" {
       condition: boolean,
     ): (
       label: string,
-      fn:
-        | (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void),
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ) => void;
     /**
@@ -465,25 +424,13 @@ declare module "bun:test" {
      */
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
-    ): (
-      label: string,
-      fn: (...args: [...T]) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
+    ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T extends any[]>(
       table: readonly T[],
-    ): (
-      label: string,
-      fn: (...args: Readonly<T>) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
+    ): (label: string, fn: (...args: Readonly<T>) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T>(
       table: T[],
-    ): (
-      label: string,
-      fn: (...args: T[]) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
+    ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
   }
   /**
    * Runs a test.
@@ -517,8 +464,7 @@ declare module "bun:test" {
    */
   export const expect: Expect;
 
-  type ExpectNot = Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin> &
-    AsymmetricMatchersBuiltinNegated;
+  type ExpectNot = Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin> & AsymmetricMatchersBuiltinNegated;
 
   export interface Expect extends AsymmetricMatchers {
     // the `expect()` callable signature
@@ -679,9 +625,7 @@ declare module "bun:test" {
      *   expect(mock).toBeCalledWith(expect.any(Number));
      * });
      */
-    any(
-      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
-    ): AsymmetricMatcher;
+    any(constructor: ((..._: any[]) => any) | { new (..._: any[]): any }): AsymmetricMatcher;
     /**
      * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead
      * of a literal value. For example, if you want to check that a mock function is called with a
@@ -1027,10 +971,7 @@ declare module "bun:test" {
      * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided
      */
-    toHaveProperty(
-      keyPath: string | number | Array<string | number>,
-      value?: unknown,
-    ): void;
+    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): void;
     /**
      * Asserts that a value is "truthy".
      *
@@ -1285,17 +1226,7 @@ declare module "bun:test" {
      * expect("hello").toBeTypeOf("string");
      * expect([]).not.toBeTypeOf("boolean");
      */
-    toBeTypeOf(
-      type:
-        | "bigint"
-        | "boolean"
-        | "function"
-        | "number"
-        | "object"
-        | "string"
-        | "symbol"
-        | "undefined",
-    ): void;
+    toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"): void;
     /**
      * Asserts that a value is `false`.
      *
@@ -1499,10 +1430,7 @@ declare module "bun:test" {
   ) => MatcherResult | Promise<MatcherResult>;
 
   /** All non-builtin matchers and asymmetric matchers that have been type-registered through declaration merging */
-  export type CustomMatchersDetected = Omit<
-    Matchers<unknown>,
-    keyof MatchersBuiltin<unknown>
-  > &
+  export type CustomMatchersDetected = Omit<Matchers<unknown>, keyof MatchersBuiltin<unknown>> &
     Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin>;
 
   /**
@@ -1516,12 +1444,7 @@ declare module "bun:test" {
   };
 
   /** Custom equality tester */
-  export type Tester = (
-    this: TesterContext,
-    a: any,
-    b: any,
-    customTesters: Tester[],
-  ) => boolean | undefined;
+  export type Tester = (this: TesterContext, a: any, b: any, customTesters: Tester[]) => boolean | undefined;
 
   export type EqualsFunction = (
     a: unknown,
@@ -1892,13 +1815,9 @@ declare namespace JestMock {
   //   ): MockedShallow<T>;
   // }
 
-  export type PropertyLikeKeys<T> = Exclude<
-    keyof T,
-    ConstructorLikeKeys<T> | MethodLikeKeys<T>
-  >;
+  export type PropertyLikeKeys<T> = Exclude<keyof T, ConstructorLikeKeys<T> | MethodLikeKeys<T>>;
 
-  export type RejectType<T extends FunctionLike> =
-    ReturnType<T> extends PromiseLike<any> ? unknown : never;
+  export type RejectType<T extends FunctionLike> = ReturnType<T> extends PromiseLike<any> ? unknown : never;
 
   export interface Replaced<T = unknown> {
     /**
@@ -1919,36 +1838,33 @@ declare namespace JestMock {
           [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
         }
       | keyof {
-          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
-            ? K_1
-            : never]: T[K_1];
+          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike ? K_1 : never]: T[K_1];
         }
     >,
     V extends T[K_2],
   >(object: T, propertyKey: K_2, value: V): Replaced<T[K_2]>;
 
-  export type ResolveType<T extends FunctionLike> =
-    ReturnType<T> extends PromiseLike<infer U> ? U : never;
+  export type ResolveType<T extends FunctionLike> = ReturnType<T> extends PromiseLike<infer U> ? U : never;
 
   export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
     ? SpiedClass<T>
     : T extends FunctionLike
-      ? SpiedFunction<T>
-      : never;
+    ? SpiedFunction<T>
+    : never;
 
   export type SpiedClass<T extends ClassLike = UnknownClass> = MockInstance<
     (...args: ConstructorParameters<T>) => InstanceType<T>
   >;
 
-  export type SpiedFunction<T extends FunctionLike = UnknownFunction> =
-    MockInstance<(...args: Parameters<T>) => ReturnType<T>>;
+  export type SpiedFunction<T extends FunctionLike = UnknownFunction> = MockInstance<
+    (...args: Parameters<T>) => ReturnType<T>
+  >;
 
   export type SpiedGetter<T> = MockInstance<() => T>;
 
   export type SpiedSetter<T> = MockInstance<(arg: T) => void>;
 
-  export interface SpyInstance<T extends FunctionLike = UnknownFunction>
-    extends MockInstance<T> {}
+  export interface SpyInstance<T extends FunctionLike = UnknownFunction> extends MockInstance<T> {}
 
   export const spyOn: {
     <
@@ -1956,14 +1872,10 @@ declare namespace JestMock {
       K_2 extends Exclude<
         keyof T,
         | keyof {
-            [K in keyof T as Required<T>[K] extends ClassLike
-              ? K
-              : never]: T[K];
+            [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
           }
         | keyof {
-            [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
-              ? K_1
-              : never]: T[K_1];
+            [K_1 in keyof T as Required<T>[K_1] extends FunctionLike ? K_1 : never]: T[K_1];
           }
       >,
       V extends Required<T>[K_2],
@@ -1972,23 +1884,15 @@ declare namespace JestMock {
       object: T,
       methodKey: K_2,
       accessType: A,
-    ): A extends "get"
-      ? SpiedGetter<V>
-      : A extends "set"
-        ? SpiedSetter<V>
-        : never;
+    ): A extends "get" ? SpiedGetter<V> : A extends "set" ? SpiedSetter<V> : never;
     <
       T_1 extends object,
       K_5 extends
         | keyof {
-            [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike
-              ? K_3
-              : never]: T_1[K_3];
+            [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike ? K_3 : never]: T_1[K_3];
           }
         | keyof {
-            [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike
-              ? K_4
-              : never]: T_1[K_4];
+            [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike ? K_4 : never]: T_1[K_4];
           },
       V_1 extends Required<T_1>[K_5],
     >(

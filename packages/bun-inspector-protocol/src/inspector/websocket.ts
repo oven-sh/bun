@@ -6,7 +6,7 @@ import { WebSocket } from "ws";
 /**
  * An inspector that communicates with a debugger over a WebSocket.
  */
-export class WebSocketInspector extends EventEmitter<InspectorEventMap> implements Inspector {
+export class WebSocketInspector extends EventEmitter implements Inspector {
   #url?: string;
   #webSocket?: WebSocket;
   #ready: Promise<boolean> | undefined;
@@ -91,9 +91,12 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
       this.#close(unknownToError(event));
     });
 
-    webSocket.addEventListener("unexpected-response", () => {
-      this.#close(new Error("WebSocket upgrade failed"));
-    });
+    if ("on" in webSocket) {
+      // @ts-ignore: Support both Bun and Node
+      webSocket.on("unexpected-response", () => {
+        this.#close(new Error("WebSocket upgrade failed"));
+      });
+    }
 
     webSocket.addEventListener("close", ({ code, reason }) => {
       if (code === 1001 || code === 1006) {

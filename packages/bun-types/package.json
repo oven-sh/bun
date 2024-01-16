@@ -1,4 +1,5 @@
 {
+  "private": true,
   "name": "bun-types",
   "repository": "https://github.com/oven-sh/bun",
   "license": "MIT",
@@ -13,7 +14,6 @@
     "prettier": "^2.4.1",
     "typescript": "^5.0.2"
   },
-  "private": true,
   "scripts": {
     "prebuild": "echo $(pwd)",
     "build": "rm -rf ./dist && bun run bundle && bun run fmt",

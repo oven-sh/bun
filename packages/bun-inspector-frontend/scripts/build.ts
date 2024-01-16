@@ -1,47 +1,53 @@
-import { build } from "esbuild";
-import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, mkdirSync, rmSync, writeFileSync, cpSync } from "node:fs";
+import { join, resolve } from "node:path";
 
-try {
-  const basePath = join(import.meta.dir, "../../../src/bun.js/WebKit/Source/WebInspectorUI/UserInterface");
-  const htmlPath = join(basePath, "Main.html");
-  const backendCommands = join(
-    import.meta.dir,
-    "../../../src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/DerivedSources/inspector/InspectorBackendCommands.js",
-  );
-  const scriptsToBundle = [];
-  const stylesToBundle = [];
-  const jsReplacementId = crypto.randomUUID() + ".js";
-  const cssReplacementId = crypto.randomUUID() + ".css";
-  const html = new HTMLRewriter()
-    .on("script", {
-      element(element) {
-        const src = element.getAttribute("src");
-        if (
-          src &&
-          !src?.includes("External") &&
-          !src?.includes("WebKitAdditions") &&
-          !src.includes("DOMUtilities.js")
-        ) {
-          if (scriptsToBundle.length === 0) {
-            element.replace("<script>var WI = {};\n</script>", { html: true });
-          } else {
-            element.remove();
-          }
+const projectPath = resolve(import.meta.dir, "..", "..", "..");
+const uiPath = join(projectPath, "src", "bun.js", "WebKit", "Source", "WebInspectorUI", "UserInterface");
+const indexPath = join(uiPath, "Main.html");
+const commandPath = join(
+  projectPath,
+  "src",
+  "bun.js",
+  "WebKit",
+  "WebKitBuild",
+  "Release",
+  "JavaScriptCore",
+  "DerivedSources",
+  "inspector",
+  "InspectorBackendCommands.js",
+);
 
-          scriptsToBundle.push(src);
+if (!existsSync(indexPath)) {
+  console.error("Did you run `make jsc` first?");
+  process.exit(1);
+}
+
+const randomId = `${crypto.randomUUID()}.js`;
+const scripts: string[] = [];
+
+const html = new HTMLRewriter()
+  .on("script", {
+    element(element: HTMLRewriterTypes.Element) {
+      const src = element.getAttribute("src");
+      if (src && !src?.includes("External") && !src?.includes("WebKitAdditions") && !src.includes("DOMUtilities.js")) {
+        if (scripts.length) {
+          element.remove();
+        } else {
+          element.replace("<script>var WI = {};\n</script>", { html: true });
         }
-      },
-    })
-    .on("script:not([src])", {
-      element(element) {
-        element.remove();
-      },
-    })
-    .on("head", {
-      element(element) {
-        element.prepend(
-          `
+        scripts.push(src);
+      }
+    },
+  })
+  .on("script:not([src])", {
+    element(element: HTMLRewriterTypes.Element) {
+      element.remove();
+    },
+  })
+  .on("head", {
+    element(element: HTMLRewriterTypes.Element) {
+      element.prepend(
+        `
           <script type="text/javascript">
         if (!Element.prototype.scrollIntoViewIfNeeded) {
           Element.prototype.scrollIntoViewIfNeeded = function (centerIfNeeded) {
@@ -72,101 +78,53 @@ try {
         }
         </script>
         <base href="/" /> `,
-          { html: true },
-        );
+        { html: true },
+      );
 
-        element.append(
-          `
+      element.append(
+        `
         <style>
             body {
                 --undocked-title-area-height: 0px !important;
             }
         </style>
-        <script src="${jsReplacementId}"></script>
+        <script src="${randomId}"></script>
 
         <script type="text/javascript">
             WI.sharedApp = new WI.AppController;
             WI.sharedApp.initialize();
         </script>`,
-          { html: true },
-        );
-      },
-    })
-    //   .on("link[rel=stylesheet]", {
-    //     element(element) {
-    //       const href = element.getAttribute("href");
-    //       if (href && !href?.includes("External") && !href?.includes("WebKitAdditions")) {
-    //         element.remove();
-    //         stylesToBundle.push(href);
-    //       }
-    //     },
-    //   })
-    .transform(new Response(Bun.file(htmlPath)));
-  let htmlText = await html.text();
-  rmSync(join(import.meta.dir, "out"), { recursive: true, force: true });
-  mkdirSync(join(import.meta.dir, "out", "Protocol"), { recursive: true });
+        { html: true },
+      );
+    },
+  })
+  .transform(new Response(readFileSync(indexPath)));
 
-  const javascript = scriptsToBundle.map(a => `import '${join(basePath, a)}';`).join("\n") + "\n";
-  // const css = stylesToBundle.map(a => `@import "${join(basePath, a)}";`).join("\n") + "\n";
-  await Bun.write(join(import.meta.dir, "out/manifest.js"), javascript);
-  mkdirSync("out/WebKitAdditions/WebInspectorUI/", { recursive: true });
-  await Bun.write(join(import.meta.dir, "out/WebKitAdditions/WebInspectorUI/WebInspectorUIAdditions.js"), "");
-  await Bun.write(join(import.meta.dir, "out/WebKitAdditions/WebInspectorUI/WebInspectorUIAdditions.css"), "");
-  // await Bun.write(join(import.meta.dir, "manifest.css"), css);
-  const jsBundle = await Bun.build({
-    entrypoints: [join(import.meta.dir, "out/manifest.js")],
-    outdir: "out",
-    minify: true,
-  });
-  const jsFilename = "manifest-" + jsBundle.outputs[0].hash + ".js";
-  // const cssBundle = await build({
-  //   bundle: true,
-  //   minify: true,
-  //   write: false,
-  //   entryPoints: [join(import.meta.dir, "manifest.css")],
-  //   outdir: "out",
-  //   loader: {
-  //     ".css": "css",
-  //     ".svg": "dataurl",
-  //   },
-  //   external: ["*.png"],
-  //   plugins: [
-  //     {
-  //       name: "css",
-  //       setup(build) {
-  //         build.onResolve({ filter: new RegExp("/Images/Warning.svg") }, args => ({
-  //           path: join(basePath, "Images/Warning.svg"),
-  //         }));
-  //       },
-  //     },
-  //   ],
-  // });
+const indexHtml = await html.text();
+const indexJs = `${scripts.map(path => `import '${join(uiPath, path)}';`).join("\n")}\n`;
 
-  // const cssFilename = "manifest-" + cssBundle.outputFiles[0].hash.replaceAll("/", "_") + ".css";
-  htmlText = htmlText.replace(jsReplacementId, jsFilename);
-  // htmlText = htmlText.replace(cssReplacementId, cssFilename);
-  await Bun.write(join(import.meta.dir, "out", jsFilename), jsBundle.outputs[0]);
-  // await Bun.write(join(import.meta.dir, "out", cssFilename), cssBundle.outputFiles[0].text);
-  await Bun.write(join(import.meta.dir, "out", "index.html"), htmlText);
-  await Bun.write(join(import.meta.dir, "out", "index.html"), htmlText);
-  await Bun.write(join(import.meta.dir, "out", "Protocol", "InspectorBackendCommands.js"), Bun.file(backendCommands));
+const distPath = resolve(import.meta.dir, "..", "dist");
+const manifestPath = join(distPath, "manifest.js");
+const additionsPath = join(distPath, "WebKitAdditions", "WebInspectorUI");
 
-  function recursiveCopy(src, dest) {
-    readdirSync(src).forEach(file => {
-      const srcPath = join(src, file);
-      const destPath = join(dest, file);
-      if (statSync(srcPath).isDirectory()) {
-        mkdirSync(destPath, { recursive: true });
-        recursiveCopy(srcPath, destPath);
-      } else {
-        rmSync(destPath, { force: true });
-        copyFileSync(srcPath, destPath);
-      }
-    });
-  }
+rmSync(distPath, { recursive: true, force: true });
+mkdirSync(distPath, { recursive: true });
+writeFileSync(manifestPath, indexJs);
+mkdirSync(additionsPath, { recursive: true });
+writeFileSync(join(additionsPath, "WebInspectorUIAdditions.js"), "");
+writeFileSync(join(additionsPath, "WebInspectorUIAdditions.css"), "");
 
-  recursiveCopy(basePath, join(import.meta.dir, "out"));
-} catch (e) {
-  console.error("Failed to build. Please make sure you've ran `make jsc` locally.");
-  throw e;
-}
+const { outputs } = await Bun.build({
+  entrypoints: [manifestPath],
+  outdir: distPath,
+  minify: true,
+});
+const [output] = outputs;
+
+const indexName = `manifest-${output.hash}.js`;
+writeFileSync(join(distPath, indexName), await output.arrayBuffer());
+writeFileSync(join(distPath, "index.html"), indexHtml.replace(randomId, indexName));
+
+mkdirSync(join(distPath, "Protocol"), { recursive: true });
+cpSync(commandPath, join(distPath, "Protocol", "InspectorBackendCommands.js"));
+cpSync(uiPath, distPath, { recursive: true });

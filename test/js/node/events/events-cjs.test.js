@@ -1,4 +1,4 @@
 test("in cjs, events is callable", () => {
-  const events = require("events");
-  new events();
+  const EventEmitter = require("events");
+  new EventEmitter();
 });

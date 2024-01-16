@@ -3321,6 +3321,57 @@ console.log("boop");
     ts.expectPrinted("a<b>", "a");
     expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);
   });
+
+  const prepareForSnapshot = code => {
+    return code.replace(/(__using|__callDispose)_([a-z0-9]+)/g, '$1')
+  }
+  const expectCapturePrintedSnapshot = code => {
+    const result = parsed(`(async() => {${code}})()`, false, false);
+    expect(result).toEndWith("})();\n");
+    const of_relevance = result
+      .slice(result.indexOf("() => {") + 9, result.lastIndexOf("})();") - 1)
+      .trim()
+      .split("\n")
+      .map(x => x.trim())
+      .filter(x => x.length > 0)
+      .join("\n");
+    expect(prepareForSnapshot(of_relevance)).toMatchSnapshot();
+  };
+  const expectPrintedSnapshot = code => {
+    expect(prepareForSnapshot(parsed(`${code}`, false, false))).toMatchSnapshot();
+  };
+
+  it("using statements work right", () => {
+    expectCapturePrintedSnapshot(`using x = a;`);
+    expectCapturePrintedSnapshot(`await using x = a;`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for (await using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) c(a)`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for (await using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
+  });
+
+  it("using top level", () => {
+    expectPrintedSnapshot(`
+      using a = b;
+      export function c(e) {
+        using f = g(a);
+        return f.h;
+      }
+      await using j = c(i);
+      using k = l(m);
+      export { k };
+      import { using } from 'n';
+      using o = using;
+      await using p = await using;
+      export var q = r;
+    `);
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

@@ -1821,16 +1821,16 @@ pub const Bundler = struct {
         // }
 
         if (bundler.linker.any_needs_runtime) {
-            try bundler.output_files.append(
-                options.OutputFile.initBuf(
-                    runtime.Runtime.sourceContent(false),
-                    bun.default_allocator,
-                    Linker.runtime_source_path,
-                    .js,
-                    null,
-                    null,
-                ),
-            );
+            // try bundler.output_files.append(
+            //     options.OutputFile.initBuf(
+            //         runtime.Runtime.source_code,
+            //         bun.default_allocator,
+            //         Linker.runtime_source_path,
+            //         .js,
+            //         null,
+            //         null,
+            //     ),
+            // );
         }
 
         if (FeatureFlags.tracing and bundler.options.log.level.atLeast(.info)) {

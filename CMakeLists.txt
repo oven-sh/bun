@@ -469,6 +469,7 @@ else()
         # make jsc-compile-debug jsc-copy-headers
         include_directories(
             "${WEBKIT_DIR}/"
+            "${WEBKIT_DIR}/JavaScriptCore/Headers/JavaScriptCore"
             "${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders"
             "${WEBKIT_DIR}/bmalloc/Headers"
             "${WEBKIT_DIR}/WTF/Headers"

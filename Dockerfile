@@ -380,7 +380,7 @@ FROM bun-base-with-zig as bun-codegen-for-zig
 
 COPY package.json bun.lockb Makefile .gitmodules .prettierrc.cjs ${BUN_DIR}/
 COPY src/runtime ${BUN_DIR}/src/runtime
-COPY src/runtime.js src/runtime.footer*.js src/react-refresh.js ${BUN_DIR}/src/
+COPY src/runtime.js src/runtime.bun.js ${BUN_DIR}/src/
 COPY packages/bun-error ${BUN_DIR}/packages/bun-error
 COPY src/fallback.ts ${BUN_DIR}/src/fallback.ts
 COPY src/api ${BUN_DIR}/src/api

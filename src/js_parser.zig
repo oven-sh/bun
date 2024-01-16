@@ -19075,7 +19075,7 @@ fn NewParser_(
                         }
 
                         // Handle "for (using x of y)" and "for (await using x of y)"
-                        if (data.init.data.s_local.kind.isUsing() and p.options.features.lower_using) {
+                        if (data.init.data == .s_local and data.init.data.s_local.kind.isUsing() and p.options.features.lower_using) {
                             // fn lowerUsingDeclarationInForOf()
                             const loc = data.init.loc;
                             const init2 = data.init.data.s_local;

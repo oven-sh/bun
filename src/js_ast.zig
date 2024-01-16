@@ -1160,7 +1160,7 @@ pub const Symbol = struct {
         import,
 
         // Assigning to a "const" symbol will throw a TypeError at runtime
-        cconst,
+        constant,
 
         // This annotates all other symbols that don't have special behavior.
         other,
@@ -1361,7 +1361,7 @@ pub const Symbol = struct {
 
     pub fn isReactComponentishName(symbol: *const Symbol) bool {
         switch (symbol.kind) {
-            .hoisted, .hoisted_function, .cconst, .class, .other => {
+            .hoisted, .hoisted_function, .constant, .class, .other => {
                 return switch (symbol.original_name[0]) {
                     'A'...'Z' => true,
                     else => false,
@@ -1375,7 +1375,7 @@ pub const Symbol = struct {
     }
 };
 
-pub const OptionalChain = enum(u2) {
+pub const OptionalChain = enum(u1) {
 
     // "a?.b"
     start,
@@ -5591,7 +5591,7 @@ pub const S = struct {
     pub const Throw = struct { value: ExprNodeIndex };
 
     pub const Local = struct {
-        kind: Kind = Kind.k_var,
+        kind: Kind = .k_var,
         decls: G.Decl.List = .{},
         is_export: bool = false,
         // The TypeScript compiler doesn't generate code for "import foo = bar"
@@ -5605,12 +5605,19 @@ pub const S = struct {
                 this.was_commonjs_export == other.was_commonjs_export;
         }
 
-        pub const Kind = enum(u2) {
+        pub const Kind = enum {
             k_var,
             k_let,
             k_const,
+            k_using,
+            k_await_using,
+
             pub fn jsonStringify(self: @This(), writer: anytype) !void {
                 return try writer.write(@tagName(self));
+            }
+
+            pub fn isUsing(self: Kind) bool {
+                return self == .k_using or self == .k_await_using;
             }
         };
     };

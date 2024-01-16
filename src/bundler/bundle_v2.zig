@@ -2357,6 +2357,7 @@ pub const ParseTask = struct {
             .node =>
             \\import { createRequire } from "node:module";
             \\export var __require = /* @__PURE__ */ createRequire(import.meta.url);
+            \\
             ,
 
             // Copied from esbuild's runtime.go:
@@ -2372,16 +2373,90 @@ pub const ParseTask = struct {
             // is not always defined there. The `createRequire` call approach is more reliable.
             else =>
             \\export var __require = /* @__PURE__ */ (x =>
-            \\	typeof require !== 'undefined' ? require :
-            \\	typeof Proxy !== 'undefined' ? new Proxy(x, {
-            \\		get: (a, b) => (typeof require !== 'undefined' ? require : a)[b]
-            \\	}) : x
+            \\  typeof require !== 'undefined' ? require :
+            \\  typeof Proxy !== 'undefined' ? new Proxy(x, {
+            \\    get: (a, b) => (typeof require !== 'undefined' ? require : a)[b]
+            \\  }) : x
             \\)(function (x) {
-            \\	if (typeof require !== 'undefined') return require.apply(this, arguments)
-            \\	throw Error('Dynamic require of "' + x + '" is not supported')
+            \\  if (typeof require !== 'undefined') return require.apply(this, arguments)
+            \\  throw Error('Dynamic require of "' + x + '" is not supported')
             \\});
+            \\
         };
-        const runtime_code = @embedFile("../runtime.js") ++ runtime_require;
+        const runtime_using_symbols = switch (target) {
+            // bun's webkit has Symbol.asyncDispose, Symbol.dispose, and SuppressedError, but not the syntax support
+            .bun =>
+            \\export var __using = (stack, value, async) => {
+            \\  if (value != null) {
+            \\    if (typeof value !== 'object' && typeof value !== 'function') throw TypeError('Object expected to be assigned to "using" declaration')
+            \\    let dispose
+            \\    if (async) dispose = value[Symbol.asyncDispose]
+            \\    if (dispose === void 0) dispose = value[Symbol.dispose]
+            \\    if (typeof dispose !== 'function') throw TypeError('Object not disposable')
+            \\    stack.push([async, dispose, value])
+            \\  } else if (async) {
+            \\    stack.push([async])
+            \\  }
+            \\  return value
+            \\}
+            \\
+            \\export var __callDispose = (stack, error, hasError) => {
+            \\  let fail = e => error = hasError ? new SuppressedError(e, error, 'An error was suppressed during disposal') : (hasError = true, e)
+            \\    , next = (it) => {
+            \\      while (it = stack.pop()) {
+            \\        try {
+            \\          var result = it[1] && it[1].call(it[2])
+            \\          if (it[0]) return Promise.resolve(result).then(next, (e) => (fail(e), next()))
+            \\        } catch (e) {
+            \\          fail(e)
+            \\        }
+            \\      }
+            \\      if (hasError) throw error
+            \\    }
+            \\  return next()
+            \\}
+            \\
+            ,
+            // Other platforms may or may not have the symbol or errors
+            // The definitions of __dispose and __asyncDispose match what esbuild's __wellKnownSymbol() helper does
+            else =>
+            \\var __dispose = Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
+            \\var __asyncDispose =  Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
+            \\
+            \\export var __using = (stack, value, async) => {
+            \\  if (value != null) {
+            \\    if (typeof value !== 'object' && typeof value !== 'function') throw TypeError('Object expected to be assigned to "using" declaration')
+            \\    var dispose
+            \\    if (async) dispose = value[__asyncDispose]
+            \\    if (dispose === void 0) dispose = value[__dispose]
+            \\    if (typeof dispose !== 'function') throw TypeError('Object not disposable')
+            \\    stack.push([async, dispose, value])
+            \\  } else if (async) {
+            \\    stack.push([async])
+            \\  }
+            \\  return value
+            \\}
+            \\
+            \\export var __callDispose = (stack, error, hasError) => {
+            \\  var E = typeof SuppressedError === 'function' ? SuppressedError :
+            \\    function (e, s, m, _) { return _ = Error(m), _.name = 'SuppressedError', _.error = e, _.suppressed = s, _ },
+            \\    fail = e => error = hasError ? new E(e, error, 'An error was suppressed during disposal') : (hasError = true, e),
+            \\    next = (it) => {
+            \\      while (it = stack.pop()) {
+            \\        try {
+            \\          var result = it[1] && it[1].call(it[2])
+            \\          if (it[0]) return Promise.resolve(result).then(next, (e) => (fail(e), next()))
+            \\        } catch (e) {
+            \\          fail(e)
+            \\        }
+            \\      }
+            \\      if (hasError) throw error
+            \\    }
+            \\  return next()
+            \\}
+            \\
+        };
+        const runtime_code = @embedFile("../runtime.js") ++ runtime_require ++ runtime_using_symbols;
 
         const parse_task = ParseTask{
             .ctx = undefined,

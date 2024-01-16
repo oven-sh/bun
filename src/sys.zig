@@ -426,7 +426,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -544,7 +544,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), rc, @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1334,6 +1334,7 @@ pub const Error = struct {
     syscall: Syscall.Tag,
     path: []const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
+    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
@@ -1429,7 +1430,11 @@ pub const Error = struct {
             const system_errno = brk: {
                 // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
                 @setRuntimeSafety(false);
-                break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
             if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);

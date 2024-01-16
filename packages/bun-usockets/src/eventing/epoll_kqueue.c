@@ -183,7 +183,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
     if (loop->num_polls == 0)
         return;
 
-    us_loop_integrate(loop);
+    struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
+
+    // Only integrate the loop if we haven't already.
+    // Otherwise we will keep restarting the timer.
+    if(!timer_callback->cb) {
+        us_loop_integrate(loop);
+    }
 
     if (tickCallbackContext) {
         bun_on_tick_before(tickCallbackContext);

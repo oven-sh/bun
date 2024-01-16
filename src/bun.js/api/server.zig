@@ -2523,6 +2523,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     },
                     .Rejected => {
+                        promise.setHandled(vm.global.vm());
                         ctx.handleReject(promise.result(vm.global.vm()));
                         return;
                     },

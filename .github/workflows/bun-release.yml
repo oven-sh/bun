@@ -131,14 +131,14 @@ jobs:
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: JS-DevTools/npm-publish@v1
         with:
-          package: packages/bun-types/dist/package.json
+          package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
           tag: canary
       - name: Release (latest)
         if: ${{ env.BUN_LATEST == 'true' }}
         uses: JS-DevTools/npm-publish@v1
         with:
-          package: packages/bun-types/dist/package.json
+          package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
   docker:
     name: Release to Dockerhub

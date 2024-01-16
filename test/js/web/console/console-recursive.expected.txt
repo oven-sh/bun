@@ -1,2 +1,0 @@
-inside size
-map: Map {}

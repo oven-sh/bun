@@ -4629,7 +4629,11 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = fd.asDir();
-        var iterator = DirIterator.iterate(dir, .u8);
+        const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
+        var iterator = DirIterator.iterate(
+            dir,
+            comptime if (is_u16) .u16 else .u8,
+        );
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4657,21 +4661,37 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
-            const utf8_name = current.name.slice();
-            switch (ExpectedType) {
-                Dirent => {
-                    entries.append(.{
-                        .name = bun.String.create(utf8_name),
-                        .kind = current.kind,
-                    }) catch bun.outOfMemory();
-                },
-                Buffer => {
-                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
-                },
-                bun.String => {
-                    entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
-                },
-                else => @compileError("unreachable"),
+            if (comptime !is_u16) {
+                const utf8_name = current.name.slice();
+                switch (ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.create(utf8_name),
+                            .kind = current.kind,
+                        }) catch bun.outOfMemory();
+                    },
+                    Buffer => {
+                        entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    },
+                    bun.String => {
+                        entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
+                    },
+                    else => @compileError("unreachable"),
+                }
+            } else {
+                const utf16_name = current.name.slice();
+                switch (ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.createUTF16(utf16_name),
+                            .kind = current.kind,
+                        }) catch bun.outOfMemory();
+                    },
+                    bun.String => {
+                        entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory();
+                    },
+                    else => @compileError("unreachable"),
+                }
             }
         }
 

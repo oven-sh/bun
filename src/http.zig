@@ -2183,6 +2183,12 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    if (comptime Environment.allow_assert) {
+        if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
+            @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
+        }
+    }
+
     // Aborted before connecting
     if (this.signals.get(.aborted)) {
         this.fail(error.Aborted);

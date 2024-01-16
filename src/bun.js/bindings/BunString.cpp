@@ -236,6 +236,22 @@ extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
     return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
 }
 
+extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
+{
+    ASSERT(length > 0);
+    ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
+    size_t outLength = simdutf::latin1_length_from_utf16(length);
+    LChar* ptr = nullptr;
+    auto impl = WTF::StringImpl::createUninitialized(outLength, ptr);
+    if (!ptr) {
+        return { BunStringTag::Dead };
+    }
+
+    size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr));
+    ASSERT_WITH_MESSAGE(latin1_length == outLength, "Failed to convert UTF16 to Latin1");
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
 extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);

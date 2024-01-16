@@ -63,7 +63,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-            const next = switch (builtin.os.tag) {
+            pub const next = switch (builtin.os.tag) {
                 .macos, .ios => nextDarwin,
                 // .freebsd, .netbsd, .dragonfly, .openbsd => nextBsd,
                 // .solaris => nextSolaris,
@@ -177,12 +177,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
         },
         .windows => struct {
             dir: Dir,
-            buf: [8192]u8 align(@alignOf(os.windows.FILE_BOTH_DIR_INFORMATION)),
+            buf: [8192]u8 align(@alignOf(os.windows.FILE_DIRECTORY_INFORMATION)),
             index: usize,
             end_index: usize,
             first: bool,
-            name_data: [256]u8,
-            name_data_w: [128]u16,
+            name_data: if (use_windows_ospath) [257]u16 else [513]u8,
 
             const Self = @This();
 
@@ -206,17 +205,24 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             &io,
                             &self.buf,
                             self.buf.len,
-                            .FileBothDirectoryInformation,
+                            .FileDirectoryInformation,
                             w.FALSE,
                             null,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
+
                         self.first = false;
-                        if (io.Information == 0) return .{ .result = null };
+                        if (io.Information == 0) {
+                            bun.sys.syslog("NtQueryDirectoryFile({d}) = 0", .{
+                                @intFromPtr(self.dir.fd),
+                            });
+                            return .{ .result = null };
+                        }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
+                            bun.sys.syslog("NtQueryDirectoryFile({d}) = {s}", .{ @intFromPtr(self.dir.fd), @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.C.SystemErrno.ENOTDIR),
@@ -226,11 +232,14 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         if (rc == .NO_MORE_FILES) {
+                            bun.sys.syslog("NtQueryDirectoryFile({d}) = {s}", .{ @intFromPtr(self.dir.fd), @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
+                            bun.sys.syslog("NtQueryDirectoryFile({d}) = {s}", .{ @intFromPtr(self.dir.fd), @tagName(rc) });
+
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
                                     .err = .{
@@ -247,21 +256,20 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                                 },
                             };
                         }
+
+                        bun.sys.syslog("NtQueryDirectoryFile({d}) = {d}", .{ @intFromPtr(self.dir.fd), self.end_index });
                     }
 
-                    const dir_info: *w.FILE_BOTH_DIR_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
+                    const dir_info: *w.FILE_DIRECTORY_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
                     if (dir_info.NextEntryOffset != 0) {
                         self.index += dir_info.NextEntryOffset;
                     } else {
                         self.index = self.buf.len;
                     }
 
-                    const length = dir_info.FileNameLength / 2;
-                    @memcpy(self.name_data_w[0..length], @as([*]u16, @ptrCast(&dir_info.FileName))[0..length]);
-                    self.name_data_w[length] = 0;
-                    const name_utf16le = self.name_data_w[0..length :0];
+                    const dir_info_name = @as([*]const u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
 
-                    if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
+                    if (mem.eql(u16, dir_info_name, &[_]u16{'.'}) or mem.eql(u16, dir_info_name, &[_]u16{ '.', '.' }))
                         continue;
 
                     const kind = blk: {
@@ -272,6 +280,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     };
 
                     if (use_windows_ospath) {
+                        const length = dir_info.FileNameLength / 2;
+                        @memcpy(self.name_data[0..length], @as([*]u16, @ptrCast(&dir_info.FileName))[0..length]);
+                        self.name_data[length] = 0;
+                        const name_utf16le = self.name_data[0..length :0];
+
                         return .{
                             .result = IteratorResultW{
                                 .kind = kind,
@@ -281,7 +294,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     }
 
                     // Trust that Windows gives us valid UTF-16LE
-                    const name_utf8 = strings.fromWPath(self.name_data[0..], name_utf16le);
+                    const name_utf8 = strings.fromWPath(self.name_data[0..], dir_info_name);
 
                     return .{
                         .result = IteratorResult{
@@ -405,7 +418,6 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .first = true,
                         .buf = undefined,
                         .name_data = undefined,
-                        .name_data_w = undefined,
                     },
                     .wasi => IteratorType{
                         .dir = dir,

@@ -90,7 +90,11 @@ pub const FileSystem = struct {
             return;
         }
 
-        max_fd = @enumFromInt(@max(fd, max_fd.int()));
+        if (comptime @TypeOf(fd) == *anyopaque) {
+            max_fd = @enumFromInt(@max(@intFromPtr(fd), max_fd.int()));
+        } else {
+            max_fd = @enumFromInt(@max(fd, max_fd.int()));
+        }
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -158,7 +162,8 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: *const bun.DirIterator.IteratorResult, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+            const name_slice = entry.name.slice();
             const _kind: Entry.Kind = switch (entry.kind) {
                 .directory => .dir,
                 // This might be wrong!
@@ -171,9 +176,9 @@ pub const FileSystem = struct {
                 if (prev_map) |map| {
                     var stack_fallback = std.heap.stackFallback(512, allocator);
                     const stack = stack_fallback.get();
-                    const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, entry.name);
+                    const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, name_slice);
                     defer prehashed.deinit(stack);
-                    if (map.getAdapted(entry.name, prehashed)) |existing| {
+                    if (map.getAdapted(name_slice, prehashed)) |existing| {
                         existing.mutex.lock();
                         defer existing.mutex.unlock();
                         existing.dir = dir.dir;
@@ -189,15 +194,15 @@ pub const FileSystem = struct {
                     }
                 }
 
-                // entry.name only lives for the duration of the iteration
+                // name_slice only lives for the duration of the iteration
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
-                    entry.name,
+                    name_slice,
                     *FileSystem.FilenameStore,
                     &FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
-                    entry.name,
+                    name_slice,
                     *FileSystem.FilenameStore,
                     &FileSystem.FilenameStore.instance,
                 );
@@ -923,7 +928,7 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = handle.iterate();
+            var iter = bun.iterateDir(handle);
             var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
@@ -933,8 +938,8 @@ pub const FileSystem = struct {
                 dir.fd = bun.toFD(handle.fd);
             }
 
-            while (try iter.next()) |_entry| {
-                debug("readdir entry {s}", .{_entry.name});
+            while (try iter.next().unwrap()) |*_entry| {
+                debug("readdir entry {s}", .{_entry.name.slice()});
 
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }

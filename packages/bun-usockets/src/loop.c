@@ -342,7 +342,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
-                        
+                        // loop->num_ready_polls isn't accessible on Windows.
+                        #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
@@ -361,6 +362,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #endif
                     } else if (!length) {
                         if (us_socket_is_shut_down(0, s)) {
                             /* We got FIN back after sending it */

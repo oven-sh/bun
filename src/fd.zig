@@ -217,9 +217,9 @@ pub const FDImpl = packed struct {
                 };
             },
             .windows => result: {
-                var req: libuv.fs_t = libuv.fs_t.uninitialized;
                 switch (this.kind) {
                     .uv => {
+                        var req: libuv.fs_t = libuv.fs_t.uninitialized;
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
                         break :result if (rc.errno()) |errno|
@@ -230,17 +230,14 @@ pub const FDImpl = packed struct {
                     .system => {
                         std.debug.assert(this.value.as_system != 0);
                         const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
-                        if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
-                            const errno = switch (std.os.windows.kernel32.GetLastError()) {
-                                .INVALID_HANDLE => @intFromEnum(os.E.BADF),
-                                else => |i| @intFromEnum(i),
-                            };
-                            break :result bun.sys.Error{
-                                .errno = errno,
+                        break :result switch (bun.windows.NtClose(handle)) {
+                            .SUCCESS => null,
+                            else => |rc| bun.sys.Error{
+                                .errno = if (bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno()) |errno| @intFromEnum(errno) else 1,
                                 .syscall = .CloseHandle,
                                 .fd = this.encode(),
-                            };
-                        }
+                            },
+                        };
                     },
                 }
             },
@@ -253,7 +250,7 @@ pub const FDImpl = packed struct {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
                     bun.Output.debugWarn("close({}) = EBADF. This is an indication of a file descriptor UAF", .{this});
                 } else {
-                    log("close({}) = err {d}", .{ this, err.errno });
+                    log("close({}) = {}", .{ this, err });
                 }
             } else {
                 log("close({})", .{this});

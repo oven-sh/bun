@@ -1106,7 +1106,13 @@ fn writeProxyConnect(
     writer: Writer,
     client: *HTTPClient,
 ) !void {
-    const port = if (client.url.getPort()) |_| client.url.port else if (client.url.isHTTPS()) "443" else "80";
+    const port = if (client.url.getPort()) |_|
+        client.url.port
+    else if (client.url.isHTTPS())
+        "443"
+    else
+        "80";
+
     _ = writer.write("CONNECT ") catch 0;
     _ = writer.write(client.url.hostname) catch 0;
     _ = writer.write(":") catch 0;

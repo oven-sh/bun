@@ -72,6 +72,9 @@ pub const MessageType = enum(u32) {
 var stderr_mutex: bun.Lock = bun.Lock.init();
 var stdout_mutex: bun.Lock = bun.Lock.init();
 
+threadlocal var stderr_lock_count: u16 = 0;
+threadlocal var stdout_lock_count: u16 = 0;
+
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
     //console_: ConsoleObject.Type,
@@ -92,15 +95,32 @@ pub fn messageWithTypeAndLevel(
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
     if (level == .Warning or level == .Error or message_type == .Assert) {
-        stderr_mutex.lock();
+        if (stderr_lock_count == 0) {
+            stderr_mutex.lock();
+        }
+
+        stderr_lock_count += 1;
     } else {
-        stdout_mutex.lock();
+        if (stdout_lock_count == 0) {
+            stdout_mutex.lock();
+        }
+
+        stdout_lock_count += 1;
     }
+
     defer {
         if (level == .Warning or level == .Error or message_type == .Assert) {
-            stderr_mutex.unlock();
+            stderr_lock_count -= 1;
+
+            if (stderr_lock_count == 0) {
+                stderr_mutex.unlock();
+            }
         } else {
-            stdout_mutex.unlock();
+            stdout_lock_count -= 1;
+
+            if (stdout_lock_count == 0) {
+                stdout_mutex.unlock();
+            }
         }
     }
 

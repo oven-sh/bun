@@ -152,6 +152,7 @@ pub const Arguments = struct {
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         // clap.parseParam("-w, --workspace <STR>             Perform the command on the specified workspace member package") catch unreachable,
         clap.parseParam("-F, --filter <STR>...             Perform the command on all workspace member packages that match the pattern") catch unreachable,
+        // clap.parseParam("--fail-if-no-match                Fail if no packages match the filter") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
@@ -547,11 +548,6 @@ pub const Arguments = struct {
             }
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
-
-            if (list.items.len == 0) {
-                Output.prettyErrorln("error resolving --filter: no packages matched the filter", .{});
-                Global.exit(1);
-            }
 
             ctx.workspace_paths = list.items;
         }
@@ -1749,11 +1745,7 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true)) {
-                        return;
-                    }
-
-                    Global.exit(1);
+                    try RunCommand.execAll(ctx, false);
                 }
             },
             .RunAsNodeCommand => {

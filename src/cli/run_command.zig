@@ -340,8 +340,7 @@ pub const RunCommand = struct {
                         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
                         Output.flush();
                     }
-
-                    Global.exit(code);
+                    return false;
                 }
             },
             .Signal => |signal| {
@@ -417,13 +416,13 @@ pub const RunCommand = struct {
                             if (@errorReturnTrace()) |trace| {
                                 std.debug.dumpStackTrace(trace.*);
                             }
-                            Global.exit(1);
+                            return false;
                         }
                     }
                 }
             }
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-            Global.exit(1);
+            return false;
         };
         switch (result) {
             .Exited => |code| {
@@ -452,7 +451,7 @@ pub const RunCommand = struct {
                         Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
                     }
                 }
-                Global.exit(code);
+                return false;
             },
             .Signal, .Stopped => |sig| {
                 // forward the signal to the shell / parent process
@@ -468,7 +467,7 @@ pub const RunCommand = struct {
                 if (!silent) {
                     Output.errGeneric("\"<b>{s}<r>\" stopped with unknown state <b>{d}<r>", .{ basenameOrBun(executable), sig });
                 }
-                Global.exit(1);
+                return false;
             },
         }
 
@@ -1009,12 +1008,42 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
+        // if there are no workspace paths specified, run in the current directory
+        if (ctx.workspace_paths.len == 0) {
+            _ = try exec(ctx, bin_dirs_only, true);
+            return;
+        }
+        const fsinstance = try bun.fs.FileSystem.init(null);
+        const olddir = fsinstance.top_level_dir;
+        defer {
+            // change back to the original directory once we're done
+            fsinstance.top_level_dir = olddir;
+            std.os.chdir(olddir) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s}<r> due to error <b>{s}<r>", .{ olddir, @errorName(err) });
+                Global.crash();
+            };
+        }
+        var ok = true;
+        for (ctx.workspace_paths) |path| {
+            std.os.chdir(path) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
+                continue;
+            };
+            fsinstance.top_level_dir = path;
+            const res = exec(ctx, bin_dirs_only, true) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
+                continue;
+            };
+            ok = ok and res;
+        }
+        if (!ok) {
+            Global.exit(1);
+        }
+    }
+
     pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
         var ctx = ctx_;
-
-        // for (ctx.workspace_paths) |path| {
-        // }
-        std.debug.print("found {d} workspace paths\n", .{ctx.workspace_paths.len});
 
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
@@ -1049,7 +1078,7 @@ pub const RunCommand = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                Global.exit(1);
+                return false;
             };
             return true;
         }
@@ -1117,7 +1146,7 @@ pub const RunCommand = struct {
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
                             if (!ctx.debug.silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
-                            Global.exit(1);
+                            return false;
                         };
 
                         var shebang: string = shebang_buf[0..shebang_size];
@@ -1149,7 +1178,7 @@ pub const RunCommand = struct {
                         if (@errorReturnTrace()) |trace| {
                             std.debug.dumpStackTrace(trace.*);
                         }
-                        Global.exit(1);
+                        return false;
                     };
 
                     return true;
@@ -1236,7 +1265,7 @@ pub const RunCommand = struct {
                                 if (@errorReturnTrace()) |trace| {
                                     std.debug.dumpStackTrace(trace.*);
                                 }
-                                Global.exit(1);
+                                return false;
                             };
                         }
                     },
@@ -1247,7 +1276,7 @@ pub const RunCommand = struct {
         if (script_name_to_search.len == 0) {
             if (comptime log_errors) {
                 Output.prettyError("<r>No \"scripts\" in package.json found.\n", .{});
-                Global.exit(0);
+                return false;
             }
 
             return false;
@@ -1299,7 +1328,6 @@ pub const RunCommand = struct {
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
-            Global.exit(1);
         }
 
         return false;

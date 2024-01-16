@@ -39,15 +39,27 @@ beforeAll(() => {
   cwd_b = path.join(cwd_packages, "b");
 });
 
-function runInCwdSuccess(cwd: string, pkgname: string, result: RegExp) {
+function runInCwdSuccess(cwd: string, pkgname: string | string[], result: RegExp | RegExp[]) {
+  let cmd = [bunExe(), "run"]
+  if (pkgname instanceof Array) {
+    for (let p of pkgname) {
+      cmd.push("-F", p)
+    }
+  } else {
+    cmd.push("-F", pkgname)
+  }
+  cmd.push("present")
   const { exitCode, stdout, stderr } = spawnSync({
     cwd: cwd,
-    cmd: [bunExe(), "run", "--workspace", pkgname, "present"],
+    cmd: cmd,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(stdout.toString()).toMatch(result);
+  const stdoutval = stdout.toString()
+  for (let r of result instanceof Array ? result : [result]) {
+    expect(stdoutval).toMatch(r);
+  }
   // expect(stderr.toString()).toBeEmpty();
   expect(exitCode).toBe(0);
 }
@@ -55,7 +67,7 @@ function runInCwdSuccess(cwd: string, pkgname: string, result: RegExp) {
 function runInCwdFailure(cwd: string, pkgname: string, result: RegExp) {
   const { exitCode, stdout, stderr } = spawnSync({
     cwd: cwd,
-    cmd: [bunExe(), "run", "--workspace", pkgname, "present"],
+    cmd: [bunExe(), "run", "-F", pkgname, "present"],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -90,8 +102,14 @@ describe("bun", () => {
   test("resolve 'b' from other", () => {
     runInCwdSuccess(cwd_a, "b", /4321/);
   });
+  test("resolve 'a' and 'b' from 'a'", () => {
+    runInCwdSuccess(cwd_a, ["a", "b"], [/1234/, /4321/]);
+  });
+  test("resolve 'a' and 'b' from 'b'", () => {
+    runInCwdSuccess(cwd_a, ["a", "b"], [/1234/, /4321/]);
+  });
 
   test("should error with missing workspace", () => {
-    runInCwdFailure(cwd_root, "notpresent", /workspace/);
+    runInCwdFailure(cwd_root, "notpresent", /filter/);
   });
 });

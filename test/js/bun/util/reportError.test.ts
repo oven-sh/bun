@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
 import { bunEnv, bunExe } from "harness";

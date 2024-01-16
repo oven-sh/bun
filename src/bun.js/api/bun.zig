@@ -211,7 +211,7 @@ const JSValue = @import("root").bun.JSC.JSValue;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -282,9 +282,8 @@ pub fn flushCSSImports() void {
 }
 
 pub fn getCSSImports() []ZigString {
-    var i: u16 = 0;
     const tail = css_imports_list_tail;
-    while (i < tail) : (i += 1) {
+    for (0..tail) |i| {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
@@ -375,7 +374,7 @@ pub fn inspect(
         }
     }
 
-    var formatOptions = ZigConsoleClient.FormatOptions{
+    var formatOptions = ConsoleObject.FormatOptions{
         .enable_colors = false,
         .add_newline = false,
         .flush = false,
@@ -449,7 +448,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ZigConsoleClient.format(
+    ConsoleObject.format(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -774,7 +773,18 @@ fn doResolve(
         }
     }
 
-    return doResolveWithArgs(globalThis, specifier.toBunString(globalThis), from.toBunString(globalThis), exception, is_esm, false);
+    const specifier_str = specifier.toBunString(globalThis);
+    defer specifier_str.deref();
+    const from_str = from.toBunString(globalThis);
+    defer from_str.deref();
+    return doResolveWithArgs(
+        globalThis,
+        specifier_str,
+        from_str,
+        exception,
+        is_esm,
+        false,
+    );
 }
 
 fn doResolveWithArgs(
@@ -869,9 +879,16 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
-    const value = doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
+    const source_str = source.toBunString(global);
+    defer source_str.deref();
+
+    const value = doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, exception_[0].?.value());
     };
+
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
@@ -883,7 +900,14 @@ export fn Bun__resolveSync(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
-    return doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
+
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
+    const source_str = source.toBunString(global);
+    defer source_str.deref();
+
+    return doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -895,8 +919,11 @@ export fn Bun__resolveSyncWithSource(
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
     const exception = &exception_;
-    return doResolveWithArgs(global, specifier.toBunString(global), source.*, exception, is_esm, true) orelse {
+    return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -2447,15 +2474,7 @@ pub const Crypto = struct {
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
                 } else {
-                    output_digest_buf = comptime brk: {
-                        var bytes: Hasher.Digest = undefined;
-                        var i: usize = 0;
-                        while (i < Hasher.digest) {
-                            bytes[i] = 0;
-                            i += 1;
-                        }
-                        break :brk bytes;
-                    };
+                    output_digest_buf = std.mem.zeroes(Hasher.Digest);
                 }
 
                 this.hashing.final(output_digest_slice);
@@ -3277,11 +3296,8 @@ pub const Timer = struct {
                         } else {
                             args = args_buf[0..count];
                         }
-                        var arg = args.ptr;
-                        var i: u32 = 0;
-                        while (i < count) : (i += 1) {
-                            arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
-                            arg += 1;
+                        for (args, 0..) |*arg, i| {
+                            arg.* = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
                         }
                     }
                 }

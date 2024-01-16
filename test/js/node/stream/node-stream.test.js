@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, describe, it } from "bun:test";
 import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";

@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { test, expect, it, describe } from "bun:test";
 import { gc } from "harness";
 

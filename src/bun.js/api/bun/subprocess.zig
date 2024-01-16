@@ -1159,7 +1159,7 @@ pub const Subprocess = struct {
                     if (Environment.isWindows) @panic("TODO");
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
-                        .fd = bun.toFD(fd),
+                        .fd = fd,
                         .buffer = bun.ByteList{},
                         .allocator = globalThis.bunVM().allocator,
                         .auto_close = true,
@@ -1178,7 +1178,7 @@ pub const Subprocess = struct {
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
-                    var buffered_input: BufferedInput = .{ .fd = bun.toFD(fd), .source = undefined };
+                    var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined };
                     switch (stdio) {
                         .array_buffer => |array_buffer| {
                             buffered_input.source = .{ .array_buffer = array_buffer };
@@ -1194,7 +1194,7 @@ pub const Subprocess = struct {
                     return Writable{ .memfd = stdio.memfd };
                 },
                 .fd => {
-                    return Writable{ .fd = bun.toFD(fd) };
+                    return Writable{ .fd = fd };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -1387,6 +1387,13 @@ pub const Subprocess = struct {
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
         var stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{};
+        var pipes_to_close: std.ArrayListUnmanaged(bun.FileDescriptor) = .{};
+        defer {
+            for (pipes_to_close.items) |pipe_fd| {
+                _ = bun.sys.close(pipe_fd);
+            }
+            pipes_to_close.clearAndFree(bun.default_allocator);
+        }
 
         var windows_hide: if (Environment.isWindows) u1 else u0 = 0;
 
@@ -1863,6 +1870,7 @@ pub const Subprocess = struct {
                     .PROTONOSUPPORT => break :blk error.ProtocolNotSupported,
                     else => |err| break :blk std.os.unexpectedErrno(err),
                 }
+                pipes_to_close.append(bun.default_allocator, bun.toFD(fds[1])) catch |err| break :blk err;
                 actions.dup2(bun.toFD(fds[1]), bun.toFD(item.fileno)) catch |err| break :blk err;
                 actions.close(bun.toFD(fds[1])) catch |err| break :blk err;
                 item.fd = fds[0];
@@ -1915,7 +1923,14 @@ pub const Subprocess = struct {
                 });
                 return .zero;
             };
+            pipes_to_close.append(bun.default_allocator, bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
             actions.dup2(bun.toFD(fds[1]), bun.toFD(3)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            actions.close(bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            // enable non-block
+            const before = std.c.fcntl(fds[0], os.F.GETFL);
+            _ = std.c.fcntl(fds[0], os.F.SETFL, before | os.O.NONBLOCK);
+            // enable SOCK_CLOXEC
+            _ = std.c.fcntl(fds[0], os.FD_CLOEXEC);
         }
 
         env_array.append(allocator, null) catch {
@@ -1935,9 +1950,12 @@ pub const Subprocess = struct {
                 if (stdio[2].isPiped()) {
                     _ = bun.sys.close(bun.toFD(stderr_pipe[1]));
                 }
-                for (stdio_pipes.items) |item| {
-                    _ = bun.sys.close(bun.toFD(item.fd + 1));
+
+                // we always close these, but we want to close these earlier
+                for (pipes_to_close.items) |pipe_fd| {
+                    _ = bun.sys.close(pipe_fd);
                 }
+                pipes_to_close.clearAndFree(bun.default_allocator);
             }
 
             break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {
@@ -2700,7 +2718,10 @@ pub const Subprocess = struct {
                 }
 
                 switch (req.ptr) {
-                    .File, .Blob => unreachable,
+                    .File, .Blob => {
+                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049");
+                        return false;
+                    },
                     .Direct, .JavaScript, .Bytes => {
                         if (req.isLocked(globalThis)) {
                             globalThis.throwInvalidArguments("ReadableStream cannot be locked", .{});
@@ -2710,11 +2731,11 @@ pub const Subprocess = struct {
                         out_stdio.* = .{ .pipe = req };
                         return true;
                     },
-                    else => {},
+                    .Invalid => {
+                        globalThis.throwInvalidArguments("ReadableStream is in invalid state.", .{});
+                        return false;
+                    },
                 }
-
-                globalThis.throwInvalidArguments("Unsupported ReadableStream type", .{});
-                return false;
             }
         } else if (value.asArrayBuffer(globalThis)) |array_buffer| {
             if (array_buffer.slice().len == 0) {

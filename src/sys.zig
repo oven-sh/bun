@@ -132,6 +132,7 @@ pub const Tag = enum(u8) {
     GetFinalPathNameByHandle,
     CloseHandle,
     SetFilePointerEx,
+    SetEndOfFile,
 
     pub fn isWindows(this: Tag) bool {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
@@ -158,11 +159,15 @@ pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
 }
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.fchmod(fd, mode);
+    }
+
     return Maybe(void).errnoSys(C.fchmod(fd.cast(), mode), .fchmod) orelse
         Maybe(void).success;
 }
 
-pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
+pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = sys.chdir(destination);
         return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
@@ -170,11 +175,11 @@ pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
-            log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), kernel32.GetLastError() });
+            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), kernel32.GetLastError() });
             return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
         }
 
-        log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), 0 });
+        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), 0 });
 
         return Maybe(void).success;
     }
@@ -207,8 +212,8 @@ pub fn chdir(destination: anytype) Maybe(void) {
             return Maybe(void).success;
         }
 
-        if (comptime Type == bun.OSPathSlice or Type == [:0]u16) {
-            return chdirOSPath(@as(bun.OSPathSlice, destination));
+        if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
+            return chdirOSPath(@as(bun.OSPathSliceZ, destination));
         }
 
         var wbuf: bun.WPathBuffer = undefined;
@@ -266,7 +271,10 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         .windows => {
             var wbuf: bun.WPathBuffer = undefined;
             const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
-            return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+            return if (rc != 0)
+                Maybe(void).success
+            else
+                Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
         },
 
         else => @compileError("mkdir is not implemented on this platform"),
@@ -295,12 +303,14 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
         const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
-
-        return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+        return if (rc != 0)
+            Maybe(void).success
+        else
+            Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
     }
 }
 
-pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
+pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
@@ -416,12 +426,12 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
-            return JSC.Maybe(bun.FileDescriptor){
+            return .{
                 .result = bun.toFD(fd),
             };
         },
@@ -534,7 +544,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -576,7 +586,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
     }
 }
 
-pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = system.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
@@ -672,6 +682,7 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
 pub const max_count = switch (builtin.os.tag) {
     .linux => 0x7ffff000,
     .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
+    .windows => std.math.maxInt(u32),
     else => std.math.maxInt(isize),
 };
 
@@ -687,7 +698,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 return err;
             }
 
-            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+            return Maybe(usize){ .result = @intCast(rc) };
         },
         .linux => {
             while (true) {
@@ -699,10 +710,31 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                     return err;
                 }
 
-                return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+                return Maybe(usize){ .result = @intCast(rc) };
             }
         },
-        .windows => sys_uv.write(fd, bytes),
+        .windows => {
+            // "WriteFile sets this value to zero before doing any work or error checking."
+            var bytes_written: u32 = undefined;
+            std.debug.assert(bytes.len > 0);
+            const rc = std.os.windows.kernel32.WriteFile(
+                bun.fdcast(fd),
+                bytes.ptr,
+                adjusted_len,
+                &bytes_written,
+                null,
+            );
+            if (rc == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .WriteFile,
+                        .fd = fd,
+                    },
+                };
+            }
+            return Maybe(usize){ .result = bytes_written };
+        },
         else => @compileError("Not implemented yet"),
     };
 }
@@ -1302,6 +1334,7 @@ pub const Error = struct {
     syscall: Syscall.Tag,
     path: []const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
+    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
@@ -1397,7 +1430,11 @@ pub const Error = struct {
             const system_errno = brk: {
                 // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
                 @setRuntimeSafety(false);
-                break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
             if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
@@ -1493,7 +1530,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
-pub fn existsOSPath(path: bun.OSPathSlice) bool {
+pub fn existsOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
         return system.access(path, 0) == 0;
     }
@@ -1501,7 +1538,7 @@ pub fn existsOSPath(path: bun.OSPathSlice) bool {
     if (comptime Environment.isWindows) {
         const result = kernel32.GetFileAttributesW(path.ptr);
         if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.strings.fmtUTF16(path), result });
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), result });
         }
         return result != windows.INVALID_FILE_ATTRIBUTES;
     }
@@ -1539,7 +1576,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
         };
         const attr = windows.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-            .RootDirectory = bun.toFD(fd),
+            .RootDirectory = fd,
             .Attributes = 0,
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
@@ -1557,7 +1594,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
 
 pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 
-pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
+pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
         return is_executable_file(path);
     }
@@ -1584,7 +1621,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
         //     else => false,
         // };
 
-        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.strings.fmtUTF16(path), out, result });
+        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.fmtUTF16(path), out, result });
 
         // return result;
     }

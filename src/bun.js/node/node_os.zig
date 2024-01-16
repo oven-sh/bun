@@ -280,14 +280,7 @@ pub const Os = struct {
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        switch (comptime builtin.target.cpu.arch.endian()) {
-            .big => {
-                return JSC.ZigString.init("BE").withEncoding().toValue(globalThis);
-            },
-            .little => {
-                return JSC.ZigString.init("LE").withEncoding().toValue(globalThis);
-            },
-        }
+        return JSC.ZigString.init("LE").withEncoding().toValue(globalThis);
     }
 
     pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

@@ -241,8 +241,8 @@ export var __merge = (props, defaultProps) => {
   return !hasAnyProps(defaultProps)
     ? props
     : !hasAnyProps(props)
-    ? defaultProps
-    : mergeDefaultProps(props, defaultProps);
+      ? defaultProps
+      : mergeDefaultProps(props, defaultProps);
 };
 
 export var __legacyDecorateClassTS = function (decorators, target, key, desc) {

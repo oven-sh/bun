@@ -1,6 +1,6 @@
 const server = Bun.serve({
   async fetch() {
-    throw new Error("Error")
+    throw new Error("Error");
   },
   error() {
     return new Response("Hello");

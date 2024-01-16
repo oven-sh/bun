@@ -52,11 +52,11 @@ Some methods are not optimized yet.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `on` `addAbortListener` `getMaxListeners`
+🟡 Missing `addAbortListener` `events.getMaxListeners`
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `Dir` `fdatasync` `fdatasyncSync` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `Dir` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -80,7 +80,7 @@ Some methods are not optimized yet.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout` `Server#ref()` `Server#unref()` `Socket#ref()` `Socket#unref()`.
+🟡 Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout`
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -92,7 +92,7 @@ Some methods are not optimized yet.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Missing `Performance` `PerformanceMark` `PerformanceMeasure` `PerformanceObserverEntryList` `PerformanceResourceTiming` `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 

@@ -393,18 +393,14 @@ async function* on(emitter, event, options = {}) {
 
   while (!done) {
     if (!unconsumedEvents.isEmpty()) {
-      yield new Promise(function (resolve, reject) {
-        resolve(unconsumedEvents.shift());
-      });
+      yield Promise.$resolve(unconsumedEvents.shift());
     }
     if (!unconsumedErrors.isEmpty()) {
-      yield new Promise(function (resolve, reject) {
-        reject(unconsumedErrors.shift());
-      });
+      yield Promise.$reject(unconsumedErrors.shift());
     }
-    yield new Promise(function (resolve, reject) {
-      unconsumedPromises.push({ resolve, reject });
-    });
+    const { promise, reject, resolve } = $newPromiseCapability(Promise);
+    unconsumedPromises.push({ reject, resolve });
+    yield promise;
   }
 }
 

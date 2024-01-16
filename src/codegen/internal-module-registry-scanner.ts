@@ -57,7 +57,6 @@ export function createInternalModuleRegistry(basedir: string) {
   const requireTransformer = (specifier: string, from: string) => {
     // this one is deprecated
     if (specifier === "$shared") specifier = "./internal/shared.ts";
-    if (specifier === "$fixed_queue") specifier = "./internal/fixed_queue.ts";
 
     const directMatch = internalRegistry.get(specifier);
     if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);

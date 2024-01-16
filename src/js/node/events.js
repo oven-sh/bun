@@ -2,7 +2,6 @@
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 const { throwNotImplemented } = require("$shared");
-const { FixedQueue } = require("$fixed_queue");
 
 const SymbolFor = Symbol.for;
 
@@ -361,6 +360,7 @@ async function* on(emitter, event, options = {}) {
   const signal = options.signal;
   if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
 
+  const { FixedQueue } = require("internal/fixed_queue");
   const unconsumedPromises = new FixedQueue();
   const unconsumedEvents = new FixedQueue();
   const unconsumedErrors = new FixedQueue();

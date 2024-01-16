@@ -258,7 +258,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
   var setup;
   setup = () => {
-    const { FixedQueue } = require("$fixed_queue");
+    const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
 
     function processTicksAndRejections() {

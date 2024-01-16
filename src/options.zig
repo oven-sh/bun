@@ -650,12 +650,24 @@ pub const Loader = enum(u8) {
     base64,
     dataurl,
     text,
+    sqlite,
+    sqlite_embedded,
+
+    pub inline fn isSQLite(this: Loader) bool {
+        return switch (this) {
+            .sqlite, .sqlite_embedded => true,
+            else => false,
+        };
+    }
 
     pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
             // TODO: CSS
             .css,
+            .napi,
+            .sqlite,
+            .sqlite_embedded,
             => true,
             else => false,
         };
@@ -745,6 +757,8 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
+        .{ "sqlite", Loader.sqlite },
+        .{ "sqlite_embedded", Loader.sqlite_embedded },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -766,6 +780,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Api.Loader.base64 },
         .{ "txt", Api.Loader.text },
         .{ "text", Api.Loader.text },
+        .{ "sqlite", Api.Loader.sqlite },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -799,6 +814,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .sqlite_embedded, .sqlite => .sqlite,
         };
     }
 
@@ -817,6 +833,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .sqlite => .sqlite,
             else => .file,
         };
     }

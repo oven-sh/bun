@@ -316,6 +316,7 @@ extern "C" void* Bun__transpileFile(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
+    const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);

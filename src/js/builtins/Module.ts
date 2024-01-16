@@ -5,7 +5,7 @@ export function main() {
 
 $visibility = "Private";
 export function require(this: CommonJSModuleRecord, id: string) {
-  return $overridableRequire.$call(this, id);
+  return $tailCallForwardArguments($overridableRequire, this);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
@@ -50,7 +50,15 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
   // clear the module from the map.
   //
-  var out = this.$require(id, mod);
+  var out = this.$require(
+    id,
+    mod,
+    // did they pass a { type } object?
+    $argumentCount(),
+    // the object containing a "type" attribute, if they passed one
+    // maybe this will be "paths" in the future too.
+    arguments[1],
+  );
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {

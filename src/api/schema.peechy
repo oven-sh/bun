@@ -14,6 +14,7 @@ smol Loader {
     base64 = 11;
     dataurl = 12;
     text = 13;
+    sqlite = 14;
 }
 
 smol FrameworkEntryPointType {

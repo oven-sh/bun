@@ -3,6 +3,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "headers-handwritten.h"
 #include "node_api.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
@@ -232,6 +233,8 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
     return true;
 }
 
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -268,6 +271,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    // Support embedded .node files
+    if (filename.startsWith("/$bunfs/"_s)) {
+        BunString bunStr = Bun::toString(filename);
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
+            filename = bunStr.toWTFString(BunString::ZeroCopy);
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 #if OS(WINDOWS)
     CString utf8 = filename.utf8();

@@ -4708,6 +4708,11 @@ fn NewPrinter(
                     }
 
                     p.printImportRecordPath(record);
+
+                    if ((record.tag.loader() orelse options.Loader.file).isSQLite()) {
+                        // we do not preserve "embed": "true" since it is not necessary
+                        p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {

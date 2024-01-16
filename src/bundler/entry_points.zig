@@ -157,25 +157,6 @@ pub const ClientEntryPoint = struct {
     }
 };
 
-const QuoteEscapeFormat = struct {
-    data: []const u8,
-
-    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var i: usize = 0;
-        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
-            try writer.writeAll(self.data[i..j]);
-            try writer.writeAll(switch (self.data[j]) {
-                '"' => "\\\"",
-                '\n' => "\\n",
-                '\\' => "\\\\",
-                else => unreachable,
-            });
-        }
-        if (i == self.data.len) return;
-        try writer.writeAll(self.data[i..]);
-    }
-};
-
 pub const ServerEntryPoint = struct {
     source: logger.Source = undefined,
 
@@ -218,7 +199,7 @@ pub const ServerEntryPoint = struct {
                     \\
                 ,
                     .{
-                        QuoteEscapeFormat{ .data = path_to_use },
+                        strings.QuoteEscapeFormat{ .data = path_to_use },
                     },
                 );
             }
@@ -239,7 +220,7 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    QuoteEscapeFormat{ .data = path_to_use },
+                    strings.QuoteEscapeFormat{ .data = path_to_use },
                 },
             );
         };

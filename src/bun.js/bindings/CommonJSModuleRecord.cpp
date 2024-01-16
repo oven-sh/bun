@@ -29,6 +29,7 @@
  * different value. In that case, it will have a stale value.
  */
 
+#include "headers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
@@ -914,13 +915,39 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
+    BunString typeAttributeStr = { BunStringTag::Dead };
+    String typeAttribute = String();
+
+
+    // We need to be able to wire in the "type" import attribute from bundled code..
+    // so we do it via CommonJS require().
+    int32_t previousArgumentCount = callframe->argument(2).asInt32();
+    // If they called require(id), skip the check for the type attribute
+    if (UNLIKELY(previousArgumentCount == 2)) {
+        JSValue val = callframe->argument(3);
+        if (val.isObject()) {
+            JSObject* obj = val.getObject();
+            // This getter is expensive and rare.
+            if (auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+                if (typeValue.isString()) {
+                    typeAttribute = typeValue.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    typeAttributeStr = Bun::toString(typeAttribute);
+                }
+            }
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
 
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
         jsCast<JSCommonJSModule*>(callframe->argument(1)),
         specifierValue,
         &specifierStr,
-        &referrerStr);
+        &referrerStr,
+        LIKELY(typeAttribute.isEmpty())
+            ? nullptr
+            : &typeAttributeStr);
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
 }

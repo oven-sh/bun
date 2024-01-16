@@ -27,6 +27,7 @@ export const enum Loader {
   base64 = 11,
   dataurl = 12,
   text = 13,
+  sqlite = 14,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -55,6 +56,8 @@ export const LoaderKeys: {
   dataurl: "dataurl";
   13: "text";
   text: "text";
+  14: "sqlite";
+  sqlite: "sqlite";
 };
 export const enum FrameworkEntryPointType {
   client = 1,

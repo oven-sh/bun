@@ -595,7 +595,16 @@ pub const BundleV2 = struct {
             entry.value_ptr.* = source_index.get();
             out_source_index = source_index;
             this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
-            const loader = path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
+            const loader = brk: {
+                if (import_record.importer_source_index) |importer| {
+                    var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
+                    if (record.loader()) |out_loader| {
+                        break :brk out_loader;
+                    }
+                }
+
+                break :brk path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
+            };
 
             this.graph.input_files.append(bun.default_allocator, .{
                 .source = .{
@@ -1067,7 +1076,9 @@ pub const BundleV2 = struct {
             const sources = this.graph.input_files.items(.source);
             var additional_output_files = std.ArrayList(options.OutputFile).init(this.bundler.allocator);
 
-            var additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
+            const additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
+            const loaders = this.graph.input_files.items(.loader);
+
             for (reachable_files) |reachable_source| {
                 const index = reachable_source.get();
                 const key = unique_key_for_additional_files[index];
@@ -1092,7 +1103,7 @@ pub const BundleV2 = struct {
                         template.placeholder.hash = content_hashes_for_additional_files[index];
                     }
 
-                    const loader = source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
+                    const loader = loaders[index];
 
                     additional_output_files.append(
                         options.OutputFile.init(
@@ -1896,6 +1907,16 @@ pub const BundleV2 = struct {
                 }
             }
 
+            // By default, we treat .sqlite files as external.
+            if (import_record.tag == .with_type_sqlite) {
+                import_record.is_external_without_side_effects = true;
+                continue;
+            }
+
+            if (import_record.tag == .with_type_sqlite_embedded) {
+                import_record.is_external_without_side_effects = true;
+            }
+
             if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
                 continue;
             }
@@ -2023,6 +2044,10 @@ pub const BundleV2 = struct {
             }
 
             resolve_task.jsx.development = resolve_result.jsx.development;
+
+            if (import_record.tag.loader()) |loader| {
+                resolve_task.loader = loader;
+            }
 
             if (resolve_task.loader == null) {
                 resolve_task.loader = path.loader(&this.bundler.options.loaders);
@@ -2499,6 +2524,116 @@ pub const ParseTask = struct {
                     .data = source.contents,
                     .prefer_template = true,
                 }, Logger.Loc{ .start = 0 });
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+            },
+
+            .sqlite_embedded, .sqlite => {
+                if (!bundler.options.target.isBun()) {
+                    log.addError(
+                        null,
+                        Logger.Loc.Empty,
+                        "To use the \"sqlite\" loader, set target to \"bun\"",
+                    ) catch bun.outOfMemory();
+                    return error.ParserError;
+                }
+
+                const path_to_use = brk: {
+                    // Implements embedded sqlite
+                    if (loader == .sqlite_embedded) {
+                        const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                        unique_key_for_additional_file.* = embedded_path;
+                        break :brk embedded_path;
+                    }
+
+                    break :brk source.path.text;
+                };
+
+                // This injects the following code:
+                //
+                // import.meta.require(unique_key).db
+                //
+                const import_path = Expr.init(E.String, E.String{
+                    .data = path_to_use,
+                }, Logger.Loc{ .start = 0 });
+
+                const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, Logger.Loc{ .start = 0 });
+                const require_property = Expr.init(E.Dot, E.Dot{
+                    .target = import_meta,
+                    .name_loc = Logger.Loc.Empty,
+                    .name = "require",
+                }, Logger.Loc{ .start = 0 });
+                const require_args = allocator.alloc(Expr, 2) catch unreachable;
+                require_args[0] = import_path;
+                const object_properties = allocator.alloc(G.Property, 1) catch unreachable;
+                object_properties[0] = G.Property{
+                    .key = Expr.init(E.String, E.String{
+                        .data = "type",
+                    }, Logger.Loc{ .start = 0 }),
+                    .value = Expr.init(E.String, E.String{
+                        .data = "sqlite",
+                    }, Logger.Loc{ .start = 0 }),
+                };
+                require_args[1] = Expr.init(E.Object, E.Object{
+                    .properties = G.Property.List.init(object_properties),
+                    .is_single_line = true,
+                }, Logger.Loc{ .start = 0 });
+                const require_call = Expr.init(E.Call, E.Call{
+                    .target = require_property,
+                    .args = BabyList(Expr).init(require_args),
+                }, Logger.Loc{ .start = 0 });
+
+                const root = Expr.init(E.Dot, E.Dot{
+                    .target = require_call,
+                    .name_loc = Logger.Loc.Empty,
+                    .name = "db",
+                }, Logger.Loc{ .start = 0 });
+
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+            },
+            .napi => {
+                if (bundler.options.target == .node) {
+                    log.addError(
+                        null,
+                        Logger.Loc.Empty,
+                        "TODO: implement .node loader for Node.js target",
+                    ) catch bun.outOfMemory();
+                    return error.ParserError;
+                }
+
+                if (bundler.options.target != .bun) {
+                    log.addError(
+                        null,
+                        Logger.Loc.Empty,
+                        "To load .node files, set target to \"bun\"",
+                    ) catch bun.outOfMemory();
+                    return error.ParserError;
+                }
+
+                const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                // This injects the following code:
+                //
+                // import.meta.require(unique_key)
+                //
+                const import_path = Expr.init(E.String, E.String{
+                    .data = unique_key,
+                }, Logger.Loc{ .start = 0 });
+
+                // TODO: e_require_string
+                const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, Logger.Loc{ .start = 0 });
+                const require_property = Expr.init(E.Dot, E.Dot{
+                    .target = import_meta,
+                    .name_loc = Logger.Loc.Empty,
+                    .name = "require",
+                }, Logger.Loc{ .start = 0 });
+                const require_args = allocator.alloc(Expr, 1) catch unreachable;
+                require_args[0] = import_path;
+                const require_call = Expr.init(E.Call, E.Call{
+                    .target = require_property,
+                    .args = BabyList(Expr).init(require_args),
+                }, Logger.Loc{ .start = 0 });
+
+                const root = require_call;
+                unique_key_for_additional_file.* = unique_key;
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             // TODO: css

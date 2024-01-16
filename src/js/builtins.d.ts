@@ -107,7 +107,7 @@ declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
 declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
 declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
-declare function $tailCallForwardArguments(): TODO;
+declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
  * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin
  * @deprecated

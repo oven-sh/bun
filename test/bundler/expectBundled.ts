@@ -89,9 +89,9 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string>;
+  files: Record<string, string | Buffer>;
   /** Files to be written only after the bundle is done. */
-  runtimeFiles?: Record<string, string>;
+  runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
   /** ??? */
@@ -498,7 +498,9 @@ function expectBundled(
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
-      writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(filename, formattedContents);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -1159,7 +1161,9 @@ for (const [key, blob] of build.outputs) {
     // Write runtime files to disk as well as run the post bundle hook.
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(path.join(root, file), formattedContents);
     }
 
     if (onAfterBundle) {

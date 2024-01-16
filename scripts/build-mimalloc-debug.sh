@@ -27,9 +27,9 @@ cmake "${CMAKE_FLAGS[@]}" . \
 
 ninja
 
-if [ -f libmimalloc-valgrind-debug.a ];
+if [ -f libmimalloc-valgrind-debug.a ]; then
     file="libmimalloc-valgrind-debug.a"
-elif [ -f libmimalloc-debug.a ];
+elif [ -f libmimalloc-debug.a ]; then
     file="libmimalloc-debug.a"
 else
     echo "Could not find libmimalloc-valgrind-debug.a or libmimalloc-debug.a"

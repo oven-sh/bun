@@ -947,7 +947,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         )
     else()
         target_compile_options(${bun} PUBLIC /O2 -flto=full)
-        target_link_options(${bun} PUBLIC /LTCG)
+        target_link_options(${bun} PUBLIC /LTCG /Z7)
     endif()
 endif()
 
@@ -978,8 +978,7 @@ if(WIN32)
         "BORINGSSL_NO_CXX=1" # lol
     )
 
-    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
@@ -1275,6 +1274,7 @@ if(USE_STATIC_SQLITE)
         "SQLITE_ENABLE_JSON1=1"
     )
     target_link_libraries(${bun} PRIVATE sqlite3)
+    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     message(STATUS "Using static sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
 else()
@@ -1305,18 +1305,15 @@ else()
         "${WEBKIT_LIB_DIR}/sicudt.lib"
         "${WEBKIT_LIB_DIR}/sicuin.lib"
         "${WEBKIT_LIB_DIR}/sicuuc.lib"
-        winmm
         bcrypt
         ntdll
-        ucrt
         userenv
         dbghelp
-        wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+        delayimp
     )
-endif()
-
-if(WIN32)
-    # delayimp -delayload:shell32.dll -delayload:ole32.dll
+    target_link_options(${bun} PRIVATE
+        "/DELAYLOAD:wsock32" # ws2_32 required by TransmitFile aka sendfile on windows
+    )
 endif()
 
 if(BUN_LINK_ONLY)

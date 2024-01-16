@@ -33,10 +33,8 @@ $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-WmiObject -Class Win32_Processo
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2'
-# $CFLAGS = '/O2 /MT'
-$CXXFLAGS = '/O2'
-# $CXXFLAGS = '/O2 /MT'
+$CFLAGS = '/O2 /MT'
+$CXXFLAGS = '/O2 /MT'
 
 if ($Baseline) {
   $CFLAGS += ' -march=nehalem'
@@ -48,8 +46,10 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_BUILD_TYPE=Release",
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
-  "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
-  "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
+  "-DCMAKE_C_FLAGS=$CFLAGS",
+  "-DCMAKE_CXX_FLAGS=$CXXFLAGS",
+  "-DCMAKE_C_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG",
+  "-DCMAKE_CXX_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG"
 )
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"

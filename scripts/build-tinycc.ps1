@@ -21,7 +21,7 @@ try {
   Run .\c2str.exe .\include\tccdefs.h tccdefs_.h
 
   # TODO: -MT
-  Run clang-cl libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c"
+  Run clang-cl libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MT" "-GS-" "-c"
   Run lib "tcc.obj" "-OUT:tcc.lib"
 
   Copy-Item tcc.obj $BUN_DEPS_OUT_DIR/tcc.lib

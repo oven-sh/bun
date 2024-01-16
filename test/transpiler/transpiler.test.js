@@ -3323,8 +3323,8 @@ console.log("boop");
   });
 
   const prepareForSnapshot = code => {
-    return code.replace(/(__using|__callDispose)_([a-z0-9]+)/g, '$1')
-  }
+    return code.replace(/(__using|__callDispose)_([a-z0-9]+)/g, "$1");
+  };
   const expectCapturePrintedSnapshot = code => {
     const result = parsed(`(async() => {${code}})()`, false, false);
     expect(result).toEndWith("})();\n");

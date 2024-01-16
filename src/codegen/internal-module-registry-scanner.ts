@@ -15,10 +15,10 @@ export function createInternalModuleRegistry(basedir: string) {
     const prefix = moduleList[i].startsWith("node/")
       ? "node:"
       : moduleList[i].startsWith("bun:")
-      ? "bun:"
-      : moduleList[i].startsWith("internal/")
-      ? "internal/"
-      : undefined;
+        ? "bun:"
+        : moduleList[i].startsWith("internal/")
+          ? "internal/"
+          : undefined;
     if (prefix) {
       const id = prefix + moduleList[i].slice(prefix.length).replaceAll(".", "/").slice(0, -3);
       internalRegistry.set(id, i);

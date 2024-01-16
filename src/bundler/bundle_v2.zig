@@ -2586,7 +2586,7 @@ pub const ParseTask = struct {
                 ) catch |err| {
                     const source_ = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
-                        error.FileNotFound => {
+                        error.ENOENT, error.FileNotFound => {
                             log.addErrorFmt(
                                 source_,
                                 Logger.Loc.Empty,

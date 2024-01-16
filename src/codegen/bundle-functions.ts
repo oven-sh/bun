@@ -175,10 +175,9 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 // do not allow the bundler to rename a symbol to $
 ($);
 
-$$capture_start$$(${fn.async ? "async " : ""}${
-        useThis
-          ? `function(${fn.params.join(",")})`
-          : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
+$$capture_start$$(${fn.async ? "async " : ""}${useThis
+        ? `function(${fn.params.join(",")})`
+        : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
       } {${fn.source}}).$$capture_end$$;
 `,
     );
@@ -202,11 +201,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       (fn.directives.sloppy
         ? captured
         : captured.replace(
-            /function\s*\(.*?\)\s*{/,
-            '$&"use strict";' +
-              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
-              (usesAssert ? createAssertClientJS(fn.name) : ""),
-          )
+          /function\s*\(.*?\)\s*{/,
+          '$&"use strict";' +
+          (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+          (usesAssert ? createAssertClientJS(fn.name) : ""),
+        )
       )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@") + "\n";
@@ -225,8 +224,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
         : fn.directives.overriddenName
-        ? `"${fn.directives.overriddenName}"_s`
-        : "ASCIILiteral()",
+          ? `"${fn.directives.overriddenName}"_s`
+          : "ASCIILiteral()",
     });
   }
 
@@ -290,13 +289,11 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
       const name = `${lowerBasename}${cap(fn.name)}Code`;
       bundledCPP += `// ${fn.name}
     const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
-    const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${
-        fn.directives.alwaysInline ? "Always" : "None"
-      };
+    const JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"
+        };
     const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
-    const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${
-        fn.visibility
-      };
+    const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility
+        };
     const int s_${name}Length = ${fn.source.length};
     const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
     const char s_${name}Bytes[${count}] = ${code};

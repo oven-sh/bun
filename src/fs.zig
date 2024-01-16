@@ -83,14 +83,18 @@ pub const FileSystem = struct {
         });
     }
 
-    pub var max_fd: FileDescriptorType = 0;
+    pub var max_fd: FileDescriptorType = .zero;
 
     pub inline fn setMaxFd(fd: anytype) void {
         if (!FeatureFlags.store_file_descriptors) {
             return;
         }
 
-        max_fd = @max(fd, max_fd);
+        if (comptime @TypeOf(fd) == *anyopaque) {
+            max_fd = @enumFromInt(@max(@intFromPtr(fd), max_fd.int()));
+        } else {
+            max_fd = @enumFromInt(@max(fd, max_fd.int()));
+        }
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -150,7 +154,7 @@ pub const FileSystem = struct {
         pub const EntryMap = bun.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
-        fd: StoredFileDescriptorType = 0,
+        fd: StoredFileDescriptorType = .zero,
         generation: bun.Generation = 0,
         data: EntryMap,
 
@@ -158,7 +162,8 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+        pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: *const bun.DirIterator.IteratorResult, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+            const name_slice = entry.name.slice();
             const _kind: Entry.Kind = switch (entry.kind) {
                 .directory => .dir,
                 // This might be wrong!
@@ -171,9 +176,9 @@ pub const FileSystem = struct {
                 if (prev_map) |map| {
                     var stack_fallback = std.heap.stackFallback(512, allocator);
                     const stack = stack_fallback.get();
-                    const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, entry.name);
+                    const prehashed = bun.StringHashMapContext.PrehashedCaseInsensitive.init(stack, name_slice);
                     defer prehashed.deinit(stack);
-                    if (map.getAdapted(entry.name, prehashed)) |existing| {
+                    if (map.getAdapted(name_slice, prehashed)) |existing| {
                         existing.mutex.lock();
                         defer existing.mutex.unlock();
                         existing.dir = dir.dir;
@@ -189,15 +194,15 @@ pub const FileSystem = struct {
                     }
                 }
 
-                // entry.name only lives for the duration of the iteration
+                // name_slice only lives for the duration of the iteration
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
-                    entry.name,
+                    name_slice,
                     *FileSystem.FilenameStore,
                     &FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
-                    entry.name,
+                    name_slice,
                     *FileSystem.FilenameStore,
                     &FileSystem.FilenameStore.instance,
                 );
@@ -380,7 +385,7 @@ pub const FileSystem = struct {
             symlink: PathString = PathString.empty,
             /// Too much code expects this to be 0
             /// don't make it bun.invalid_fd
-            fd: StoredFileDescriptorType = 0,
+            fd: StoredFileDescriptorType = .zero,
             kind: Kind = .file,
         };
 
@@ -648,7 +653,7 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = bun.toFD(dir_fd);
 
-                const result = try bun.sys.openat(dir_fd, name, flags, std.os.S.IRWXU).unwrap();
+                const result = try bun.sys.openat(bun.toFD(dir_fd), name, flags, std.os.S.IRWXU).unwrap();
                 this.fd = bun.toFD(result);
             }
 
@@ -656,7 +661,7 @@ pub const FileSystem = struct {
                 std.debug.assert(this.fd != bun.invalid_fd);
                 std.debug.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), bun.sliceTo(from_name, 0), std.fs.cwd().fd, bun.sliceTo(name, 0));
+                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.toFD(std.fs.cwd().fd), bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -695,7 +700,7 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
                 const result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                this.fd = bun.toFD(result);
+                this.fd = bun.toLibUVOwnedFD(result);
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
@@ -712,7 +717,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ strings.fmtUTF16(existing), strings.fmtUTF16(new) });
+                    debug("moveFileExW({s}, {s})", .{ bun.fmt.fmtUTF16(existing), bun.fmt.fmtUTF16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -734,7 +739,7 @@ pub const FileSystem = struct {
             }
 
             // If we're not near the max amount of open files, don't worry about it.
-            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
+            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
         }
 
         pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
@@ -923,7 +928,7 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = handle.iterate();
+            var iter = bun.iterateDir(handle);
             var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
@@ -933,8 +938,8 @@ pub const FileSystem = struct {
                 dir.fd = bun.toFD(handle.fd);
             }
 
-            while (try iter.next()) |_entry| {
-                debug("readdir entry {s}", .{_entry.name});
+            while (try iter.next().unwrap()) |*_entry| {
+                debug("readdir entry {s}", .{_entry.name.slice()});
 
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
@@ -1044,7 +1049,7 @@ pub const FileSystem = struct {
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
-                if (store_fd and entries.fd == 0)
+                if (store_fd and entries.fd == .zero)
                     entries.fd = bun.toFD(handle.fd);
 
                 entries_ptr.* = entries;
@@ -1282,8 +1287,8 @@ pub const FileSystem = struct {
             var symlink: []const u8 = "";
 
             if (is_symlink) {
-                var file = try if (existing_fd != 0)
-                    std.fs.File{ .handle = existing_fd }
+                var file = try if (existing_fd != .zero)
+                    std.fs.File{ .handle = existing_fd.int() }
                 else if (store_fd)
                     std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
                 else
@@ -1291,10 +1296,10 @@ pub const FileSystem = struct {
                 setMaxFd(file.handle);
 
                 defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
+                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == .zero) {
                         file.close();
                     } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = file.handle;
+                        cache.fd = bun.toFD(file.handle);
                     }
                 }
                 const _stat = try file.stat();
@@ -1440,8 +1445,8 @@ pub const PathName = struct {
         return this.dir;
     }
 
-    pub fn fmtIdentifier(self: *const PathName) strings.FormatValidIdentifier {
-        return strings.fmtIdentifier(self.nonUniqueNameStringBase());
+    pub fn fmtIdentifier(self: *const PathName) bun.fmt.FormatValidIdentifier {
+        return bun.fmt.fmtIdentifier(self.nonUniqueNameStringBase());
     }
 
     // For readability, the names of certain automatically-generated symbols are

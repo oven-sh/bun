@@ -16,6 +16,7 @@ public:
     DOMClientIsoSubspaces() = default;
 
     /* --- bun --- */
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunClassConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
@@ -46,6 +47,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

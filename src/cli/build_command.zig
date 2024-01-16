@@ -147,10 +147,17 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> to use multiple entry points, specify <b>--outdir<r>", .{});
-            Global.exit(1);
-            return;
+        if (ctx.bundler_options.outdir.len == 0) {
+            if (this_bundler.options.entry_points.len > 1) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
+                Global.exit(1);
+                return;
+            }
+            if (this_bundler.options.code_splitting) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled", .{});
+                Global.exit(1);
+                return;
+            }
         }
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;

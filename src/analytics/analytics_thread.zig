@@ -305,7 +305,7 @@ pub const GenerateHeader = struct {
             const sliced_string = Semver.SlicedString.init(release, release);
             const result = Semver.Version.parse(sliced_string);
             // we only care about major, minor, patch so we don't care about the string
-            return result.version.fill();
+            return result.version.min();
         }
 
         pub fn forLinux() Analytics.Platform {

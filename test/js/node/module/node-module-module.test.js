@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";

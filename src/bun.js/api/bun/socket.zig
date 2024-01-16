@@ -951,7 +951,7 @@ pub const Listener = struct {
         const connection: Listener.UnixOrHost = blk: {
             if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
-                    const fd: bun.FileDescriptor = fd_.asInt32();
+                    const fd = fd_.asFileDescriptor();
                     break :blk .{ .fd = fd };
                 }
             }
@@ -1857,7 +1857,8 @@ fn NewSocket(comptime ssl: bool) type {
                 globalObject.throw("sendfile() not implemented yet", .{});
                 return .{ .fail = {} };
             } else if (bun.String.tryFromJS(args.ptr[0], globalObject)) |bun_str| {
-                var zig_str = bun_str.toUTF8(bun.default_allocator);
+                defer bun_str.deref();
+                var zig_str = bun_str.toUTF8WithoutRef(bun.default_allocator);
                 defer zig_str.deinit();
 
                 var slice = zig_str.slice();

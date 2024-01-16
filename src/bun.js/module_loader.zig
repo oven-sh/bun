@@ -58,7 +58,7 @@ const NewClass = @import("./base.zig").NewClass;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -382,7 +382,7 @@ pub const RuntimeTranspilerStore = struct {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const _fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
+                        fd = if (_fd.int() > 0) _fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -406,12 +406,12 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = 0;
+            var input_file_fd: StoredFileDescriptorType = .zero;
             var parse_options = Bundler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
                 .loader = loader,
-                .dirname_fd = 0,
+                .dirname_fd = .zero,
                 .file_descriptor = fd,
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
@@ -430,9 +430,9 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             defer {
-                if (should_close_input_file_fd and input_file_fd != 0) {
+                if (should_close_input_file_fd and input_file_fd != .zero) {
                     _ = bun.sys.close(input_file_fd);
-                    input_file_fd = 0;
+                    input_file_fd = .zero;
                 }
             }
 
@@ -451,7 +451,7 @@ pub const RuntimeTranspilerStore = struct {
                 false,
             ) orelse {
                 if (vm.isWatcherEnabled()) {
-                    if (input_file_fd != 0) {
+                    if (input_file_fd != .zero) {
                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
                             vm.bun_watcher.addFile(
@@ -459,7 +459,7 @@ pub const RuntimeTranspilerStore = struct {
                                 path.text,
                                 hash,
                                 loader,
-                                0,
+                                .zero,
                                 package_json,
                                 true,
                             ) catch {};
@@ -472,7 +472,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             if (vm.isWatcherEnabled()) {
-                if (input_file_fd != 0) {
+                if (input_file_fd != .zero) {
                     if (!is_node_override and
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
@@ -482,7 +482,7 @@ pub const RuntimeTranspilerStore = struct {
                             path.text,
                             hash,
                             loader,
-                            0,
+                            .zero,
                             package_json,
                             true,
                         ) catch {};
@@ -539,6 +539,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -553,6 +554,7 @@ pub const RuntimeTranspilerStore = struct {
                         import_record.path.namespace = "bun";
                         import_record.tag = .bun_test;
                         import_record.path.text = "test";
+                        import_record.is_external_without_side_effects = true;
                         continue;
                     }
                 }
@@ -560,6 +562,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
+                    import_record.is_external_without_side_effects = true;
 
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;
@@ -1326,7 +1329,7 @@ pub const ModuleLoader = struct {
                             path.text,
                             this.hash,
                             options.Loader.fromAPI(this.loader),
-                            0,
+                            .zero,
                             this.package_json,
                             true,
                         ) catch {};
@@ -1467,7 +1470,7 @@ pub const ModuleLoader = struct {
 
                 if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
                     const _fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
-                    fd = if (_fd > 0) _fd else null;
+                    fd = if (_fd.int() > 0) _fd else null;
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
@@ -1555,7 +1558,7 @@ pub const ModuleLoader = struct {
                         ) orelse {
                             if (comptime !disable_transpilying) {
                                 if (jsc_vm.isWatcherEnabled()) {
-                                    if (input_file_fd != 0) {
+                                    if (input_file_fd != .zero) {
                                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                             should_close_input_file_fd = false;
                                             jsc_vm.bun_watcher.addFile(
@@ -1563,7 +1566,7 @@ pub const ModuleLoader = struct {
                                                 path.text,
                                                 hash,
                                                 loader,
-                                                0,
+                                                .zero,
                                                 package_json,
                                                 true,
                                             ) catch {};
@@ -1598,7 +1601,7 @@ pub const ModuleLoader = struct {
 
                 if (comptime !disable_transpilying) {
                     if (jsc_vm.isWatcherEnabled()) {
-                        if (input_file_fd != 0) {
+                        if (input_file_fd != .zero) {
                             if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
                                 jsc_vm.bun_watcher.addFile(
@@ -1606,7 +1609,7 @@ pub const ModuleLoader = struct {
                                     path.text,
                                     hash,
                                     loader,
-                                    0,
+                                    .zero,
                                     package_json,
                                     true,
                                 ) catch {};
@@ -1931,6 +1934,49 @@ pub const ModuleLoader = struct {
                 );
             },
 
+            .sqlite_embedded, .sqlite => {
+                const sqlite_module_source_code_string = brk: {
+                    if (jsc_vm.hot_reload == .hot) {
+                        break :brk 
+                        \\// Generated code
+                        \\import {Database} from 'bun:sqlite';
+                        \\const {path} = import.meta;
+                        \\
+                        \\// Don't reload the database if it's already loaded
+                        \\const registry = (globalThis[Symbol.for("bun:sqlite:hot")] ??= new Map());
+                        \\
+                        \\export let db = registry.get(path);
+                        \\export const __esModule = true;
+                        \\if (!db) {
+                        \\   // Load the database
+                        \\   db = new Database(path);
+                        \\   registry.set(path, db);
+                        \\}
+                        \\
+                        \\export default db;
+                        ;
+                    }
+
+                    break :brk 
+                    \\// Generated code
+                    \\import {Database} from 'bun:sqlite';
+                    \\export const db = new Database(import.meta.path);
+                    \\
+                    \\export const __esModule = true;
+                    \\export default db;
+                    ;
+                };
+
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = bun.String.create(sqlite_module_source_code_string),
+                    .specifier = input_specifier,
+                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                    .tag = .esm,
+                    .hash = 0,
+                };
+            },
+
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 const allocator = stack_buf.get();
@@ -2038,6 +2084,7 @@ pub const ModuleLoader = struct {
         globalObject: *JSC.JSGlobalObject,
         specifier_ptr: *const bun.String,
         referrer: *const bun.String,
+        type_attribute: ?*const bun.String,
         ret: *ErrorableResolvedSource,
         allow_promise: bool,
     ) ?*anyopaque {
@@ -2068,6 +2115,12 @@ pub const ModuleLoader = struct {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
                 virtual_source = eval_script;
                 loader = .tsx;
+            }
+        }
+
+        if (type_attribute) |attribute| {
+            if (attribute.eqlComptime("sqlite")) {
+                loader = .sqlite;
             }
         }
 
@@ -2171,7 +2224,7 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = String.init(Runtime.Runtime.sourceContentBun()),
+                .source_code = String.init(Runtime.Runtime.source_code),
                 .specifier = specifier,
                 .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
@@ -2274,6 +2327,26 @@ pub const ModuleLoader = struct {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
             if (graph.files.get(specifier_utf8.slice())) |file| {
+                if (file.loader == .sqlite or file.loader == .sqlite_embedded) {
+                    const code =
+                        \\/* Generated code */
+                        \\import {Database} from 'bun:sqlite';
+                        \\import {readFileSync} from 'node:fs';
+                        \\export const db = new Database(readFileSync(import.meta.path));
+                        \\
+                        \\export const __esModule = true;
+                        \\export default db;
+                    ;
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.init(code),
+                        .specifier = specifier,
+                        .source_url = specifier.dupeRef(),
+                        .hash = 0,
+                        .needs_deref = false,
+                    };
+                }
+
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.static(file.contents),
@@ -2720,3 +2793,50 @@ pub const HardcodedModule = enum {
         }
     };
 };
+
+/// Support embedded .node files
+export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
+    var graph = vm.standalone_module_graph orelse return false;
+    const utf8 = in_out_str.toUTF8(bun.default_allocator);
+    defer utf8.deinit();
+    const file = graph.find(utf8.slice()) orelse return false;
+
+    if (comptime Environment.isLinux) {
+        // TODO: use /proc/fd/12346 instead! Avoid the copy!
+    }
+
+    // atomically write to a tmpfile and then move it to the final destination
+    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname("node", &tmpname_buf, bun.hash(file.name)) catch return false, 0);
+
+    const tmpdir = bun.fs.FileSystem.instance.tmpdir();
+
+    // First we open the tmpfile, to avoid any other work in the event of failure.
+    const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return false;
+    defer {
+        _ = bun.sys.close(tmpfile.fd);
+    }
+
+    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+        &tmpname_buf, // not used
+
+        .{
+            .data = .{
+                .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
+            },
+            .dirfd = bun.toFD(tmpdir.fd),
+            .file = .{
+                .fd = tmpfile.fd,
+            },
+            .encoding = .buffer,
+        },
+    )) {
+        .err => {
+            return false;
+        },
+        else => {},
+    }
+
+    in_out_str.* = bun.String.create(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
+    return true;
+}

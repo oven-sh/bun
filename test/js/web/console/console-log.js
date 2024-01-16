@@ -171,3 +171,5 @@ console.log(hole([1, 2, 3], 0));
 
 // TODO: handle DerivedArray
 // It appears to not be set and I don't know why.
+
+console.log({ "": "" });

@@ -335,7 +335,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = try reader.readInt(bun.FileDescriptor, .little);
+                        const fd = try bun.FileDescriptor.readFrom(reader, .little);
 
                         var path_or_fd = JSC.Node.PathOrFileDescriptor{
                             .fd = fd,
@@ -918,6 +918,7 @@ pub const Blob = struct {
 
                 if (len < 256 * 1024) {
                     const str = data.toBunString(globalThis);
+                    defer str.deref();
 
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -1192,18 +1193,23 @@ pub const Blob = struct {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                // we deliberately don't use O_TRUNC here
-                // it's a perf optimization
-                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                if (!Environment.isWindows)
+                    // we deliberately don't use O_TRUNC here
+                    // it's a perf optimization
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK
+                else
+                    std.os.O.WRONLY | std.os.O.CREAT,
                 write_permissions,
             )) {
                 .result => |result| {
                     break :brk result;
                 },
                 .err => |err| {
-                    if (err.getErrno() == .NOENT) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .NOENT) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
 
                     return JSC.JSPromise.rejectedPromiseValue(
@@ -1212,16 +1218,13 @@ pub const Blob = struct {
                     );
                 },
             }
-            unreachable;
         };
 
-        var truncate = needs_open or bytes.len == 0;
+        // TODO: on windows this is always synchronous
+
+        const truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
         defer {
-            if (truncate) {
-                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
-            }
-
             if (needs_open) {
                 _ = bun.sys.close(fd);
             }
@@ -1239,19 +1242,31 @@ pub const Blob = struct {
                     if (res == 0) break;
                 },
                 .err => |err| {
-                    truncate = false;
-                    if (err.getErrno() == .AGAIN) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.toJSC(globalThis),
+                        );
                     }
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
                 },
+            }
+        }
+
+        if (truncate) {
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+            } else {
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
         }
 
@@ -1278,25 +1293,27 @@ pub const Blob = struct {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
             return null;
         }
-
-        const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-            globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-            return null;
-        };
-
-        blob = get(globalThis, args[0], false, true) catch |err| {
-            if (err == error.InvalidArguments) {
-                globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+        {
+            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
+                globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 return null;
-            }
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            };
+            defer name_value_str.deref();
 
-        if (blob.store) |store_| {
-            store_.data.bytes.stored_name = bun.PathString.init(
-                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-            );
+            blob = get(globalThis, args[0], false, true) catch |err| {
+                if (err == error.InvalidArguments) {
+                    globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                    return null;
+                }
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+
+            if (blob.store) |store_| {
+                store_.data.bytes.stored_name = bun.PathString.init(
+                    (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                );
+            }
         }
 
         if (args.len > 2) {
@@ -1612,7 +1629,7 @@ pub const Blob = struct {
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try writer.writeInt(bun.FileDescriptor, fd, .little);
+                            try fd.writeTo(writer, .little);
                         },
                         .path => |path| {
                             const path_slice = path.slice();
@@ -1802,7 +1819,7 @@ pub const Blob = struct {
                         }
                     }
 
-                    if (is_allowed_to_close_fd and this.opened_fd > 2 and this.opened_fd != invalid_fd) {
+                    if (is_allowed_to_close_fd and this.opened_fd.int() > 2 and this.opened_fd != invalid_fd) {
                         _ = bun.sys.close(this.opened_fd);
                         this.opened_fd = invalid_fd;
                     }
@@ -2330,16 +2347,17 @@ pub const Blob = struct {
 
             req: libuv.fs_t = libuv.fs_t.uninitialized,
 
-            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *Handler) void {
+            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
                 var this = bun.new(ReadFileUV, .{
                     .loop = loop,
                     .file_store = store.data.file,
                     .store = store,
                     .offset = off,
                     .max_length = max_len,
-                    .on_complete_data = @ptrCast(handler),
+                    .on_complete_data = handler,
                     .on_complete_fn = @ptrCast(&Handler.run),
                 });
+                store.ref();
                 this.getFd(onFileOpen);
             }
 
@@ -2809,7 +2827,7 @@ pub const Blob = struct {
                     // seemed to have zero performance impact in
                     // microbenchmarks.
                     if (!this.could_block and this.bytes_blob.sharedView().len > 1024) {
-                        bun.C.preallocate_file(fd, 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
+                        bun.C.preallocate_file(fd.cast(), 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
                     }
                 }
 
@@ -3054,7 +3072,7 @@ pub const Blob = struct {
                                     .fail => {
                                         if (which == .both) {
                                             _ = bun.sys.close(this.source_fd);
-                                            this.source_fd = 0;
+                                            this.source_fd = .zero;
                                         }
                                         return bun.errnoToZigErr(errno.errno);
                                     },
@@ -3063,7 +3081,7 @@ pub const Blob = struct {
 
                                 if (which == .both) {
                                     _ = bun.sys.close(this.source_fd);
-                                    this.source_fd = 0;
+                                    this.source_fd = .zero;
                                 }
 
                                 this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
@@ -3121,7 +3139,7 @@ pub const Blob = struct {
                             return bun.errnoToZigErr(err.errno);
                         },
                         .result => {
-                            _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                            _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                             return;
                         },
                     }
@@ -3129,9 +3147,9 @@ pub const Blob = struct {
 
                 while (true) {
                     const written = switch (comptime use) {
-                        .copy_file_range => linux.copy_file_range(src_fd, null, dest_fd, null, remain, 0),
-                        .sendfile => linux.sendfile(dest_fd, src_fd, null, remain),
-                        .splice => bun.C.splice(src_fd, null, dest_fd, null, remain, 0),
+                        .copy_file_range => linux.copy_file_range(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
+                        .sendfile => linux.sendfile(dest_fd.cast(), src_fd.cast(), null, remain),
+                        .splice => bun.C.splice(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
                     };
 
                     switch (linux.getErrno(written)) {
@@ -3144,7 +3162,7 @@ pub const Blob = struct {
                                     return bun.errnoToZigErr(err.errno);
                                 },
                                 .result => {
-                                    _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                    _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                                     return;
                                 },
                             }
@@ -3157,9 +3175,9 @@ pub const Blob = struct {
                                     // make() can set STDOUT / STDERR to O_APPEND
                                     // this messes up sendfile()
                                     has_unset_append = true;
-                                    const flags = linux.fcntl(dest_fd, linux.F.GETFL, 0);
+                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, 0);
                                     if ((flags & O.APPEND) != 0) {
-                                        _ = linux.fcntl(dest_fd, linux.F.SETFL, flags ^ O.APPEND);
+                                        _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ O.APPEND);
                                         continue;
                                     }
                                 }
@@ -3176,7 +3194,7 @@ pub const Blob = struct {
                                         return bun.errnoToZigErr(err.errno);
                                     },
                                     .result => {
-                                        _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                        _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                                         return;
                                     },
                                 }
@@ -3367,7 +3385,7 @@ pub const Blob = struct {
                         this.max_length > bun.C.preallocate_length and
                         this.max_length != Blob.max_size)
                     {
-                        bun.C.preallocate_file(this.destination_fd, 0, this.max_length) catch {};
+                        bun.C.preallocate_file(this.destination_fd.cast(), 0, this.max_length) catch {};
                     }
                 }
 
@@ -3420,7 +3438,7 @@ pub const Blob = struct {
                         return;
                     };
                     if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
-                        _ = darwin.ftruncate(this.destination_fd, @as(std.os.off_t, @intCast(this.max_length)));
+                        _ = darwin.ftruncate(this.destination_fd.cast(), @as(std.os.off_t, @intCast(this.max_length)));
                     }
 
                     this.doClose();
@@ -4361,7 +4379,8 @@ pub const Blob = struct {
 
     pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
         if (Environment.isWindows) {
-            @panic("todo");
+            const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
+            return Store.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
         }
         const file_read = Store.ReadFile.createWithCtx(
             bun.default_allocator,
@@ -4574,7 +4593,7 @@ pub const Blob = struct {
                                     const byteLength = buf.len;
 
                                     const result = JSC.ArrayBuffer.toArrayBufferFromSharedMemfd(
-                                        @intCast(allocator.fd),
+                                        allocator.fd.cast(),
                                         global,
                                         byteOffset,
                                         byteLength,

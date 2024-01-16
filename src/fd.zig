@@ -44,7 +44,7 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
 ///
 /// bun.FileDescriptor is the bitcast of this struct, which is essentially a tagged pointer.
 ///
-/// You can aquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
+/// You can acquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
 ///
 /// On Windows builds we have two kinds of file descriptors:
 /// - system: A "std.os.windows.HANDLE" that windows APIs can interact with.
@@ -139,11 +139,12 @@ pub const FDImpl = packed struct {
 
     /// Convert to bun.FileDescriptor
     pub fn encode(this: FDImpl) bun.FileDescriptor {
-        return @bitCast(this);
+        // https://github.com/ziglang/zig/issues/18462
+        return @enumFromInt(@as(bun.FileDescriptorInt, @bitCast(this)));
     }
 
     pub fn decode(fd: bun.FileDescriptor) FDImpl {
-        return @bitCast(fd);
+        return @bitCast(fd.int());
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.
@@ -170,7 +171,7 @@ pub const FDImpl = packed struct {
         if (env.os != .windows or this.kind == .uv) {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
-            const fd = this.uv();
+            const fd = bun.toFD(this.uv());
             if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
                 log("close({}) SKIPPED", .{this});
                 return null;
@@ -198,27 +199,27 @@ pub const FDImpl = packed struct {
 
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
-                const fd = this.system();
+                const fd = this.encode();
                 std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd > -1);
-                break :result switch (linux.getErrno(linux.close(fd))) {
+                std.debug.assert(fd.cast() > -1);
+                break :result switch (linux.getErrno(linux.close(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .mac => result: {
-                const fd = this.system();
+                const fd = this.encode();
                 std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd > -1);
-                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd))) {
+                std.debug.assert(fd.cast() > -1);
+                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .windows => result: {
-                var req: libuv.fs_t = libuv.fs_t.uninitialized;
                 switch (this.kind) {
                     .uv => {
+                        var req: libuv.fs_t = libuv.fs_t.uninitialized;
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
                         break :result if (rc.errno()) |errno|
@@ -229,17 +230,14 @@ pub const FDImpl = packed struct {
                     .system => {
                         std.debug.assert(this.value.as_system != 0);
                         const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
-                        if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
-                            const errno = switch (std.os.windows.kernel32.GetLastError()) {
-                                .INVALID_HANDLE => @intFromEnum(os.E.BADF),
-                                else => |i| @intFromEnum(i),
-                            };
-                            break :result bun.sys.Error{
-                                .errno = errno,
+                        break :result switch (bun.windows.NtClose(handle)) {
+                            .SUCCESS => null,
+                            else => |rc| bun.sys.Error{
+                                .errno = if (bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno()) |errno| @intFromEnum(errno) else 1,
                                 .syscall = .CloseHandle,
                                 .fd = this.encode(),
-                            };
-                        }
+                            },
+                        };
                     },
                 }
             },
@@ -252,7 +250,7 @@ pub const FDImpl = packed struct {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
                     bun.Output.debugWarn("close({}) = EBADF. This is an indication of a file descriptor UAF", .{this});
                 } else {
-                    log("close({}) = err {d}", .{ this, err.errno });
+                    log("close({}) = {}", .{ this, err });
                 }
             } else {
                 log("close({})", .{this});

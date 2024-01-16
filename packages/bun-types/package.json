@@ -1,7 +1,24 @@
 {
-  "private": true,
   "name": "bun-types",
-  "repository": "https://github.com/oven-sh/bun",
+  "version": "1.0.23",
+  "description": "Type definitions for Bun, an incredibly fast JavaScript runtime.",
+  "keywords": [
+    "bun",
+    "bun.js",
+    "types",
+    "node",
+    "node.js"
+  ],
+  "main": "",
+  "types": "index.d.ts",
+  "files": [
+    "*.d.ts"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun",
+    "directory": "packages/bun-types"
+  },
   "license": "MIT",
   "dependencies": {
     "@types/node": "*",
@@ -15,11 +32,8 @@
     "typescript": "^5.0.2"
   },
   "scripts": {
-    "prebuild": "echo $(pwd)",
-    "build": "rm -rf ./dist && bun run bundle && bun run fmt",
-    "bundle": "bun scripts/bundle.ts ./dist",
-    "test": "tsc",
-    "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
-  },
-  "types": "index.d.ts"
+    "build": "bun scripts/build.ts",
+    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'",
+    "test": "tsc"
+  }
 }

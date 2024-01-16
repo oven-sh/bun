@@ -52,7 +52,7 @@ const JSValue = @import("root").bun.JSC.JSValue;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -280,8 +280,7 @@ pub const ServerConfig = struct {
             }
 
             if (this.cert) |cert| {
-                var i: u32 = 0;
-                while (i < this.cert_count) : (i += 1) {
+                for (0..this.cert_count) |i| {
                     const slice = std.mem.span(cert[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
@@ -293,8 +292,7 @@ pub const ServerConfig = struct {
             }
 
             if (this.key) |key| {
-                var i: u32 = 0;
-                while (i < this.key_count) : (i += 1) {
+                for (0..this.key_count) |i| {
                     const slice = std.mem.span(key[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
@@ -306,8 +304,7 @@ pub const ServerConfig = struct {
             }
 
             if (this.ca) |ca| {
-                var i: u32 = 0;
-                while (i < this.ca_count) : (i += 1) {
+                for (0..this.ca_count) |i| {
                     const slice = std.mem.span(ca[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
@@ -355,10 +352,9 @@ pub const ServerConfig = struct {
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                        var i: u32 = 0;
                         var valid_count: u32 = 0;
-                        while (i < count) : (i += 1) {
-                            const item = js_obj.getIndex(global, i);
+                        for (0..count) |i| {
+                            const item = js_obj.getIndex(global, @intCast(i));
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
@@ -466,11 +462,9 @@ pub const ServerConfig = struct {
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                        var i: u32 = 0;
                         var valid_count: u32 = 0;
-
-                        while (i < count) : (i += 1) {
-                            const item = js_obj.getIndex(global, i);
+                        for (0..count) |i| {
+                            const item = js_obj.getIndex(global, @intCast(i));
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
@@ -574,11 +568,9 @@ pub const ServerConfig = struct {
                     if (count > 0) {
                         const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
 
-                        var i: u32 = 0;
                         var valid_count: u32 = 0;
-
-                        while (i < count) : (i += 1) {
-                            const item = js_obj.getIndex(global, i);
+                        for (0..count) |i| {
+                            const item = js_obj.getIndex(global, @intCast(i));
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
@@ -2531,6 +2523,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     },
                     .Rejected => {
+                        promise.setHandled(vm.global.vm());
                         ctx.handleReject(promise.result(vm.global.vm()));
                         return;
                     },

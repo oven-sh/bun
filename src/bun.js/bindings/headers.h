@@ -752,24 +752,24 @@ ZIG_DECL JSC__JSValue Bun__Process__setTitle(JSC__JSGlobalObject* arg0, ZigStrin
 #endif
 CPP_DECL ZigException ZigException__fromException(JSC__Exception* arg0);
 
-#pragma mark - Zig::ConsoleClient
+#pragma mark - Bun::ConsoleObject
 
 
 #ifdef __cplusplus
 
-ZIG_DECL void Zig__ConsoleClient__count(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__countReset(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC__JSGlobalObject* arg3, JSC__JSValue* arg4, size_t arg5);
-ZIG_DECL void Zig__ConsoleClient__profile(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__profileEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__record(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Zig__ConsoleClient__recordEnd(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Zig__ConsoleClient__screenshot(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Zig__ConsoleClient__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, JSC__JSValue* arg4, size_t arg5);
-ZIG_DECL void Zig__ConsoleClient__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__count(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__countReset(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC__JSGlobalObject* arg3, JSC__JSValue* arg4, size_t arg5);
+ZIG_DECL void Bun__ConsoleObject__profile(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__profileEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__record(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__recordEnd(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__screenshot(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, JSC__JSValue* arg4, size_t arg5);
+ZIG_DECL void Bun__ConsoleObject__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
 
 #endif
 

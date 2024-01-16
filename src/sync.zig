@@ -948,8 +948,7 @@ else if (@import("builtin").os.tag == .linux)
 
             var new_state = current_state;
             while (true) {
-                var spin: u8 = 0;
-                while (spin < 100) : (spin += 1) {
+                for (0..100) |spin| {
                     const state = @cmpxchgWeak(
                         State,
                         &self.state,
@@ -965,8 +964,7 @@ else if (@import("builtin").os.tag == .linux)
                         .waiting => break,
                     }
 
-                    var iter = spin + 1;
-                    while (iter > 0) : (iter -= 1)
+                    for (0..spin) |_|
                         spinLoopHint();
                 }
 

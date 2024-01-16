@@ -115,16 +115,6 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
-pub fn canUseBrotli() bool {
-    if (Environment.isMac) {
-        if (bun.CompressionFramework.isAvailable()) {
-            return true;
-        }
-    }
-
-    return bun.brotli.hasBrotli();
-}
-
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -705,7 +695,7 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
     queued_shutdowns: ShutdownQueue = ShutdownQueue{},
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    timer: std.time.Timer = undefined,
+    timer: std.time.Timer,
     const threadlog = Output.scoped(.HTTPThread, true);
 
     const FakeStruct = struct {
@@ -1786,8 +1776,7 @@ pub const AsyncHTTP = struct {
                 // Password between 0 and 4096 chars
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
-                    var password_buffer: [4096]u8 = undefined;
-                    @memset(&password_buffer, 0);
+                    var password_buffer = std.mem.zeroes([4096]u8);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1798,8 +1787,7 @@ pub const AsyncHTTP = struct {
                     const password = password_buffer[0..password_len];
 
                     // Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1819,8 +1807,7 @@ pub const AsyncHTTP = struct {
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
                     //Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1888,8 +1875,7 @@ pub const AsyncHTTP = struct {
                 // Password between 0 and 4096 chars
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
-                    var password_buffer: [4096]u8 = undefined;
-                    @memset(&password_buffer, 0);
+                    var password_buffer = std.mem.zeroes([4096]u8);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1900,8 +1886,7 @@ pub const AsyncHTTP = struct {
                     const password = password_buffer[0..password_len];
 
                     // Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1922,8 +1907,7 @@ pub const AsyncHTTP = struct {
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
                     //Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -2199,6 +2183,12 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    if (comptime Environment.allow_assert) {
+        if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
+            @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
+        }
+    }
+
     // Aborted before connecting
     if (this.signals.get(.aborted)) {
         this.fail(error.Aborted);

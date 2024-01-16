@@ -30,7 +30,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSClassRef.h"
 #include "JavaScriptCore/JSMicrotask.h"
-#include "ZigConsoleClient.h"
+#include "ConsoleObject.h"
 // #include "JavaScriptCore/JSContextInternal.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/DeferredWorkTimer.h"
@@ -66,6 +66,8 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
+#include "JavaScriptCore/JSScriptFetchParameters.h"
+#include "JavaScriptCore/ScriptFetchParameters.h"
 
 #include "wtf/text/Base64.h"
 // #include "JavaScriptCore/CachedType.h"
@@ -242,14 +244,12 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 #include <unistd.h>
 #endif
 
+#include "ProcessBindingTTYWrap.h"
+
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-
-namespace Bun {
-extern JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-}
 
 namespace WebCore {
 class Base64Utilities {
@@ -725,7 +725,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         reinterpret_cast<Zig::GlobalObject*>(globalObject),
         &res,
         &specifier,
-        &specifier);
+        &specifier,
+        nullptr);
 
     if (scope.exception() || !result) {
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
@@ -981,7 +982,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
 void GlobalObject::setConsole(void* console)
 {
-    this->setConsoleClient(new Zig::ConsoleClient(console));
+    this->setConsoleClient(new Bun::ConsoleObject(console));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,
@@ -1602,35 +1603,6 @@ JSC_DEFINE_HOST_FUNCTION(asyncHooksSetEnabled, (JSC::JSGlobalObject * globalObje
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" int Bun__ttySetMode(int fd, int mode);
-
-JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() != 2) {
-        throwTypeError(globalObject, scope, "Expected 2 arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue fd = callFrame->argument(0);
-    if (!fd.isNumber()) {
-        throwTypeError(globalObject, scope, "fd must be a number"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue mode = callFrame->argument(1);
-    if (!mode.isNumber()) {
-        throwTypeError(globalObject, scope, "mode must be a number"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd.asNumber(), mode.asNumber());
-    return JSValue::encode(jsNumber(err));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1958,15 +1930,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "tty"_s) {
-            auto* obj = constructEmptyObject(globalObject);
-
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "ttySetMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 1);
-
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, jsFunctionTty_isatty, ImplementationVisibility::Public), 1);
-
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
-
-            return JSValue::encode(obj);
+            return JSValue::encode(Bun::createBunTTYFunctions(lexicalGlobalObject));
         }
 
         if (string == "unstable_syntaxHighlight"_s) {
@@ -4221,7 +4185,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
-    JSValue value1, JSValue value2)
+    JSValue parameters, JSValue script)
 {
     JSC::VM& vm = globalObject->vm();
 
@@ -4236,7 +4200,23 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);
-    auto source = Bun::toString(globalObject, value1);
+    auto sourceString = String("undefined"_s);
+    auto typeAttributeString = String();
+
+    if (parameters && parameters.isCell()) {
+        JSCell* parametersCell = parameters.asCell();
+        if (parametersCell->type() == JSScriptFetchParametersType) {
+            auto* obj = jsCast<JSScriptFetchParameters*>(parametersCell);
+            const auto& params = obj->parameters();
+
+            if (params.type() == ScriptFetchParameters::Type::HostDefined) {
+                typeAttributeString = params.hostDefinedImportType();
+            }
+        }
+    }
+
+    auto source = Bun::toString(sourceString);
+    auto typeAttribute = Bun::toString(typeAttributeString);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -4246,7 +4226,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         reinterpret_cast<Zig::GlobalObject*>(globalObject),
         &res,
         &moduleKeyBun,
-        &source);
+        &source,
+        typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
 
     if (auto* internalPromise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(result)) {
         return internalPromise;

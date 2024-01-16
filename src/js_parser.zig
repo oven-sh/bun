@@ -44,6 +44,7 @@ pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 const JSC = @import("root").bun.JSC;
+const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");
@@ -298,6 +299,18 @@ pub fn ExpressionTransposer(
                     return visitor(self.context, arg, state);
                 },
             }
+        }
+
+        pub fn tranposeKnownToBeIf(self: *This, arg: Expr, state: anytype) Expr {
+            return Expr.init(
+                E.If,
+                E.If{
+                    .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
+                    .no = self.maybeTransposeIf(arg.data.e_if.no, state),
+                    .test_ = arg.data.e_if.test_,
+                },
+                arg.loc,
+            );
         }
     };
 }
@@ -1017,9 +1030,7 @@ pub const ImportScanner = struct {
                         if (st.items.len > 0) {
                             found_imports = true;
                             var items_end: usize = 0;
-                            var i: usize = 0;
-                            while (i < st.items.len) : (i += 1) {
-                                const item = st.items[i];
+                            for (st.items) |item| {
                                 const ref = item.name.ref.?;
                                 const symbol: Symbol = p.symbols.items[ref.innerIndex()];
 
@@ -2491,6 +2502,7 @@ const ParsedPath = struct {
     loc: logger.Loc,
     text: string,
     is_macro: bool,
+    import_tag: ImportRecord.Tag = .none,
 };
 
 const StrictModeFeature = enum {
@@ -3738,8 +3750,8 @@ pub const Parser = struct {
 
                     try p.log.addRangeErrorWithNotes(p.source, record.range, "Cannot use import statement with CommonJS-only features", notes.items);
                 }
-            } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
-                if (p.options.legacy_transform_require_to_import or p.options.features.dynamic_require) {
+            } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.use_import_meta_require)) {
+                if (p.options.legacy_transform_require_to_import or p.options.features.use_import_meta_require) {
                     const args = p.allocator.alloc(Expr, 2) catch unreachable;
 
                     if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
@@ -4876,6 +4888,12 @@ fn NewParser_(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
+        /// use this instead of checking p.source.index
+        /// because when not bundling, p.source.index is `0`
+        inline fn isSourceRuntime(p: *const P) bool {
+            return p.options.bundle and p.source.index.isRuntime();
+        }
+
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -4908,26 +4926,10 @@ fn NewParser_(
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(p: *P, arg: Expr, state: anytype) Expr {
+        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: anytype) Expr {
             // The argument must be a string
-            if (@as(Expr.Tag, arg.data) == .e_string) {
-                // Ignore calls to import() if the control flow is provably dead here.
-                // We don't want to spend time scanning the required files if they will
-                // never be used.
-                if (p.is_control_flow_dead) {
-                    return p.newExpr(E.Null{}, arg.loc);
-                }
-
-                const import_record_index = p.addImportRecord(.require, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
-                p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
-                p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
-                return p.newExpr(
-                    E.RequireResolveString{
-                        .import_record_index = Ref.toInt(import_record_index),
-                        // .leading_interior_comments = arg.getString().
-                    },
-                    arg.loc,
-                );
+            if (arg.data == .e_string) {
+                return p.transposeRequireResolveKnownString(arg);
             }
 
             if (p.options.warn_about_unbundled_modules) {
@@ -4936,13 +4938,53 @@ fn NewParser_(
                 p.log.addRangeDebug(p.source, r, "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
 
-            return state;
+            const args = p.allocator.alloc(Expr, 1) catch unreachable;
+            args[0] = arg;
+
+            return p.newExpr(E.Call{
+                .target = require_resolve_ref,
+                .args = ExprNodeList.init(args),
+            }, arg.loc);
+        }
+
+        pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
+            std.debug.assert(arg.data == .e_string);
+
+            // Ignore calls to import() if the control flow is provably dead here.
+            // We don't want to spend time scanning the required files if they will
+            // never be used.
+            if (p.is_control_flow_dead) {
+                return p.newExpr(E.Null{}, arg.loc);
+            }
+
+            const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+            p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+            p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+
+            return p.newExpr(
+                E.RequireResolveString{
+                    .import_record_index = Ref.toInt(import_record_index),
+                    // .leading_interior_comments = arg.getString().
+                },
+                arg.loc,
+            );
         }
 
         pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
+            if (!p.options.features.allow_runtime) {
+                const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
+                args[0] = arg;
+                return p.newExpr(
+                    E.Call{
+                        .target = p.valueForRequire(arg.loc),
+                        .args = ExprNodeList.init(args),
+                    },
+                    arg.loc,
+                );
+            }
+
             switch (arg.data) {
                 .e_string => |str| {
-
                     // Ignore calls to require() if the control flow is provably dead here.
                     // We don't want to spend time scanning the required files if they will
                     // never be used.
@@ -4982,7 +5024,6 @@ fn NewParser_(
                             .import_record_id = import_record_index,
                         }) catch unreachable;
                         p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch unreachable;
-                        p.ignoreUsage(p.require_ref);
                         p.recordUsage(namespace_ref);
 
                         if (!state.is_require_immediately_assigned_to_decl) {
@@ -5049,12 +5090,18 @@ fn NewParser_(
                         arg.loc,
                     );
 
-                    p.ignoreUsage(p.require_ref);
-
                     // require(import_object_assign)
-                    return p.callRuntime(arg.loc, "__require", args);
+                    p.recordUsageOfRuntimeRequire();
+                    return p.newExpr(
+                        E.Call{
+                            .target = p.valueForRequire(arg.loc),
+                            .args = ExprNodeList.init(args),
+                        },
+                        arg.loc,
+                    );
                 },
                 else => {
+                    p.recordUsageOfRuntimeRequire();
                     const args = p.allocator.alloc(Expr, 1) catch unreachable;
                     args[0] = arg;
                     return p.newExpr(
@@ -5066,8 +5113,6 @@ fn NewParser_(
                     );
                 },
             }
-
-            return arg;
         }
 
         fn isBindingUsed(p: *P, binding: Binding, default_export_ref: Ref) bool {
@@ -5303,7 +5348,7 @@ fn NewParser_(
         }
 
         fn computeCharacterFrequency(p: *P) ?js_ast.CharFreq {
-            if (!p.options.features.minify_identifiers or (p.options.bundle and p.source.index.isRuntime())) {
+            if (!p.options.features.minify_identifiers or p.isSourceRuntime()) {
                 return null;
             }
 
@@ -5535,13 +5580,6 @@ fn NewParser_(
                     p.panic("Unexpected binding export type {any}", .{binding});
                 },
             }
-        }
-
-        // If we're auto-importing JSX and it's bundled, we use the bundled version
-        // This means we need to transform from require(react) to react()
-        // unless we're building inside of bun, then it's just normal commonjs
-        pub inline fn callUnbundledRequire(p: *P, require_args: []Expr) Expr {
-            return p.callRuntime(require_args[0].loc, "__require", require_args);
         }
 
         pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) anyerror!void {
@@ -8685,11 +8723,10 @@ fn NewParser_(
                     item_refs.putAssumeCapacity(name, name_loc.*);
                 }
             }
-            var i: usize = 0;
             var end: usize = 0;
 
-            while (i < stmt.items.len) : (i += 1) {
-                var item: js_ast.ClauseItem = stmt.items[i];
+            for (stmt.items) |item_| {
+                var item = item_;
                 const name = p.loadNameFromRef(item.name.ref orelse unreachable);
                 const ref = try p.declareSymbol(.import, item.name.loc, name);
                 item.name.ref = ref;
@@ -8743,9 +8780,32 @@ fn NewParser_(
                 item_refs.shrinkAndFree(stmt.items.len + @as(usize, @intFromBool(stmt.default_name != null)));
             }
 
+            if (path.import_tag != .none) {
+                try p.validateSQLiteImportType(path.import_tag, &stmt);
+            }
+
             // Track the items for this namespace
             try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
             return p.s(stmt, loc);
+        }
+
+        fn validateSQLiteImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
+            @setCold(true);
+
+            if (import_tag == .with_type_sqlite or import_tag == .with_type_sqlite_embedded) {
+                p.import_records.items[stmt.import_record_index].tag = import_tag;
+
+                for (stmt.items) |*item| {
+                    if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
+                        try p.log.addError(
+                            p.source,
+                            item.name.loc,
+                            "sqlite imports only support the \"default\" or \"db\" imports",
+                        );
+                        break;
+                    }
+                }
+            }
         }
 
         // This is the type parameter declarations that go with other symbol
@@ -9373,6 +9433,8 @@ fn NewParser_(
 
                             if (path.is_macro) {
                                 try p.log.addError(p.source, path.loc, "cannot use macro in export statement");
+                            } else if (path.import_tag != .none) {
+                                try p.log.addError(p.source, loc, "cannot use export statement with \"type\" attribute");
                             }
 
                             if (comptime track_symbol_usage_during_parse_pass) {
@@ -9413,6 +9475,8 @@ fn NewParser_(
 
                                 if (parsedPath.is_macro) {
                                     try p.log.addError(p.source, loc, "export from cannot be used with \"type\": \"macro\"");
+                                } else if (parsedPath.import_tag != .none) {
+                                    try p.log.addError(p.source, loc, "export from cannot be used with \"type\" attribute");
                                 }
 
                                 const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
@@ -10556,15 +10620,6 @@ fn NewParser_(
             try p.skipTypeScriptObjectType();
         }
 
-        fn importMetaRequire(_: *P, loc: logger.Loc) Expr {
-            return Expr{
-                .data = .{
-                    .e_require_call_target = {},
-                },
-                .loc = loc,
-            };
-        }
-
         fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
             try p.lexer.expect(.t_equals);
 
@@ -11436,6 +11491,7 @@ fn NewParser_(
                 .loc = p.lexer.loc(),
                 .text = p.lexer.string_literal_slice,
                 .is_macro = false,
+                .import_tag = .none,
             };
 
             if (p.lexer.token == .t_no_substitution_template_literal) {
@@ -11456,28 +11512,68 @@ fn NewParser_(
                 try p.lexer.next();
                 try p.lexer.expect(.t_open_brace);
 
+                const SupportedAttribute = enum {
+                    type,
+                    embed,
+                };
+
+                var has_seen_embed_true = false;
+
                 while (p.lexer.token != .t_close_brace) {
-                    const is_type_flag = brk: {
+                    const supported_attribute: ?SupportedAttribute = brk: {
                         // Parse the key
                         if (p.lexer.isIdentifierOrKeyword()) {
-                            break :brk strings.eqlComptime(p.lexer.identifier, "type");
+                            if (strings.eqlComptime(p.lexer.identifier, "type")) {
+                                break :brk .type;
+                            }
+
+                            if (strings.eqlComptime(p.lexer.identifier, "embed")) {
+                                break :brk .embed;
+                            }
                         } else if (p.lexer.token == .t_string_literal) {
-                            break :brk p.lexer.string_literal_is_ascii and strings.eqlComptime(p.lexer.string_literal_slice, "type");
+                            if (p.lexer.string_literal_is_ascii) {
+                                if (strings.eqlComptime(p.lexer.string_literal_slice, "type")) {
+                                    break :brk .type;
+                                }
+
+                                if (strings.eqlComptime(p.lexer.string_literal_slice, "embed")) {
+                                    break :brk .embed;
+                                }
+                            }
                         } else {
                             try p.lexer.expect(.t_identifier);
                         }
 
-                        break :brk false;
+                        break :brk null;
                     };
 
                     try p.lexer.next();
                     try p.lexer.expect(.t_colon);
 
                     try p.lexer.expect(.t_string_literal);
-                    if (is_type_flag and
-                        p.lexer.string_literal_is_ascii and strings.eqlComptime(p.lexer.string_literal_slice, "macro"))
-                    {
-                        path.is_macro = true;
+                    if (p.lexer.string_literal_is_ascii) {
+                        if (supported_attribute) |attr| {
+                            switch (attr) {
+                                .type => {
+                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "macro")) {
+                                        path.is_macro = true;
+                                    } else if (strings.eqlComptime(p.lexer.string_literal_slice, "sqlite")) {
+                                        path.import_tag = .with_type_sqlite;
+                                        if (has_seen_embed_true) {
+                                            path.import_tag = .with_type_sqlite_embedded;
+                                        }
+                                    }
+                                },
+                                .embed => {
+                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "true")) {
+                                        has_seen_embed_true = true;
+                                        if (path.import_tag == .with_type_sqlite) {
+                                            path.import_tag = .with_type_sqlite_embedded;
+                                        }
+                                    }
+                                },
+                            }
+                        }
                     }
 
                     if (p.lexer.token != .t_comma) {
@@ -12263,6 +12359,12 @@ fn NewParser_(
                     },
                     .e_new => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
+                    },
+
+                    // this is specifically added only to support our implementation
+                    // of '__require' for --target=node, for /* @__PURE__ */ import.meta.url
+                    .e_dot => |ex| {
+                        ex.can_be_removed_if_unused = true;
                     },
                     else => {},
                 }
@@ -15492,13 +15594,17 @@ fn NewParser_(
                             }
                         }
 
-                        if (!p.options.bundle and p.options.features.dynamic_require) {
-                            const is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
-                            if (!is_call_target and p.require_ref.eql(e_.ref)) {
-                                // Substitute "require" for import.meta.require
-                                p.ignoreUsage(e_.ref);
-                                return p.importMetaRequire(expr.loc);
+                        // Substitute uncalled "require" for the require target
+                        if (p.require_ref.eql(e_.ref) and !p.isSourceRuntime()) {
+                            // mark a reference to __require only if this is not about to be used for a call target
+                            if (!(p.call_target == .e_identifier and
+                                expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref)) and
+                                p.options.features.allow_runtime)
+                            {
+                                p.recordUsageOfRuntimeRequire();
                             }
+
+                            return p.valueForRequire(expr.loc);
                         }
                     }
 
@@ -16299,6 +16405,20 @@ fn NewParser_(
 
                     e_.target = p.visitExpr(e_.target);
 
+                    // 'require.resolve' -> .e_require_resolve_call_target
+                    if (e_.target.data == .e_require_call_target and
+                        strings.eqlComptime(e_.name, "resolve"))
+                    {
+                        // we do not need to call p.recordUsageOfRuntimeRequire(); because `require`
+                        // was not a call target. even if the call target is `require.resolve`, it should be set.
+                        return .{
+                            .data = .{
+                                .e_require_resolve_call_target = {},
+                            },
+                            .loc = expr.loc,
+                        };
+                    }
+
                     if (e_.optional_chain == null) {
                         if (p.maybeRewritePropertyAccess(
                             expr.loc,
@@ -16532,7 +16652,6 @@ fn NewParser_(
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
-                    var could_be_require_resolve: bool = false;
 
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
@@ -16573,12 +16692,6 @@ fn NewParser_(
                         },
                         .e_dot => |dot| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
-                            // Prepare to recognize "require.resolve()" calls
-                            could_be_require_resolve = (e_.args.len >= 1 and
-                                dot.optional_chain == null and
-                                @as(Expr.Tag, dot.target.data) == .e_identifier and
-                                dot.target.data.e_identifier.ref.eql(p.require_ref) and
-                                strings.eqlComptime(dot.name, "resolve"));
                         },
                         else => {},
                     }
@@ -16599,9 +16712,7 @@ fn NewParser_(
                         }
                     }
 
-                    if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and
-                        e_.target.data.e_identifier.ref.eql(p.require_ref))
-                    {
+                    if (e_.target.data == .e_require_call_target) {
                         e_.can_be_unwrapped_if_unused = false;
 
                         // Heuristic: omit warnings inside try/catch blocks because presumably
@@ -16620,45 +16731,32 @@ fn NewParser_(
                                 .e_if => {
                                     // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                                     // This makes static analysis later easier
-                                    return p.require_transposer.maybeTransposeIf(first, state);
+                                    return p.require_transposer.tranposeKnownToBeIf(first, state);
                                 },
                                 else => {},
                             }
                         }
 
-                        if (p.options.features.dynamic_require) {
-                            // Ignore calls to require() if the control flow is provably
-                            // dead here. We don't want to spend time scanning the required files
-                            // if they will never be used.
-                            if (p.is_control_flow_dead) {
-                                return p.newExpr(E.Null{}, expr.loc);
-                            }
-
-                            if (p.options.warn_about_unbundled_modules) {
-                                const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
-                                p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has dynamic arguments") catch unreachable;
-                            }
-
-                            p.ignoreUsage(p.require_ref);
-
-                            if (!could_be_require_resolve) {
-                                return p.newExpr(
-                                    E.Call{
-                                        .target = p.valueForRequire(e_.target.loc),
-                                        .args = e_.args,
-                                    },
-                                    expr.loc,
-                                );
-                            }
+                        // Ignore calls to require() if the control flow is provably
+                        // dead here. We don't want to spend time scanning the required files
+                        // if they will never be used.
+                        if (p.is_control_flow_dead) {
+                            return p.newExpr(E.Null{}, expr.loc);
                         }
 
                         if (p.options.warn_about_unbundled_modules) {
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
+
+                        if (p.options.features.allow_runtime) {
+                            p.recordUsageOfRuntimeRequire();
+                        }
+
+                        return expr;
                     }
 
-                    if (could_be_require_resolve) {
+                    if (e_.target.data == .e_require_resolve_call_target) {
                         // Ignore calls to require.resolve() if the control flow is provably
                         // dead here. We don't want to spend time scanning the required files
                         // if they will never be used.
@@ -16666,40 +16764,26 @@ fn NewParser_(
                             return p.newExpr(E.Null{}, expr.loc);
                         }
 
-                        if (p.options.features.dynamic_require and !p.options.bundle) {
-                            p.ignoreUsage(p.require_ref);
-                            // require.resolve(FOO) => import.meta.resolveSync(FOO)
-                            // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
-                            return p.newExpr(
-                                E.Call{
-                                    .target = Expr{
-                                        .data = .{
-                                            .e_require_resolve_call_target = {},
-                                        },
-                                        .loc = e_.target.loc,
-                                    },
-                                    .args = e_.args,
-                                    .close_paren_loc = e_.close_paren_loc,
-                                },
-                                expr.loc,
-                            );
-                        }
-
                         if (e_.args.len == 1) {
                             const first = e_.args.first_();
                             switch (first.data) {
                                 .e_string => {
-                                    // require(FOO) => require(FOO)
-                                    return p.transposeRequireResolve(first, expr);
+                                    // require.resolve(FOO) => require.resolve(FOO)
+                                    // (this will register dependencies)
+                                    return p.transposeRequireResolveKnownString(first);
                                 },
                                 .e_if => {
-                                    // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
+                                    // require.resolve(FOO  ? '123' : '456')
+                                    //  =>
+                                    // FOO ? require.resolve('123') : require.resolve('456')
                                     // This makes static analysis later easier
-                                    return p.require_resolve_transposer.maybeTransposeIf(first, expr);
+                                    return p.require_resolve_transposer.tranposeKnownToBeIf(first, e_.target);
                                 },
                                 else => {},
                             }
                         }
+
+                        return expr;
                     }
 
                     if (comptime allow_macros) {
@@ -16827,12 +16911,26 @@ fn NewParser_(
             return expr;
         }
 
-        fn valueForRequire(p: *P, loc: logger.Loc) Expr {
-            if (p.options.features.dynamic_require) {
-                return p.importMetaRequire(loc);
-            } else {
-                return p.runtimeIdentifier(loc, "__require");
+        /// This is only allowed to be called if allow_runtime is true
+        /// If --target=bun, this does nothing.
+        fn recordUsageOfRuntimeRequire(p: *P) void {
+            // target bun does not have __require
+            if (!p.options.features.use_import_meta_require) {
+                std.debug.assert(p.options.features.allow_runtime);
+
+                p.ensureRequireSymbol();
+                p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
             }
+        }
+
+        inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
+            std.debug.assert(!p.isSourceRuntime());
+            return Expr{
+                .data = .{
+                    .e_require_call_target = {},
+                },
+                .loc = loc,
+            };
         }
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
@@ -17618,8 +17716,7 @@ fn NewParser_(
                         // This also makes correctness a little easier.
                         if (identifier_opts.is_call_target and strings.eqlComptime(name, "require")) {
                             p.ignoreUsage(p.module_ref);
-                            p.recordUsage(p.require_ref);
-                            return p.newExpr(E.Identifier{ .ref = p.require_ref }, name_loc);
+                            return p.valueForRequire(name_loc);
                         } else if (!p.commonjs_named_exports_deoptimized and strings.eqlComptime(name, "exports")) {
 
                             // Detect if we are doing
@@ -17892,6 +17989,20 @@ fn NewParser_(
                                 }
                             }
                         }
+                    }
+                },
+                .e_import_meta => {
+                    // Make `import.meta.url` side effect free.
+                    if (strings.eqlComptime(name, "url")) {
+                        return p.newExpr(
+                            E.Dot{
+                                .target = target,
+                                .name = name,
+                                .name_loc = name_loc,
+                                .can_be_removed_if_unused = true,
+                            },
+                            target.loc,
+                        );
                     }
                 },
                 else => {},
@@ -18775,9 +18886,7 @@ fn NewParser_(
                         const old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
                         p.fn_or_arrow_data_visit.is_inside_switch = true;
                         defer p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_Swsitch;
-                        var i: usize = 0;
-                        while (i < data.cases.len) : (i += 1) {
-                            const case = data.cases[i];
+                        for (data.cases, 0..) |case, i| {
                             if (case.value) |val| {
                                 data.cases[i].value = p.visitExpr(val);
                                 // TODO: error messages
@@ -20403,11 +20512,8 @@ fn NewParser_(
                     p.enclosing_class_keyword = old_enclosing_class_keyword;
                 }
 
-                var i: usize = 0;
                 var constructor_function: ?*E.Function = null;
-                while (i < class.properties.len) : (i += 1) {
-                    var property = &class.properties[i];
-
+                for (class.properties) |*property| {
                     if (property.kind == .class_static_block) {
                         const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
                         const old_fn_only_data = p.fn_only_data_visit;
@@ -20443,7 +20549,7 @@ fn NewParser_(
                     if (is_private) {
                         p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
                     } else if (property.key) |key| {
-                        class.properties[i].key = p.visitExpr(key);
+                        property.key = p.visitExpr(key);
                     }
 
                     // Make it an error to use "arguments" in a class body
@@ -20603,38 +20709,34 @@ fn NewParser_(
             }, loc);
         }
 
-        fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
-            var ref: Ref = undefined;
+        fn runtimeIdentifierRef(p: *P, loc: logger.Loc, comptime name: string) Ref {
             p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
-                ref = brk: {
-                    if (!p.options.bundle) {
-                        if (comptime strings.eqlComptime(name, "__require")) {
-                            p.ensureRequireSymbol();
-                            break :brk p.runtime_imports.__require.?.ref;
-                        }
-                        const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
-                        p.runtime_imports.put(name, generated_symbol);
-                        break :brk generated_symbol.ref;
-                    } else {
-                        const loc_ref = js_ast.LocRef{
-                            .loc = loc,
-                            .ref = p.newSymbol(.other, name) catch unreachable,
-                        };
-                        p.runtime_imports.put(name, .{
-                            .primary = loc_ref.ref.?,
-                            .backup = loc_ref.ref.?,
-                            .ref = loc_ref.ref.?,
-                        });
-                        p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
-                        break :brk loc_ref.ref.?;
-                    }
-                };
+                if (!p.options.bundle) {
+                    const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
+                    p.runtime_imports.put(name, generated_symbol);
+                    return generated_symbol.ref;
+                } else {
+                    const loc_ref = js_ast.LocRef{
+                        .loc = loc,
+                        .ref = p.newSymbol(.other, name) catch unreachable,
+                    };
+                    p.runtime_imports.put(name, .{
+                        .primary = loc_ref.ref.?,
+                        .backup = loc_ref.ref.?,
+                        .ref = loc_ref.ref.?,
+                    });
+                    p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
+                    return loc_ref.ref.?;
+                }
             } else {
-                ref = p.runtime_imports.at(name).?;
+                return p.runtime_imports.at(name).?;
             }
+        }
 
+        fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
+            const ref = p.runtimeIdentifierRef(loc, name);
             p.recordUsage(ref);
             return p.newExpr(
                 E.ImportIdentifier{

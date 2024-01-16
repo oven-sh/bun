@@ -2138,6 +2138,13 @@ pub const OverrideMap = struct {
                 continue;
             };
 
+            const version_str = value.data.e_string.slice(lockfile.allocator);
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                // TODO(dylan-conway): apply .patch files to packages
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+                continue;
+            }
+
             if (try parseOverrideValue(
                 "override",
                 lockfile,
@@ -2146,7 +2153,7 @@ pub const OverrideMap = struct {
                 value.loc,
                 log,
                 k,
-                value.data.e_string.slice(lockfile.allocator),
+                version_str,
                 builder,
             )) |version| {
                 this.map.putAssumeCapacity(name_hash, version);
@@ -2201,6 +2208,13 @@ pub const OverrideMap = struct {
                 continue;
             }
 
+            const version_str = value.data.e_string.data;
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                // TODO(dylan-conway): apply .patch files to packages
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
+                continue;
+            }
+
             if (try parseOverrideValue(
                 "resolution",
                 lockfile,
@@ -2209,7 +2223,7 @@ pub const OverrideMap = struct {
                 value.loc,
                 log,
                 k,
-                value.data.e_string.data,
+                version_str,
                 builder,
             )) |version| {
                 const name_hash = String.Builder.stringHash(k);
@@ -2616,16 +2630,6 @@ pub const Package = extern struct {
         }
     };
 
-    pub fn verify(this: *const Package, externs: []const ExternalString) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        this.name.assertDefined();
-        this.resolution.verify();
-        this.meta.man_dir.assertDefined();
-        this.bin.verify(externs);
-    }
-
     pub const DependencyGroup = struct {
         prop: string,
         field: string,
@@ -2741,7 +2745,6 @@ pub const Package = extern struct {
             },
             id,
         );
-        defer new_package.verify(new.buffers.extern_strings.items);
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 

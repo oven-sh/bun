@@ -22,6 +22,8 @@
 #include <sys/ioctl.h>
 #endif
 
+#include <limits.h>
+
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
@@ -195,6 +197,12 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     loop->data.post_cb(loop);
 }
 
+#ifdef WIN32
+#define us_ioctl ioctlsocket
+#else
+#define us_ioctl ioctl
+#endif
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -326,24 +334,53 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
                 }
 
-                int length = bsd_recv(us_poll_fd(&s->p), s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, 0);
-                if (length > 0) {
-                    s = s->context->on_data(s, s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
-                } else if (!length) {
-                    if (us_socket_is_shut_down(0, s)) {
-                        /* We got FIN back after sending it */
-                        /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
+                size_t repeat_recv_count = 0;
+
+                do {
+                    const struct us_loop_t* loop = s->context->loop;
+                    int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, MSG_DONTWAIT);
+
+                    if (length > 0) {
+                        s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        // loop->num_ready_polls isn't accessible on Windows.
+                        #ifndef WIN32
+                        // rare case: we're reading a lot of data, there's more to be read, and either:
+                        // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
+                        // - the event loop isn't very busy, so we can read multiple times in a row
+                        #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        if (
+                            s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH && 
+                            (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) && 
+                            !us_socket_is_closed(0, s)
+                        ) {
+                            repeat_recv_count += error == 0;
+
+                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                            // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT 
+                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                                continue;
+                            }
+                        }
+                        #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #endif
+                    } else if (!length) {
+                        if (us_socket_is_shut_down(0, s)) {
+                            /* We got FIN back after sending it */
+                            /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
+                            s = us_socket_close(0, s, 0, NULL);
+                        } else {
+                            /* We got FIN, so stop polling for readable */
+                            us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                            s = s->context->on_end(s);
+                        }
+                    } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                        /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, 0, NULL);
-                    } else {
-                        /* We got FIN, so stop polling for readable */
-                        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                        s = s->context->on_end(s);
+                        return;
                     }
-                } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                    /* Todo: decide also here what kind of reason we should give */
-                    s = us_socket_close(0, s, 0, NULL);
-                    return;
-                }
+
+                    break;
+                } while (1);
             }
 
             /* Such as epollerr epollhup */
@@ -365,3 +402,5 @@ void us_loop_integrate(struct us_loop_t *loop) {
 void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
+
+#undef us_ioctl

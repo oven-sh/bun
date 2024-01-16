@@ -3808,7 +3808,7 @@ pub const JSValue = enum(JSValueReprInt) {
         const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
-        const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+        const fmt_options = JSC.ConsoleObject.FormatOptions{
             .enable_colors = false,
             .add_newline = false,
             .flush = false,
@@ -3816,7 +3816,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .quote_strings = true,
         };
 
-        JSC.ZigConsoleClient.format(
+        JSC.ConsoleObject.format(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
@@ -4277,6 +4277,9 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
+    /// Increments the reference count
+    ///
+    /// **You must call `.deref()` or it will leak memory**
     pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
         return bun.String.fromJS(this, globalObject);
     }
@@ -4380,7 +4383,7 @@ pub const JSValue = enum(JSValueReprInt) {
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        return this.toSliceCloneWithAllocator(globalThis, globalThis.allocator());
+        return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
     /// On exception or out of memory, this returns null, to make exception checks clearer.
@@ -4734,18 +4737,36 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub const StringFormatter = struct {
+        value: JSC.JSValue,
+        globalObject: *JSC.JSGlobalObject,
+
+        pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const str = this.value.toBunString(this.globalObject);
+            defer str.deref();
+            try str.format(text, opts, writer);
+        }
+    };
+
+    pub fn fmtString(this: JSValue, globalObject: *JSC.JSGlobalObject) StringFormatter {
+        return .{
+            .value = this,
+            .globalObject = globalObject,
+        };
+    }
+
     pub fn toFmt(
         this: JSValue,
         global: *JSGlobalObject,
-        formatter: *Exports.ZigConsoleClient.Formatter,
-    ) Exports.ZigConsoleClient.Formatter.ZigFormatter {
+        formatter: *Exports.ConsoleObject.Formatter,
+    ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
         if (formatter.map_node) |node| {
             node.release();
             formatter.map_node = null;
         }
 
-        return Exports.ZigConsoleClient.Formatter.ZigFormatter{
+        return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
             .value = this,
             .global = global,
@@ -5950,10 +5971,8 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         }
 
         pub fn hasLongNames(self: *Self) bool {
-            var i = self.i;
-            const len = self.len;
             var estimated_length: usize = 0;
-            while (i < len) : (i += 1) {
+            for (self.i..self.len) |i| {
                 estimated_length += JSC.C.JSStringGetLength(JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, i));
                 if (estimated_length > 14) return true;
             }

@@ -150,7 +150,8 @@ pub const Arguments = struct {
     const base_params_ = [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-w, --workspace <STR>             Run a script from a workspace member package") catch unreachable,
+        // clap.parseParam("-w, --workspace <STR>             Perform the command on the specified workspace member package") catch unreachable,
+        clap.parseParam("-F, --filter <STR>...             Perform the command on all workspace member packages that match the pattern") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
@@ -339,16 +340,17 @@ pub const Arguments = struct {
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
-            if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = bun.getcwd(&secondbuf) catch return;
-
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cwd: []const u8 = undefined;
+            if (ctx.args.cwd_override) |cwd_val| {
+                cwd = cwd_val;
+            } else {
+                cwd = try bun.getcwd(&cwd_buf);
             }
 
-            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
+            var parts = [_]string{ cwd, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
-                ctx.args.absolute_working_dir.?,
+                cwd,
                 &config_buf,
                 &parts,
                 .auto,
@@ -491,26 +493,33 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd: []u8 = undefined;
+        var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var cwd: []const u8 = undefined;
         if (args.option("--cwd")) |cwd_| {
-            cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
-                break :brk try allocator.dupe(u8, out);
+            var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const out = std.os.realpath(cwd_, &outbuf) catch |err| {
+                Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                Global.exit(1);
             };
+            std.os.chdir(out) catch |err| {
+                Output.prettyErrorln("error setting --cwd: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+            cwd = try allocator.dupe(u8, out);
+            ctx.args.cwd_override = cwd;
         } else {
-            cwd = try bun.getcwdAlloc(allocator);
+            cwd = try bun.getcwd(&cwd_buf);
         }
 
-        if (args.option("--workspace")) |package_name| {
+
+        const filters = args.options("--filter");
+        if (filters.len > 0) {
             // TODO in the future we can try loading the lockfile to get the workspace information more quickly
             // var manager = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
             // const load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
             // if (load_lockfile == .not_found) {
 
+            // find the paths of all projects that match this filter
             bun.JSAst.Expr.Data.Store.create(default_allocator);
             bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
@@ -518,36 +527,34 @@ pub const Arguments = struct {
             defer wsmap.deinit();
             // find the root package.json of the workspace and load the child packages into workspace map
             findWorkspaceRoot(allocator, ctx.log, &wsmap, cwd) catch |err| {
-                Output.prettyErrorln("error resolving --workspace: {s}", .{@errorName(err)});
+                Output.prettyErrorln("error resolving --filter: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
 
-            var found = false;
-            for (wsmap.keys()) |path| {
-                // check if the package at the path matches the name provided as an argument
-                const matches = packageMatchesName(allocator, ctx.log, path, package_name) catch |err| {
-                    Output.prettyErrorln("error resolving --workspace: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
-                if (matches) {
-                    cwd = try allocator.dupe(u8, path);
-                    found = true;
-                    break;
+            var list = std.ArrayListUnmanaged([]u8){};
+
+            for (filters) |pattern| {
+                std.debug.print("pattern: {s}\n", .{pattern});
+                for (wsmap.keys()) |path| {
+                    // check if the package at the path matches the name provided as an argument
+                    const matches = packageMatchesName(allocator, ctx.log, path, pattern) catch |err| {
+                        Output.prettyErrorln("error resolving --filter: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                    if (matches) {
+                        try list.append(allocator, try allocator.dupe(u8, path));
+                    }
                 }
             }
-
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
 
-            // if we didn't find a package with the name provided, try to resolve it as a path
-            if (!found) {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(package_name, &outbuf) catch {
-                    Output.prettyErrorln("error resolving --workspace: no package found with name {s}", .{package_name});
-                    Global.exit(1);
-                };
-                cwd = try allocator.dupe(u8, out);
+            if (list.items.len == 0) {
+                Output.prettyErrorln("error resolving --filter: no packages matched the filter", .{});
+                Global.exit(1);
             }
+
+            ctx.workspace_paths = list.items;
         }
 
         if (cmd == .TestCommand) {
@@ -606,7 +613,6 @@ pub const Arguments = struct {
             ctx.test_options.only = args.flag("--only");
         }
 
-        ctx.args.absolute_working_dir = cwd;
         ctx.positionals = args.positionals();
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
@@ -1220,6 +1226,8 @@ pub const Command = struct {
         test_options: TestOptions = TestOptions{},
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
+
+        workspace_paths: [][]const u8 = &[_][]const u8{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,

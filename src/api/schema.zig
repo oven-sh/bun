@@ -1689,8 +1689,8 @@ pub const Api = struct {
         /// origin
         origin: ?[]const u8 = null,
 
-        /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        /// cwd_override
+        cwd_override: ?[]const u8 = null,
 
         /// define
         define: ?StringMap = null,
@@ -1774,7 +1774,7 @@ pub const Api = struct {
                         this.origin = try reader.readValue([]const u8);
                     },
                     5 => {
-                        this.absolute_working_dir = try reader.readValue([]const u8);
+                        this.cwd_override = try reader.readValue([]const u8);
                     },
                     6 => {
                         this.define = try reader.readValue(StringMap);
@@ -1861,9 +1861,9 @@ pub const Api = struct {
                 try writer.writeFieldID(4);
                 try writer.writeValue(@TypeOf(origin), origin);
             }
-            if (this.absolute_working_dir) |absolute_working_dir| {
+            if (this.cwd_override) |cwd_override| {
                 try writer.writeFieldID(5);
-                try writer.writeValue(@TypeOf(absolute_working_dir), absolute_working_dir);
+                try writer.writeValue(@TypeOf(cwd_override), cwd_override);
             }
             if (this.define) |define| {
                 try writer.writeFieldID(6);

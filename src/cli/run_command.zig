@@ -1011,6 +1011,11 @@ pub const RunCommand = struct {
 
     pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
         var ctx = ctx_;
+
+        // for (ctx.workspace_paths) |path| {
+        // }
+        std.debug.print("found {d} workspace paths\n", .{ctx.workspace_paths.len});
+
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {

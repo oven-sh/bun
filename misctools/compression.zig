@@ -250,22 +250,17 @@ pub fn main() anyerror!void {
         std.os.exit(1);
     }
 
-    var output_file: std.fs.File = undefined;
-    var input_file: std.fs.File = undefined;
-
-    if (second.len == 0) {
-        output_file = std.io.getStdOut();
-    } else {
-        output_file = try std.fs.cwd().createFile(second, .{
+    const output_file = if (second.len == 0)
+        std.io.getStdOut()
+    else
+        try std.fs.cwd().createFile(second, .{
             .truncate = true,
         });
-    }
 
-    if (first.len == 0) {
-        input_file = std.io.getStdIn();
-    } else {
-        input_file = try std.fs.cwd().openFile(first, .{});
-    }
+    const input_file = if (first.len == 0)
+        std.io.getStdIn()
+    else
+        try std.fs.cwd().openFile(first, .{});
 
     var writer = std.io.BufferedWriter(64 * 1024, @TypeOf(output_file.writer())){
         .unbuffered_writer = output_file.writer(),

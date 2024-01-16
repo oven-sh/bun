@@ -669,19 +669,17 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         pub fn putKey(self: *Self, key: anytype, result: *Result) !void {
             self.map.mutex.lock();
             defer self.map.mutex.unlock();
-            var slice: []u8 = undefined;
 
             // Is this actually a slice into the map? Don't free it.
-            if (isKeyStaticallyAllocated(key)) {
-                slice = key;
-            } else if (instance.key_list_buffer_used + key.len < instance.key_list_buffer.len) {
+            var slice = if (isKeyStaticallyAllocated(key))
+                key
+            else if (instance.key_list_buffer_used + key.len < instance.key_list_buffer.len) blk: {
                 const start = instance.key_list_buffer_used;
                 instance.key_list_buffer_used += key.len;
-                slice = instance.key_list_buffer[start..instance.key_list_buffer_used];
-                bun.copy(u8, slice, key);
-            } else {
-                slice = try self.map.allocator.dupe(u8, key);
-            }
+                const sl = instance.key_list_buffer[start..instance.key_list_buffer_used];
+                bun.copy(u8, sl, key);
+                break :blk sl;
+            } else try self.map.allocator.dupe(u8, key);
 
             if (comptime remove_trailing_slashes) {
                 slice = std.mem.trimRight(u8, slice, "/");

@@ -609,17 +609,16 @@ pub fn GlobWalker_(
             only_files: bool,
         ) !Maybe(void) {
             errdefer arena.deinit();
-            var cwd: []const u8 = undefined;
-            switch (Syscall.getcwd(&this.pathBuf)) {
+            const cwd = switch (Syscall.getcwd(&this.pathBuf)) {
                 .err => |err| {
                     return .{ .err = err };
                 },
-                .result => |result| {
+                .result => |result| blk: {
                     const copiedCwd = try arena.allocator().alloc(u8, result.len);
                     @memcpy(copiedCwd, result);
-                    cwd = copiedCwd;
+                    break :blk copiedCwd;
                 },
-            }
+            };
 
             return try this.initWithCwd(
                 arena,

@@ -101,10 +101,9 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         return Holder.file;
     }
 
-    var file: std.fs.File = undefined;
-    if ((comptime Environment.allow_assert) and from_path.len == 0) {
+    var file = if ((comptime Environment.allow_assert) and from_path.len == 0) blk: {
         const absolute_path = comptime (Environment.base_path ++ (std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?) ++ "/js/out/" ++ moduleFolder ++ "/" ++ input);
-        file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
+        break :blk std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
             const WarnOnce = struct {
                 pub var warned = false;
             };
@@ -114,12 +113,12 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
             }
             return Holder.file;
         };
-    } else {
+    } else blk: {
         var parts = [_]string{ from_path, "src/js/out/" ++ moduleFolder ++ "/" ++ input };
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
-        file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
+        break :blk std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
             const WarnOnce = struct {
                 pub var warned = false;
             };
@@ -129,7 +128,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
             }
             return Holder.file;
         };
-    }
+    };
 
     const contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file " ++ input);
     file.close();
@@ -366,8 +365,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             var vm = this.vm;
-            var bundler: bun.Bundler = undefined;
-            bundler = vm.bundler;
+            var bundler = vm.bundler;
             bundler.setAllocator(allocator);
             bundler.setLog(&this.log);
             bundler.resolver.opts = bundler.options;

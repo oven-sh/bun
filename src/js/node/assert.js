@@ -1026,6 +1026,7 @@ var require_assert = __commonJS({
               : (_this[key] = obj[key]));
         });
     };
+    Comparison.prototype = {};
     function compareExceptionKey(actual, expected, key, message, keys, fn) {
       if (!(key in actual) || !isDeepEqual(actual[key], expected[key], true)) {
         if (!message) {

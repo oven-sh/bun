@@ -835,6 +835,17 @@ describe("path.posix.parse and path.posix.format", () => {
         name: "Ł",
       },
     },
+    {
+      // https://github.com/oven-sh/bun/issues/8090
+      input: ".prettierrc",
+      expected: {
+        root: "",
+        dir: "",
+        base: ".prettierrc",
+        ext: "",
+        name: ".prettierrc",
+      },
+    },
   ];
   testCases.forEach(({ input, expected }) => {
     it(`case ${input}`, () => {

@@ -304,10 +304,8 @@ pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @Ty
 pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usize {
     return comptime brk: {
         var slice: [max - min]usize = undefined;
-        var i: usize = min;
-        while (i < max) {
+        for (min..max) |i| {
             slice[i - min] = i;
-            i += 1;
         }
         break :brk slice;
     };
@@ -1067,7 +1065,7 @@ pub fn getcwd(buf_: []u8) ![]u8 {
     const temp_slice = try std.os.getcwd(&temp);
     // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
     // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .loose);
+    return path.normalizeBuf(temp_slice, buf_, .auto);
 }
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
@@ -1951,13 +1949,7 @@ pub fn serializable(input: anytype) @TypeOf(input) {
             }
         }
     }
-    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
-        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
-        for (&buf) |*ptr| {
-            ptr.* = 0;
-        }
-        break :brk buf;
-    };
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = std.mem.zeroes([@sizeOf(T)]u8);
     const result: *T = @ptrCast(&zeroed);
 
     inline for (comptime std.meta.fieldNames(T)) |field_name| {
@@ -1968,13 +1960,7 @@ pub fn serializable(input: anytype) @TypeOf(input) {
 }
 
 pub inline fn serializableInto(comptime T: type, init: anytype) T {
-    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
-        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
-        for (&buf) |*ptr| {
-            ptr.* = 0;
-        }
-        break :brk buf;
-    };
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = std.mem.zeroes([@sizeOf(T)]u8);
     const result: *T = @ptrCast(&zeroed);
 
     inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {
@@ -2444,3 +2430,7 @@ pub const S = if (Environment.isWindows) C.S else std.os.S;
 pub const trait = @import("./trait.zig");
 
 pub const brotli = @import("./brotli.zig");
+
+pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
+    return DirIterator.iterate(dir, .u8).iter;
+}

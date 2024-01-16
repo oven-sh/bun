@@ -3331,12 +3331,10 @@ pub const Expr = struct {
                 return Expr.joinWithComma(all[0], all[1], allocator);
             },
             else => {
-                var i: usize = 1;
                 var expr = all[0];
-                while (i < all.len) : (i += 1) {
+                for (1..all.len) |i| {
                     expr = Expr.joinWithComma(expr, all[i], allocator);
                 }
-
                 return expr;
             },
         }
@@ -7229,6 +7227,7 @@ pub const Macro = struct {
                     },
                     .String => {
                         var bun_str = value.toBunString(this.global);
+                        defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly
                         var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;

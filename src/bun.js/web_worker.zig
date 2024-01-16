@@ -92,8 +92,7 @@ pub const WebWorker = struct {
         defer temp_log.deinit();
 
         var resolved_entry_point = parent.bundler.resolveEntryPoint(spec_slice.slice()) catch {
-            var out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
-            out.ref();
+            const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
             error_message.* = out;
             return null;
         };
@@ -201,6 +200,7 @@ pub const WebWorker = struct {
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
         const str = err.toBunString(vm.global);
+        defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
 

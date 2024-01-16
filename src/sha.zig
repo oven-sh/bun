@@ -245,14 +245,10 @@ pub fn main() anyerror!void {
             .{},
         );
         const DigestType = if (BoringHasher != void) BoringHasher.Digest else [32]u8;
-        var digest1: DigestType = undefined;
-        var digest2: DigestType = undefined;
-        var digest3: DigestType = undefined;
-        var digest4: DigestType = undefined;
-        @memset(@as([*]u8, @ptrCast(&digest1))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest2))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest3))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest4))[0..@sizeOf(DigestType)], 0);
+        var digest1 = std.mem.zeroes(DigestType);
+        var digest2 = std.mem.zeroes(DigestType);
+        var digest3 = std.mem.zeroes(DigestType);
+        var digest4 = std.mem.zeroes(DigestType);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);

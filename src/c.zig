@@ -244,8 +244,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 allocator.free(slice);
             }
             const img_count = std.c._dyld_image_count();
-            var i: u32 = 0;
-            while (i < img_count) : (i += 1) {
+            for (0..img_count) |i| {
                 const name = std.c._dyld_get_image_name(i);
                 const item = try allocator.dupeZ(u8, mem.sliceTo(name, 0));
                 errdefer allocator.free(item);

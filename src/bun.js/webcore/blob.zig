@@ -918,6 +918,7 @@ pub const Blob = struct {
 
                 if (len < 256 * 1024) {
                     const str = data.toBunString(globalThis);
+                    defer str.deref();
 
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -1192,18 +1193,23 @@ pub const Blob = struct {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                // we deliberately don't use O_TRUNC here
-                // it's a perf optimization
-                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                if (!Environment.isWindows)
+                    // we deliberately don't use O_TRUNC here
+                    // it's a perf optimization
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK
+                else
+                    std.os.O.WRONLY | std.os.O.CREAT,
                 write_permissions,
             )) {
                 .result => |result| {
                     break :brk result;
                 },
                 .err => |err| {
-                    if (err.getErrno() == .NOENT) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .NOENT) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
 
                     return JSC.JSPromise.rejectedPromiseValue(
@@ -1212,16 +1218,13 @@ pub const Blob = struct {
                     );
                 },
             }
-            unreachable;
         };
 
-        var truncate = needs_open or bytes.len == 0;
+        // TODO: on windows this is always synchronous
+
+        const truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
         defer {
-            if (truncate) {
-                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
-            }
-
             if (needs_open) {
                 _ = bun.sys.close(fd);
             }
@@ -1239,19 +1242,31 @@ pub const Blob = struct {
                     if (res == 0) break;
                 },
                 .err => |err| {
-                    truncate = false;
-                    if (err.getErrno() == .AGAIN) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.toJSC(globalThis),
+                        );
                     }
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
                 },
+            }
+        }
+
+        if (truncate) {
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+            } else {
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
         }
 
@@ -1278,25 +1293,27 @@ pub const Blob = struct {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
             return null;
         }
-
-        const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-            globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-            return null;
-        };
-
-        blob = get(globalThis, args[0], false, true) catch |err| {
-            if (err == error.InvalidArguments) {
-                globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+        {
+            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
+                globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 return null;
-            }
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            };
+            defer name_value_str.deref();
 
-        if (blob.store) |store_| {
-            store_.data.bytes.stored_name = bun.PathString.init(
-                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-            );
+            blob = get(globalThis, args[0], false, true) catch |err| {
+                if (err == error.InvalidArguments) {
+                    globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                    return null;
+                }
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+
+            if (blob.store) |store_| {
+                store_.data.bytes.stored_name = bun.PathString.init(
+                    (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                );
+            }
         }
 
         if (args.len > 2) {

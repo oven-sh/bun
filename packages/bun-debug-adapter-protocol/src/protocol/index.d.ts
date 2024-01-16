@@ -2215,7 +2215,7 @@ export namespace DAP {
      */
     instructionReference: string;
     /**
-     * The offset from the instruction reference.
+     * The offset from the instruction reference in bytes.
      * This can be negative.
      */
     offset?: number;
@@ -2278,6 +2278,13 @@ export namespace DAP {
      * This can be negative.
      */
     offset?: number;
+    /**
+     * A machine-readable explanation of why a breakpoint may not be verified. If a breakpoint is verified or a specific reason is not known, the adapter should omit this property. Possible values include:
+     *
+     * - `pending`: Indicates a breakpoint might be verified in the future, but the adapter cannot verify it in the current state.
+     * - `failed`: Indicates a breakpoint was not able to be verified, and the adapter does not believe it can be verified without intervention.
+     */
+    reason?: "pending" | "failed";
   };
   /**
    * The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
@@ -2587,6 +2594,12 @@ export namespace DAP {
      * The end column of the range that corresponds to this instruction, if any.
      */
     endColumn?: number;
+    /**
+     * A hint for how to present the instruction in the UI.
+     *
+     * A value of `invalid` may be used to indicate this instruction is 'filler' and cannot be reached by the program. For example, unreadable memory addresses may be presented is 'invalid.'
+     */
+    presentationHint?: "normal" | "invalid";
   };
   /**
    * Logical areas that can be invalidated by the `invalidated` event.

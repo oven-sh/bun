@@ -1655,6 +1655,7 @@ pub const Arguments = struct {
                     if (next_val.isString()) {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
+                        defer str.deref();
                         const utf8 = str.utf8();
                         if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
                         if (strings.eqlComptime(utf8, "file")) break :link_type .file;
@@ -4628,7 +4629,11 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = fd.asDir();
-        var iterator = DirIterator.iterate(dir, .u8);
+        const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
+        var iterator = DirIterator.iterate(
+            dir,
+            comptime if (is_u16) .u16 else .u8,
+        );
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -4656,21 +4661,37 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
-            const utf8_name = current.name.slice();
-            switch (ExpectedType) {
-                Dirent => {
-                    entries.append(.{
-                        .name = bun.String.create(utf8_name),
-                        .kind = current.kind,
-                    }) catch bun.outOfMemory();
-                },
-                Buffer => {
-                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
-                },
-                bun.String => {
-                    entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
-                },
-                else => @compileError("unreachable"),
+            if (comptime !is_u16) {
+                const utf8_name = current.name.slice();
+                switch (ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.create(utf8_name),
+                            .kind = current.kind,
+                        }) catch bun.outOfMemory();
+                    },
+                    Buffer => {
+                        entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    },
+                    bun.String => {
+                        entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
+                    },
+                    else => @compileError("unreachable"),
+                }
+            } else {
+                const utf16_name = current.name.slice();
+                switch (ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.createUTF16(utf16_name),
+                            .kind = current.kind,
+                        }) catch bun.outOfMemory();
+                    },
+                    bun.String => {
+                        entries.append(bun.String.createUTF16(utf16_name)) catch bun.outOfMemory();
+                    },
+                    else => @compileError("unreachable"),
+                }
             }
         }
 
@@ -5226,43 +5247,6 @@ pub const NodeFS = struct {
                 _ = bun.sys.close(fd);
         }
 
-        if (Environment.isWindows) {
-            const native_fd = bun.fdcast(fd);
-
-            var data = args.data.slice();
-
-            // "WriteFile sets this value to zero before doing any work or error checking."
-            var bytes_written: u32 = undefined;
-
-            while (data.len > 0) {
-                const adjusted_len = @min(data.len, std.math.maxInt(u32));
-                const rc = std.os.windows.kernel32.WriteFile(native_fd, data.ptr, adjusted_len, &bytes_written, null);
-                if (rc == 0) {
-                    return .{
-                        .err = Syscall.Error{
-                            .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                            .syscall = .WriteFile,
-                            .fd = fd,
-                        },
-                    };
-                }
-                data = data[bytes_written..];
-            }
-
-            const rc = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
-            if (rc == 0) {
-                return .{
-                    .err = Syscall.Error{
-                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                        .syscall = .WriteFile,
-                        .fd = fd,
-                    },
-                };
-            }
-
-            return Maybe(Return.WriteFile).success;
-        }
-
         var buf = args.data.slice();
         var written: usize = 0;
 
@@ -5298,7 +5282,7 @@ pub const NodeFS = struct {
         }
 
         while (buf.len > 0) {
-            switch (Syscall.write(fd, buf)) {
+            switch (bun.sys.write(fd, buf)) {
                 .err => |err| return .{
                     .err = err,
                 },
@@ -5312,9 +5296,22 @@ pub const NodeFS = struct {
             }
         }
 
-        // https://github.com/oven-sh/bun/issues/2931
-        if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
-            _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
+        if (Environment.isWindows) {
+            const rc = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+            if (rc == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                        .syscall = .SetEndOfFile,
+                        .fd = fd,
+                    },
+                };
+            }
+        } else {
+            // https://github.com/oven-sh/bun/issues/2931
+            if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
+                _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
+            }
         }
 
         return Maybe(Return.WriteFile).success;

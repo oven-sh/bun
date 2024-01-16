@@ -2951,6 +2951,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (result.toError()) |err| {
                         this.finishRunningErrorHandler(err, status);
                         return;
+                    } else if (result.asAnyPromise()) |promise| {
+                        this.waitForErrorPromise(promise);
                     } else if (result.as(Response)) |response| {
                         this.render(response);
                         return;
@@ -2959,6 +2961,54 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.finishRunningErrorHandler(value, status);
+        }
+
+        fn waitForErrorPromise(
+            ctx: *RequestContext,
+            promise: JSC.AnyPromise,
+            value: JSC.JSValue,
+            status: u16,
+        ) void {
+            var vm = ctx.vm;
+            var wait_for_promise = false;
+
+            switch (promise.status(vm.global.vm())) {
+                .Pending => {},
+                .Fulfilled => {
+                    const fulfilled_value = promise.result(vm.global.vm());
+
+                    // if you return a Response object or a Promise<Response>
+                    // but you upgraded the connection to a WebSocket
+                    // just ignore the Response object. It doesn't do anything.
+                    // it's better to do that than to throw an error
+                    if (ctx.didUpgradeWebSocket()) {
+                        return;
+                    }
+
+                    if (!fulfilled_value.isEmptyOrUndefinedOrNull()) {
+                        if (fulfilled_value.toError()) |err| {
+                            ctx.finishRunningErrorHandler(err, status);
+                            return;
+                        } else if (fulfilled_value.as(Response)) |response| {
+                            ctx.render(response);
+                            return;
+                        }
+                    } else {
+                        ctx.finishRunningErrorHandler(value, status);
+                        return;
+                    }
+                },
+                .Rejected => {
+                    promise.setHandled(vm.global.vm());
+                    ctx.finishRunningErrorHandler(value, promise.result(vm.global.vm()));
+                    return;
+                },
+            }
+            wait_for_promise = true;
+
+            if (wait_for_promise) {
+                @panic("");
+            }
         }
 
         pub fn runErrorHandlerWithStatusCode(

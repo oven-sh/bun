@@ -347,7 +347,7 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     };
 
     if (comptime bun.Environment.allow_assert)
-        log("napi_create_string_utf16: {d} {any}", .{ slice.len, strings.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+        log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
         setNapiValue(result, bun.String.empty.toJS(env));
@@ -408,6 +408,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.latin1ByteLength();
@@ -461,6 +463,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.utf16ByteLength();

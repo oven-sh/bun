@@ -38,7 +38,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = 0,
+dir: StoredFileDescriptorType = .zero,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -204,12 +204,9 @@ pub const Routes = struct {
 
     fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         // its cleaned, so now we search the big list of strings
-        var i: usize = 0;
-        while (i < this.dynamic_names.len) : (i += 1) {
-            const name = this.dynamic_match_names[i];
-            const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
-            if (Pattern.match(path, case_sensitive_name_without_leading_slash, name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
-                return this.dynamic[i];
+        for (this.dynamic_names, this.dynamic_match_names, this.dynamic) |case_sensitive_name, name, route| {
+            if (Pattern.match(path, case_sensitive_name[1..], name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
+                return route;
             }
         }
 
@@ -569,11 +566,8 @@ pub const Route = struct {
     pub const Sorter = struct {
         const sort_table: [std.math.maxInt(u8)]u8 = brk: {
             var table: [std.math.maxInt(u8)]u8 = undefined;
-            var i: u16 = 0;
-            while (i < @as(u16, table.len)) {
-                table[i] = @as(u8, @intCast(i));
-                i += 1;
-            }
+            for (&table, 0..) |*t, i| t.* = @as(u8, @intCast(i));
+
             // move dynamic routes to the bottom
             table['['] = 252;
             table[']'] = 253;
@@ -586,9 +580,8 @@ pub const Route = struct {
             const math = std.math;
 
             const n = @min(lhs.len, rhs.len);
-            var i: usize = 0;
-            while (i < n) : (i += 1) {
-                switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
+            for (lhs[0..n], rhs[0..n]) |lhs_i, rhs_i| {
+                switch (math.order(sort_table[lhs_i], sort_table[rhs_i])) {
                     .eq => continue,
                     .lt => return true,
                     .gt => return false,
@@ -736,8 +729,8 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (entry.cache.fd != 0) {
-                file = std.fs.File{ .handle = bun.fdcast(entry.cache.fd) };
+            if (entry.cache.fd != .zero) {
+                file = entry.cache.fd.asFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);

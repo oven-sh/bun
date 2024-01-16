@@ -1,6 +1,7 @@
-import { gc as bunGC, stdout, unsafe, which } from "bun";
+import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
-export const bunEnv: any = {
+
+export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
@@ -172,6 +173,10 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };
+}
+
+export function randomPort(): number {
+  return 1024 + Math.floor(Math.random() * 65535);
 }
 
 expect.extend({

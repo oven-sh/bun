@@ -138,7 +138,7 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd(), this.fd, &signed_offset, this.remain);
+                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
             const errcode = std.os.linux.getErrno(val);
@@ -152,13 +152,24 @@ pub const Sendfile = struct {
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
+        } else if (Environment.isWindows) {
+            const win = std.os.windows;
+            const uv = bun.windows.libuv;
+            const wsocket = bun.socketcast(socket.fd());
+            const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
+            if (win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
+                return .{ .done = {} };
+            }
+            this.offset += this.remain;
+            this.remain = 0;
+            const errorno = win.ws2_32.WSAGetLastError();
+            return .{ .err = bun.errnoToZigErr(errorno) };
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(
-                this.fd,
-                socket.fd(),
-
+                this.fd.cast(),
+                socket.fd().cast(),
                 signed_offset,
                 &sbytes,
                 null,
@@ -684,7 +695,7 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
     queued_shutdowns: ShutdownQueue = ShutdownQueue{},
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    timer: std.time.Timer = undefined,
+    timer: std.time.Timer,
     const threadlog = Output.scoped(.HTTPThread, true);
 
     const FakeStruct = struct {
@@ -1765,8 +1776,7 @@ pub const AsyncHTTP = struct {
                 // Password between 0 and 4096 chars
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
-                    var password_buffer: [4096]u8 = undefined;
-                    @memset(&password_buffer, 0);
+                    var password_buffer = std.mem.zeroes([4096]u8);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1777,8 +1787,7 @@ pub const AsyncHTTP = struct {
                     const password = password_buffer[0..password_len];
 
                     // Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1798,8 +1807,7 @@ pub const AsyncHTTP = struct {
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
                     //Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1867,8 +1875,7 @@ pub const AsyncHTTP = struct {
                 // Password between 0 and 4096 chars
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
-                    var password_buffer: [4096]u8 = undefined;
-                    @memset(&password_buffer, 0);
+                    var password_buffer = std.mem.zeroes([4096]u8);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     const password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1879,8 +1886,7 @@ pub const AsyncHTTP = struct {
                     const password = password_buffer[0..password_len];
 
                     // Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1901,8 +1907,7 @@ pub const AsyncHTTP = struct {
                     this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
                 } else {
                     //Decode username
-                    var username_buffer: [4096]u8 = undefined;
-                    @memset(&username_buffer, 0);
+                    var username_buffer = std.mem.zeroes([4096]u8);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     const username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -2178,6 +2183,12 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    if (comptime Environment.allow_assert) {
+        if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
+            @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
+        }
+    }
+
     // Aborted before connecting
     if (this.signals.get(.aborted)) {
         this.fail(error.Aborted);

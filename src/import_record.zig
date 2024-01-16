@@ -181,6 +181,10 @@ pub const ImportRecord = struct {
 
     pub const List = bun.BabyList(ImportRecord);
 
+    pub fn loader(this: *const ImportRecord) ?bun.options.Loader {
+        return this.tag.loader();
+    }
+
     pub const Tag = enum {
         none,
         /// JSX auto-import for React Fast Refresh
@@ -207,6 +211,17 @@ pub const ImportRecord = struct {
         /// A file starting with "use client"; imported a server entry point
         /// We don't actually support this right now.
         react_server_component,
+
+        with_type_sqlite,
+        with_type_sqlite_embedded,
+
+        pub fn loader(this: Tag) ?bun.options.Loader {
+            return switch (this) {
+                .with_type_sqlite => .sqlite,
+                .with_type_sqlite_embedded => .sqlite_embedded,
+                else => null,
+            };
+        }
 
         pub fn isReactReference(this: Tag) bool {
             return switch (this) {

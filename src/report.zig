@@ -245,7 +245,12 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
     }
 
     if (!had_printed_fatal) {
-        crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        if (Environment.isWindows) {
+            // TODO(@paperdave) change this to the original one once bun windows is stable
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or join in #windows channel in https://bun.sh/discord\n\n", .{});
+        } else {
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        }
         crash_report_writer.flush();
     }
 }
@@ -566,7 +571,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 Global.exit(1);
             }
         },
-        error.FileNotFound => {
+        error.ENOENT, error.FileNotFound => {
             Output.prettyError(
                 "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},

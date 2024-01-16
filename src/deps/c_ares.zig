@@ -464,7 +464,7 @@ pub const Channel = opaque {
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
                 const container = bun.cast(*Container, ctx.?);
-                Container.onDNSSocketState(container, @as(i32, @intCast(socket)), readable != 0, writable != 0);
+                Container.onDNSSocketState(container, socket, readable != 0, writable != 0);
             }
         };
 
@@ -1521,6 +1521,7 @@ pub export fn Bun__canonicalizeIP(
     const addr_arg = args.nextEat().?;
 
     if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
+        defer addr.deref();
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {

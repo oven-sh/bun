@@ -268,7 +268,7 @@ public:
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
-    
+
     JSC::JSObject* processObject() { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() { return m_bunObject.getInitializedOnMainThread(this); }
@@ -362,8 +362,8 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
-    // This is set when doing `require('module')._resolveFilename = ...`
-    // a hack used by Next.js to inject their versions of webpack and react
+    // This is set when overriding `require('module')._resolveFilename = ...`
+    // used by projects like Next.js to inject their versions of webpack and react.
     mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;

@@ -2,6 +2,8 @@
 #include "root.h"
 #include "headers-handwritten.h"
 
+extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveSyncPrivate);
+
 namespace Zig {
 class GlobalObject;
 }
@@ -15,7 +17,7 @@ class AbstractModuleRecord;
 namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -61,15 +63,15 @@ public:
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
-        const WTF::String& key,
+        JSC::JSString* id,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
-        const WTF::String& key,
+        JSC::JSString* id,
         ResolvedSource resolvedSource);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, JSC::JSString* filename);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         JSC::Identifier moduleKey,
@@ -81,7 +83,6 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -105,12 +106,6 @@ public:
     {
     }
 };
-
-JSCommonJSModule* createCommonJSModuleWithoutRunning(
-    Zig::GlobalObject* globalObject,
-    Ref<Zig::SourceProvider> sourceProvider,
-    const WTF::String& sourceURL,
-    ResolvedSource source);
 
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);

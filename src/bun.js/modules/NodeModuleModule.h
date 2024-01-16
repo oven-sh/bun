@@ -10,6 +10,9 @@
 using namespace Zig;
 using namespace JSC;
 
+extern "C" JSC__JSValue Bun__Path__dirname(JSC__JSGlobalObject *arg0, bool arg1,
+                                           JSC__JSValue *arg2, uint16_t arg3);
+
 // This is a mix of bun's builtin module names and also the ones reported by
 // node v20.4.0
 static constexpr ASCIILiteral builtinModuleNames[] = {
@@ -98,10 +101,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
   // In node, this is supposed to be the actual CommonJSModule constructor.
   // We are cutting a huge corner by not doing all that work.
   // This code is only to support babel.
-  JSC::VM &vm = globalObject->vm();
-  JSString *idString = JSC::jsString(vm, WTF::String("."_s));
-
-  JSString *dirname = jsEmptyString(vm);
+  auto &vm = globalObject->vm();
+  auto *id = JSC::jsEmptyString(vm);
+  auto *dirname = JSC::jsStringWithCache(vm, "."_s);
 
   // TODO: handle when JSGlobalObject !== Zig::GlobalObject, such as in node:vm
   Structure *structure = static_cast<Zig::GlobalObject *>(globalObject)
@@ -112,18 +114,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
   JSValue parentValue = callFrame->argument(1);
 
   auto scope = DECLARE_THROW_SCOPE(vm);
+
   if (idValue.isString()) {
-    idString = idValue.toString(globalObject);
+    id = idValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-
-    auto index = idString->tryGetValue().reverseFind('/', idString->length());
-
-    if (index != WTF::notFound) {
-      dirname = JSC::jsSubstring(globalObject, idString, 0, index);
-    }
+    WTF::Vector<JSC::EncodedJSValue, 1> dirnameArgs;
+    dirnameArgs.reserveInitialCapacity(1);
+    dirnameArgs.unsafeAppendWithoutCapacityCheck(JSValue::encode(idValue));
+#if OS(WINDOWS)
+    dirname = JSValue::decode(
+                  Bun__Path__dirname(
+                      globalObject, true,
+                      reinterpret_cast<JSC__JSValue *>(dirnameArgs.data()), 1))
+                  .toString(globalObject);
+#else
+    dirname = JSValue::decode(
+                  Bun__Path__dirname(
+                      globalObject, false,
+                      reinterpret_cast<JSC__JSValue *>(dirnameArgs.data()), 1))
+                  .toString(globalObject);
+#endif
   }
 
-  auto *out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
+  auto *out = Bun::JSCommonJSModule::create(vm, structure, id, jsNull(),
                                             dirname, nullptr);
 
   if (!parentValue.isUndefined())
@@ -175,7 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
-  JSC::VM &vm = globalObject->vm();
+  auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
   if (callFrame->argumentCount() < 1) {
     throwTypeError(globalObject, scope,
@@ -183,10 +196,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode({}));
   }
 
-  auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
-
-  if (val.startsWith("file://"_s)) {
-    WTF::URL url(val);
+  auto filenameWTF = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+  if (filenameWTF.startsWith("file://"_s)) {
+    WTF::URL url(filenameWTF);
     if (!url.isValid()) {
       throwTypeError(globalObject, scope,
                      makeString("createRequire() was given an invalid URL '"_s,
@@ -199,14 +211,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
                      "createRequire() does not support non-file URLs"_s);
       RELEASE_AND_RETURN(scope, JSValue::encode({}));
     }
-    val = url.fileSystemPath();
+    filenameWTF = url.fileSystemPath();
   }
+  auto *filename = JSC::jsStringWithCache(vm, filenameWTF);
 
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
   RELEASE_AND_RETURN(
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
-                 vm, globalObject, val)));
+                 vm, globalObject, filename)));
 }
+
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
                                                               CallFrame *);
 
@@ -332,16 +346,14 @@ JSC_DEFINE_CUSTOM_SETTER(set_resolveFilename,
   return false;
 }
 
-// These two setters are only used if you directly hit
-// `Module.prototype.require` or `module.require`. When accessing the cjs
-// require argument, this is a bound version of `require`, which calls into the
-// overridden one.
+// These accessors are defined for `Module.prototype.require`.
+// The cjs `require` argument will also call into the overridden one.
 //
 // This require function also intentionally does not have .resolve on it, nor
 // does it have any of the other properties.
 //
-// Note: allowing require to be overridable at all is only needed for Next.js to
-// work (they do Module.prototype.require = ...)
+// Note: allowing require to be overridable is needed for projects like Next.js
+// to work (they do Module.prototype.require = ...)
 
 JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
                          (JSC::JSGlobalObject * globalObject,

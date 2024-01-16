@@ -33,6 +33,7 @@ export const globalsToPrefix = [
   "ArrayBuffer",
   "Buffer",
   "Infinity",
+  "isFinite",
   "Loader",
   "Promise",
   "ReadableByteStreamController",
@@ -41,17 +42,15 @@ export const globalsToPrefix = [
   "ReadableStreamBYOBRequest",
   "ReadableStreamDefaultController",
   "ReadableStreamDefaultReader",
+  "RegExp",
+  "String",
   "TransformStream",
   "TransformStreamDefaultController",
   "Uint8Array",
-  "String",
-  "Buffer",
-  "RegExp",
+  "undefined",
   "WritableStream",
   "WritableStreamDefaultController",
   "WritableStreamDefaultWriter",
-  "isFinite",
-  "undefined",
 ];
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId

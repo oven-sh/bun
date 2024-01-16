@@ -8,11 +8,8 @@
 
 #include "JSDOMWrapperCache.h"
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
-extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolve(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm);
-extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 
 namespace Zig {
 
@@ -24,9 +21,6 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
-
-    static JSObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
-
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSString* keyString);
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue keyString);
 

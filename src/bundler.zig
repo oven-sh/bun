@@ -1043,7 +1043,7 @@ pub const Bundler = struct {
 
                 output_file.value = .{ .move = file_op };
             },
-            .wasm, .file, .napi => {
+            .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
                 const hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
@@ -1821,16 +1821,16 @@ pub const Bundler = struct {
         // }
 
         if (bundler.linker.any_needs_runtime) {
-            try bundler.output_files.append(
-                options.OutputFile.initBuf(
-                    runtime.Runtime.sourceContent(false),
-                    bun.default_allocator,
-                    Linker.runtime_source_path,
-                    .js,
-                    null,
-                    null,
-                ),
-            );
+            // try bundler.output_files.append(
+            //     options.OutputFile.initBuf(
+            //         runtime.Runtime.source_code,
+            //         bun.default_allocator,
+            //         Linker.runtime_source_path,
+            //         .js,
+            //         null,
+            //         null,
+            //     ),
+            // );
         }
 
         if (FeatureFlags.tracing and bundler.options.log.level.atLeast(.info)) {

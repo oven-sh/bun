@@ -4239,6 +4239,12 @@ fn NewPrinter(
                         .k_var => {
                             p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
+                        .k_using => {
+                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
+                        },
+                        .k_await_using => {
+                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
+                        },
                     }
                 },
                 .s_if => |s| {
@@ -4708,6 +4714,11 @@ fn NewPrinter(
                     }
 
                     p.printImportRecordPath(record);
+
+                    if ((record.tag.loader() orelse options.Loader.file).isSQLite()) {
+                        // we do not preserve "embed": "true" since it is not necessary
+                        p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -5003,6 +5014,12 @@ fn NewPrinter(
                         },
                         .k_const => {
                             p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_using => {
+                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_await_using => {
+                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },

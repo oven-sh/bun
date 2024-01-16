@@ -333,11 +333,11 @@ function generatePrototype(typeName, obj) {
 
       specialSymbols += `
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${privateSymbol}PrivateName(), JSFunction::create(vm, globalObject, ${
-        protoFields[name].length || 0
-      }, String("${fn}"_s), ${protoSymbolName(
-        typeName,
-        fn,
-      )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+      protoFields[name].length || 0
+    }, String("${fn}"_s), ${protoSymbolName(
+      typeName,
+      fn,
+    )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
       continue;
     }
 
@@ -464,8 +464,8 @@ function generateConstructorHeader(typeName) {
     public:
         using Base = JSC::InternalFunction;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, ${prototypeName(
-    typeName,
-  )}* prototype);
+          typeName,
+        )}* prototype);
 
         static constexpr unsigned StructureFlags = Base::StructureFlags;
         static constexpr bool needsDestruction = false;
@@ -726,8 +726,8 @@ function renderCallbacksZig(typeName, callbacks: Record<string, string>) {
       .join("\n")}
   }) void {
     ${symbolName(typeName, "_setAllCallbacks")}(this.instance, ${Object.keys(callbacks)
-    .map((name, i) => `values.${camelCase(name)}`)
-    .join(", ")},);
+      .map((name, i) => `values.${camelCase(name)}`)
+      .join(", ")},);
   }
   `;
 
@@ -915,8 +915,8 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
 
     JSC::JSValue result = JSC::JSValue::decode(
         ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
-            proto[name].this!! ? " encodedThisValue, " : ""
-          } globalObject)
+          proto[name].this!! ? " encodedThisValue, " : ""
+        } globalObject)
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
@@ -932,8 +932,8 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
               auto& vm = globalObject->vm();
               auto throwScope = DECLARE_THROW_SCOPE(vm);
               ${className(typeName)}* thisObject = jsDynamicCast<${className(
-            typeName,
-          )}*>(JSValue::decode(encodedThisValue));
+                typeName,
+              )}*>(JSValue::decode(encodedThisValue));
               if (UNLIKELY(!thisObject)) {
                   return JSValue::encode(jsUndefined());
               }
@@ -945,8 +945,8 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
               
               JSC::JSValue result = JSC::JSValue::decode(
                   ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
-            proto[name].this!! ? " thisValue, " : ""
-          } globalObject)
+                    proto[name].this!! ? " thisValue, " : ""
+                  } globalObject)
               );
               RETURN_IF_EXCEPTION(throwScope, {});
               thisObject->${cacheName}.set(vm, thisObject, result);
@@ -969,8 +969,8 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
-          !!proto[name].this ? " encodedThisValue, " : ""
-        } globalObject);
+      !!proto[name].this ? " encodedThisValue, " : ""
+    } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -986,15 +986,15 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
           Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
           auto throwScope = DECLARE_THROW_SCOPE(vm);
           ${className(typeName)}* thisObject = jsDynamicCast<${className(
-          typeName,
-        )}*>(JSValue::decode(encodedThisValue));
+            typeName,
+          )}*>(JSValue::decode(encodedThisValue));
           if (UNLIKELY(!thisObject)) {
               return JSValue::encode(jsUndefined());
           }
           JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
           JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
-          !!proto[name].this ? " encodedThisValue, " : ""
-        } globalObject);
+            !!proto[name].this ? " encodedThisValue, " : ""
+          } globalObject);
           RETURN_IF_EXCEPTION(throwScope, {});
           RELEASE_AND_RETURN(throwScope, result);
       }
@@ -1015,8 +1015,8 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     auto result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
-          !!proto[name].this ? " encodedThisValue, " : ""
-        } lexicalGlobalObject, encodedValue);
+      !!proto[name].this ? " encodedThisValue, " : ""
+    } lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -1427,10 +1427,10 @@ ${
     ? `JSObject* ${name}::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
   return WebCore::${constructorName(typeName)}::create(vm, globalObject, WebCore::${constructorName(
-        typeName,
-      )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(
-        typeName,
-      )}*>(prototype));
+    typeName,
+  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(
+    typeName,
+  )}*>(prototype));
 }`
     : ""
 }

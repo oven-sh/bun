@@ -566,7 +566,10 @@ pub const Resolver = struct {
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
-                this.allocator,
+
+                // This cannot be the threadlocal allocator. It goes to the HTTP thread.
+                bun.default_allocator,
+
                 .{},
                 this.env_loader.?,
             ) catch @panic("Failed to initialize package manager");
@@ -2056,7 +2059,7 @@ pub const Resolver = struct {
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
-        var open_dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
+        const open_dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
             // TODO: handle this error better
             r.log.addErrorFmt(
                 null,
@@ -2086,11 +2089,11 @@ pub const Resolver = struct {
                 r.generation,
             );
 
-            var dir_iterator = open_dir.iterate();
-            while (dir_iterator.next() catch null) |_value| {
+            var dir_iterator = bun.iterateDir(open_dir);
+            while (dir_iterator.next().unwrap() catch null) |_value| {
                 new_entry.addEntry(
                     if (in_place) |existing| &existing.data else null,
-                    _value,
+                    &_value,
                     allocator,
                     void,
                     {},
@@ -2514,12 +2517,18 @@ pub const Resolver = struct {
         };
     }
 
+    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
     fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
         var _path = __path;
+
         if (isDotSlash(_path) or strings.eqlComptime(_path, "."))
             _path = r.fs.top_level_dir;
+
+        if (comptime Environment.isWindows) {
+            _path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, _path);
+        }
 
         const top_result = try r.dir_cache.getOrPut(_path);
         if (top_result.status != .unknown) {
@@ -2744,11 +2753,11 @@ pub const Resolver = struct {
                     r.generation,
                 );
 
-                var dir_iterator = open_dir.iterate();
-                while (dir_iterator.next() catch null) |_value| {
+                var dir_iterator = bun.iterateDir(open_dir);
+                while (dir_iterator.next().unwrap() catch null) |_value| {
                     new_entry.addEntry(
                         if (in_place) |existing| &existing.data else null,
-                        _value,
+                        &_value,
                         allocator,
                         void,
                         {},
@@ -3999,9 +4008,8 @@ pub const Resolver = struct {
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
                         const ts_dir_name = Dirname.dirname(current.abs_path);
-                        // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
                         const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
-                        const parent_config_maybe = r.parseTSConfig(abs_path, bun.STDIN_FD) catch |err| {
+                        const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
                             r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
                                 @errorName(err),
                                 bun.fmt.QuotedFormatter{

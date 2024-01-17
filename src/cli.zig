@@ -417,10 +417,13 @@ pub const Arguments = struct {
                 Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            std.os.chdir(out) catch |err| {
-                Output.prettyErrorln("error setting --cwd: {s}", .{@errorName(err)});
-                Global.exit(1);
-            };
+            switch (bun.sys.chdir(out)) {
+                .err => |err| {
+                    Output.prettyErrorln("error setting --cwd to {s} due to error {}", .{ out, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
             cwd = try allocator.dupe(u8, out);
             ctx.args.cwd_override = cwd;
         } else {

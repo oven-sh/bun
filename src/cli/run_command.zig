@@ -1021,10 +1021,13 @@ pub const RunCommand = struct {
         defer {
             // change back to the original directory once we're done
             fsinstance.top_level_dir = olddir;
-            std.os.chdir(olddir) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s}<r> due to error <b>{s}<r>", .{ olddir, @errorName(err) });
-                Global.crash();
-            };
+            switch (bun.sys.chdir(olddir)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ olddir, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
         }
         var workspace_paths = std.ArrayList([]u8).init(ctx.allocator);
         defer {
@@ -1043,10 +1046,13 @@ pub const RunCommand = struct {
         var ok = true;
         for (workspace_paths.items) |path| {
             Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
-            std.os.chdir(path) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
-                continue;
-            };
+            switch (bun.sys.chdir(path)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ path, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
             fsinstance.top_level_dir = path;
             const res = exec(ctx, bin_dirs_only, true) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });

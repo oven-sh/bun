@@ -23,17 +23,18 @@ fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *bun.logger.Log, work
 
     while (true) : (workdir = std.fs.path.dirname(workdir) orelse break) {
         const parent_trimmed = strings.withoutTrailingSlash(workdir);
-        var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        @memcpy(buf2[0..parent_trimmed.len], parent_trimmed);
-        buf2[parent_trimmed.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-        buf2[parent_trimmed.len + "/package.json".len] = 0;
-        const json_path = buf2[0 .. parent_trimmed.len + "/package.json".len];
+        var name_buf: bun.PathBuffer = undefined;
+        @memcpy(name_buf[0..parent_trimmed.len], parent_trimmed);
+        name_buf[parent_trimmed.len..name_buf.len][0.."/package.json".len].* = "/package.json".*;
+        name_buf[parent_trimmed.len + "/package.json".len] = 0;
+        const json_path = name_buf[0 .. parent_trimmed.len + "/package.json".len];
+
         log.msgs.clearRetainingCapacity();
         log.errors = 0;
         log.warnings = 0;
 
         const json_file = std.fs.cwd().openFileZ(
-            buf2[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
+            name_buf[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
             .{ .mode = .read_only },
         ) catch continue;
         defer json_file.close();
@@ -55,6 +56,12 @@ fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *bun.logger.Log, work
             } else break,
             else => break,
         };
+        const name_prop = json.asProperty("name") orelse continue;
+        const name = switch (name_prop.expr.data) {
+            .e_string => |n| n.data,
+            else => break,
+        };
+
         _ = Package.processWorkspaceNamesArray(
             workspace_map,
             allocator,
@@ -66,6 +73,11 @@ fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *bun.logger.Log, work
         ) catch |err| {
             return err;
         };
+
+        // add the root package to the workspace map, too
+        const entry = Package.WorkspaceMap.Entry{ .name = try allocator.dupe(u8, name), .version = null, .name_loc = bun.logger.Loc.Empty };
+        try workspace_map.insert(try allocator.dupe(u8, parent_trimmed), entry);
+
         return;
     }
 

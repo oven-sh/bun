@@ -10,7 +10,7 @@ let cwd_root = tempDirWithFiles("testworkspace", {
       "package.json": JSON.stringify({
         "name": "pkga",
         "scripts": {
-          "present": "echo 1234",
+          "present": "echo scripta",
         },
       }),
     },
@@ -18,7 +18,7 @@ let cwd_root = tempDirWithFiles("testworkspace", {
       "package.json": JSON.stringify({
         "name": "pkgb",
         "scripts": {
-          "present": "echo 4321",
+          "present": "echo scriptb",
         },
       }),
     },
@@ -26,13 +26,16 @@ let cwd_root = tempDirWithFiles("testworkspace", {
       "package.json": JSON.stringify({
         "name": "pkgc",
         "scripts": {
-          "present": "echo 5678",
+          "present": "echo scriptc",
         },
       }),
     },
   },
   "package.json": JSON.stringify({
     "name": "ws",
+    "scripts": {
+      "present": "echo rootscript",
+    },
     "workspaces": ["packages/pkga", "packages/pkgb", "packages/dirname"],
   }),
 });
@@ -57,9 +60,6 @@ function runInCwdSuccess(
     cmd.push("--filter", pattern);
   }
   cmd.push("present");
-  console.log(cmd);
-  console.log(cwd);
-  console.log(cwd_root);
   const { exitCode, stdout, stderr } = spawnSync({
     cwd: cwd,
     cmd: cmd,
@@ -68,7 +68,6 @@ function runInCwdSuccess(
     stderr: "pipe",
   });
   const stdoutval = stdout.toString();
-  console.log(stdoutval, stderr.toString());
   for (let r of target_pattern instanceof Array ? target_pattern : [target_pattern]) {
     expect(stdoutval).toMatch(r);
   }
@@ -99,15 +98,15 @@ describe("bun", () => {
   let packages = [
     {
       name: "pkga",
-      output: /1234/,
+      output: /scripta/,
     },
     {
       name: "pkgb",
-      output: /4321/,
+      output: /scriptb/,
     },
     {
       name: "pkgc",
-      output: /5678/,
+      output: /scriptc/,
     },
   ];
 
@@ -122,21 +121,21 @@ describe("bun", () => {
 
   for (let d of dirs) {
     test(`resolve '*' from ${d}`, () => {
-      runInCwdSuccess(d, "*", [/1234/, /4321/, /5678/]);
+      runInCwdSuccess(d, "*", [/scripta/, /scriptb/, /scriptc/, /rootscript/]);
     });
     test(`resolve all from ${d}`, () => {
-      runInCwdSuccess(d, names, [/1234/, /4321/, /5678/]);
+      runInCwdSuccess(d, names, [/scripta/, /scriptb/, /scriptc/]);
     });
   }
 
   test("resolve all with glob", () => {
-    runInCwdSuccess(cwd_root, "./packages/*", [/1234/, /4321/, /5678/]);
+    runInCwdSuccess(cwd_root, "./packages/*", [/scripta/, /scriptb/, /scriptc/]);
   });
-  test("resolve all with recursie glob", () => {
-    runInCwdSuccess(cwd_root, "./**", [/1234/, /4321/, /5678/]);
+  test("resolve all with recursive glob", () => {
+    runInCwdSuccess(cwd_root, "./**", [/scripta/, /scriptb/, /scriptc/]);
   });
   test("resolve 'pkga' and 'pkgb' but not 'pkgc' with targeted glob", () => {
-    runInCwdSuccess(cwd_root, "./packages/pkg*", [/1234/, /4321/], /5678/);
+    runInCwdSuccess(cwd_root, "./packages/pkg*", [/scripta/, /scriptb/], /scriptc/);
   });
 
   test("should error with missing script", () => {

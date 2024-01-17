@@ -1161,7 +1161,7 @@ pub const RunCommand = struct {
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
-        
+
         if (script_name_to_search.len == 0) {
             // naked "bun run"
             if (root_dir_info.enclosing_package_json) |package_json| {

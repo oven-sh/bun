@@ -529,7 +529,7 @@ ReadStream = (function (InternalReadStream) {
         options = { encoding: options };
       }
 
-      if (!$isObject(options)) {
+      if (!$isObject(options) && !$isCallable(options)) {
         throw new TypeError("Expected options to be an object or a string");
       }
 

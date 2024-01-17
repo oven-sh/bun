@@ -711,7 +711,7 @@ pub const String = extern struct {
         this: *String,
     ) JSC.JSValue;
 
-    pub fn toJSForParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         return BunString__toJSON(globalObject, self);
     }

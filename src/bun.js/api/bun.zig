@@ -3146,7 +3146,7 @@ const TOMLObject = struct {
         var out = bun.String.fromUTF8(slice);
         defer out.deref();
 
-        return out.toJSForParseJSON(globalThis);
+        return out.toJSByParseJSON(globalThis);
     }
 };
 

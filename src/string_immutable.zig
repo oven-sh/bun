@@ -1027,7 +1027,7 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return bun.C.memcmp(bun.cast([*]const u8, self.ptr), bun.cast([*]const u8, other.ptr), self.len * @sizeOf(u16)) == 0;
 }
 
-pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
+pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
@@ -1197,11 +1197,116 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     }
 }
 
-const utf8_bom = [_]u8{ 0xef, 0xbb, 0xbf };
+/// It is common on Windows to find files that are not encoded in UTF8. Most of these include
+/// a 'byte-order mark' codepoint at the start of the file. The layout of this codepoint can
+/// determine the encoding.
+///
+/// https://en.wikipedia.org/wiki/Byte_order_mark
+pub const BOM = enum {
+    utf8,
+    utf16_le,
+    utf16_be,
+    utf32_le,
+    utf32_be,
 
+    pub const utf8_bytes = [_]u8{ 0xef, 0xbb, 0xbf };
+    pub const utf16_le_bytes = [_]u8{ 0xff, 0xfe };
+    pub const utf16_be_bytes = [_]u8{ 0xfe, 0xff };
+    pub const utf32_le_bytes = [_]u8{ 0xff, 0xfe, 0x00, 0x00 };
+    pub const utf32_be_bytes = [_]u8{ 0x00, 0x00, 0xfe, 0xff };
+
+    pub fn detect(bytes: []const u8) ?BOM {
+        if (bytes.len < 3) return null;
+        if (eqlComptimeIgnoreLen(bytes, utf8_bytes)) return .utf8;
+        if (eqlComptimeIgnoreLen(bytes, utf16_le_bytes)) {
+            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
+            //   return .utf32_le;
+            return .utf16_le;
+        }
+        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
+        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
+        return null;
+    }
+
+    pub fn detectAndSplit(bytes: []const u8) struct { ?BOM, []const u8 } {
+        const bom = detect(bytes);
+        if (bom == null) return .{ null, bytes };
+        return .{ bom, bytes[bom.?.length()..] };
+    }
+
+    pub fn getHeader(bom: BOM) []const u8 {
+        return switch (bom) {
+            inline else => |t| comptime &@field(BOM, @tagName(t) ++ "_bytes"),
+        };
+    }
+
+    pub fn length(bom: BOM) usize {
+        return switch (bom) {
+            inline else => |t| comptime (&@field(BOM, @tagName(t) ++ "_bytes")).len,
+        };
+    }
+
+    /// If an allocation is needed, free the input and the caller will
+    /// replace it with the new return
+    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) ![]u8 {
+        switch (bom) {
+            .utf8 => {
+                bun.C.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
+                return bytes[0 .. bytes.len - utf8_bytes.len];
+            },
+            .utf16_le => {
+                const trimmed_bytes = bytes[utf16_le_bytes.len..];
+                const trimmed_bytes_u16: []const u16 = @alignCast(std.mem.bytesAsSlice(u16, trimmed_bytes));
+                const out = try toUTF8Alloc(allocator, trimmed_bytes_u16);
+                allocator.free(bytes);
+                return out;
+            },
+            else => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                const bom_bytes = bom.getHeader();
+                bun.C.memmove(bytes.ptr, bytes.ptr + bom_bytes.len, bytes.len - bom_bytes.len);
+                return bytes[0 .. bytes.len - bom_bytes.len];
+            },
+        }
+    }
+
+    /// This is required for fs.zig's `use_shared_buffer` flag. we cannot free that pointer.
+    /// The returned slice will always point to the base of the input.
+    ///
+    /// Requires an arraylist in case it must be grown.
+    pub fn removeAndConvertToUTF8WithoutDealloc(bom: BOM, allocator: std.mem.Allocator, list: *std.ArrayListUnmanaged(u8)) ![]u8 {
+        const bytes = list.items;
+        switch (bom) {
+            .utf8 => {
+                bun.C.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
+                return bytes[0 .. bytes.len - utf8_bytes.len];
+            },
+            .utf16_le => {
+                const trimmed_bytes = bytes[utf16_le_bytes.len..];
+                const trimmed_bytes_u16: []const u16 = @alignCast(std.mem.bytesAsSlice(u16, trimmed_bytes));
+                const out = try toUTF8Alloc(allocator, trimmed_bytes_u16);
+                if (list.capacity < out.len) {
+                    try list.ensureTotalCapacity(allocator, out.len);
+                }
+                list.items.len = out.len;
+                @memcpy(list.items, out);
+                return out;
+            },
+            else => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                const bom_bytes = bom.getHeader();
+                bun.C.memmove(bytes.ptr, bytes.ptr + bom_bytes.len, bytes.len - bom_bytes.len);
+                return bytes[0 .. bytes.len - bom_bytes.len];
+            },
+        }
+    }
+};
+
+/// @deprecated. If you are using this, you likely will need to remove other BOMs and handle encoding.
+/// Use the BOM struct's `detect` and conversion functions instead.
 pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
-    if (strings.hasPrefixComptime(bytes, utf8_bom)) {
-        return bytes[utf8_bom.len..];
+    if (strings.hasPrefixComptime(bytes, BOM.utf8_bytes)) {
+        return bytes[BOM.utf8_bytes.len..];
     } else {
         return bytes;
     }

@@ -538,12 +538,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.shell_env.deinit();
                 this.cmd_local_env.deinit();
                 this.export_env.deinit();
-                // FIXME dealloc cwd stuff
+                this.__cwd.deinit();
+                this.__prev_cwd.deinit();
+                closefd(this.cwd_fd);
             }
 
-            pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) *ShellState {
+            pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) Maybe(*ShellState) {
                 if (comptime bun.Environment.allow_assert) std.debug.assert(kind != .normal);
                 const duped = allocator.create(ShellState) catch bun.outOfMemory();
+
+                const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |fd| fd,
+                };
 
                 duped.* = .{
                     .io = io,
@@ -557,10 +564,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .__prev_cwd = this.__prev_cwd.clone() catch bun.outOfMemory(),
                     .__cwd = this.__cwd.clone() catch bun.outOfMemory(),
                     // TODO probably need to use os.dup here
-                    .cwd_fd = this.cwd_fd,
+                    .cwd_fd = dupedfd,
                 };
 
-                return duped;
+                return .{ .result = duped };
             }
 
             pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
@@ -1461,7 +1468,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             var io: IO = .{};
                             io.stdout = .pipe;
                             io.stderr = this.base.shell.io.stderr;
-                            const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit);
+                            const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit)) {
+                                .result => |s| s,
+                                .err => |e| {
+                                    global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                                    return false;
+                                },
+                            };
                             var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst.script, Script.ParentPtr.init(this), io);
                             this.child_state = .{
                                 .cmd_subst = .{
@@ -1482,7 +1495,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
                                 io.stderr = this.base.shell.io.stderr;
-                                const shell_state = this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit);
+                                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit)) {
+                                    .result => |s| s,
+                                    .err => |e| {
+                                        global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                                        return false;
+                                    },
+                                };
                                 var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst.script, Script.ParentPtr.init(this), io);
                                 this.child_state = .{
                                     .cmd_subst = .{

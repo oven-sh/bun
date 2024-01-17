@@ -85,7 +85,7 @@ fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     usage_info.oublock = counters.WriteOperationCount;
     
     const memory = std.os.windows.GetProcessMemoryInfo(process_pid) catch return usage_info;
-    usage_info.maxrss = memory.PeakWorkingSetSize / 1000;
+    usage_info.maxrss = memory.PeakWorkingSetSize / 1024;
     
     return usage_info;
 }

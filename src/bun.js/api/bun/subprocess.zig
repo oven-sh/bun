@@ -24,22 +24,22 @@ const PosixSpawn = bun.posix.spawn;
 
 const win_rusage = struct {
     utime: struct {
-        tv_sec: u0 = 0,
-        tv_usec: u0 = 0,
+        tv_sec: i64 = 0,
+        tv_usec: i64 = 0,
     },
     stime: struct {
-        tv_sec: u0 = 0,
-        tv_usec: u0 = 0,
+        tv_sec: i64 = 0,
+        tv_usec: i64 = 0,
     },
-    maxrss: u0 = 0,
+    maxrss: u64 = 0,
     ixrss: u0 = 0,
     idrss: u0 = 0,
     isrss: u0 = 0,
     minflt: u0 = 0,
     majflt: u0 = 0,
     nswap: u0 = 0,
-    inblock: u0 = 0,
-    oublock: u0 = 0,
+    inblock: u64 = 0,
+    oublock: u64 = 0,
     msgsnd: u0 = 0,
     msgrcv: u0 = 0,
     nsignals: u0 = 0,
@@ -47,6 +47,48 @@ const win_rusage = struct {
     nivcsw: u0 = 0,
 };
 
+const IO_COUNTERS = extern struct{
+  ReadOperationCount: u64 = 0,
+  WriteOperationCount: u64 = 0,
+  OtherOperationCount: u64 = 0,
+  ReadTransferCount: u64 = 0,
+  WriteTransferCount: u64 = 0,
+  OtherTransferCount: u64 = 0,
+};
+
+extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
+
+fn uv_getrusage(process: *uv.uv_process_t) win_rusage {    
+    var usage_info: Rusage = .{ .utime = .{}, .stime = .{}};
+    const process_pid: *anyopaque = process.process_handle;
+    const WinTime = std.os.windows.FILETIME;
+    var starttime: WinTime = undefined;
+    var exittime: WinTime = undefined;
+    var kerneltime: WinTime = undefined;
+    var usertime: WinTime = undefined;
+    // We at least get process times
+    if(std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) { 
+        var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
+        if(temp > 0) {
+            usage_info.stime.tv_sec = @intCast(temp / 10000000);
+            usage_info.stime.tv_usec = @intCast(temp % 1000000);
+        }
+        temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
+        if(temp > 0) {
+            usage_info.utime.tv_sec = @intCast(temp / 10000000);
+            usage_info.utime.tv_usec = @intCast(temp % 1000000);
+        }
+    }
+    var counters: IO_COUNTERS = .{};
+    _ = GetProcessIoCounters(process_pid, &counters);
+    usage_info.inblock = counters.ReadOperationCount;
+    usage_info.oublock = counters.WriteOperationCount;
+    
+    const memory = std.os.windows.GetProcessMemoryInfo(process_pid) catch return usage_info;
+    usage_info.maxrss = memory.PeakWorkingSetSize / 1000;
+    
+    return usage_info;
+}
 const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
 
 pub const ResourceUsage = struct {
@@ -220,10 +262,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
     ) JSValue {
-        if (comptime Environment.isWindows) {
-            //TODO: implement on windows
-            return JSValue.jsUndefined();
-        }
+        
         if (this.pid_rusage == null) {
             return JSValue.jsUndefined();
         }
@@ -1031,7 +1070,6 @@ pub const Subprocess = struct {
         }
 
         fn uvStreamReadCallback(handle: *uv.uv_handle_t, nread: isize, buffer: *const uv.uv_buf_t) callconv(.C) void {
-            log("uvStreamReadCallback {}", .{ nread });
             const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
             if(nread <= 0) {
                 switch(nread){
@@ -1061,7 +1099,6 @@ pub const Subprocess = struct {
         }
 
         fn uvStreamAllocCallback(handle: *uv.uv_handle_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
-            log("uvStreamAllocCallback {}", .{ suggested_size });
 
             const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
             var size: usize = 0;
@@ -1094,8 +1131,8 @@ pub const Subprocess = struct {
             if(Environment.isWindows) {
                 if(this.status == .pending) {
                     this.stream.data = this;
-                    const rc = uv.uv_read_start(@ptrCast(this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
-                    log("readAll uv_read_start {}", .{ rc });
+                    _ = uv.uv_read_start(@ptrCast(this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
+                    
                 }
                 return;
             }
@@ -2535,6 +2572,7 @@ pub const Subprocess = struct {
         subprocess.globalThis.assertOnJSThread();
         subprocess.exit_code = @intCast(exit_status);
         subprocess.signal_code = if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
+        subprocess.pid_rusage = uv_getrusage(process);
         subprocess.onExit(subprocess.globalThis, subprocess.this_jsvalue);
     }
 

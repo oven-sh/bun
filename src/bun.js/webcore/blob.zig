@@ -4452,11 +4452,7 @@ pub const Blob = struct {
             return ZigString.Empty.toValue(global);
         }
 
-        if (bom == .utf16_le) {
-            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
-            defer out.deref();
-            return out.toJS(global);
-        }
+        if (bom == .utf16_le) {}
 
         // null == unknown
         // false == can't be
@@ -4551,16 +4547,18 @@ pub const Blob = struct {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
+        defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
+
         if (bom == .utf16_le) {
+            if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJSByParseJSON(global);
         }
+
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-        defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(buf));
-
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();

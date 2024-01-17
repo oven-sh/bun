@@ -2989,3 +2989,8 @@ pub fn getLastErrno() bun.C.E {
         },
     };
 }
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: LPWSTR,
+    nSize: LPDWORD,
+) BOOL;

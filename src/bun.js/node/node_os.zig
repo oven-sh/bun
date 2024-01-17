@@ -353,7 +353,13 @@ pub const Os = struct {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows) {
-            globalThis.throwTODO("hostname() is not implemented on Windows");
+            var name_buffer: [129]u16 = undefined;
+            if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
+                const str = bun.String.createUTF16(bun.span(&name_buffer));
+                defer str.deref();
+                return str.toJS(globalThis);
+            }
+
             return .zero;
         }
 

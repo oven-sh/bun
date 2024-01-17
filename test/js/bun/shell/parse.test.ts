@@ -70,7 +70,7 @@ describe("parse shell", () => {
                 "name_and_args": [
                   {
                     "compound": {
-                      "atoms": [{ "Text": "FOO " }, { "Var": "NICE!" }],
+                      "atoms": [{ "Text": "FOO " }, { "Var": "NICE" }, { "Text": "!" }],
                       brace_expansion_hint: false,
                       glob_hint: false,
                     },

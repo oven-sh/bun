@@ -157,7 +157,6 @@ export class TestBuilder {
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {
-      console.log("Filename", this.tempdir!, filename);
       const actual = await Bun.file(join(this.tempdir!, filename)).text();
       expect(actual).toEqual(expected);
     }

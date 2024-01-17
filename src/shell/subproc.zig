@@ -1215,7 +1215,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             /// - `next() bool`
             pub fn fillEnv(
                 this: *SpawnArgs,
-                env_iter: *std.StringArrayHashMap([:0]const u8).Iterator,
+                env_iter: *bun.shell.EnvMap.Iterator,
                 comptime disable_path_lookup_for_arv0: bool,
             ) void {
                 const allocator = this.arena.allocator();
@@ -1228,8 +1228,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 }
 
                 while (env_iter.next()) |entry| {
-                    const key = entry.key_ptr.*;
-                    const value = entry.value_ptr.*;
+                    const key = entry.key_ptr.*.slice();
+                    const value = entry.value_ptr.*.slice();
 
                     var line = std.fmt.allocPrintZ(allocator, "{s}={s}", .{ key, value }) catch bun.outOfMemory();
 

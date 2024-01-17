@@ -69,8 +69,6 @@ pub fn assert(cond: bool, comptime msg: []const u8) void {
     }
 }
 
-const EnvMap = std.StringArrayHashMap([:0]const u8);
-
 pub const StateKind = enum(u8) {
     script,
     stmt,
@@ -201,6 +199,207 @@ pub const IO = struct {
 pub const Interpreter = NewInterpreter(.js);
 pub const InterpreterMini = NewInterpreter(.mini);
 
+pub const EnvStr = packed struct {
+    ptr: u48,
+    tag: Tag,
+    len: usize = 0,
+
+    const print = bun.Output.scoped(.EnvStr, false);
+
+    const Tag = enum(u16) {
+        /// Dealloced by reference counting
+        refcounted,
+        /// Memory is managed elsewhere so don't dealloc it
+        slice,
+    };
+
+    inline fn initSlice(str: []const u8) EnvStr {
+        return .{
+            .ptr = @intCast(@intFromPtr(str.ptr)),
+            .tag = .slice,
+            .len = str.len,
+        };
+    }
+
+    fn initRefCounted(str: []const u8) EnvStr {
+        return .{
+            .ptr = @intCast(@intFromPtr(RefCountedStr.init(str))),
+            .tag = .refcounted,
+        };
+    }
+
+    pub fn slice(this: EnvStr) []const u8 {
+        if (this.asRefCounted()) |refc| {
+            return refc.byteSlice();
+        }
+        return this.castSlice();
+    }
+
+    fn ref(this: EnvStr) void {
+        if (this.asRefCounted()) |refc| {
+            refc.ref();
+        }
+    }
+
+    fn deref(this: EnvStr) void {
+        if (this.asRefCounted()) |refc| {
+            refc.deref();
+        }
+    }
+
+    inline fn asRefCounted(this: EnvStr) ?*RefCountedStr {
+        if (this.tag == .refcounted) return this.castRefCounted();
+        return null;
+    }
+
+    inline fn castSlice(this: EnvStr) []const u8 {
+        return @as([*]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len];
+    }
+
+    inline fn castRefCounted(this: EnvStr) *RefCountedStr {
+        return @ptrFromInt(@as(usize, @intCast(this.ptr)));
+    }
+};
+
+pub const RefCountedStr = struct {
+    refcount: u32 = 1,
+    len: u32 = 0,
+    ptr: [*]const u8 = undefined,
+
+    const print = bun.Output.scoped(.RefCountedEnvStr, false);
+
+    // /// Use bun.default_allocator
+    // const DEFAULT_ALLOC_TAG: usize = 1 << 63;
+
+    fn init(slice: []const u8) *RefCountedStr {
+        const this = bun.default_allocator.create(RefCountedStr) catch bun.outOfMemory();
+        this.* = .{
+            .refcount = 1,
+            .len = @intCast(slice.len),
+            .ptr = slice.ptr,
+        };
+        return this;
+    }
+
+    fn byteSlice(this: *RefCountedStr) []const u8 {
+        if (this.len == 0) return "";
+        return this.ptr[0..this.len];
+    }
+
+    fn ref(this: *RefCountedStr) void {
+        this.refcount += 1;
+    }
+
+    fn deref(this: *RefCountedStr) void {
+        this.refcount -= 1;
+        if (this.refcount == 0) {
+            this.deinit();
+        }
+    }
+
+    fn deinit(this: *RefCountedStr) void {
+        print("deinit: {s}", .{this.byteSlice()});
+        this.freeStr();
+        bun.default_allocator.destroy(this);
+    }
+
+    fn freeStr(this: *RefCountedStr) void {
+        if (this.len == 0) return;
+        // if (this.ptr & DEFAULT_ALLOC_TAG != 0) {
+        bun.default_allocator.free(this.ptr[0..this.len]);
+        // } else {}
+    }
+};
+
+pub const EnvMap = struct {
+    map: MapType,
+    pub const Iterator = MapType.Iterator;
+
+    const MapType = std.ArrayHashMap(EnvStr, EnvStr, struct {
+        pub fn hash(self: @This(), s: EnvStr) u32 {
+            _ = self;
+            return std.array_hash_map.hashString(s.slice());
+        }
+        pub fn eql(self: @This(), a: EnvStr, b: EnvStr, b_index: usize) bool {
+            _ = self;
+            _ = b_index;
+            return std.array_hash_map.eqlString(a.slice(), b.slice());
+        }
+    }, true);
+
+    fn init(alloc: Allocator) EnvMap {
+        return .{ .map = MapType.init(alloc) };
+    }
+
+    fn deinit(this: *EnvMap) void {
+        this.derefStrings();
+        this.map.deinit();
+    }
+
+    fn insert(this: *EnvMap, key: EnvStr, val: EnvStr) void {
+        const result = this.map.getOrPut(key) catch bun.outOfMemory();
+        if (!result.found_existing) {
+            key.ref();
+        } else {
+            result.value_ptr.deref();
+        }
+        val.ref();
+        result.value_ptr.* = val;
+    }
+
+    fn iterator(this: *EnvMap) MapType.Iterator {
+        return this.map.iterator();
+    }
+
+    fn clearRetainingCapacity(this: *EnvMap) void {
+        this.derefStrings();
+        this.map.clearRetainingCapacity();
+    }
+
+    fn ensureTotalCapacity(this: *EnvMap, new_capacity: usize) void {
+        this.map.ensureTotalCapacity(new_capacity) catch bun.outOfMemory();
+    }
+
+    /// NOTE: Make sure you deref the string when done!
+    fn get(this: *EnvMap, key: EnvStr) ?EnvStr {
+        const val = this.map.get(key) orelse return null;
+        val.ref();
+        return val;
+    }
+
+    fn clone(this: *EnvMap) EnvMap {
+        var new: EnvMap = .{
+            .map = this.map.clone() catch bun.outOfMemory(),
+        };
+        new.refStrings();
+        return new;
+    }
+
+    fn cloneWithAllocator(this: *EnvMap, allocator: Allocator) EnvMap {
+        var new: EnvMap = .{
+            .map = this.map.cloneWithAllocator(allocator) catch bun.outOfMemory(),
+        };
+        new.refStrings();
+        return new;
+    }
+
+    fn refStrings(this: *EnvMap) void {
+        var iter = this.map.iterator();
+        while (iter.next()) |entry| {
+            entry.key_ptr.ref();
+            entry.value_ptr.ref();
+        }
+    }
+
+    fn derefStrings(this: *EnvMap) void {
+        var iter = this.map.iterator();
+        while (iter.next()) |entry| {
+            entry.key_ptr.deref();
+            entry.value_ptr.deref();
+        }
+    }
+};
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
@@ -291,20 +490,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             /// TODO Performance optimization: make these env maps copy-on-write
             /// Shell env for expansion by the shell
-            shell_env: std.StringArrayHashMap([:0]const u8),
+            shell_env: EnvMap,
             /// Local environment variables to be given to a subprocess
-            cmd_local_env: std.StringArrayHashMap([:0]const u8),
+            cmd_local_env: EnvMap,
             /// Exported environment variables available to all subprocesses. This includes system ones.
-            export_env: std.StringArrayHashMap([:0]const u8),
+            export_env: EnvMap,
 
-            /// The current working directory of the shell
-            prev_cwd: [:0]const u8,
-            cwd: [:0]const u8,
+            /// The current working directory of the shell.
+            /// Use an array list so we don't have to keep reallocating
+            /// Always has zero-sentinel
+            __prev_cwd: std.ArrayList(u8),
+            __cwd: std.ArrayList(u8),
             // FIXME TODO deinit
             cwd_fd: bun.FileDescriptor,
-            // FIXME TODO we should get rid of these
-            __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
-            __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
 
             const Kind = enum {
                 normal,
@@ -313,6 +511,26 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 /// DOES inherit environment
                 subshell_inherit,
             };
+
+            pub inline fn cwdZ(this: *ShellState) [:0]const u8 {
+                if (this.__cwd.items.len == 0) return "";
+                return this.__cwd.items[0..this.__cwd.items.len -| 1 :0];
+            }
+
+            pub inline fn prevCwdZ(this: *ShellState) [:0]const u8 {
+                if (this.__prev_cwd.items.len == 0) return "";
+                return this.__prev_cwd.items[0..this.__prev_cwd.items.len -| 1 :0];
+            }
+
+            pub inline fn prevCwd(this: *ShellState) []const u8 {
+                const prevcwdz = this.prevCwdZ();
+                return prevcwdz[0..prevcwdz.len];
+            }
+
+            pub inline fn cwd(this: *ShellState) []const u8 {
+                const cwdz = this.cwdZ();
+                return cwdz[0..cwdz.len];
+            }
 
             pub fn deinit(this: *ShellState) void {
                 this.buffered_stdout.deinitWithAllocator(bun.default_allocator);
@@ -332,41 +550,35 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .kind = kind,
                     .buffered_stdout = .{},
                     .buffered_stderr = .{},
-                    .shell_env = if (kind == .subshell) std.StringArrayHashMap([:0]const u8).init(allocator) else this.shell_env.clone() catch bun.outOfMemory(),
-                    .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
-                    .export_env = this.export_env.clone() catch bun.outOfMemory(),
+                    .shell_env = if (kind == .subshell) EnvMap.init(allocator) else this.shell_env.clone(),
+                    .cmd_local_env = EnvMap.init(allocator),
+                    .export_env = this.export_env.clone(),
 
-                    .prev_cwd = allocator.dupeZ(u8, this.prev_cwd[0..this.prev_cwd.len]) catch bun.outOfMemory(),
-                    .cwd = allocator.dupeZ(u8, this.cwd[0..this.cwd.len]) catch bun.outOfMemory(),
+                    .__prev_cwd = this.__prev_cwd.clone() catch bun.outOfMemory(),
+                    .__cwd = this.__cwd.clone() catch bun.outOfMemory(),
                     // TODO probably need to use os.dup here
                     .cwd_fd = this.cwd_fd,
-                    .__cwd_pathbuf = undefined,
-                    .__prevcwd_pathbuf = undefined,
                 };
-
-                const duped_pathbuf = allocator.dupe(u8, this.__cwd_pathbuf.*[0..bun.MAX_PATH_BYTES]) catch bun.outOfMemory();
-                const duped_prevpathbuf = if (this.__prevcwd_pathbuf) |prev| allocator.dupe(u8, prev.*[0..bun.MAX_PATH_BYTES]) catch bun.outOfMemory() else null;
-                duped.__cwd_pathbuf = @ptrCast(duped_pathbuf.ptr);
-                duped.__prevcwd_pathbuf = if (duped_prevpathbuf) |x| @as(*[bun.MAX_PATH_BYTES]u8, @ptrCast(x.ptr)) else null;
 
                 return duped;
             }
 
-            pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: []const u8, value_: [:0]const u8, assign_ctx: AssignCtx) void {
-                const value = interp.arena.allocator().dupeZ(u8, value_) catch |e| OOM(e);
-                (switch (assign_ctx) {
-                    .cmd => this.cmd_local_env.put(label, value),
-                    .shell => this.shell_env.put(label, value),
-                    .exported => this.export_env.put(label, value),
-                }) catch |e| OOM(e);
+            pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
+                _ = interp; // autofix
+                switch (assign_ctx) {
+                    .cmd => this.cmd_local_env.insert(label, value),
+                    .shell => this.shell_env.insert(label, value),
+                    .exported => this.export_env.insert(label, value),
+                }
             }
 
             pub fn changePrevCwd(self: *ShellState, interp: *ThisInterpreter) Maybe(void) {
-                return self.changeCwd(interp, self.prev_cwd);
+                return self.changeCwd(interp, self.prevCwdZ());
             }
 
             // pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: [:0]const u8) Maybe(void) {
             pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
+                _ = interp; // autofix
                 if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
                     @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
                 }
@@ -374,14 +586,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 const new_cwd: [:0]const u8 = brk: {
                     if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
-                        if (is_sentinel)
-                            break :brk new_cwd_;
+                        if (is_sentinel) {
+                            @memcpy(ResolvePath.join_buf[0..new_cwd_.len], new_cwd_[0..new_cwd_.len]);
+                            ResolvePath.join_buf[new_cwd_.len] = 0;
+                            break :brk ResolvePath.join_buf[0..new_cwd_.len :0];
+                        }
                         std.mem.copyForwards(u8, &ResolvePath.join_buf, new_cwd_);
                         ResolvePath.join_buf[new_cwd_.len] = 0;
                         break :brk ResolvePath.join_buf[0..new_cwd_.len :0];
                     }
 
-                    const existing_cwd = this.cwd;
+                    const existing_cwd = this.cwd();
                     const cwd_str = ResolvePath.joinZ(&[_][]const u8{
                         existing_cwd,
                         new_cwd_,
@@ -409,36 +624,38 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 };
                 _ = Syscall.close2(this.cwd_fd);
 
-                var prev_cwd_buf = brk: {
-                    if (this.__prevcwd_pathbuf) |prev| break :brk prev;
-                    break :brk interp.allocator.alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
-                };
+                this.__prev_cwd.clearRetainingCapacity();
+                this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
 
-                std.mem.copyForwards(u8, prev_cwd_buf[0..this.cwd.len], this.cwd[0..this.cwd.len]);
-                prev_cwd_buf[this.cwd.len] = 0;
-                this.prev_cwd = prev_cwd_buf[0..this.cwd.len :0];
+                this.__cwd.clearRetainingCapacity();
+                this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]) catch bun.outOfMemory();
 
-                std.mem.copyForwards(u8, this.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
-                this.__cwd_pathbuf[new_cwd.len] = 0;
-                this.cwd = new_cwd;
+                if (comptime bun.Environment.allow_assert) {
+                    std.debug.assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
+                    std.debug.assert(this.__prev_cwd.items[this.__prev_cwd.items.len -| 1] == 0);
+                }
 
                 this.cwd_fd = new_cwd_fd;
 
-                this.export_env.put("OLDPWD", this.prev_cwd) catch bun.outOfMemory();
-                this.export_env.put("PWD", this.cwd) catch bun.outOfMemory();
+                this.export_env.insert(EnvStr.initSlice("OLDPWD"), EnvStr.initSlice(this.prevCwd()));
+                this.export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initSlice(this.cwd()));
 
                 return Maybe(void).success;
             }
 
-            pub fn getHomedir(self: *ShellState) [:0]const u8 {
+            pub fn getHomedir(self: *ShellState) EnvStr {
                 if (comptime bun.Environment.isWindows) {
-                    if (self.export_env.get("USERPROFILE")) |env|
+                    if (self.export_env.get(EnvStr.initSlice("USERPROFILE"))) |env| {
+                        env.ref();
                         return env;
+                    }
                 } else {
-                    if (self.export_env.get("HOME")) |env|
+                    if (self.export_env.get(EnvStr.initSlice("HOME"))) |env| {
+                        env.ref();
                         return env;
+                    }
                 }
-                return "unknown";
+                return EnvStr.initSlice("unknown");
             }
 
             pub fn writeFailingError(
@@ -630,6 +847,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return script_ast;
         }
 
+        // fn bunStringDealloc(this: *anyopaque, str: *anyopaque, size: u32) callconv(.C) void {}
+
         /// If all initialization allocations succeed, the arena will be copied
         /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
         pub fn init(
@@ -641,12 +860,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         ) shell.Result(*ThisInterpreter) {
             var interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
             interpreter.global = global;
-            errdefer {
-                allocator.destroy(interpreter);
-            }
+            interpreter.allocator = allocator;
 
             const export_env = brk: {
-                var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
+                var export_env = EnvMap.init(allocator);
                 // This will be set by in the shell builtin to `process.env`
                 if (EventLoopKind == .js) break :brk export_env;
 
@@ -660,16 +877,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 var iter = env_loader.map.iter();
                 while (iter.next()) |entry| {
-                    const dupedz = allocator.dupeZ(u8, entry.value_ptr.value) catch bun.outOfMemory();
-                    export_env.put(entry.key_ptr.*, dupedz) catch bun.outOfMemory();
+                    const value = EnvStr.initSlice(entry.value_ptr.value);
+                    const key = EnvStr.initSlice(entry.key_ptr.*);
+                    export_env.insert(key, value);
                 }
 
                 break :brk export_env;
             };
 
-            var pathbuf = arena.allocator().alloc(u8, bun.MAX_PATH_BYTES) catch bun.outOfMemory();
-
-            const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
+            var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const cwd = switch (Syscall.getcwd(&pathbuf)) {
                 .result => |cwd| cwd.ptr[0..cwd.len :0],
                 .err => |err| {
                     return .{ .err = .{ .sys = err } };
@@ -685,6 +902,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return .{ .err = .{ .sys = err } };
                 },
             };
+            var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
+            cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
+
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
+            }
 
             interpreter.* = .{
                 .global = global,
@@ -698,13 +921,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 .root_shell = ShellState{
                     .io = .{},
 
-                    .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
-                    .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+                    .shell_env = EnvMap.init(allocator),
+                    .cmd_local_env = EnvMap.init(allocator),
                     .export_env = export_env,
 
-                    .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
-                    .cwd = pathbuf[0..cwd.len :0],
-                    .prev_cwd = pathbuf[0..cwd.len :0],
+                    .__cwd = cwd_arr,
+                    .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
                     .cwd_fd = cwd_fd,
                 },
             };
@@ -878,21 +1100,24 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             defer object_iter.deinit();
 
             this.root_shell.export_env.clearRetainingCapacity();
-            this.root_shell.export_env.ensureTotalCapacity(object_iter.len) catch bun.outOfMemory();
+            this.root_shell.export_env.ensureTotalCapacity(object_iter.len);
 
             // If the env object does not include a $PATH, it must disable path lookup for argv[0]
             // PATH = "";
 
             while (object_iter.next()) |key| {
-                const keyslice = key.toOwnedSlice(this.arena.allocator()) catch bun.outOfMemory();
+                const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
                 var value = object_iter.value;
                 if (value == .undefined) continue;
 
                 const value_str = value.getZigString(globalThis);
-                const slice = value_str.toSlice(bun.default_allocator);
-                defer slice.deinit();
-                const dupedz = this.arena.allocator().dupeZ(u8, slice.slice()) catch bun.outOfMemory();
-                this.root_shell.export_env.put(keyslice, dupedz) catch bun.outOfMemory();
+                const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+                const keyref = EnvStr.initRefCounted(keyslice);
+                defer keyref.deref();
+                const valueref = EnvStr.initRefCounted(slice);
+                defer valueref.deref();
+
+                this.root_shell.export_env.insert(keyref, valueref);
             }
 
             return .undefined;
@@ -1438,7 +1663,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         str_list.appendSlice(txt) catch bun.outOfMemory();
                     },
                     .Var => |label| {
-                        str_list.appendSlice(this.expandVar(label)) catch bun.outOfMemory();
+                        str_list.appendSlice(this.expandVar(label).slice()) catch bun.outOfMemory();
                     },
                     .asterisk => {
                         str_list.append('*') catch bun.outOfMemory();
@@ -1505,9 +1730,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
             }
 
-            fn expandVar(this: *const Expansion, label: []const u8) [:0]const u8 {
-                const value = this.base.shell.shell_env.get(label) orelse brk: {
-                    break :brk this.base.shell.export_env.get(label) orelse return "";
+            fn expandVar(this: *const Expansion, label: []const u8) EnvStr {
+                const value = this.base.shell.shell_env.get(EnvStr.initSlice(label)) orelse brk: {
+                    break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return EnvStr.initSlice("");
                 };
                 return value;
             }
@@ -1779,6 +2004,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // Subshell, command substitution
                 if (this.base.shell.kind == .subshell) {
                     this.base.shell.deinit();
+                } else {
+                    this.base.shell.deinit();
                 }
             }
         };
@@ -1843,7 +2070,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     switch (this.state) {
                         .idle => {
                             this.state = .{ .expanding = .{
-                                .current_expansion_result = std.ArrayList([:0]const u8).init(this.base.interpreter.allocator),
+                                .current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator),
                                 .expansion = undefined,
                             } };
                             continue;
@@ -1884,7 +2111,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     if (expanding.current_expansion_result.items.len == 1) {
                         const value = expanding.current_expansion_result.items[0];
-                        this.base.shell.assignVar(this.base.interpreter, label, value, this.ctx);
+                        const ref = EnvStr.initRefCounted(value);
+                        defer ref.deref();
+                        this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), ref, this.ctx);
+                        expanding.current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator);
                     } else {
                         const size = brk: {
                             var total: usize = 0;
@@ -1895,7 +2125,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         };
 
                         const value = brk: {
-                            var merged = this.base.interpreter.allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
+                            var merged = bun.default_allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
                             var i: usize = 0;
                             for (expanding.current_expansion_result.items) |slice| {
                                 @memcpy(merged[i .. i + slice.len], slice[0..slice.len]);
@@ -1903,16 +2133,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             }
                             break :brk merged;
                         };
+                        const value_ref = EnvStr.initRefCounted(value);
+                        defer value_ref.deref();
 
-                        this.base.shell.assignVar(this.base.interpreter, label, value, this.ctx);
-                    }
-
-                    for (expanding.current_expansion_result.items) |slice| {
-                        this.base.interpreter.allocator.free(slice);
+                        this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), value_ref, this.ctx);
+                        for (expanding.current_expansion_result.items) |slice| {
+                            bun.default_allocator.free(slice);
+                        }
+                        expanding.current_expansion_result.clearRetainingCapacity();
                     }
 
                     expanding.idx += 1;
-                    expanding.current_expansion_result.clearRetainingCapacity();
                     this.next();
                     return;
                 }
@@ -2771,7 +3002,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             fn initSubproc(this: *Cmd) void {
-                log("cmd init subproc ({x})", .{@intFromPtr(this)});
+                log("cmd init subproc ({x}, cwd={s})", .{ @intFromPtr(this), this.base.shell.cwd() });
 
                 var arena = &this.spawn_arena;
                 var arena_allocator = arena.allocator();
@@ -2784,7 +3015,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
                 spawn_args.cmd_parent = this;
-                spawn_args.cwd = this.base.shell.cwd;
+                spawn_args.cwd = this.base.shell.cwdZ();
 
                 const args = args: {
                     this.args.append(null) catch bun.outOfMemory();
@@ -2822,8 +3053,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             arena,
                             this.node,
                             &this.args,
-                            this.base.shell.export_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
-                            this.base.shell.cmd_local_env.cloneWithAllocator(arena_allocator) catch bun.outOfMemory(),
+                            this.base.shell.export_env.cloneWithAllocator(arena_allocator),
+                            this.base.shell.cmd_local_env.cloneWithAllocator(arena_allocator),
                             cwd,
                             &this.io,
                             false,
@@ -3145,8 +3376,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             /// The following are allocated with the above arena
             args: *const std.ArrayList(?[*:0]const u8),
             args_slice: ?[]const [:0]const u8 = null,
-            export_env: std.StringArrayHashMap([:0]const u8),
-            cmd_local_env: std.StringArrayHashMap([:0]const u8),
+            export_env: EnvMap,
+            cmd_local_env: EnvMap,
             cwd: bun.FileDescriptor,
 
             impl: union(Kind) {
@@ -3340,8 +3571,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 arena: *bun.ArenaAllocator,
                 node: *const ast.Cmd,
                 args: *const std.ArrayList(?[*:0]const u8),
-                export_env: std.StringArrayHashMap([:0]const u8),
-                cmd_local_env: std.StringArrayHashMap([:0]const u8),
+                export_env: EnvMap,
+                cmd_local_env: EnvMap,
                 cwd: bun.FileDescriptor,
                 io_: *IO,
                 comptime in_cmd_subst: bool,
@@ -3669,11 +3900,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 } = null,
 
                 const Entry = struct {
-                    key: []const u8,
-                    value: [:0]const u8,
+                    key: EnvStr,
+                    value: EnvStr,
 
                     pub fn compare(context: void, this: @This(), other: @This()) bool {
-                        return bun.strings.cmpStringsAsc(context, this.key, other.key);
+                        return bun.strings.cmpStringsAsc(context, this.key.slice(), other.key.slice());
                     }
                 };
 
@@ -3735,7 +3966,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         const len = brk: {
                             var len: usize = 0;
                             for (keys.items) |entry| {
-                                len += std.fmt.count("{s}={s}\n", .{ entry.key, entry.value });
+                                len += std.fmt.count("{s}={s}\n", .{ entry.key.slice(), entry.value.slice() });
                             }
                             break :brk len;
                         };
@@ -3743,7 +3974,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         {
                             var i: usize = 0;
                             for (keys.items) |entry| {
-                                const written_slice = std.fmt.bufPrint(buf[i..], "{s}={s}\n", .{ entry.key, entry.value }) catch @panic("This should not happen");
+                                const written_slice = std.fmt.bufPrint(buf[i..], "{s}={s}\n", .{ entry.key.slice(), entry.value.slice() }) catch @panic("This should not happen");
                                 i += written_slice.len;
                             }
                         }
@@ -3797,13 +4028,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const buf = this.bltn.fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
                                 return this.writeOutput(.stderr, buf);
                             }
-                            this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, arg, "", .exported);
+                            this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, EnvStr.initSlice(arg), EnvStr.initSlice(""), .exported);
                             continue;
                         };
 
                         const label = arg[0..eqsign_idx];
                         const value = arg_sentinel[eqsign_idx + 1 .. :0];
-                        this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, label, value, .exported);
+                        this.bltn.parentCmd().base.shell.assignVar(this.bltn.parentCmd().base.interpreter, EnvStr.initSlice(label), EnvStr.initSlice(value), .exported);
                     }
 
                     this.bltn.done(0);
@@ -3943,11 +4174,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     if (!this.bltn.stdout.needsIO()) {
                         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        const PATH = this.bltn.parentCmd().base.shell.export_env.get("PATH") orelse "";
+                        const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                         var had_not_found = false;
                         for (args) |arg_raw| {
                             const arg = arg_raw[0..std.mem.len(arg_raw)];
-                            const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.shell.cwd, arg) orelse {
+                            const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                                 had_not_found = true;
                                 const buf = this.bltn.fmtErrorArena(.which, "{s} not found\n", .{arg});
                                 switch (this.bltn.writeNoIO(.stdout, buf)) {
@@ -3989,9 +4220,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     const arg = arg_raw[0..std.mem.len(arg_raw)];
 
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const PATH = this.bltn.parentCmd().base.shell.export_env.get("PATH") orelse "";
+                    const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
-                    const resolved = which(&path_buf, PATH, this.bltn.parentCmd().base.shell.cwd, arg) orelse {
+                    const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                         const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
                         multiargs.had_not_found = true;
                         multiargs.state = .{
@@ -4101,15 +4332,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             switch (this.bltn.parentCmd().base.shell.changePrevCwd(this.bltn.parentCmd().base.interpreter)) {
                                 .result => {},
                                 .err => |err| {
-                                    return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prev_cwd);
+                                    return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prevCwdZ());
                                 },
                             }
                         },
                         '~' => {
                             const homedir = this.bltn.parentCmd().base.shell.getHomedir();
-                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir)) {
+                            homedir.deref();
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir.slice())) {
                                 .result => {},
-                                .err => |err| return this.handleChangeCwdErr(err, homedir),
+                                .err => |err| return this.handleChangeCwdErr(err, homedir.slice()),
                             }
                         },
                         else => {
@@ -4123,7 +4355,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return Maybe(void).success;
                 }
 
-                fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: [:0]const u8) Maybe(void) {
+                fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Maybe(void) {
                     const errno: usize = @intCast(err.errno);
 
                     switch (errno) {
@@ -4224,8 +4456,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         return Maybe(void).success;
                     }
 
-                    const cwd_str = this.bltn.parentCmd().base.shell.cwd;
-                    const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{cwd_str[0..cwd_str.len]});
+                    const cwd_str = this.bltn.parentCmd().base.shell.cwd();
+                    const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{cwd_str});
                     if (this.bltn.stdout.needsIO()) {
                         this.state = .{
                             .waiting_io = .{

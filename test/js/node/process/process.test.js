@@ -238,11 +238,11 @@ it("process.argv in testing", () => {
 
 describe("process.exitCode", () => {
   it("validates int", () => {
-    expect(() => (process.exitCode = "potato")).toThrow("exitCode must be a number");
-    expect(() => (process.exitCode = 1.2)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = NaN)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = Infinity)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = -Infinity)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = "potato")).toThrow(`exitCode must be an integer`);
+    expect(() => (process.exitCode = 1.2)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = NaN)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = Infinity)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = -Infinity)).toThrow("exitCode must be an integer");
   });
 
   it("works with implicit process.exit", () => {
@@ -513,4 +513,8 @@ it("process.constrainedMemory()", () => {
 it("process.report", () => {
   // TODO: write better tests
   JSON.stringify(process.report.getReport(), null, 2);
+});
+
+it("process.exit with jsDoubleNumber that is an integer", () => {
+  expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
 });

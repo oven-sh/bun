@@ -4569,10 +4569,8 @@ pub const Blob = struct {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
-        defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(raw_bytes));
-
         if (bom == .utf16_le) {
-            if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
+            if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJSByParseJSON(global);

@@ -149,7 +149,7 @@ pub const Subprocess = struct {
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
-    pipes: if(Environment.isWindows) [3]uv.uv_pipe_t else u0 = if(Environment.isWindows) undefined else 0,
+    pipes: if(Environment.isWindows) [3]uv.uv_pipe_t else u0 = if(Environment.isWindows) std.mem.zeroes([3]uv.uv_pipe_t) else 0,
 
     stdin: Writable,
     stdout: Readable,
@@ -1094,7 +1094,7 @@ pub const Subprocess = struct {
             if(Environment.isWindows) {
                 if(this.status == .pending) {
                     this.stream.data = this;
-                    const rc = uv.uv_read_start(@ptrCast(&this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
+                    const rc = uv.uv_read_start(@ptrCast(this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
                     log("readAll uv_read_start {}", .{ rc });
                 }
                 return;

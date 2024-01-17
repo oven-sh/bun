@@ -1,5 +1,4 @@
-﻿
-test('this file is utf8 with bom', async () => {
+﻿test("this file is utf8 with bom", async () => {
   const arrayBuffer = await Bun.file(import.meta.path).arrayBuffer();
   expect(arrayBuffer.byteLength).toBeGreaterThan(3);
   const uint8Array = new Uint8Array(arrayBuffer);
@@ -7,5 +6,5 @@ test('this file is utf8 with bom', async () => {
   expect(uint8Array[1]).toBe(0xbb);
   expect(uint8Array[2]).toBe(0xbf);
   const text = await Bun.file(import.meta.path).text();
-  expect(text).toInclude('this text right here');
+  expect(text).toInclude("this text right here");
 });

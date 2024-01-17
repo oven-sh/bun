@@ -2708,3 +2708,10 @@ it.if(isWindows)("writing to windows hidden file is possible", () => {
   const content = readFileSync("file.txt", "utf8");
   expect(content).toBe("Hello World");
 });
+
+it("fs.ReadStream allows functions", () => {
+  // @ts-expect-error
+  expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
+  // @ts-expect-error
+  expect(() => new fs.ReadStream(".", {})).not.toThrow();
+});

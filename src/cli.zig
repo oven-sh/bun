@@ -424,6 +424,22 @@ pub const Arguments = struct {
             return;
         }
 
+        // var walker = Glob.BunGlobWalker{};
+        // var arena = std.heap.ArenaAllocator.init(allocator);
+        // try walker.init(&walker, &arena, "**/package.json", true, true, false, true);
+        // defer walker.deinit(true);
+
+        // var iter = Glob.BunGlobWalker.Iterator{ .walker = &walker };
+        // _ = try iter.init();
+
+        // while (switch (try iter.next()) {
+        //     .err => |err| return .{ .err = err },
+        //     .result => |matched_path| matched_path,
+        // }) |path| {
+        //     // try workspace_map.insert()
+        //     try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
+        // }
+
         // if we were not able to find a workspace root, try globbing for package.json files
 
         return error.MissingPackageJSON;
@@ -510,55 +526,56 @@ pub const Arguments = struct {
             };
 
             var matched_paths = std.ArrayListUnmanaged([]u8){};
-            const PkgInfo = struct {
-                // borrowed
-                path: []const u8,
-                // owned
-                name: []const u8,
-            };
+            // const PkgInfo = struct {
+            //     // borrowed
+            //     path: []const u8,
+            //     // owned
+            //     name: []const u8,
+            // };
 
-            var packages = std.ArrayList(PkgInfo).init(allocator);
-            defer {
-                for (packages.items) |package| {
-                    allocator.free(package.name);
-                }
-                packages.deinit();
-            }
+            // var packages = std.ArrayList(PkgInfo).init(allocator);
+            // defer {
+            //     for (packages.items) |package| {
+            //         allocator.free(package.name);
+            //     }
+            //     packages.deinit();
+            // }
 
-            bun.JSAst.Expr.Data.Store.create(allocator);
-            bun.JSAst.Stmt.Data.Store.create(allocator);
+            // bun.JSAst.Expr.Data.Store.create(allocator);
+            // bun.JSAst.Stmt.Data.Store.create(allocator);
 
             // for each path in the workspace map, load the name from package.json
-            for (wsmap.keys()) |path| {
-                var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-                const pkgstring = "/package.json";
-                @memcpy(local_buf[0..path.len], path);
-                local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
-                local_buf[path.len + pkgstring.len] = 0;
-                const json_path = local_buf[0 .. path.len + pkgstring.len];
+            // for (wsmap.keys(), wsmap.values()) |path, entry| {
+            //     // std.debug.print("path: {s}\n, name: {s}\n", .{ path, entry.name });
+            //     var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            //     const pkgstring = "/package.json";
+            //     @memcpy(local_buf[0..path.len], path);
+            //     local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
+            //     local_buf[path.len + pkgstring.len] = 0;
+            //     const json_path = local_buf[0 .. path.len + pkgstring.len];
 
-                const json_file = std.fs.cwd().openFileZ(
-                    local_buf[0 .. path.len + pkgstring.len :0].ptr,
-                    .{ .mode = .read_only },
-                ) catch {
-                    continue;
-                };
-                defer json_file.close();
+            //     const json_file = std.fs.cwd().openFileZ(
+            //         local_buf[0 .. path.len + pkgstring.len :0].ptr,
+            //         .{ .mode = .read_only },
+            //     ) catch {
+            //         continue;
+            //     };
+            //     defer json_file.close();
 
-                const json_stat_size = try json_file.getEndPos();
-                const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-                defer allocator.free(json_buf);
+            //     const json_stat_size = try json_file.getEndPos();
+            //     const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+            //     defer allocator.free(json_buf);
 
-                const json_len = try json_file.preadAll(json_buf, 0);
-                const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+            //     const json_len = try json_file.preadAll(json_buf, 0);
+            //     const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
 
-                var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, ctx.log);
-                _ = try parser.parseExpr();
-                if (!parser.has_found_name) {
-                    continue;
-                }
-                try packages.append(PkgInfo{ .path = path, .name = try allocator.dupe(u8, parser.found_name) });
-            }
+            //     var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, ctx.log);
+            //     _ = try parser.parseExpr();
+            //     if (!parser.has_found_name) {
+            //         continue;
+            //     }
+            //     try packages.append(PkgInfo{ .path = path, .name = try allocator.dupe(u8, parser.found_name) });
+            // }
 
             var pattern_stack = std.heap.stackFallback(4096, bun.default_allocator);
             var pattern = std.ArrayList(u32).init(pattern_stack.get());
@@ -581,15 +598,15 @@ pub const Arguments = struct {
                 while (codepointer_iter.next(&cursor)) {
                     try pattern.append(cursor.c);
                 }
-                for (packages.items) |package| {
-                    const target = if (is_file_pattern) package.path else package.name;
+                for (wsmap.keys(), wsmap.values()) |path, entry| {
+                    const target = if (is_file_pattern) path else entry.name;
                     if (Glob.matchImpl(pattern.items, target)) {
-                        try matched_paths.append(allocator, try allocator.dupe(u8, package.path));
+                        try matched_paths.append(allocator, try allocator.dupe(u8, path));
                     }
                 }
             }
-            bun.JSAst.Expr.Data.Store.reset();
-            bun.JSAst.Stmt.Data.Store.reset();
+            // bun.JSAst.Expr.Data.Store.reset();
+            // bun.JSAst.Stmt.Data.Store.reset();
 
             ctx.workspace_paths = matched_paths.items;
         }

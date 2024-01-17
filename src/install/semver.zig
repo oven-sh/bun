@@ -47,25 +47,13 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn assertDefined(_: *const String) void {
-        // if (comptime !Environment.allow_assert)
-        //     return;
-
-        // if (this.isUndefined()) {
-        //     @breakpoint();
-        //     @panic("String is undefined");
-        // }
-    }
-
     pub inline fn init(
         buf: string,
         in: string,
     ) String {
         if (comptime Environment.allow_assert) {
             const out = realInit(buf, in);
-            if (out.isInline()) {
-                out.assertDefined();
-            } else {
+            if (!out.isInline()) {
                 std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
             }
 
@@ -276,8 +264,6 @@ pub const String = extern struct {
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
-        this.assertDefined();
-
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
                 // Edgecase: string that starts with a 0 byte will be considered empty.
@@ -666,11 +652,20 @@ pub const Version = extern struct {
         patch: ?u32 = null,
         tag: Tag = .{},
 
-        pub fn fill(this: Partial) Version {
+        pub fn min(this: Partial) Version {
             return .{
                 .major = this.major orelse 0,
                 .minor = this.minor orelse 0,
                 .patch = this.patch orelse 0,
+                .tag = this.tag,
+            };
+        }
+
+        pub fn max(this: Partial) Version {
+            return .{
+                .major = this.major orelse std.math.maxInt(u32),
+                .minor = this.minor orelse std.math.maxInt(u32),
+                .patch = this.patch orelse std.math.maxInt(u32),
                 .tag = this.tag,
             };
         }
@@ -1029,7 +1024,7 @@ pub const Version = extern struct {
         wildcard: Query.Token.Wildcard = .none,
         valid: bool = true,
         version: Version.Partial = .{},
-        stopped_at: u32 = 0,
+        len: u32 = 0,
     };
 
     pub fn parse(sliced_string: SlicedString) ParseResult {
@@ -1045,7 +1040,6 @@ pub const Version = extern struct {
             return result;
         }
         var is_done = false;
-        var stopped_at: i32 = 0;
 
         var i: usize = 0;
 
@@ -1071,7 +1065,6 @@ pub const Version = extern struct {
                 break;
             }
 
-            stopped_at = @as(i32, @intCast(i));
             switch (input[i]) {
                 ' ' => {
                     is_done = true;
@@ -1079,7 +1072,9 @@ pub const Version = extern struct {
                 },
                 '|', '^', '#', '&', '%', '!' => {
                     is_done = true;
-                    stopped_at -= 1;
+                    if (i > 0) {
+                        i -= 1;
+                    }
                     break;
                 },
                 '0'...'9' => {
@@ -1133,7 +1128,6 @@ pub const Version = extern struct {
                     }
 
                     part_start_i = i;
-                    i += 1;
                     while (i < input.len and switch (input[i]) {
                         ' ' => true,
                         else => false,
@@ -1223,7 +1217,7 @@ pub const Version = extern struct {
             }
         }
 
-        result.stopped_at = @as(u32, @intCast(i));
+        result.len = @as(u32, @intCast(i));
 
         if (comptime RawType != void) {
             result.version.raw = sliced_string.sub(input[0..i]).external();
@@ -1232,7 +1226,7 @@ pub const Version = extern struct {
         return result;
     }
 
-    fn parseVersionNumber(input: string) u32 {
+    fn parseVersionNumber(input: string) ?u32 {
         // max decimal u32 is 4294967295
         var bytes: [10]u8 = undefined;
         var byte_i: u8 = 0;
@@ -1241,10 +1235,10 @@ pub const Version = extern struct {
 
         for (input) |char| {
             switch (char) {
-                'X', 'x', '*' => return 0,
+                'X', 'x', '*' => return null,
                 '0'...'9' => {
                     // out of bounds
-                    if (byte_i + 1 > bytes.len) return 0;
+                    if (byte_i + 1 > bytes.len) return null;
                     bytes[byte_i] = char;
                     byte_i += 1;
                 },
@@ -1254,8 +1248,8 @@ pub const Version = extern struct {
             }
         }
 
-        // If there are no numbers, it's 0.
-        if (byte_i == 0) return 0;
+        // If there are no numbers
+        if (byte_i == 0) return null;
 
         if (comptime Environment.isDebug) {
             return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
@@ -1738,17 +1732,17 @@ pub const Query = struct {
                 .none => unreachable,
                 .version => {
                     if (this.wildcard != Wildcard.none) {
-                        return Range.initWildcard(version.fill(), this.wildcard);
+                        return Range.initWildcard(version.min(), this.wildcard);
                     }
 
-                    return .{ .left = .{ .op = .eql, .version = version.fill() } };
+                    return .{ .left = .{ .op = .eql, .version = version.min() } };
                 },
                 else => {},
             }
 
             return switch (this.wildcard) {
                 .major => .{
-                    .left = .{ .op = .gte, .version = version.fill() },
+                    .left = .{ .op = .gte, .version = version.min() },
                     .right = .{
                         .op = .lte,
                         .version = .{
@@ -1857,7 +1851,7 @@ pub const Query = struct {
                             .lte => .lte,
                             else => unreachable,
                         },
-                        .version = version.fill(),
+                        .version = version.min(),
                     },
                 },
             };
@@ -1981,13 +1975,13 @@ pub const Query = struct {
 
             if (!skip_round) {
                 const parse_result = Version.parse(sliced.sub(input[i..]));
-                const version = parse_result.version.fill();
+                const version = parse_result.version.min();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
                 token.wildcard = parse_result.wildcard;
 
-                i += parse_result.stopped_at;
+                i += parse_result.len;
                 const rollback = i;
 
                 const maybe_hyphenate = i < input.len and (input[i] == ' ' or input[i] == '-');
@@ -2019,7 +2013,7 @@ pub const Query = struct {
 
                 if (hyphenate) {
                     const second_parsed = Version.parse(sliced.sub(input[i..]));
-                    var second_version = second_parsed.version.fill();
+                    var second_version = second_parsed.version.min();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
                     const range: Range = brk: {
@@ -2066,7 +2060,7 @@ pub const Query = struct {
                         try list.andRange(range);
                     }
 
-                    i += second_parsed.stopped_at + 1;
+                    i += second_parsed.len + 1;
                 } else if (count == 0 and token.tag == .version) {
                     switch (parse_result.wildcard) {
                         .none => {
@@ -2177,8 +2171,8 @@ pub const SemverObject = struct {
             return .zero;
         }
 
-        const left_version = left_result.version.fill();
-        const right_version = right_result.version.fill();
+        const left_version = left_result.version.max();
+        const right_version = right_result.version.max();
 
         return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
             .eq => JSC.jsNumber(0),
@@ -2221,7 +2215,7 @@ pub const SemverObject = struct {
             return .false;
         }
 
-        const left_version = left_result.version.fill();
+        const left_version = left_result.version.min();
 
         const right_group = Query.parse(
             allocator,
@@ -2252,7 +2246,7 @@ const expect = if (Environment.isTest) struct {
             SlicedString.init(input, input),
         ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 
-        return list.satisfies(parsed.version.fill());
+        return list.satisfies(parsed.version.min());
     }
 
     pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
@@ -2318,7 +2312,7 @@ const expect = if (Environment.isTest) struct {
         defer counter += 1;
 
         var result = Version.parse(SlicedString.init(input, input));
-        if (!v.eql(result.version.fill())) {
+        if (!v.eql(result.version.min())) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,
                 v.major,

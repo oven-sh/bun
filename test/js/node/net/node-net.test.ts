@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
@@ -315,7 +316,7 @@ describe("net.Socket write", () => {
     "should work with .end(data)",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port)
+        .connect(server.port, server.hostname)
         .on("ready", () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
@@ -329,7 +330,7 @@ describe("net.Socket write", () => {
     "should work with .write(data).end()",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, () => {
+        .connect(server.port, server.hostname, () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
         })

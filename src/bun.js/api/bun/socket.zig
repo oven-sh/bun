@@ -19,14 +19,6 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 
-fn normalizeListeningHost(host: [:0]const u8) ?[*:0]const u8 {
-    if (host.len == 0 or strings.eqlComptime(host, "0.0.0.0")) {
-        return null;
-    }
-
-    return host.ptr;
-}
-
 // const Corker = struct {
 //     ptr: ?*[16384]u8 = null,
 //     holder: ?*anyopaque = null,
@@ -685,7 +677,7 @@ pub const Listener = struct {
                     const socket = uws.us_socket_context_listen(
                         @intFromBool(ssl_enabled),
                         socket_context,
-                        normalizeListeningHost(host),
+                        if (host.len == 0) null else host.ptr,
                         c.port,
                         socket_flags,
                         8,
@@ -959,7 +951,7 @@ pub const Listener = struct {
         const connection: Listener.UnixOrHost = blk: {
             if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
-                    const fd: bun.FileDescriptor = fd_.asInt32();
+                    const fd = fd_.asFileDescriptor();
                     break :blk .{ .fd = fd };
                 }
             }
@@ -1865,7 +1857,8 @@ fn NewSocket(comptime ssl: bool) type {
                 globalObject.throw("sendfile() not implemented yet", .{});
                 return .{ .fail = {} };
             } else if (bun.String.tryFromJS(args.ptr[0], globalObject)) |bun_str| {
-                var zig_str = bun_str.toUTF8(bun.default_allocator);
+                defer bun_str.deref();
+                var zig_str = bun_str.toUTF8WithoutRef(bun.default_allocator);
                 defer zig_str.deinit();
 
                 var slice = zig_str.slice();

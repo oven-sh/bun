@@ -207,7 +207,7 @@ pub const INotify = struct {
 
     pub fn stop() void {
         if (inotify_fd != 0) {
-            _ = bun.sys.close(inotify_fd);
+            _ = bun.sys.close(bun.toFD(inotify_fd));
             inotify_fd = 0;
         }
     }
@@ -395,7 +395,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             watcher.* = Watcher{
                 .fs = fs,
-                .fd = 0,
+                .fd = .zero,
                 .allocator = allocator,
                 .watched_count = 0,
                 .ctx = ctx,
@@ -705,7 +705,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (this.indexOf(hash)) |index| {
                 if (comptime FeatureFlags.atomic_file_watcher) {
                     // On Linux, the file descriptor might be out of date.
-                    if (fd > 0) {
+                    if (fd.int() > 0) {
                         var fds = this.watchlist.items(.fd);
                         fds[index] = fd;
                     }
@@ -747,7 +747,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
-                event.ident = @as(usize, @intCast(fd));
+                event.ident = @intCast(fd.int());
 
                 // Store the hash for fast filtering later
                 event.udata = @as(usize, @intCast(watchlist_id));
@@ -796,7 +796,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             comptime copy_file_path: bool,
         ) !WatchItemIndex {
             const fd = brk: {
-                if (stored_fd > 0) break :brk stored_fd;
+                if (stored_fd.int() > 0) break :brk stored_fd;
                 const dir = try std.fs.cwd().openDir(file_path, .{});
                 break :brk bun.toFD(dir.fd);
             };
@@ -828,7 +828,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
-                event.ident = @as(usize, @intCast(fd));
+                event.ident = @intCast(fd.int());
 
                 // Store the hash for fast filtering later
                 event.udata = @as(usize, @intCast(watchlist_id));
@@ -916,7 +916,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (autowatch_parent_dir) {
                 var watchlist_slice = this.watchlist.slice();
 
-                if (dir_fd > 0) {
+                if (dir_fd.int() > 0) {
                     const fds = watchlist_slice.items(.fd);
                     if (std.mem.indexOfScalar(StoredFileDescriptorType, fds, dir_fd)) |i| {
                         parent_watch_item = @as(WatchItemIndex, @truncate(i));

@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
@@ -410,5 +411,16 @@ describe("Server", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("rejected promise handled by error method should not be logged", async () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), path.join("rejected-promise-fixture.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect(stderr).toBeEmpty();
+    expect(exitCode).toBe(0);
   });
 });

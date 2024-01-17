@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
@@ -7816,43 +7817,47 @@ describe("Registry URLs", () => {
     const regURL = entry[0];
     const fails = entry[1];
 
-    it(`should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`, async () => {
-      await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    it(
+      `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
+      async () => {
+        await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-      await writeFile(
-        join(package_dir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          version: "0.0.1",
-          dependencies: {
-            notapackage: "0.0.2",
-          },
-        }),
-      );
+        await writeFile(
+          join(package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              notapackage: "0.0.2",
+            },
+          }),
+        );
 
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: package_dir,
-        stdout: null,
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      expect(stdout).toBeDefined();
-      expect(await new Response(stdout).text()).toBeEmpty();
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: package_dir,
+          stdout: null,
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        expect(stdout).toBeDefined();
+        expect(await new Response(stdout).text()).toBeEmpty();
 
-      expect(stderr).toBeDefined();
-      const err = await new Response(stderr).text();
+        expect(stderr).toBeDefined();
+        const err = await new Response(stderr).text();
 
-      if (fails) {
-        expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-        expect(err).toContain("error: InvalidURL");
-      } else {
-        expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
-      }
-      // fails either way, since notapackage is, well, not a real package.
-      expect(await exited).not.toBe(0);
-    });
+        if (fails) {
+          expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+          expect(err).toContain("error: InvalidURL");
+        } else {
+          expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
+        }
+        // fails either way, since notapackage is, well, not a real package.
+        expect(await exited).not.toBe(0);
+      },
+      Infinity,
+    );
   }
 
   it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {

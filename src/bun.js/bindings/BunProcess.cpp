@@ -3,19 +3,22 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "headers-handwritten.h"
 #include "node_api.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
-#include "ZigConsoleClient.h"
+#include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
+
+#include "ProcessBindingTTYWrap.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -60,7 +63,7 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "20.8.0"
+#define REPORTED_NODE_VERSION "21.6.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
 #define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
@@ -230,79 +233,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
     return true;
 }
 
-static bool getWindowSize(int fd, size_t* width, size_t* height)
-{
-#if OS(WINDOWS)
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    switch (fd) {
-    case 0:
-        handle = GetStdHandle(STD_INPUT_HANDLE);
-        break;
-    case 1:
-        handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        break;
-    case 2:
-        handle = GetStdHandle(STD_ERROR_HANDLE);
-        break;
-    default:
-        break;
-    }
-    if (handle == INVALID_HANDLE_VALUE)
-        return false;
-
-    if (!GetConsoleScreenBufferInfo(handle, &csbi))
-        return false;
-
-    *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-    *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-    return true;
-#else
-    struct winsize ws;
-    int err;
-    do
-        err = ioctl(fd, TIOCGWINSZ, &ws);
-    while (err == -1 && errno == EINTR);
-
-    if (err == -1)
-        return false;
-
-    *width = ws.ws_col;
-    *height = ws.ws_row;
-
-    return true;
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto argCount = callFrame->argumentCount();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (argCount == 0) {
-        JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (a file descriptor)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    int fd = callFrame->uncheckedArgument(0).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(1));
-    if (!array || array->length() < 2) {
-        JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (an array)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    size_t width, height;
-    if (!getWindowSize(fd, &width, &height)) {
-        return JSC::JSValue::encode(jsBoolean(false));
-    }
-
-    array->putDirectIndex(globalObject, 0, jsNumber(width));
-    array->putDirectIndex(globalObject, 1, jsNumber(height));
-
-    return JSC::JSValue::encode(jsBoolean(true));
-}
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
@@ -340,6 +271,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    // Support embedded .node files
+    if (filename.startsWith("/$bunfs/"_s)) {
+        BunString bunStr = Bun::toString(filename);
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
+            filename = bunStr.toWTFString(BunString::ZeroCopy);
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 #if OS(WINDOWS)
     CString utf8 = filename.utf8();
@@ -483,12 +422,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
-    if (arg0.isNumber()) {
-        if (!arg0.isInt32()) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
+    if (arg0.isAnyInt()) {
         int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
@@ -742,7 +676,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
         signalNumberToNameMap->add(SIGIO, signalNames[28]);
 #ifdef SIGINFO
-        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
 #endif
         signalNumberToNameMap->add(SIGSYS, signalNames[30]);
     });
@@ -880,7 +814,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     }
 
     auto jsArgs = JSValue::encode(errorInstance);
-    Zig__ConsoleClient__messageWithTypeAndLevel(reinterpret_cast<Zig::ConsoleClient*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
+    Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
         static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
     return JSValue::encode(jsUndefined());
 }
@@ -903,25 +837,17 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
 
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
     JSValue exitCode = JSValue::decode(value);
-    if (!exitCode.isNumber()) {
-        throwTypeError(lexicalGlobalObject, throwScope, "exitCode must be a number"_s);
+    if (!exitCode.isAnyInt()) {
+        throwTypeError(lexicalGlobalObject, throwScope, "exitCode must be an integer"_s);
         return false;
     }
 
-    if (!exitCode.isInt32()) {
-        throwRangeError(lexicalGlobalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    int exitCodeInt = exitCode.toInt32(lexicalGlobalObject);
+    int exitCodeInt = exitCode.toInt32(lexicalGlobalObject) % 256;
     RETURN_IF_EXCEPTION(throwScope, false);
-    if (exitCodeInt < 0 || exitCodeInt > 255) {
-        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 255"_s);
-        return false;
-    }
 
     void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
     Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
+
     return true;
 }
 
@@ -1930,7 +1856,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "stream_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("stream_wrap", "4957");
     if (moduleName == "tcp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tcp_wrap");
     if (moduleName == "tls_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tls_wrap");
-    if (moduleName == "tty_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("tty_wrap", "4694");
+    if (moduleName == "tty_wrap"_s) return JSValue::encode(Bun::createNodeTTYWrapObject(globalObject));
     if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
     if (moduleName == "url"_s) PROCESS_BINDING_NOT_IMPLEMENTED("url");
     if (moduleName == "util"_s) return JSValue::encode(processBindingUtil(globalObject, vm));
@@ -1949,16 +1875,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
-    if (arg0.isNumber()) {
-        if (!arg0.isInt32()) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
-        int extiCode32 = arg0.toInt32(globalObject) % 256;
+    if (arg0.isAnyInt()) {
+        exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
-        exitCode = static_cast<uint8_t>(extiCode32);
     } else if (!arg0.isUndefinedOrNull()) {
         throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
         return JSC::JSValue::encode(JSC::JSValue {});

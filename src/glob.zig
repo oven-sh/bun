@@ -183,7 +183,7 @@ pub fn GlobWalker_(
         pub const Iterator = struct {
             walker: *GlobWalker,
             iter_state: IterState = .get_next,
-            cwd_fd: bun.FileDescriptor = 0,
+            cwd_fd: bun.FileDescriptor = .zero,
             empty_dir_path: [0:0]u8 = [0:0]u8{},
             /// This is to make sure in debug/tests that we are closing file descriptors
             /// We should only have max 2 open at a time. One for the cwd, and one for the
@@ -238,7 +238,7 @@ pub fn GlobWalker_(
             }
 
             pub fn closeCwdFd(this: *Iterator) void {
-                if (this.cwd_fd == 0) return;
+                if (this.cwd_fd == .zero) return;
                 _ = Syscall.close(this.cwd_fd);
                 if (bun.Environment.allow_assert) this.fds_open -= 1;
             }
@@ -263,7 +263,7 @@ pub fn GlobWalker_(
                 comptime root: bool,
             ) !Maybe(void) {
                 this.iter_state = .{ .directory = .{
-                    .fd = 0,
+                    .fd = .zero,
                     .iter = undefined,
                     .path = undefined,
                     .dir_path = undefined,
@@ -328,7 +328,7 @@ pub fn GlobWalker_(
 
                 this.iter_state.directory.fd = fd;
                 const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                const iterator = DirIterator.iterate(dir);
+                const iterator = DirIterator.iterate(dir, .u8);
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
@@ -634,14 +634,7 @@ pub fn GlobWalker_(
         }
 
         pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
-            switch (comptime @import("builtin").target.cpu.arch.endian()) {
-                .big => {
-                    _ = bun.simdutf.convert.utf8.to.utf32.be(pattern, codepoints);
-                },
-                .little => {
-                    _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
-                },
-            }
+            _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
         }
 
         /// `cwd` should be allocated with the arena

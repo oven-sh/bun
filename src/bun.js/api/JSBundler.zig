@@ -549,6 +549,10 @@ pub const JSBundler = struct {
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
+
+            pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
+                return null;
+            }
         };
 
         pub fn create(

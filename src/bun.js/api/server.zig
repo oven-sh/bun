@@ -3022,7 +3022,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 },
             }
 
-            // Promise is not fullfilled yet
+            // Promise is not fulfilled yet
             {
                 ctx.flags.is_error_promise_pending = true;
                 ctx.pending_promises_for_abort += 1;

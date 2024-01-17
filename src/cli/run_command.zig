@@ -52,6 +52,7 @@ const PosixSpawn = bun.posix.spawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
+const FilterArg = @import("filter_arg.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
@@ -1009,11 +1010,12 @@ pub const RunCommand = struct {
     }
 
     pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
-        // if there are no workspace paths specified, run in the current directory
-        if (!ctx.has_filter) {
+        // without filters just behave like normal exec
+        if (ctx.filters.len == 0) {
             _ = try exec(ctx, bin_dirs_only, true);
             return;
         }
+
         const fsinstance = try bun.fs.FileSystem.init(null);
         const olddir = fsinstance.top_level_dir;
         defer {
@@ -1024,9 +1026,23 @@ pub const RunCommand = struct {
                 Global.crash();
             };
         }
+        var workspace_paths = std.ArrayList([]u8).init(ctx.allocator);
+        defer {
+            for (workspace_paths.items) |path| {
+                ctx.allocator.free(path);
+            }
+            workspace_paths.deinit();
+        }
+        try FilterArg.getFilteredPackages(ctx, olddir, &workspace_paths);
+
+        if (workspace_paths.items.len == 0) {
+            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+            Global.exit(1);
+        }
+
         var ok = true;
-        for (ctx.workspace_paths) |path| {
-            Output.prettyErrorln("<d><b>In <r><blue><d>{s}<r>:", .{path});
+        for (workspace_paths.items) |path| {
+            Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
             std.os.chdir(path) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
                 continue;

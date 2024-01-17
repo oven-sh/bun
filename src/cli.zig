@@ -373,127 +373,6 @@ pub const Arguments = struct {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
-    fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *logger.Log, workspace_map: *Package.WorkspaceMap, workdir_: []const u8) !void {
-        bun.JSAst.Expr.Data.Store.create(default_allocator);
-        bun.JSAst.Stmt.Data.Store.create(default_allocator);
-
-        defer {
-            bun.JSAst.Expr.Data.Store.reset();
-            bun.JSAst.Stmt.Data.Store.reset();
-        }
-
-        var workdir = workdir_;
-
-        while (true) : (workdir = std.fs.path.dirname(workdir) orelse break) {
-            const parent_trimmed = strings.withoutTrailingSlash(workdir);
-            var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            @memcpy(buf2[0..parent_trimmed.len], parent_trimmed);
-            buf2[parent_trimmed.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-            buf2[parent_trimmed.len + "/package.json".len] = 0;
-            const json_path = buf2[0 .. parent_trimmed.len + "/package.json".len];
-            log.msgs.clearRetainingCapacity();
-            log.errors = 0;
-            log.warnings = 0;
-
-            const json_file = std.fs.cwd().openFileZ(
-                buf2[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
-                .{ .mode = .read_only },
-            ) catch continue;
-            defer json_file.close();
-
-            const json_stat_size = try json_file.getEndPos();
-            const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-            defer allocator.free(json_buf);
-            const json_len = try json_file.preadAll(json_buf, 0);
-            const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
-            const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
-
-            const prop = json.asProperty("workspaces") orelse continue;
-
-            const json_array = switch (prop.expr.data) {
-                .e_array => |arr| arr,
-                .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
-                    .e_array => |arr| arr,
-                    else => break,
-                } else break,
-                else => break,
-            };
-            _ = Package.processWorkspaceNamesArray(
-                workspace_map,
-                allocator,
-                log,
-                json_array,
-                &json_source,
-                prop.loc,
-                null,
-            ) catch |err| {
-                return err;
-            };
-            return;
-        }
-
-        // if we were not able to find a workspace root, try globbing for package.json files
-
-        var walker = Glob.BunGlobWalker{};
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        const walker_init_res = try walker.init(&arena, "**/package.json", true, true, false, true, true);
-        switch (walker_init_res) {
-            .err => |err| {
-                Output.prettyErrorln("Error: {}", .{err});
-                return;
-            },
-            else => {},
-        }
-        defer walker.deinit(true);
-
-        var iter = Glob.BunGlobWalker.Iterator{ .walker = &walker };
-        const iter_init_res = try iter.init();
-        switch (iter_init_res) {
-            .err => |err| {
-                Output.prettyErrorln("Error: {}", .{err});
-                return;
-            },
-            else => {},
-        }
-        defer iter.deinit();
-
-        while (true) {
-            const next = try iter.next();
-            const path = switch (next) {
-                .err => |err| {
-                    Output.prettyErrorln("Error: {}", .{err});
-                    continue;
-                },
-                .result => |path| path orelse break,
-            };
-            // const path = next.result orelse break;
-
-            const json_file = std.fs.cwd().openFile(
-                path,
-                .{ .mode = .read_only },
-            ) catch {
-                continue;
-            };
-            defer json_file.close();
-
-            const json_stat_size = try json_file.getEndPos();
-            const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-            defer allocator.free(json_buf);
-
-            const json_len = try json_file.preadAll(json_buf, 0);
-            const json_source = logger.Source.initPathString(path, json_buf[0..json_len]);
-
-            var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, log);
-            _ = try parser.parseExpr();
-            if (!parser.has_found_name) {
-                continue;
-            }
-            const entry = Package.WorkspaceMap.Entry{ .name = try allocator.dupe(u8, parser.found_name), .version = null, .name_loc = logger.Loc.Empty };
-            const dirpath = std.fs.path.dirname(path) orelse continue;
-            try workspace_map.insert(try allocator.dupe(u8, dirpath), entry);
-        }
-    }
-
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
         const params_to_parse = comptime cmd.params();
@@ -548,68 +427,7 @@ pub const Arguments = struct {
             cwd = try bun.getcwd(&cwd_buf);
         }
 
-        const filters = args.options("--filter");
-        if (filters.len > 0) {
-            ctx.has_filter = true;
-            // TODO in the future we can try loading the lockfile to get the workspace information more quickly
-            // var manager = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
-            // const load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
-            // if (load_lockfile == .not_found) {
-
-            // find the paths of all projects that match this filter
-
-            var wsmap = Package.WorkspaceMap.init(allocator);
-            defer wsmap.deinit();
-            // find the root package.json of the workspace and load the child packages into workspace map
-            findWorkspaceMembers(allocator, ctx.log, &wsmap, cwd) catch |err| {
-                if (comptime Environment.allow_assert) {
-                    if (@errorReturnTrace()) |trace| {
-                        std.debug.print("Error: {s}\n{}\n", .{ @errorName(err), trace });
-                    }
-                }
-                Output.err(err, "Failed to find workspace root in {s}", .{cwd});
-                ctx.log.printForLogLevelColorsRuntime(Output.errorWriter(), Output.enable_ansi_colors) catch {};
-                Global.exit(1);
-            };
-
-            var matched_paths = std.ArrayListUnmanaged([]u8){};
-
-            var pattern_stack = std.heap.stackFallback(4096, bun.default_allocator);
-            var pattern = std.ArrayList(u32).init(pattern_stack.get());
-            defer pattern.deinit();
-
-            // check each pattern against each package name
-            for (filters) |pattern_utf8_| {
-                var pattern_utf8 = pattern_utf8_;
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-
-                const is_file_pattern = pattern_utf8.len > 0 and pattern_utf8[0] == '.';
-                if (is_file_pattern) {
-                    const parts = [_]string{pattern_utf8};
-                    pattern_utf8 = bun.path.joinAbsStringBuf(cwd, &path_buf, &parts, .auto);
-                }
-
-                pattern.clearRetainingCapacity();
-                var codepointer_iter = strings.UnsignedCodepointIterator.init(pattern_utf8);
-                var cursor = strings.UnsignedCodepointIterator.Cursor{};
-                while (codepointer_iter.next(&cursor)) {
-                    try pattern.append(cursor.c);
-                }
-                for (wsmap.keys(), wsmap.values()) |path, entry| {
-                    const target = if (is_file_pattern) path else entry.name;
-                    if (Glob.matchImpl(pattern.items, target)) {
-                        try matched_paths.append(allocator, try allocator.dupe(u8, path));
-                    }
-                }
-            }
-
-            if (matched_paths.items.len == 0) {
-                Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
-                Global.exit(1);
-            }
-
-            ctx.workspace_paths = matched_paths.items;
-        }
+        ctx.filters = args.options("--filter");
 
         if (cmd == .TestCommand) {
             if (args.option("--timeout")) |timeout_ms| {
@@ -1281,8 +1099,7 @@ pub const Command = struct {
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
 
-        workspace_paths: [][]const u8 = &[_][]const u8{},
-        has_filter: bool = false,
+        filters: []const []const u8 = &[_][]const u8{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
@@ -1914,6 +1731,9 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0 and extension.len == 0) {
+                    if (ctx.filters.len > 0) {
+                        Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
+                    }
                     if (try RunCommand.exec(ctx, true, false)) {
                         return;
                     }

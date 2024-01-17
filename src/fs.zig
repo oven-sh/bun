@@ -1174,6 +1174,11 @@ pub const FileSystem = struct {
                 if (shared_buffer.list.capacity > file_contents.len) {
                     file_contents.ptr[file_contents.len] = 0;
                 }
+
+                if (strings.BOM.detect(file_contents)) |bom| {
+                    debug("Convert {s} BOM", .{@tagName(bom)});
+                    file_contents = try bom.removeAndConvertToUTF8WithoutDealloc(allocator, &shared_buffer.list);
+                }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position
                 var buf = try allocator.alloc(u8, size + 1);
@@ -1187,6 +1192,11 @@ pub const FileSystem = struct {
                 };
                 file_contents = buf[0..read_count];
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+
+                if (strings.BOM.detect(file_contents)) |bom| {
+                    debug("Convert {s} BOM", .{@tagName(bom)});
+                    file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
+                }
             }
 
             return PathContentsPair{ .path = Path.init(path), .contents = file_contents };

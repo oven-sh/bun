@@ -44,6 +44,7 @@ const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 const assert = std.debug.assert;
 const Syscall = bun.sys;
+const uv = bun.windows.libuv;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -349,6 +350,27 @@ pub const ReadableStream = struct {
         }
     }
 
+    pub fn fromUVPipe(globalThis: *JSGlobalObject,
+        pipe: *uv.uv_pipe_t,
+        buffered_data: bun.ByteList,) JSC.JSValue {
+        
+        JSC.markBinding(@src());
+        var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
+        reader.* = .{
+            .globalThis = globalThis,
+            .context = .{
+                .buffered_data = buffered_data,
+                .started = true,
+                .lazy_readable = .{
+                    .readable = .{
+                        .UVPIPE = pipe.*,
+                    },
+                },
+            },
+        };  
+
+        return reader.toJS(globalThis);
+    }
     pub fn fromFIFO(
         globalThis: *JSGlobalObject,
         fifo: *FIFO,

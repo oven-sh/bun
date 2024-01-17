@@ -540,12 +540,12 @@ pub const Loop = extern struct {
     }
 
     pub fn close(ptr: *Loop) void {
-        uv_loop_close(ptr);
+        _ = uv_loop_close(ptr);
     }
 
-    pub fn new() ?bun.C.E {
-        const ptr = bun.default_allocator.create(Loop);
-        if (init(ptr)) |e| return e;
+    pub fn new() ?*Loop {
+        const ptr = bun.default_allocator.create(Loop) catch return null;
+        if (init(ptr) != null) return null;
         return ptr;
     }
 
@@ -831,9 +831,10 @@ const union_unnamed_380 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, [*]uv_buf_t) callconv(.C) void;
+pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, *uv_buf_t) callconv(.C) void;
 pub const uv_stream_t = struct_uv_stream_s;
-pub const uv_read_cb = ?*const fn (*uv_stream_t, isize, [*]const uv_buf_t) callconv(.C) void;
+/// *uv.uv_handle_t is actually *uv_stream_t, just changed to avoid dependency loop error on Zig
+pub const uv_read_cb = ?*const fn (*uv_handle_t, isize, *const uv_buf_t) callconv(.C) void;
 const struct_unnamed_382 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -1909,7 +1910,7 @@ pub extern fn uv_guess_handle(file: uv_file) uv_handle_type;
 pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
 const enum_unnamed_462 = c_uint;
 pub extern fn uv_pipe_init(*uv_loop_t, handle: *uv_pipe_t, ipc: c_int) c_int;
-pub extern fn uv_pipe_open([*c]uv_pipe_t, file: uv_file) c_int;
+pub extern fn uv_pipe_open([*c]uv_pipe_t, file: uv_file) ReturnCode;
 pub extern fn uv_pipe_bind(handle: *uv_pipe_t, name: [*]const u8) c_int;
 pub extern fn uv_pipe_bind2(handle: *uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
 pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: *uv_pipe_t, name: [*]const u8, cb: uv_connect_cb) void;

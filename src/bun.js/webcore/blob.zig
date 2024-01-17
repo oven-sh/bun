@@ -4445,12 +4445,22 @@ pub const Blob = struct {
         return this.store != null and this.store.?.data == .file;
     }
 
-    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+        const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
+
+        if (buf.len == 0) {
+            return ZigString.Empty.toValue(global);
+        }
+
+        if (bom == .utf16_le) {
+            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer out.deref();
+            return out.toJS(global);
+        }
+
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-
-        const buf = strings.withoutUTF8BOM(buf_);
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
@@ -4471,10 +4481,6 @@ pub const Blob = struct {
             }
 
             if (lifetime != .temporary) this.setIsASCIIFlag(true);
-        }
-
-        if (buf.len == 0) {
-            return ZigString.Empty.toValue(global);
         }
 
         switch (comptime lifetime) {
@@ -4502,10 +4508,10 @@ pub const Blob = struct {
             .temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
-                if (buf.len != buf_.len) {
+                if (buf.len != raw_bytes.len) {
                     var out = bun.String.createLatin1(buf);
                     defer {
-                        bun.default_allocator.free(buf_);
+                        bun.default_allocator.free(raw_bytes);
                         out.deref();
                     }
 
@@ -4541,9 +4547,15 @@ pub const Blob = struct {
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
-        const buf = strings.withoutUTF8BOM(buf_);
+    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+        const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+
+        if (bom == .utf16_le) {
+            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer out.deref();
+            return out.toJSByParseJSON(global);
+        }
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
@@ -5028,7 +5040,7 @@ pub const AnyBlob = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                return str.toJSForParseJSON(global);
+                return str.toJSByParseJSON(global);
             },
         }
     }

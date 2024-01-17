@@ -1351,7 +1351,7 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
   server.stop(true);
 });
 
-it("should support async error handling", async () => {
+it("should support promise returned from error", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req) {

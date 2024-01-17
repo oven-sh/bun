@@ -81,7 +81,70 @@ pub const StateKind = enum(u8) {
     expansion,
 };
 
-pub const CopyOnWriteMap = struct {};
+/// Copy-on-write
+pub fn Cow(comptime T: type, comptime VTable: type) type {
+    const Handler = struct {
+        fn copy(this: *T) T {
+            if (@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
+            return VTable.copy(this);
+        }
+
+        fn deinit(this: *T) void {
+            if (@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
+            return VTable.deinit(this);
+        }
+    };
+
+    return union(enum) {
+        borrowed: *T,
+        owned: T,
+
+        pub fn borrow(val: *T) @This() {
+            return .{
+                .borrowed = val,
+            };
+        }
+
+        pub fn own(val: T) @This() {
+            return .{
+                .owned = val,
+            };
+        }
+
+        /// Get the underlying value.
+        pub inline fn inner(this: *@This()) *T {
+            return switch (this.*) {
+                .borrowed => this.borrowed,
+                .owned => &this.owned,
+            };
+        }
+
+        pub fn copy(this: *@This()) void {
+            switch (this.*) {
+                .borrowed => {
+                    this.* = .{
+                        .owned = Handler.copy(this.borrowed),
+                    };
+                },
+                .owned => {},
+            }
+        }
+
+        pub fn deinit(this: *@This()) void {
+            Handler.deinit(this.inner());
+        }
+    };
+}
+
+pub const CowEnv = Cow(std.StringArrayHashMap([:0]const u8), struct {
+    pub fn copy(val: *std.StringArrayHashMap([:0]const u8)) std.StringArrayHashMap([:0]const u8) {
+        return val.clone() catch bun.outOfMemory();
+    }
+
+    pub fn deinit(val: *std.StringArrayHashMap([:0]const u8)) void {
+        val.deinit();
+    }
+});
 
 pub const CoroutineResult = enum {
     /// it's okay for the caller to continue its execution
@@ -1146,8 +1209,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.parent.childDone(this, 0);
                     return;
                 }
-
-                // FIXME handle error state? technically expansion can never fail, I think
             }
 
             fn transitionToGlobState(this: *Expansion) void {

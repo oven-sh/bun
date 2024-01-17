@@ -331,7 +331,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                     .pathlike = .{
                         .fd = bun.STDIN_FD,
                     },
-                    .is_atty = std.os.isatty(bun.fdcast(bun.STDIN_FD)),
+                    .is_atty = std.os.isatty(bun.STDIN_FD.cast()),
                     .mode = mode,
                 },
             },

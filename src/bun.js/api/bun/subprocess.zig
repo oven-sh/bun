@@ -47,19 +47,19 @@ const win_rusage = struct {
     nivcsw: u0 = 0,
 };
 
-const IO_COUNTERS = extern struct{
-  ReadOperationCount: u64 = 0,
-  WriteOperationCount: u64 = 0,
-  OtherOperationCount: u64 = 0,
-  ReadTransferCount: u64 = 0,
-  WriteTransferCount: u64 = 0,
-  OtherTransferCount: u64 = 0,
+const IO_COUNTERS = extern struct {
+    ReadOperationCount: u64 = 0,
+    WriteOperationCount: u64 = 0,
+    OtherOperationCount: u64 = 0,
+    ReadTransferCount: u64 = 0,
+    WriteTransferCount: u64 = 0,
+    OtherTransferCount: u64 = 0,
 };
 
 extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
 
-fn uv_getrusage(process: *uv.uv_process_t) win_rusage {    
-    var usage_info: Rusage = .{ .utime = .{}, .stime = .{}};
+fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
+    var usage_info: Rusage = .{ .utime = .{}, .stime = .{} };
     const process_pid: *anyopaque = process.process_handle;
     const WinTime = std.os.windows.FILETIME;
     var starttime: WinTime = undefined;
@@ -67,14 +67,14 @@ fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var kerneltime: WinTime = undefined;
     var usertime: WinTime = undefined;
     // We at least get process times
-    if(std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) { 
+    if (std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
         var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
-        if(temp > 0) {
+        if (temp > 0) {
             usage_info.stime.tv_sec = @intCast(temp / 10000000);
             usage_info.stime.tv_usec = @intCast(temp % 1000000);
         }
         temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
-        if(temp > 0) {
+        if (temp > 0) {
             usage_info.utime.tv_sec = @intCast(temp / 10000000);
             usage_info.utime.tv_usec = @intCast(temp % 1000000);
         }
@@ -83,10 +83,10 @@ fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     _ = GetProcessIoCounters(process_pid, &counters);
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
-    
+
     const memory = std.os.windows.GetProcessMemoryInfo(process_pid) catch return usage_info;
     usage_info.maxrss = memory.PeakWorkingSetSize / 1024;
-    
+
     return usage_info;
 }
 const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
@@ -191,7 +191,7 @@ pub const Subprocess = struct {
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
-    pipes: if(Environment.isWindows) [3]uv.uv_pipe_t else u0 = if(Environment.isWindows) std.mem.zeroes([3]uv.uv_pipe_t) else 0,
+    pipes: if (Environment.isWindows) [3]uv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes([3]uv.uv_pipe_t) else 0,
 
     stdin: Writable,
     stdout: Readable,
@@ -262,7 +262,6 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
     ) JSValue {
-        
         if (this.pid_rusage == null) {
             return JSValue.jsUndefined();
         }
@@ -399,7 +398,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe == .buffer) {
-                        if(Environment.isWindows) {
+                        if (Environment.isWindows) {
                             uv.uv_ref(@ptrCast(&this.pipe.buffer.stream));
                             return;
                         }
@@ -416,7 +415,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe == .buffer) {
-                        if(Environment.isWindows) {
+                        if (Environment.isWindows) {
                             uv.uv_unref(@ptrCast(&this.pipe.buffer.stream));
                             return;
                         }
@@ -586,7 +585,7 @@ pub const Subprocess = struct {
                     return JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
                 },
                 .pipe => {
-                    if(!Environment.isWindows) {
+                    if (!Environment.isWindows) {
                         this.pipe.buffer.stream.close_on_empty_read = true;
                         this.pipe.buffer.readAll();
                     }
@@ -942,7 +941,7 @@ pub const Subprocess = struct {
         }
     };
 
-    pub const StreamType = if(Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
+    pub const StreamType = if (Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
     pub const BufferedOutput = struct {
         internal_buffer: bun.ByteList = .{},
         stream: StreamType = undefined,
@@ -958,7 +957,7 @@ pub const Subprocess = struct {
         };
 
         pub fn init(fd: bun.FileDescriptor) BufferedOutput {
-            if(Environment.isWindows) {
+            if (Environment.isWindows) {
                 @compileError("Cannot use BufferedOutput with fd on Windows use please use .initWithPipe");
             }
             return BufferedOutput{
@@ -970,17 +969,14 @@ pub const Subprocess = struct {
         }
 
         pub fn initWithPipe(pipe: *uv.uv_pipe_t) BufferedOutput {
-            if(!Environment.isWindows) {
+            if (!Environment.isWindows) {
                 @compileError("uv.uv_pipe_t can only be used on Windows");
             }
-            return BufferedOutput{
-                .internal_buffer = .{},
-                .stream = pipe
-            };
+            return BufferedOutput{ .internal_buffer = .{}, .stream = pipe };
         }
 
         pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
-            if(Environment.isWindows) {
+            if (Environment.isWindows) {
                 @compileError("Cannot use BufferedOutput with fd on Windows use please use .initWithPipeAndSlice");
             }
             return BufferedOutput{
@@ -994,7 +990,7 @@ pub const Subprocess = struct {
         }
 
         pub fn initWithPipeAndSlice(pipe: *uv.uv_pipe_t, slice: []u8) BufferedOutput {
-            if(!Environment.isWindows) {
+            if (!Environment.isWindows) {
                 @compileError("uv.uv_pipe_t can only be used on Window");
             }
             return BufferedOutput{
@@ -1006,7 +1002,7 @@ pub const Subprocess = struct {
         }
 
         pub fn initWithAllocator(allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
-            if(Environment.isWindows) {
+            if (Environment.isWindows) {
                 @compileError("Cannot use BufferedOutput with fd on Windows use please use .initWithPipeAndAllocator");
             }
             var this = init(fd);
@@ -1019,7 +1015,7 @@ pub const Subprocess = struct {
         }
 
         pub fn initWithPipeAndAllocator(allocator: std.mem.Allocator, pipe: *uv.uv_pipe_t, max_size: u32) BufferedOutput {
-             if(!Environment.isWindows) {
+            if (!Environment.isWindows) {
                 @compileError("uv.uv_pipe_t can only be used on Window");
             }
             var this = initWithPipe(pipe);
@@ -1032,7 +1028,7 @@ pub const Subprocess = struct {
         }
 
         pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
-            if(Environment.isWindows) {
+            if (Environment.isWindows) {
                 @compileError("uv.uv_pipe_t can only be used on Window");
             }
             switch (result) {
@@ -1071,10 +1067,10 @@ pub const Subprocess = struct {
 
         fn uvStreamReadCallback(handle: *uv.uv_handle_t, nread: isize, buffer: *const uv.uv_buf_t) callconv(.C) void {
             const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
-            if(nread <= 0) {
-                switch(nread){
+            if (nread <= 0) {
+                switch (nread) {
                     0 => {
-                        // EAGAIN or EWOULDBLOCK 
+                        // EAGAIN or EWOULDBLOCK
                         return;
                     },
                     uv.UV_EOF => {
@@ -1082,7 +1078,7 @@ pub const Subprocess = struct {
                         _ = uv.uv_read_stop(@ptrCast(handle));
                     },
                     else => {
-                        const rt = uv.ReturnCodeI64 {
+                        const rt = uv.ReturnCodeI64{
                             .value = @intCast(nread),
                         };
                         const err = rt.errEnum() orelse bun.C.E.CANCELED;
@@ -1094,45 +1090,42 @@ pub const Subprocess = struct {
                 // when nread < 0 buffer maybe not point to a valid address
                 return;
             }
-        
-            this.internal_buffer.len += @as(u32, @truncate(buffer.len));    
+
+            this.internal_buffer.len += @as(u32, @truncate(buffer.len));
         }
 
         fn uvStreamAllocCallback(handle: *uv.uv_handle_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
-
             const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
             var size: usize = 0;
             var available = this.internal_buffer.available();
             if (this.auto_sizer) |auto_sizer| {
                 size = auto_sizer.max - this.internal_buffer.len;
-                if(size > suggested_size) {
+                if (size > suggested_size) {
                     size = suggested_size;
                 }
-                
-                if(available.len < size and this.internal_buffer.len < auto_sizer.max) {
+
+                if (available.len < size and this.internal_buffer.len < auto_sizer.max) {
                     this.internal_buffer.ensureUnusedCapacity(auto_sizer.allocator, size) catch bun.outOfMemory();
                     available = this.internal_buffer.available();
                 }
-    
             } else {
                 size = available.len;
-                if(size > suggested_size) {
+                if (size > suggested_size) {
                     size = suggested_size;
                 }
             }
             buffer.* = .{ .base = @ptrCast(available.ptr), .len = @intCast(size) };
-            if(size == 0) {
+            if (size == 0) {
                 _ = uv.uv_read_stop(@ptrCast(@alignCast(handle)));
                 this.status = .{ .done = {} };
             }
         }
 
         pub fn readAll(this: *BufferedOutput) void {
-            if(Environment.isWindows) {
-                if(this.status == .pending) {
+            if (Environment.isWindows) {
+                if (this.status == .pending) {
                     this.stream.data = this;
                     _ = uv.uv_read_start(@ptrCast(this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
-                    
                 }
                 return;
             }
@@ -1214,7 +1207,7 @@ pub const Subprocess = struct {
         }
 
         fn watch(this: *BufferedOutput) void {
-            if(Environment.isWindows) {
+            if (Environment.isWindows) {
                 this.readAll();
             } else {
                 std.debug.assert(this.stream.fd != bun.invalid_fd);
@@ -1233,7 +1226,7 @@ pub const Subprocess = struct {
         pub fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
             if (exited) {
                 // exited + received EOF => no more read()
-                const isClosed = if(Environment.isWindows) this.status != .pending else this.stream.isClosed();
+                const isClosed = if (Environment.isWindows) this.status != .pending else this.stream.isClosed();
                 if (isClosed) {
                     // also no data at all
                     if (this.internal_buffer.len == 0) {
@@ -1260,14 +1253,14 @@ pub const Subprocess = struct {
                 }
             }
 
-            if(Environment.isWindows) {
+            if (Environment.isWindows) {
                 @panic("TODO: Windows");
 
                 // _ = uv.uv_read_stop(@ptrCast(&this.stream));
-               
+
                 // const internal_buffer = this.internal_buffer;
                 // this.internal_buffer = bun.ByteList.init("");
-               
+
                 // const result = JSC.WebCore.ReadableStream.fromJS(
                 //     JSC.WebCore.ReadableStream.fromUVPipe(
                 //         globalThis,
@@ -1304,7 +1297,7 @@ pub const Subprocess = struct {
             switch (this.status) {
                 .done => {},
                 .pending => {
-                    if(Environment.isWindows) {
+                    if (Environment.isWindows) {
                         _ = uv.uv_read_stop(@ptrCast(&this.stream));
                         _ = uv.uv_close(@ptrCast(&this.stream), null);
                     } else {
@@ -1883,20 +1876,18 @@ pub const Subprocess = struct {
             };
             const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
 
-
             const alloc = globalThis.allocator();
             var subprocess = alloc.create(Subprocess) catch {
                 globalThis.throwOutOfMemory();
                 return .zero;
             };
 
-            
             var uv_stdio = [3]uv.uv_stdio_container_s{
                 stdio[0].setUpChildIoUvSpawn(0, &subprocess.pipes[0], true, bun.invalid_fd) catch |err| {
                     alloc.destroy(subprocess);
                     return globalThis.handleError(err, "in setting up uv_process stdin");
                 },
-                stdio[1].setUpChildIoUvSpawn(1, &subprocess.pipes[1], false, bun.invalid_fd) catch |err| { 
+                stdio[1].setUpChildIoUvSpawn(1, &subprocess.pipes[1], false, bun.invalid_fd) catch |err| {
                     alloc.destroy(subprocess);
                     return globalThis.handleError(err, "in setting up uv_process stdout");
                 },
@@ -1967,8 +1958,7 @@ pub const Subprocess = struct {
                 subprocess.stdin.buffered_input.writeIfPossible(is_sync);
             }
 
-            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer)
-             {
+            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
                 if (is_sync or !lazy) {
                     subprocess.stdout.pipe.buffer.readAll();
                 }
@@ -2458,7 +2448,7 @@ pub const Subprocess = struct {
     }
 
     pub fn wait(this: *Subprocess, sync: bool) void {
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             @panic("TODO: Windows");
         }
         return this.waitWithJSValue(sync, this.this_jsvalue);
@@ -2826,19 +2816,19 @@ pub const Subprocess = struct {
         ) !uv.uv_stdio_container_s {
             return switch (stdio) {
                 .array_buffer, .blob, .pipe => {
-                    if(uv.uv_pipe_init(uv.Loop.get(), pipe, 0) != 0) {
+                    if (uv.uv_pipe_init(uv.Loop.get(), pipe, 0) != 0) {
                         return error.FailedToCreatePipe;
                     }
-                    if(fd != bun.invalid_fd) {
+                    if (fd != bun.invalid_fd) {
                         // we receive a FD so we open this into our pipe
-                        if(uv.uv_pipe_open(pipe, bun.uvfdcast(fd)).errEnum()) |_| {
+                        if (uv.uv_pipe_open(pipe, bun.uvfdcast(fd)).errEnum()) |_| {
                             return error.FailedToCreatePipe;
                         }
                         return uv.uv_stdio_container_s{
                             .flags = @intCast(uv.UV_INHERIT_STREAM),
                             .data = .{ .stream = @ptrCast(pipe) },
-                        }; 
-                    } 
+                        };
+                    }
                     _ = isReadable;
                     // we dont have any fd so we create a new pipe
                     return uv.uv_stdio_container_s{

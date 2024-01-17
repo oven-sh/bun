@@ -1292,7 +1292,7 @@ pub const GetAddrInfoRequest = struct {
     }
 
     pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
-        log("onLibUVComplete: status={d}", .{uv_info.retcode.value});
+        log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         std.debug.assert(uv_info == &this.backend.libc.uv);
         if (this.backend == .libinfo) {
@@ -1301,13 +1301,13 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.value, .{ .addrinfo = uv_info.addrinfo });
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), .{ .addrinfo = uv_info.addrinfo });
                 return;
             }
         }
 
         var head = this.head;
-        head.processGetAddrInfoNative(uv_info.retcode.value, uv_info.addrinfo);
+        head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
         head.globalThis.allocator().destroy(this);
     }
 };

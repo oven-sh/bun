@@ -1535,7 +1535,7 @@ pub const Blob = struct {
             this.ref_count += 1;
         }
 
-        pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
+        pub fn externalOnDeref(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
             if (ptr == null) return;
             var this = bun.cast(*Store, ptr);
             this.deref();
@@ -4484,12 +4484,12 @@ pub const Blob = struct {
                 this.store.?.ref();
 
                 if (bom == .utf16_le) {
-                    var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
-                    defer out.deref();
-                    return out.toJS(global);
+                    return ZigString.init16(bun.reinterpretSlice(u16, buf))
+                        .external(global, this.store.?, Store.externalOnDeref);
                 }
+
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                return ZigString.init(buf).external(global, this.store.?, Store.external);
+                return ZigString.init(buf).external(global, this.store.?, Store.externalOnDeref);
             },
             .transfer => {
                 const store = this.store.?;
@@ -4497,12 +4497,12 @@ pub const Blob = struct {
                 this.transfer();
 
                 if (bom == .utf16_le) {
-                    var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
-                    defer out.deref();
-                    return out.toJS(global);
+                    return ZigString.init16(bun.reinterpretSlice(u16, buf))
+                        .external(global, this.store.?, Store.externalOnDeref);
                 }
+
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                return ZigString.init(buf).external(global, store, Store.external);
+                return ZigString.init(buf).external(global, store, Store.externalOnDeref);
             },
             // strings are immutable
             // sharing isn't really a thing
@@ -4510,16 +4510,17 @@ pub const Blob = struct {
                 this.store.?.ref();
 
                 if (bom == .utf16_le) {
-                    var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
-                    defer out.deref();
-                    return out.toJS(global);
+                    return ZigString.init16(bun.reinterpretSlice(u16, buf))
+                        .external(global, this.store.?, Store.externalOnDeref);
                 }
+
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                return ZigString.init(buf).external(global, this.store.?, Store.external);
+                return ZigString.init(buf).external(global, this.store.?, Store.externalOnDeref);
             },
             .temporary => {
-                // if there was a UTF-8 BOM, we need to clone the buffer because
+                // if there was a BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
+
                 if (bom == .utf8) {
                     var out = bun.String.createLatin1(buf);
                     defer {

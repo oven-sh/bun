@@ -1366,7 +1366,7 @@ it("should support async error handling", async () => {
         throw new Error("");
       }
 
-      if(e.message.endsWith("/async-rejected")) {
+      if(e.message.endsWith("/async-rejected-pending")) {
         await Bun.sleep(100);
         throw new Error("");
       }

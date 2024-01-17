@@ -373,10 +373,18 @@ pub const Arguments = struct {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
-    fn findWorkspaceRoot(allocator: std.mem.Allocator, log: *logger.Log, workspace_map: *Package.WorkspaceMap, workdir_: []const u8) !void {
+    fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *logger.Log, workspace_map: *Package.WorkspaceMap, workdir_: []const u8) !void {
+        bun.JSAst.Expr.Data.Store.create(default_allocator);
+        bun.JSAst.Stmt.Data.Store.create(default_allocator);
+
+        defer {
+            bun.JSAst.Expr.Data.Store.reset();
+            bun.JSAst.Stmt.Data.Store.reset();
+        }
+
         var workdir = workdir_;
 
-        while (true) : (workdir = std.fs.path.dirname(workdir) orelse return error.MissingPackageJSON) {
+        while (true) : (workdir = std.fs.path.dirname(workdir) orelse break) {
             const parent_trimmed = strings.withoutTrailingSlash(workdir);
             var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
             @memcpy(buf2[0..parent_trimmed.len], parent_trimmed);
@@ -424,25 +432,66 @@ pub const Arguments = struct {
             return;
         }
 
-        // var walker = Glob.BunGlobWalker{};
-        // var arena = std.heap.ArenaAllocator.init(allocator);
-        // try walker.init(&walker, &arena, "**/package.json", true, true, false, true);
-        // defer walker.deinit(true);
-
-        // var iter = Glob.BunGlobWalker.Iterator{ .walker = &walker };
-        // _ = try iter.init();
-
-        // while (switch (try iter.next()) {
-        //     .err => |err| return .{ .err = err },
-        //     .result => |matched_path| matched_path,
-        // }) |path| {
-        //     // try workspace_map.insert()
-        //     try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
-        // }
-
         // if we were not able to find a workspace root, try globbing for package.json files
 
-        return error.MissingPackageJSON;
+        var walker = Glob.BunGlobWalker{};
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        const walker_init_res = try walker.init(&arena, "**/package.json", true, true, false, true, true);
+        switch (walker_init_res) {
+            .err => |err| {
+                Output.prettyErrorln("Error: {}", .{err});
+                return;
+            },
+            else => {},
+        }
+        defer walker.deinit(true);
+
+        var iter = Glob.BunGlobWalker.Iterator{ .walker = &walker };
+        const iter_init_res = try iter.init();
+        switch (iter_init_res) {
+            .err => |err| {
+                Output.prettyErrorln("Error: {}", .{err});
+                return;
+            },
+            else => {},
+        }
+        defer iter.deinit();
+
+        while (true) {
+            const next = try iter.next();
+            const path = switch (next) {
+                .err => |err| {
+                    Output.prettyErrorln("Error: {}", .{err});
+                    continue;
+                },
+                .result => |path| path orelse break,
+            };
+            // const path = next.result orelse break;
+
+            const json_file = std.fs.cwd().openFile(
+                path,
+                .{ .mode = .read_only },
+            ) catch {
+                continue;
+            };
+            defer json_file.close();
+
+            const json_stat_size = try json_file.getEndPos();
+            const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+            defer allocator.free(json_buf);
+
+            const json_len = try json_file.preadAll(json_buf, 0);
+            const json_source = logger.Source.initPathString(path, json_buf[0..json_len]);
+
+            var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, log);
+            _ = try parser.parseExpr();
+            if (!parser.has_found_name) {
+                continue;
+            }
+            const entry = Package.WorkspaceMap.Entry{ .name = try allocator.dupe(u8, parser.found_name), .version = null, .name_loc = logger.Loc.Empty };
+            const dirpath = std.fs.path.dirname(path) orelse continue;
+            try workspace_map.insert(try allocator.dupe(u8, dirpath), entry);
+        }
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
@@ -508,13 +557,11 @@ pub const Arguments = struct {
             // if (load_lockfile == .not_found) {
 
             // find the paths of all projects that match this filter
-            bun.JSAst.Expr.Data.Store.create(default_allocator);
-            bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
             var wsmap = Package.WorkspaceMap.init(allocator);
             defer wsmap.deinit();
             // find the root package.json of the workspace and load the child packages into workspace map
-            findWorkspaceRoot(allocator, ctx.log, &wsmap, cwd) catch |err| {
+            findWorkspaceMembers(allocator, ctx.log, &wsmap, cwd) catch |err| {
                 if (comptime Environment.allow_assert) {
                     if (@errorReturnTrace()) |trace| {
                         std.debug.print("Error: {s}\n{}\n", .{ @errorName(err), trace });
@@ -526,56 +573,6 @@ pub const Arguments = struct {
             };
 
             var matched_paths = std.ArrayListUnmanaged([]u8){};
-            // const PkgInfo = struct {
-            //     // borrowed
-            //     path: []const u8,
-            //     // owned
-            //     name: []const u8,
-            // };
-
-            // var packages = std.ArrayList(PkgInfo).init(allocator);
-            // defer {
-            //     for (packages.items) |package| {
-            //         allocator.free(package.name);
-            //     }
-            //     packages.deinit();
-            // }
-
-            // bun.JSAst.Expr.Data.Store.create(allocator);
-            // bun.JSAst.Stmt.Data.Store.create(allocator);
-
-            // for each path in the workspace map, load the name from package.json
-            // for (wsmap.keys(), wsmap.values()) |path, entry| {
-            //     // std.debug.print("path: {s}\n, name: {s}\n", .{ path, entry.name });
-            //     var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            //     const pkgstring = "/package.json";
-            //     @memcpy(local_buf[0..path.len], path);
-            //     local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
-            //     local_buf[path.len + pkgstring.len] = 0;
-            //     const json_path = local_buf[0 .. path.len + pkgstring.len];
-
-            //     const json_file = std.fs.cwd().openFileZ(
-            //         local_buf[0 .. path.len + pkgstring.len :0].ptr,
-            //         .{ .mode = .read_only },
-            //     ) catch {
-            //         continue;
-            //     };
-            //     defer json_file.close();
-
-            //     const json_stat_size = try json_file.getEndPos();
-            //     const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-            //     defer allocator.free(json_buf);
-
-            //     const json_len = try json_file.preadAll(json_buf, 0);
-            //     const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
-
-            //     var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, ctx.log);
-            //     _ = try parser.parseExpr();
-            //     if (!parser.has_found_name) {
-            //         continue;
-            //     }
-            //     try packages.append(PkgInfo{ .path = path, .name = try allocator.dupe(u8, parser.found_name) });
-            // }
 
             var pattern_stack = std.heap.stackFallback(4096, bun.default_allocator);
             var pattern = std.ArrayList(u32).init(pattern_stack.get());
@@ -605,8 +602,11 @@ pub const Arguments = struct {
                     }
                 }
             }
-            // bun.JSAst.Expr.Data.Store.reset();
-            // bun.JSAst.Stmt.Data.Store.reset();
+
+            if (matched_paths.items.len == 0) {
+                Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+                Global.exit(1);
+            }
 
             ctx.workspace_paths = matched_paths.items;
         }

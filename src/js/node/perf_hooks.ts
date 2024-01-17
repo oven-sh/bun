@@ -24,6 +24,7 @@ var constants = {
   NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
+// PerformanceEntry is not a valid constructor, so we have to fake it.
 class PerformanceNodeTiming {
   bootstrapComplete: number = 0;
   environment: number = 0;
@@ -32,15 +33,6 @@ class PerformanceNodeTiming {
   loopStart: number = 0;
   nodeStart: number = 0;
   v8Start: number = 0;
-
-  static create() {
-    const object = Object.create(PerformanceNodeTiming.prototype);
-
-    object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-    object.loopStart = object.idleTime = 1;
-    object.loopExit = -1;
-    return object;
-  }
 
   // we have to fake the properties since it's not real
   get name() {
@@ -78,6 +70,15 @@ class PerformanceNodeTiming {
 Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
 Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 
+function createPerformanceNodeTiming() {
+  const object = Object.create(PerformanceNodeTiming.prototype);
+
+  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
+  object.loopStart = object.idleTime = 1;
+  object.loopExit = -1;
+  return object;
+}
+
 function eventLoopUtilization(utilization1, utilization2) {
   return {
     idle: 0,
@@ -86,6 +87,7 @@ function eventLoopUtilization(utilization1, utilization2) {
   };
 }
 
+// PerformanceEntry is not a valid constructor, so we have to fake it.
 class PerformanceResourceTiming {
   constructor() {
     throwNotImplemented("PerformanceResourceTiming");
@@ -97,7 +99,7 @@ Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 export default {
   performance: Object.create(performance, {
     nodeTiming: {
-      value: PerformanceNodeTiming.create(),
+      value: createPerformanceNodeTiming(),
       configurable: true,
       writable: true,
     },

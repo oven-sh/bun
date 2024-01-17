@@ -350,27 +350,6 @@ pub const ReadableStream = struct {
         }
     }
 
-    pub fn fromUVPipe(globalThis: *JSGlobalObject,
-        pipe: *uv.uv_pipe_t,
-        buffered_data: bun.ByteList,) JSC.JSValue {
-        
-        JSC.markBinding(@src());
-        var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
-        reader.* = .{
-            .globalThis = globalThis,
-            .context = .{
-                .buffered_data = buffered_data,
-                .started = true,
-                .lazy_readable = .{
-                    .readable = .{
-                        .UVPIPE = pipe.*,
-                    },
-                },
-            },
-        };  
-
-        return reader.toJS(globalThis);
-    }
     pub fn fromFIFO(
         globalThis: *JSGlobalObject,
         fifo: *FIFO,

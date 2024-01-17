@@ -19,6 +19,7 @@ const uws = bun.uws;
 const windows = bun.windows;
 const uv = windows.libuv;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const Body = JSC.WebCore.Body;
 
 const PosixSpawn = bun.posix.spawn;
 
@@ -458,6 +459,10 @@ pub const Subprocess = struct {
 
                 if (this.* != .stream) {
                     const stream = this.buffer.toReadableStream(globalThis, exited);
+                    // we do not detach on windows
+                    if (Environment.isWindows) {
+                        return stream.toJS();
+                    }
                     this.* = .{ .stream = stream };
                 }
 
@@ -946,6 +951,9 @@ pub const Subprocess = struct {
         internal_buffer: bun.ByteList = .{},
         stream: StreamType = undefined,
         auto_sizer: ?JSC.WebCore.AutoSizer = null,
+        /// stream strong ref if any is available
+        readable_stream_ref: if (Environment.isWindows) JSC.WebCore.ReadableStream.Strong else u0 = if (Environment.isWindows) .{} else 0,
+        globalThis: if (Environment.isWindows) ?*JSC.JSGlobalObject else u0 = if (Environment.isWindows) null else 0,
         status: Status = .{
             .pending = {},
         },
@@ -1076,6 +1084,7 @@ pub const Subprocess = struct {
                     uv.UV_EOF => {
                         this.status = .{ .done = {} };
                         _ = uv.uv_read_stop(@ptrCast(handle));
+                        this.flushBufferedDataIntoReadableStream();
                     },
                     else => {
                         const rt = uv.ReturnCodeI64{
@@ -1084,6 +1093,7 @@ pub const Subprocess = struct {
                         const err = rt.errEnum() orelse bun.C.E.CANCELED;
                         this.status = .{ .err = bun.sys.Error.fromCode(err, .read) };
                         _ = uv.uv_read_stop(@ptrCast(handle));
+                        this.signalStreamError();
                     },
                 }
 
@@ -1092,6 +1102,7 @@ pub const Subprocess = struct {
             }
 
             this.internal_buffer.len += @as(u32, @truncate(buffer.len));
+            this.flushBufferedDataIntoReadableStream();
         }
 
         fn uvStreamAllocCallback(handle: *uv.uv_handle_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
@@ -1223,7 +1234,82 @@ pub const Subprocess = struct {
             return blob;
         }
 
-        pub fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
+        pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
+            const this = bun.cast(*BufferedOutput, ctx);
+            this.readAll();
+            const internal_buffer = this.internal_buffer;
+            this.internal_buffer = bun.ByteList.init("");
+
+            return .{
+                .owned = .{
+                    .list = internal_buffer.listManaged(bun.default_allocator),
+                    .size_hint = internal_buffer.len,
+                },
+            };
+        }
+
+        fn signalStreamError(this: *BufferedOutput) void {
+            if (this.status == .err) {
+                // if we are streaming update with error
+                if (this.readable_stream_ref.get()) |readable| {
+                    if (readable.ptr == .Bytes) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{ .Error = this.status.err },
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                }
+                // after error we dont need the ref anymore
+                this.readable_stream_ref.deinit();
+            }
+        }
+        fn flushBufferedDataIntoReadableStream(this: *BufferedOutput) void {
+            if (this.readable_stream_ref.get()) |readable| {
+                std.debug.assert(readable.ptr == .Bytes);
+
+                const internal_buffer = this.internal_buffer;
+                const isDone = this.status != .pending;
+
+                if (internal_buffer.len > 0 or isDone) {
+                    readable.ptr.Bytes.size_hint += internal_buffer.len;
+                    if (isDone) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = internal_buffer,
+                            },
+                            bun.default_allocator,
+                        );
+                        // no need to keep the ref anymore
+                        this.readable_stream_ref.deinit();
+                    } else {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = internal_buffer,
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                    this.internal_buffer.len = 0;
+                }
+            }
+        }
+
+        fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+            const this = bun.cast(*BufferedOutput, ctx);
+            if (this.globalThis) |globalThis| {
+                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis) catch .{};
+            }
+        }
+
+        fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
+            if (Environment.isWindows) {
+                if (this.readable_stream_ref.get()) |readable| {
+                    return readable;
+                }
+            }
+
             if (exited) {
                 // exited + received EOF => no more read()
                 const isClosed = if (Environment.isWindows) this.status != .pending else this.stream.isClosed();
@@ -1254,22 +1340,17 @@ pub const Subprocess = struct {
             }
 
             if (Environment.isWindows) {
-                @panic("TODO: Windows");
-
-                // _ = uv.uv_read_stop(@ptrCast(&this.stream));
-
-                // const internal_buffer = this.internal_buffer;
-                // this.internal_buffer = bun.ByteList.init("");
-
-                // const result = JSC.WebCore.ReadableStream.fromJS(
-                //     JSC.WebCore.ReadableStream.fromUVPipe(
-                //         globalThis,
-                //         this.stream,
-                //         internal_buffer,
-                //     ),
-                //     globalThis,
-                // ).?;
-                // return result;
+                this.globalThis = globalThis;
+                var body = Body.Value{
+                    .Locked = .{
+                        .size_hint = 0,
+                        .task = this,
+                        .global = globalThis,
+                        .onStartStreaming = BufferedOutput.onStartStreamingRequestBodyCallback,
+                        .onReadableStreamAvailable = BufferedOutput.onReadableStreamAvailable,
+                    },
+                };
+                return JSC.WebCore.ReadableStream.fromJS(body.toReadableStream(globalThis), globalThis).?;
             }
 
             {
@@ -1300,6 +1381,7 @@ pub const Subprocess = struct {
                     if (Environment.isWindows) {
                         _ = uv.uv_read_stop(@ptrCast(&this.stream));
                         _ = uv.uv_close(@ptrCast(&this.stream), null);
+                        this.readable_stream_ref.deinit();
                     } else {
                         this.stream.close();
                     }

@@ -1121,6 +1121,8 @@ fn NewFlags(comptime debug_mode: bool) type {
         response_protected: bool = false,
         aborted: bool = false,
         has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+
+        is_error_promise_pending: bool = false,
     };
 }
 
@@ -1377,7 +1379,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            if (!resp.hasResponded() and !ctx.flags.has_marked_pending) {
+            if (!resp.hasResponded() and !ctx.flags.has_marked_pending and !ctx.flags.is_error_promise_pending) {
                 ctx.renderMissing();
                 return;
             }
@@ -2952,7 +2954,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.finishRunningErrorHandler(err, status);
                         return;
                     } else if (result.asAnyPromise()) |promise| {
-                        this.waitForErrorPromise(promise);
+                        this.processOnErrorPromise(result, promise, value, status);
+                        return;
                     } else if (result.as(Response)) |response| {
                         this.render(response);
                         return;
@@ -2963,14 +2966,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.finishRunningErrorHandler(value, status);
         }
 
-        fn waitForErrorPromise(
+        fn processOnErrorPromise(
             ctx: *RequestContext,
+            promise_js: JSC.JSValue,
             promise: JSC.AnyPromise,
             value: JSC.JSValue,
             status: u16,
         ) void {
-            var vm = ctx.vm;
-            var wait_for_promise = false;
+            var vm = ctx.server.vm;
 
             switch (promise.status(vm.global.vm())) {
                 .Pending => {},
@@ -2985,29 +2988,50 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     }
 
-                    if (!fulfilled_value.isEmptyOrUndefinedOrNull()) {
-                        if (fulfilled_value.toError()) |err| {
-                            ctx.finishRunningErrorHandler(err, status);
-                            return;
-                        } else if (fulfilled_value.as(Response)) |response| {
-                            ctx.render(response);
-                            return;
-                        }
-                    } else {
+                    var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
                         ctx.finishRunningErrorHandler(value, status);
                         return;
+                    };
+
+                    ctx.response_jsvalue = fulfilled_value;
+                    ctx.response_jsvalue.ensureStillAlive();
+                    ctx.flags.response_protected = false;
+                    ctx.response_ptr = response;
+
+                    response.body.value.toBlobIfPossible();
+                    switch (response.body.value) {
+                        .Blob => |*blob| {
+                            if (blob.needsToReadFile()) {
+                                fulfilled_value.protect();
+                                ctx.flags.response_protected = true;
+                            }
+                        },
+                        .Locked => {
+                            fulfilled_value.protect();
+                            ctx.flags.response_protected = true;
+                        },
+                        else => {},
                     }
+                    ctx.render(response);
+                    return;
                 },
                 .Rejected => {
                     promise.setHandled(vm.global.vm());
-                    ctx.finishRunningErrorHandler(value, promise.result(vm.global.vm()));
+                    ctx.finishRunningErrorHandler(promise.result(vm.global.vm()), status);
                     return;
                 },
             }
-            wait_for_promise = true;
 
-            if (wait_for_promise) {
-                @panic("");
+            // Promise is not fullfilled yet
+            {
+                ctx.flags.is_error_promise_pending = true;
+                ctx.pending_promises_for_abort += 1;
+                promise_js.then(
+                    ctx.server.globalThis,
+                    ctx,
+                    RequestContext.onResolve,
+                    RequestContext.onReject,
+                );
             }
         }
 

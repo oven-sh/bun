@@ -525,7 +525,11 @@ ReadStream = (function (InternalReadStream) {
 })(
   class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
-      if (options && (typeof options !== "object") & (typeof options !== "string")) {
+      if (typeof options === "string") {
+        options = { encoding: options };
+      }
+
+      if (!$isObject(options) && !$isCallable(options)) {
         throw new TypeError("Expected options to be an object or a string");
       }
 
@@ -542,10 +546,6 @@ ReadStream = (function (InternalReadStream) {
         highWaterMark = defaultReadStreamOptions.highWaterMark,
         fd = defaultReadStreamOptions.fd,
       } = options;
-
-      if (typeof options === "string") {
-        encoding = options;
-      }
 
       if (pathOrFd?.constructor?.name === "URL") {
         pathOrFd = Bun.fileURLToPath(pathOrFd);

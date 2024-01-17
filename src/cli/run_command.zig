@@ -1010,7 +1010,7 @@ pub const RunCommand = struct {
 
     pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
         // if there are no workspace paths specified, run in the current directory
-        if (ctx.workspace_paths.len == 0) {
+        if (!ctx.has_filter) {
             _ = try exec(ctx, bin_dirs_only, true);
             return;
         }
@@ -1026,6 +1026,7 @@ pub const RunCommand = struct {
         }
         var ok = true;
         for (ctx.workspace_paths) |path| {
+            Output.prettyErrorln("<d><b>In <r><blue><d>{s}<r>:", .{path});
             std.os.chdir(path) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
                 continue;
@@ -1036,6 +1037,8 @@ pub const RunCommand = struct {
                 continue;
             };
             ok = ok and res;
+            // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
+            Output.flush();
         }
         if (!ok) {
             Global.exit(1);

@@ -20,6 +20,7 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
+const Glob = @import("glob.zig");
 
 const Package = @import("install/lockfile.zig").Package;
 
@@ -151,7 +152,7 @@ pub const Arguments = struct {
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         // clap.parseParam("-w, --workspace <STR>             Perform the command on the specified workspace member package") catch unreachable,
-        clap.parseParam("-F, --filter <STR>...             Perform the command on all workspace member packages that match the pattern") catch unreachable,
+        clap.parseParam("--filter <STR>...                 Perform the command on all workspace member packages that match the pattern") catch unreachable,
         // clap.parseParam("--fail-if-no-match                Fail if no packages match the filter") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
@@ -374,7 +375,6 @@ pub const Arguments = struct {
 
     fn findWorkspaceRoot(allocator: std.mem.Allocator, log: *logger.Log, workspace_map: *Package.WorkspaceMap, workdir_: []const u8) !void {
         var workdir = workdir_;
-        var package_json_cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         while (true) : (workdir = std.fs.path.dirname(workdir) orelse return error.MissingPackageJSON) {
             const parent_trimmed = strings.withoutTrailingSlash(workdir);
@@ -382,6 +382,10 @@ pub const Arguments = struct {
             @memcpy(buf2[0..parent_trimmed.len], parent_trimmed);
             buf2[parent_trimmed.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
             buf2[parent_trimmed.len + "/package.json".len] = 0;
+            const json_path = buf2[0 .. parent_trimmed.len + "/package.json".len];
+            log.msgs.clearRetainingCapacity();
+            log.errors = 0;
+            log.warnings = 0;
 
             const json_file = std.fs.cwd().openFileZ(
                 buf2[0 .. parent_trimmed.len + "/package.json".len :0].ptr,
@@ -393,7 +397,6 @@ pub const Arguments = struct {
             const json_buf = try allocator.alloc(u8, json_stat_size + 64);
             defer allocator.free(json_buf);
             const json_len = try json_file.preadAll(json_buf, 0);
-            const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
             const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
             const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
 
@@ -421,41 +424,9 @@ pub const Arguments = struct {
             return;
         }
 
+        // if we were not able to find a workspace root, try globbing for package.json files
+
         return error.MissingPackageJSON;
-    }
-
-    fn packageMatchesName(allocator: std.mem.Allocator, log: *logger.Log, path: []const u8, target_name: []const u8) !bool {
-        var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        const pkgstring = "/package.json";
-        @memcpy(local_buf[0..path.len], path);
-        local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
-        local_buf[path.len + pkgstring.len] = 0;
-
-        const json_file = std.fs.cwd().openFileZ(
-            local_buf[0 .. path.len + pkgstring.len :0].ptr,
-            .{ .mode = .read_only },
-        ) catch {
-            return false;
-        };
-        defer json_file.close();
-
-        const json_stat_size = try json_file.getEndPos();
-        const json_buf = try allocator.alloc(u8, json_stat_size + 64);
-        defer allocator.free(json_buf);
-        const json_len = try json_file.preadAll(json_buf, 0);
-        var local_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const json_path = try bun.getFdPath(json_file.handle, &local_buf2);
-        const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
-        const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
-        const prop = json.asProperty("name") orelse return false;
-        const name = switch (prop.expr.data) {
-            .e_string => |str| str.data,
-            else => {
-                Output.err("error", "package.json name is not a string", .{});
-                return false;
-            },
-        };
-        return strings.eql(name, target_name);
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
@@ -514,6 +485,7 @@ pub const Arguments = struct {
 
         const filters = args.options("--filter");
         if (filters.len > 0) {
+            ctx.has_filter = true;
             // TODO in the future we can try loading the lockfile to get the workspace information more quickly
             // var manager = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
             // const load_lockfile = manager.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
@@ -527,29 +499,99 @@ pub const Arguments = struct {
             defer wsmap.deinit();
             // find the root package.json of the workspace and load the child packages into workspace map
             findWorkspaceRoot(allocator, ctx.log, &wsmap, cwd) catch |err| {
-                Output.prettyErrorln("error resolving --filter: {s}", .{@errorName(err)});
+                if (comptime Environment.allow_assert) {
+                    if (@errorReturnTrace()) |trace| {
+                        std.debug.print("Error: {s}\n{}\n", .{ @errorName(err), trace });
+                    }
+                }
+                Output.err(err, "Failed to find workspace root in {s}", .{cwd});
+                ctx.log.printForLogLevelColorsRuntime(Output.errorWriter(), Output.enable_ansi_colors) catch {};
                 Global.exit(1);
             };
 
-            var list = std.ArrayListUnmanaged([]u8){};
+            var matched_paths = std.ArrayListUnmanaged([]u8){};
+            const PkgInfo = struct {
+                // borrowed
+                path: []const u8,
+                // owned
+                name: []const u8,
+            };
 
-            for (filters) |pattern| {
-                std.debug.print("pattern: {s}\n", .{pattern});
-                for (wsmap.keys()) |path| {
-                    // check if the package at the path matches the name provided as an argument
-                    const matches = packageMatchesName(allocator, ctx.log, path, pattern) catch |err| {
-                        Output.prettyErrorln("error resolving --filter: {s}", .{@errorName(err)});
-                        Global.exit(1);
-                    };
-                    if (matches) {
-                        try list.append(allocator, try allocator.dupe(u8, path));
+            var packages = std.ArrayList(PkgInfo).init(allocator);
+            defer {
+                for (packages.items) |package| {
+                    allocator.free(package.name);
+                }
+                packages.deinit();
+            }
+
+            bun.JSAst.Expr.Data.Store.create(allocator);
+            bun.JSAst.Stmt.Data.Store.create(allocator);
+
+            // for each path in the workspace map, load the name from package.json
+            for (wsmap.keys()) |path| {
+                var local_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                const pkgstring = "/package.json";
+                @memcpy(local_buf[0..path.len], path);
+                local_buf[path.len..local_buf.len][0..pkgstring.len].* = pkgstring.*;
+                local_buf[path.len + pkgstring.len] = 0;
+                const json_path = local_buf[0 .. path.len + pkgstring.len];
+
+                const json_file = std.fs.cwd().openFileZ(
+                    local_buf[0 .. path.len + pkgstring.len :0].ptr,
+                    .{ .mode = .read_only },
+                ) catch {
+                    continue;
+                };
+                defer json_file.close();
+
+                const json_stat_size = try json_file.getEndPos();
+                const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+                defer allocator.free(json_buf);
+
+                const json_len = try json_file.preadAll(json_buf, 0);
+                const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+
+                var parser = try json_parser.PackageJSONVersionChecker.init(allocator, &json_source, ctx.log);
+                _ = try parser.parseExpr();
+                if (!parser.has_found_name) {
+                    continue;
+                }
+                try packages.append(PkgInfo{ .path = path, .name = try allocator.dupe(u8, parser.found_name) });
+            }
+
+            var pattern_stack = std.heap.stackFallback(4096, bun.default_allocator);
+            var pattern = std.ArrayList(u32).init(pattern_stack.get());
+            defer pattern.deinit();
+
+            // check each pattern against each package name
+            for (filters) |pattern_utf8_| {
+                var pattern_utf8 = pattern_utf8_;
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+                const is_file_pattern = pattern_utf8.len > 0 and pattern_utf8[0] == '.';
+                if (is_file_pattern) {
+                    const parts = [_]string{pattern_utf8};
+                    pattern_utf8 = bun.path.joinAbsStringBuf(cwd, &path_buf, &parts, .auto);
+                }
+
+                pattern.clearRetainingCapacity();
+                var codepointer_iter = strings.UnsignedCodepointIterator.init(pattern_utf8);
+                var cursor = strings.UnsignedCodepointIterator.Cursor{};
+                while (codepointer_iter.next(&cursor)) {
+                    try pattern.append(cursor.c);
+                }
+                for (packages.items) |package| {
+                    const target = if (is_file_pattern) package.path else package.name;
+                    if (Glob.matchImpl(pattern.items, target)) {
+                        try matched_paths.append(allocator, try allocator.dupe(u8, package.path));
                     }
                 }
             }
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
 
-            ctx.workspace_paths = list.items;
+            ctx.workspace_paths = matched_paths.items;
         }
 
         if (cmd == .TestCommand) {
@@ -1223,6 +1265,7 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = RuntimeOptions{},
 
         workspace_paths: [][]const u8 = &[_][]const u8{},
+        has_filter: bool = false,
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,

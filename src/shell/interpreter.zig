@@ -4968,12 +4968,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     fn shouldSkipEntry(this: *@This(), name: [:0]const u8) bool {
                         if (this.opts.show_all) return false;
                         if (this.opts.show_almost_all) {
-                            if (comptime bun.Environment.isWindows) {
-                                const nameutf16 = @as([*]const u16, @ptrCast(name.ptr))[0 .. name.len / 2];
-                                if (bun.strings.eqlComptimeUTF16(nameutf16[0..1], ".") or bun.strings.eqlComptimeUTF16(nameutf16[0..2], "..")) return true;
-                            } else {
-                                if (bun.strings.eqlComptime(name[0..1], ".") or bun.strings.eqlComptime(name[0..2], "..")) return true;
-                            }
+                            if (bun.strings.eqlComptime(name[0..1], ".") or bun.strings.eqlComptime(name[0..2], "..")) return true;
                         }
                         return false;
                     }

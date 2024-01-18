@@ -2717,12 +2717,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             node: *const ast.Cmd,
             parent: ParentPtr,
 
+            /// Arena used for memory needed to spawn command.
+            /// For subprocesses:
+            ///   - allocates argv, env array, etc.
+            ///   - Freed after calling posix spawn since its not needed anymore
+            /// For Builtins:
+            ///   - allocates argv, sometimes used by the builtin for small allocations.
+            ///   - Freed when builtin is done (since it contains argv which might be used at any point)
             spawn_arena: bun.ArenaAllocator,
+            spawn_arena_freed: bool = false,
 
             /// This allocated by the above arena
             args: std.ArrayList(?[*:0]const u8),
 
-            /// If the cmd redirects to a file we have to expand that string
+            /// If the cmd redirects to a file we have to expand that string.
+            /// Allocated in `spawn_arena`
             redirection_file: std.ArrayList(u8),
             redirection_fd: bun.FileDescriptor = bun.invalid_fd,
 
@@ -3290,6 +3299,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     },
                 };
                 subproc.ref();
+                this.spawn_arena_freed = true;
+                arena.deinit();
 
                 // if (this.cmd.stdout == .pipe and this.cmd.stdout.pipe == .buffer) {
                 //     this.cmd.?.stdout.pipe.buffer.watch();
@@ -3402,7 +3413,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.exec = .none;
                 }
 
-                this.spawn_arena.deinit();
+                if (!this.spawn_arena_freed) this.spawn_arena.deinit();
                 this.freed = true;
                 this.base.interpreter.allocator.destroy(this);
             }

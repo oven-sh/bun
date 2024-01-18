@@ -1216,21 +1216,20 @@ fn NewSocket(comptime ssl: bool) type {
         }
         pub fn onTimeout(
             this: *This,
-            _: Socket,
+            socket: Socket,
         ) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
             if (this.detached) return;
-            this.detached = true;
-            defer this.markInactive();
 
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
-
             const callback = handlers.onTimeout;
             if (callback == .zero) return;
-            var vm = handlers.vm;
-            defer vm.drainMicrotasks();
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter(socket.context());
+            defer scope.exit(ssl, this.wrapped);
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);

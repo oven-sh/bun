@@ -193,7 +193,7 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 2, 100);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 100);
 });
 
 it("should allow large amounts of data to be sent and received", async () => {

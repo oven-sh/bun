@@ -479,7 +479,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             Script,
         });
 
-        /// FIXME really need to think about lifetimes here properly
         pub const ShellState = struct {
             io: IO = .{},
             kind: Kind = .normal,
@@ -501,7 +500,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             /// Always has zero-sentinel
             __prev_cwd: std.ArrayList(u8),
             __cwd: std.ArrayList(u8),
-            // FIXME TODO deinit
             cwd_fd: bun.FileDescriptor,
 
             const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
@@ -1242,8 +1240,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             single: bool = false,
         };
 
-        /// FIXME: think about lifetimes and allocators here
-        /// in the case of expanding cmd args, we probably want to use the spawn args arena
+        /// TODO PERF: in the case of expanding cmd args, we probably want to use the spawn args arena
         /// otherwise the interpreter allocator
         ///
         /// If a word contains command substitution or glob expansion syntax then it
@@ -1363,8 +1360,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn deinit(expansion: *Expansion) void {
-                // FIXME
-                _ = expansion; // doesn't allocate so this should be fine
+                expansion.current_out.deinit();
             }
 
             pub fn start(this: *Expansion) void {
@@ -2093,8 +2089,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             });
 
             pub inline fn deinit(this: *Assigns) void {
-                // FIXME
-                _ = this;
+                if (this.state == .expanding) {
+                    this.state.expanding.current_expansion_result.deinit();
+                }
             }
 
             pub inline fn start(this: *Assigns) void {

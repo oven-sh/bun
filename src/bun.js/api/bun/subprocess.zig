@@ -1519,16 +1519,12 @@ pub const Subprocess = struct {
         },
         fd: bun.FileDescriptor,
         buffered_input: if (Environment.isWindows) BufferedPipeInput else BufferedInput,
-        uvpipe: *uv.uv_pipe_t,
         memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
 
         pub fn ref(this: *Writable) void {
             switch (this.*) {
-                .uvpipe => |pipe| {
-                    uv.uv_ref(@ptrCast(pipe));
-                },
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
                         poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
@@ -1540,9 +1536,6 @@ pub const Subprocess = struct {
 
         pub fn unref(this: *Writable) void {
             switch (this.*) {
-                .uvpipe => |pipe| {
-                    uv.uv_unref(@ptrCast(pipe));
-                },
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
                         poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
@@ -1651,7 +1644,6 @@ pub const Subprocess = struct {
 
         pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
             return switch (this) {
-                .uvpipe => JSValue.jsUndefined(),
                 .pipe => |pipe| pipe.toJS(globalThis),
                 .fd => |fd| JSValue.jsNumber(fd),
                 .memfd, .ignore => JSValue.jsUndefined(),
@@ -1663,9 +1655,6 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Writable) void {
             return switch (this.*) {
-                .uvpipe => |pipe| {
-                    _ = uv.uv_close(@ptrCast(pipe), null);
-                },
                 .pipe => |pipe| {
                     pipe.close();
                 },
@@ -1686,9 +1675,6 @@ pub const Subprocess = struct {
 
         pub fn close(this: *Writable) void {
             return switch (this.*) {
-                .uvpipe => |pipe| {
-                    _ = uv.uv_close(@ptrCast(pipe), null);
-                },
                 .pipe => {},
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);

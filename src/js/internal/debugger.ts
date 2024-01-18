@@ -264,6 +264,9 @@ const defaultHostname = "localhost";
 const defaultPort = 6499;
 
 function parseUrl(input: string): URL {
+  if (input.startsWith("ws://") || input.startsWith("ws+unix://") || input.startsWith("unix://")) {
+    return new URL(input);
+  }
   const url = new URL(`ws://${defaultHostname}:${defaultPort}/${randomId()}`);
   for (const part of input.split(/(\[[a-z0-9:]+\])|:/).filter(Boolean)) {
     if (/^\d+$/.test(part)) {

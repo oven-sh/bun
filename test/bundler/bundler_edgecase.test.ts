@@ -1040,6 +1040,7 @@ describe("bundler", () => {
     },
   });
 
+  // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node
     ["require", "import.meta.require", "__require"],

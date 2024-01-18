@@ -441,7 +441,7 @@ pub const CreateCommand = struct {
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = std.fs.File{ .handle = bun.fdcast(plucker.fd) };
+                        package_json_file = plucker.fd.asFile();
                     }
                 }
             },
@@ -1727,31 +1727,31 @@ pub const Example = struct {
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
             var folders = [3]std.fs.Dir{
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             // subfolders with package.json
             for (folders) |folder| {
-                if (folder.fd != bun.fdcast(bun.invalid_fd)) {
+                if (folder.fd != bun.invalid_fd.cast()) {
                     var iter = folder.iterate();
 
                     loop: while (iter.next() catch null) |entry_| {

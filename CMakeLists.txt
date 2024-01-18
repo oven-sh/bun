@@ -3,7 +3,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.23")
-set(WEBKIT_TAG b4de09f41b83e9e5c0e43ef414f1aee5968b6f7c)
+set(WEBKIT_TAG 9c501b9aa712b7959f80dc99491e8758c151c20e)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -471,6 +471,7 @@ else()
         # make jsc-compile-debug jsc-copy-headers
         include_directories(
             "${WEBKIT_DIR}/"
+            "${WEBKIT_DIR}/JavaScriptCore/Headers/JavaScriptCore"
             "${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders"
             "${WEBKIT_DIR}/bmalloc/Headers"
             "${WEBKIT_DIR}/WTF/Headers"

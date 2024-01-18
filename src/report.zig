@@ -77,7 +77,7 @@ pub const CrashReportWriter = struct {
         }
 
         const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
-        var file = std.fs.File{ .handle = bun.fdcast(call) };
+        var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -571,7 +571,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 Global.exit(1);
             }
         },
-        error.FileNotFound => {
+        error.ENOENT, error.FileNotFound => {
             Output.prettyError(
                 "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},

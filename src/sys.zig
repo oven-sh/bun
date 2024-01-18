@@ -11,7 +11,6 @@ const JSC = @import("root").bun.JSC;
 const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
@@ -402,7 +401,7 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else bun.fdcast(dirFd),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else dirFd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -426,7 +425,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -502,7 +501,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         else if (dirfd == bun.invalid_fd)
             std.fs.cwd().fd
         else
-            bun.fdcast(dirfd),
+            dirfd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -544,7 +543,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), rc, @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -718,7 +717,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             var bytes_written: u32 = undefined;
             std.debug.assert(bytes.len > 0);
             const rc = std.os.windows.kernel32.WriteFile(
-                bun.fdcast(fd),
+                fd.cast(),
                 bytes.ptr,
                 adjusted_len,
                 &bytes_written,
@@ -1074,9 +1073,9 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
     unreachable;
 }
 
-pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
+pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {
+        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
             return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
         }
 
@@ -1334,6 +1333,7 @@ pub const Error = struct {
     syscall: Syscall.Tag,
     path: []const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
+    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
@@ -1429,7 +1429,11 @@ pub const Error = struct {
             const system_errno = brk: {
                 // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
                 @setRuntimeSafety(false);
-                break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
             if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
@@ -1667,7 +1671,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         const offset_low: u64 = @as(u32, @intCast(offset & 0xFFFFFFFF));
         var plarge_integer: i64 = @bitCast(offset_high);
         const rc = kernel32.SetFilePointerEx(
-            bun.fdcast(fd),
+            fd.cast(),
             @as(windows.LARGE_INTEGER, @bitCast(offset_low)),
             &plarge_integer,
             windows.FILE_BEGIN,
@@ -1685,7 +1689,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,
-            bun.fdcast(fd),
+            fd.cast(),
             process,
             target,
             0,

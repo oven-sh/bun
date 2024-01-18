@@ -3,7 +3,13 @@ import React from "react";
 import ReactDOM from "react-dom";
 
 const ErrorScreenRoot = styled.div`
-  font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  font-family:
+    "Muli",
+    -apple-system,
+    BlinkMacSystemFont,
+    Helvetica,
+    Arial,
+    sans-serif;
   position: fixed;
   top: 0;
   left: 0;
@@ -17,7 +23,13 @@ const ErrorScreenRoot = styled.div`
   text-align: center;
   background-color: #0b2988;
   color: #fff;
-  font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  font-family:
+    "Muli",
+    -apple-system,
+    BlinkMacSystemFont,
+    Helvetica,
+    Arial,
+    sans-serif;
   line-height: 1.5em;
 
   & > p {

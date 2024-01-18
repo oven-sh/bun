@@ -1741,8 +1741,8 @@ var require_deflate = __commonJS({
           s.strategy === Z_HUFFMAN_ONLY
             ? deflate_huff(s, flush)
             : s.strategy === Z_RLE
-            ? deflate_rle(s, flush)
-            : configuration_table[s.level].func(s, flush);
+              ? deflate_rle(s, flush)
+              : configuration_table[s.level].func(s, flush);
         if (bstate === BS_FINISH_STARTED || bstate === BS_FINISH_DONE) {
           s.status = FINISH_STATE;
         }

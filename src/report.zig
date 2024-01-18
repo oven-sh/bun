@@ -77,7 +77,7 @@ pub const CrashReportWriter = struct {
         }
 
         const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
-        var file = std.fs.File{ .handle = bun.fdcast(call) };
+        var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -232,20 +232,30 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         crash_report_writer.flush();
 
-        // It only is a real crash report if it's not coming from Zig
+        // TODO(@paperdave):
+        // Bun__crashReportDumpStackTrace does not work on Windows, even in a debug build
+        // It is fine to skip this because in release we ship with ReleaseSafe
+        // because zig's panic handler will also trigger right after
+        if (!Environment.isWindows) {
+            // It only is a real crash report if it's not coming from Zig
+            if (comptime !@import("root").bun.JSC.is_bindgen) {
+                std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+                Bun__crashReportDumpStackTrace(&crash_report_writer);
+            }
 
-        if (comptime !@import("root").bun.JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-            Bun__crashReportDumpStackTrace(&crash_report_writer);
+            crash_report_writer.flush();
         }
-
-        crash_report_writer.flush();
 
         crash_report_writer.printPath();
     }
 
     if (!had_printed_fatal) {
-        crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        if (Environment.isWindows) {
+            // TODO(@paperdave) change this to the original one once bun windows is stable
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or join in #windows channel in https://bun.sh/discord\n\n", .{});
+        } else {
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        }
         crash_report_writer.flush();
     }
 }
@@ -566,7 +576,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 Global.exit(1);
             }
         },
-        error.FileNotFound => {
+        error.ENOENT, error.FileNotFound => {
             Output.prettyError(
                 "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},

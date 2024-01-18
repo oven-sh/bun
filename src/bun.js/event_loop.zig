@@ -931,6 +931,9 @@ pub const EventLoop = struct {
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                    if (Environment.isWindows) {
+                        @panic("This should not be reachable on Windows");
+                    }
                     var any: *TimerReference = task.get(TimerReference).?;
                     any.runFromJSThread();
                 },

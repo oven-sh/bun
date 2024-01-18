@@ -65,16 +65,25 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
+    /// converts a `bun.FileDescriptor` into the native operating system fd
+    ///
+    /// On non-windows this does nothing, but on windows it converts UV descriptors
+    /// to Windows' *HANDLE, and casts the types for proper usage.
+    ///
+    /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
     pub inline fn cast(fd: FileDescriptor) std.os.fd_t {
-        return fdcast(fd);
+        if (!Environment.isWindows) return fd.int();
+        // if not having this check, the cast may crash zig compiler?
+        if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
+        return FDImpl.decode(fd).system();
     }
 
     pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
-        return std.fs.Dir{ .fd = fdcast(fd) };
+        return std.fs.Dir{ .fd = fd.cast() };
     }
 
     pub inline fn asFile(fd: FileDescriptor) std.fs.File {
-        return std.fs.File{ .handle = fdcast(fd) };
+        return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
@@ -304,10 +313,8 @@ pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @Ty
 pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usize {
     return comptime brk: {
         var slice: [max - min]usize = undefined;
-        var i: usize = min;
-        while (i < max) {
+        for (min..max) |i| {
             slice[i - min] = i;
-            i += 1;
         }
         break :brk slice;
     };
@@ -347,8 +354,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     }
 
     const Child = std.meta.Child(T);
-    assertDefined(item);
-
     if (comptime trait.isContainer(Child)) {
         if (std.meta.hasFn(Child, "clone")) {
             const slice = try allocator.alloc(Child, item.len);
@@ -365,41 +370,6 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 }
 
 pub const StringBuilder = @import("./string_builder.zig");
-
-pub fn assertDefined(val: anytype) void {
-    if (comptime !Environment.allow_assert) return;
-    const Type = @TypeOf(val);
-
-    if (comptime @typeInfo(Type) == .Optional) {
-        if (val) |res| {
-            assertDefined(res);
-        }
-        return;
-    }
-
-    if (comptime trait.isSlice(Type)) {
-        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        const slice: []Type = undefined;
-        if (val.len > 0) {
-            std.debug.assert(@intFromPtr(val.ptr) != @intFromPtr(slice.ptr));
-        }
-        return;
-    }
-
-    if (comptime @typeInfo(Type) == .Pointer) {
-        const slice: *Type = undefined;
-        std.debug.assert(@intFromPtr(val) != @intFromPtr(slice));
-        return;
-    }
-
-    if (comptime @typeInfo(Type) == .Struct) {
-        inline for (comptime std.meta.fieldNames(Type)) |name| {
-            assertDefined(@field(val, name));
-        }
-    }
-}
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -586,7 +556,7 @@ pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs
     }
 
     const res = try sys.open(pathZ, flags, 0).unwrap();
-    return std.fs.File{ .handle = fdcast(res) };
+    return std.fs.File{ .handle = res.cast() };
 }
 
 pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
@@ -598,7 +568,8 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
             .read_write => flags |= std.os.O.RDWR,
         }
 
-        return std.fs.File{ .handle = fdcast(try sys.openA(path_, flags, 0).unwrap()) };
+        const fd = try sys.openA(path_, flags, 0).unwrap();
+        return fd.asFile();
     }
 
     return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
@@ -607,7 +578,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -617,7 +588,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -627,7 +598,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -1104,7 +1075,7 @@ pub fn getcwd(buf_: []u8) ![]u8 {
     const temp_slice = try std.os.getcwd(&temp);
     // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
     // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .loose);
+    return path.normalizeBuf(temp_slice, buf_, .auto);
 }
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
@@ -1116,7 +1087,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const fd = fdcast(toFD(fd_));
+    const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1154,7 +1125,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 }
 
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
-    const fd = fdcast(toFD(fd_));
+    const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1712,19 +1683,6 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
     return value;
 }
 
-/// converts a `bun.FileDescriptor` into the native operating system fd
-///
-/// On non-windows this does nothing, but on windows it converts UV descriptors
-/// to Windows' *HANDLE, and casts the types for proper usage.
-///
-/// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
-    if (!Environment.isWindows) return fd.int();
-    // if not having this check, the cast may crash zig compiler?
-    if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-    return FDImpl.decode(fd).system();
-}
-
 /// Converts a native file descriptor into a `bun.FileDescriptor`
 ///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
@@ -1988,13 +1946,7 @@ pub fn serializable(input: anytype) @TypeOf(input) {
             }
         }
     }
-    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
-        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
-        for (&buf) |*ptr| {
-            ptr.* = 0;
-        }
-        break :brk buf;
-    };
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = std.mem.zeroes([@sizeOf(T)]u8);
     const result: *T = @ptrCast(&zeroed);
 
     inline for (comptime std.meta.fieldNames(T)) |field_name| {
@@ -2005,13 +1957,7 @@ pub fn serializable(input: anytype) @TypeOf(input) {
 }
 
 pub inline fn serializableInto(comptime T: type, init: anytype) T {
-    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
-        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
-        for (&buf) |*ptr| {
-            ptr.* = 0;
-        }
-        break :brk buf;
-    };
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = std.mem.zeroes([@sizeOf(T)]u8);
     const result: *T = @ptrCast(&zeroed);
 
     inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {
@@ -2481,3 +2427,20 @@ pub const S = if (Environment.isWindows) C.S else std.os.S;
 pub const trait = @import("./trait.zig");
 
 pub const brotli = @import("./brotli.zig");
+
+pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
+    return DirIterator.iterate(dir, .u8).iter;
+}
+
+fn ReinterpretSliceType(comptime T: type, comptime slice: type) type {
+    const is_const = @typeInfo(slice).Pointer.is_const;
+    return if (is_const) []const T else []T;
+}
+
+/// Zig has a todo for @ptrCast changing the `.len`. This is the workaround
+pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T, @TypeOf(slice)) {
+    const is_const = @typeInfo(@TypeOf(slice)).Pointer.is_const;
+    const bytes = std.mem.sliceAsBytes(slice);
+    const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
+    return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
+}

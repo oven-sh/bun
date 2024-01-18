@@ -136,6 +136,16 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
+        pub inline fn errno(err: anytype, syscall: Syscall.Tag) @This() {
+            return @This(){
+                // always truncate
+                .err = .{
+                    .errno = @truncate(@intFromEnum(err)),
+                    .syscall = syscall,
+                },
+            };
+        }
+
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -245,7 +255,8 @@ pub const StringOrBuffer = union(enum) {
             return try allocator.dupe(u8, array_buffer.byteSlice());
         }
 
-        var str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        defer str.deref();
 
         const result = try str.toOwnedSlice(allocator);
         defer globalObject.vm().reportExtraMemory(result.len);
@@ -322,9 +333,12 @@ pub const StringOrBuffer = union(enum) {
     ) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var str = bun.String.tryFromJS(value, global) orelse return null;
+                const str = bun.String.tryFromJS(value, global) orelse return null;
+
                 if (is_async) {
-                    var sliced = str.toThreadSafeSlice(allocator);
+                    defer str.deref();
+                    var possible_clone = str;
+                    var sliced = possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
@@ -333,7 +347,6 @@ pub const StringOrBuffer = union(enum) {
 
                     return StringOrBuffer{ .threadsafe_string = sliced };
                 } else {
-                    str.ref();
                     return StringOrBuffer{ .string = str.toSlice(allocator) };
                 }
             },
@@ -376,6 +389,7 @@ pub const StringOrBuffer = union(enum) {
         }
 
         var str = bun.String.tryFromJS(value, global) orelse return null;
+        defer str.deref();
         if (str.isEmpty()) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
         }
@@ -698,6 +712,7 @@ pub const PathLike = union(enum) {
             JSC.JSValue.JSType.DerivedStringObject,
             => {
                 var str = arg.toBunString(ctx);
+                defer str.deref();
 
                 arguments.eat();
 

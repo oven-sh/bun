@@ -12,6 +12,7 @@ pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
 pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
+pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
@@ -2967,4 +2968,34 @@ pub extern "kernel32" fn SetFileInformationByHandle(
     fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
     fileInformation: LPVOID,
     bufferSize: DWORD,
+) BOOL;
+
+pub fn getLastErrno() bun.C.E {
+    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
+}
+
+pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
+    return switch (err) {
+        .SUCCESS => .SUCCESS,
+        .FILE_NOT_FOUND => .NOENT,
+        .PATH_NOT_FOUND => .NOENT,
+        .TOO_MANY_OPEN_FILES => .NOMEM,
+        .ACCESS_DENIED => .PERM,
+        .INVALID_HANDLE => .BADF,
+        .NOT_ENOUGH_MEMORY => .NOMEM,
+        .OUTOFMEMORY => .NOMEM,
+        .INVALID_PARAMETER => .INVAL,
+
+        else => |t| {
+            // if (bun.Environment.isDebug) {
+            bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            // }
+            return .UNKNOWN;
+        },
+    };
+}
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: PWSTR,
+    nSize: c_int,
 ) BOOL;

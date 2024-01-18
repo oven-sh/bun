@@ -307,10 +307,10 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
       .map((id, n) => {
         return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-          id.replace(/\.[mc]?[tj]s$/, ".js"),
-        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-          .replace(/\.[mc]?[tj]s$/, "")
-          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+        id.replace(/\.[mc]?[tj]s$/, ".js"),
+      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+        .replace(/\.[mc]?[tj]s$/, "")
+        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
       })
       .join("\n    ")}

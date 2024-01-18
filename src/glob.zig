@@ -327,8 +327,7 @@ pub fn GlobWalker_(
                 };
 
                 this.iter_state.directory.fd = fd;
-                const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                const iterator = DirIterator.iterate(dir, .u8);
+                const iterator = DirIterator.iterate(fd.asDir(), .u8);
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
@@ -634,14 +633,7 @@ pub fn GlobWalker_(
         }
 
         pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
-            switch (comptime @import("builtin").target.cpu.arch.endian()) {
-                .big => {
-                    _ = bun.simdutf.convert.utf8.to.utf32.be(pattern, codepoints);
-                },
-                .little => {
-                    _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
-                },
-            }
+            _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
         }
 
         /// `cwd` should be allocated with the arena

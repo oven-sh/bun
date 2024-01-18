@@ -482,13 +482,6 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
-
-    pub fn verify(this: *const PackageVersion) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        this.man_dir.value.assertDefined();
-    }
 };
 
 pub const NpmPackage = extern struct {
@@ -522,23 +515,6 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
 
-    pub fn verify(this: *const PackageManifest) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        for (this.extern_strings_bin_entries) |*entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.external_strings_for_versions) |entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.package_versions) |package| {
-            package.tarball_url.value.assertDefined();
-        }
-    }
-
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
     }
@@ -565,13 +541,11 @@ pub const PackageManifest = struct {
                 };
             }
             const Sort = struct {
-                fn lessThan(trash: *i32, lhs: Data, rhs: Data) bool {
-                    _ = trash;
+                fn lessThan(_: void, lhs: Data, rhs: Data) bool {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.pdq(Data, &data, &trash, Sort.lessThan);
+            std.sort.pdq(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -715,8 +689,6 @@ pub const PackageManifest = struct {
                     );
                 }
             }
-
-            package_manifest.verify();
 
             return package_manifest;
         }

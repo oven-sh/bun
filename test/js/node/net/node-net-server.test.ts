@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { createServer, Server, AddressInfo, Socket } from "net";
 import { realpathSync } from "fs";
 import { tmpdir } from "os";

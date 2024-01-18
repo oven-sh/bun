@@ -200,9 +200,8 @@ pub fn repeatingBuf(self: []u8, char: u8) void {
 }
 
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
-    var i: u32 = 0;
-    while (i < self.len) : (i += 1) {
-        if (self[i] == char) return @as(i32, @intCast(i));
+    for (self, 0..) |c, i| {
+        if (c == char) return @as(i32, @intCast(i));
     }
     return -1;
 }
@@ -342,24 +341,31 @@ pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string 
     return out;
 }
 
-// 30 character string or a slice
+// 31 character string or a slice
 pub const StringOrTinyString = struct {
-    pub const Max = 30;
+    pub const Max = 31;
     const Buffer = [Max]u8;
 
     remainder_buf: Buffer = undefined,
-    remainder_len: u7 = 0,
-    is_tiny_string: u1 = 0,
+    meta: packed struct {
+        remainder_len: u7 = 0,
+        is_tiny_string: u1 = 0,
+    } = .{},
+
+    comptime {
+        std.debug.assert(@sizeOf(@This()) == 32);
+    }
+
     pub inline fn slice(this: *const StringOrTinyString) []const u8 {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
-        return switch (this.is_tiny_string) {
-            1 => this.remainder_buf[0..this.remainder_len],
+        return switch (this.meta.is_tiny_string) {
+            1 => this.remainder_buf[0..this.meta.remainder_len],
             0 => @as([*]const u8, @ptrFromInt(std.mem.readInt(usize, this.remainder_buf[0..@sizeOf(usize)], .little)))[0..std.mem.readInt(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], .little)],
         };
     }
 
     pub fn deinit(this: *StringOrTinyString, _: std.mem.Allocator) void {
-        if (this.is_tiny_string == 1) return;
+        if (this.meta.is_tiny_string == 1) return;
 
         // var slice_ = this.slice();
         // allocator.free(slice_);
@@ -384,22 +390,25 @@ pub const StringOrTinyString = struct {
     pub fn init(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
-                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+                return StringOrTinyString{ .meta = .{
+                    .is_tiny_string = 1,
+                    .remainder_len = 0,
+                } };
             },
             1...(@sizeOf(Buffer)) => {
                 @setRuntimeSafety(false);
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 1,
                     .remainder_len = @as(u7, @truncate(stringy.len)),
-                };
-                @memcpy(tiny.remainder_buf[0..tiny.remainder_len], stringy[0..tiny.remainder_len]);
+                } };
+                @memcpy(tiny.remainder_buf[0..tiny.meta.remainder_len], stringy[0..tiny.meta.remainder_len]);
                 return tiny;
             },
             else => {
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 0,
                     .remainder_len = 0,
-                };
+                } };
                 std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
                 std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
@@ -410,22 +419,25 @@ pub const StringOrTinyString = struct {
     pub fn initLowerCase(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
-                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+                return StringOrTinyString{ .meta = .{
+                    .is_tiny_string = 1,
+                    .remainder_len = 0,
+                } };
             },
             1...(@sizeOf(Buffer)) => {
                 @setRuntimeSafety(false);
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 1,
                     .remainder_len = @as(u7, @truncate(stringy.len)),
-                };
+                } };
                 _ = copyLowercase(stringy, &tiny.remainder_buf);
                 return tiny;
             },
             else => {
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 0,
                     .remainder_len = 0,
-                };
+                } };
                 std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
                 std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
@@ -989,8 +1001,7 @@ pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string,
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
     var remain = out;
     var count: usize = 0;
-    comptime var i: usize = 0;
-    inline while (i < parts_len) : (i += 1) {
+    inline for (0..parts_len) |i| {
         const part = parts[i];
         bun.copy(u8, remain, part);
         remain = remain[part.len..];
@@ -1016,7 +1027,7 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return bun.C.memcmp(bun.cast([*]const u8, self.ptr), bun.cast([*]const u8, other.ptr), self.len * @sizeOf(u16)) == 0;
 }
 
-pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
+pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
@@ -1186,11 +1197,116 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     }
 }
 
-const utf8_bom = [_]u8{ 0xef, 0xbb, 0xbf };
+/// It is common on Windows to find files that are not encoded in UTF8. Most of these include
+/// a 'byte-order mark' codepoint at the start of the file. The layout of this codepoint can
+/// determine the encoding.
+///
+/// https://en.wikipedia.org/wiki/Byte_order_mark
+pub const BOM = enum {
+    utf8,
+    utf16_le,
+    utf16_be,
+    utf32_le,
+    utf32_be,
 
+    pub const utf8_bytes = [_]u8{ 0xef, 0xbb, 0xbf };
+    pub const utf16_le_bytes = [_]u8{ 0xff, 0xfe };
+    pub const utf16_be_bytes = [_]u8{ 0xfe, 0xff };
+    pub const utf32_le_bytes = [_]u8{ 0xff, 0xfe, 0x00, 0x00 };
+    pub const utf32_be_bytes = [_]u8{ 0x00, 0x00, 0xfe, 0xff };
+
+    pub fn detect(bytes: []const u8) ?BOM {
+        if (bytes.len < 3) return null;
+        if (eqlComptimeIgnoreLen(bytes, utf8_bytes)) return .utf8;
+        if (eqlComptimeIgnoreLen(bytes, utf16_le_bytes)) {
+            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
+            //   return .utf32_le;
+            return .utf16_le;
+        }
+        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
+        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
+        return null;
+    }
+
+    pub fn detectAndSplit(bytes: []const u8) struct { ?BOM, []const u8 } {
+        const bom = detect(bytes);
+        if (bom == null) return .{ null, bytes };
+        return .{ bom, bytes[bom.?.length()..] };
+    }
+
+    pub fn getHeader(bom: BOM) []const u8 {
+        return switch (bom) {
+            inline else => |t| comptime &@field(BOM, @tagName(t) ++ "_bytes"),
+        };
+    }
+
+    pub fn length(bom: BOM) usize {
+        return switch (bom) {
+            inline else => |t| comptime (&@field(BOM, @tagName(t) ++ "_bytes")).len,
+        };
+    }
+
+    /// If an allocation is needed, free the input and the caller will
+    /// replace it with the new return
+    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) ![]u8 {
+        switch (bom) {
+            .utf8 => {
+                bun.C.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
+                return bytes[0 .. bytes.len - utf8_bytes.len];
+            },
+            .utf16_le => {
+                const trimmed_bytes = bytes[utf16_le_bytes.len..];
+                const trimmed_bytes_u16: []const u16 = @alignCast(std.mem.bytesAsSlice(u16, trimmed_bytes));
+                const out = try toUTF8Alloc(allocator, trimmed_bytes_u16);
+                allocator.free(bytes);
+                return out;
+            },
+            else => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                const bom_bytes = bom.getHeader();
+                bun.C.memmove(bytes.ptr, bytes.ptr + bom_bytes.len, bytes.len - bom_bytes.len);
+                return bytes[0 .. bytes.len - bom_bytes.len];
+            },
+        }
+    }
+
+    /// This is required for fs.zig's `use_shared_buffer` flag. we cannot free that pointer.
+    /// The returned slice will always point to the base of the input.
+    ///
+    /// Requires an arraylist in case it must be grown.
+    pub fn removeAndConvertToUTF8WithoutDealloc(bom: BOM, allocator: std.mem.Allocator, list: *std.ArrayListUnmanaged(u8)) ![]u8 {
+        const bytes = list.items;
+        switch (bom) {
+            .utf8 => {
+                bun.C.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
+                return bytes[0 .. bytes.len - utf8_bytes.len];
+            },
+            .utf16_le => {
+                const trimmed_bytes = bytes[utf16_le_bytes.len..];
+                const trimmed_bytes_u16: []const u16 = @alignCast(std.mem.bytesAsSlice(u16, trimmed_bytes));
+                const out = try toUTF8Alloc(allocator, trimmed_bytes_u16);
+                if (list.capacity < out.len) {
+                    try list.ensureTotalCapacity(allocator, out.len);
+                }
+                list.items.len = out.len;
+                @memcpy(list.items, out);
+                return out;
+            },
+            else => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                const bom_bytes = bom.getHeader();
+                bun.C.memmove(bytes.ptr, bytes.ptr + bom_bytes.len, bytes.len - bom_bytes.len);
+                return bytes[0 .. bytes.len - bom_bytes.len];
+            },
+        }
+    }
+};
+
+/// @deprecated. If you are using this, you likely will need to remove other BOMs and handle encoding.
+/// Use the BOM struct's `detect` and conversion functions instead.
 pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
-    if (strings.hasPrefixComptime(bytes, utf8_bom)) {
-        return bytes[utf8_bom.len..];
+    if (strings.hasPrefixComptime(bytes, BOM.utf8_bytes)) {
+        return bytes[BOM.utf8_bytes.len..];
     } else {
         return bytes;
     }
@@ -2382,8 +2498,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                         buf.items.len = copy_len;
                         any_needs_escape = true;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
@@ -2436,8 +2551,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @as(AsciiVectorU1, @bitCast((vec == vecs[4])))) == 1)
                     {
                         buf.ensureUnusedCapacity(ascii_vector_size + 6) catch unreachable;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
@@ -3096,7 +3210,6 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
     var i: usize = 0;
     // TODO: is it safe to just make this u32 or u21?
     var r1: i32 = undefined;
-    var k: u4 = 0;
     while (i < n) : (i += 1) {
         r1 = text[i];
         if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
@@ -3111,8 +3224,7 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
         if (j + width > str.len) {
             return false;
         }
-        k = 0;
-        while (k < width) : (k += 1) {
+        for (0..width) |k| {
             if (temp[k] != str[j]) {
                 return false;
             }
@@ -3396,8 +3508,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
                                 std.debug.assert(remaining[first_set_byte] > 127);
-                                var j: usize = 0;
-                                while (j < first_set_byte) : (j += 1) {
+                                for (0..first_set_byte) |j| {
                                     std.debug.assert(remaining[j] <= 127);
                                 }
                             }
@@ -3414,8 +3525,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
                                 std.debug.assert(remaining[first_set_byte] > 127);
-                                var j: usize = 0;
-                                while (j < first_set_byte) : (j += 1) {
+                                for (0..first_set_byte) |j| {
                                     std.debug.assert(remaining[j] <= 127);
                                 }
                             }
@@ -3459,8 +3569,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                     const first_set_byte = @ctz(mask) / 8;
                     if (comptime Environment.allow_assert) {
                         std.debug.assert(remaining[first_set_byte] > 127);
-                        var j: usize = 0;
-                        while (j < first_set_byte) : (j += 1) {
+                        for (0..first_set_byte) |j| {
                             std.debug.assert(remaining[j] <= 127);
                         }
                     }
@@ -4204,8 +4313,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 test "indexOfNotChar" {
     {
         var yes: [312]u8 = undefined;
-        var i: usize = 0;
-        while (i < yes.len) {
+        for (0..yes.len) |i| {
             @memset(yes, 'a');
             yes[i] = 'b';
             if (comptime Environment.allow_assert) std.debug.assert(indexOfNotChar(&yes, 'a').? == i);
@@ -4757,8 +4865,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             defer it.i = original_i;
 
             var end_ix = original_i;
-            var found: usize = 0;
-            while (found < n) : (found += 1) {
+            for (0..n) |_| {
                 const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
                 end_ix += next_codepoint.len;
             }
@@ -5635,3 +5742,22 @@ pub fn visibleUTF16Width(input: []const u16) usize {
 pub fn visibleLatin1Width(input: []const u8) usize {
     return visibleASCIIWidth(input);
 }
+
+pub const QuoteEscapeFormat = struct {
+    data: []const u8,
+
+    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
+            try writer.writeAll(self.data[i..j]);
+            try writer.writeAll(switch (self.data[j]) {
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\\' => "\\\\",
+                else => unreachable,
+            });
+        }
+        if (i == self.data.len) return;
+        try writer.writeAll(self.data[i..]);
+    }
+};

@@ -280,6 +280,7 @@ pub const String = extern struct {
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromUTF16(bytes: [*]const u16, len: usize) String;
+    extern fn BunString__fromUTF16ToLatin1(bytes: [*]const u16, len: usize) String;
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
@@ -369,6 +370,9 @@ pub const String = extern struct {
 
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
+        if (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false) == null) {
+            return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
+        }
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
@@ -496,6 +500,7 @@ pub const String = extern struct {
     }
 
     pub fn toErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
         return JSC__createError(globalObject, this);
     }
 
@@ -706,7 +711,7 @@ pub const String = extern struct {
         this: *String,
     ) JSC.JSValue;
 
-    pub fn toJSForParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         return BunString__toJSON(globalObject, self);
     }
@@ -1138,15 +1143,14 @@ pub const String = extern struct {
     }
 
     pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var str: String = String.dead;
-
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        str = args[0].toBunString(globalObject);
+        const str = args[0].toBunString(globalObject);
+        defer str.deref();
 
         if (str.isEmpty()) {
             return JSC.jsNumber(@as(i32, 0));

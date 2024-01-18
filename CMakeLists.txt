@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.22")
-set(WEBKIT_TAG b4de09f41b83e9e5c0e43ef414f1aee5968b6f7c)
+set(Bun_VERSION "1.0.23")
+set(WEBKIT_TAG 9c501b9aa712b7959f80dc99491e8758c151c20e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -469,6 +469,7 @@ else()
         # make jsc-compile-debug jsc-copy-headers
         include_directories(
             "${WEBKIT_DIR}/"
+            "${WEBKIT_DIR}/JavaScriptCore/Headers/JavaScriptCore"
             "${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders"
             "${WEBKIT_DIR}/bmalloc/Headers"
             "${WEBKIT_DIR}/WTF/Headers"
@@ -978,7 +979,9 @@ if(WIN32)
         "BORINGSSL_NO_CXX=1" # lol
     )
 
+    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
 else()
@@ -1228,17 +1231,15 @@ else()
     target_link_libraries(${bun} PRIVATE base64::base64)
 endif()
 
-if(NOT WIN32)
-    if(USE_CUSTOM_TINYCC)
-        if(WIN32)
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
-        else()
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libtcc.a")
-        endif()
+if(USE_CUSTOM_TINYCC)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
     else()
-        find_package(tinycc REQUIRED)
-        target_link_libraries(${bun} PRIVATE tinycc::tinycc)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libtcc.a")
     endif()
+else()
+    find_package(tinycc REQUIRED)
+    target_link_libraries(${bun} PRIVATE tinycc::tinycc)
 endif()
 
 if(USE_CUSTOM_LOLHTML)

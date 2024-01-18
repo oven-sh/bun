@@ -1829,9 +1829,9 @@ fn consumeArg(
 ) !void {
     const allocator = getAllocator(globalThis);
     if (should_write) {
-        const owned_slice = try arg.*.toBunString(globalThis).toOwnedSlice(allocator);
-        defer allocator.free(owned_slice);
-        try array_list.*.appendSlice(allocator, owned_slice);
+        const owned_slice = arg.toSliceOrNull(globalThis) orelse return error.Failed;
+        defer owned_slice.deinit();
+        try array_list.appendSlice(allocator, owned_slice.slice());
     } else {
         try array_list.appendSlice(allocator, fallback);
     }
@@ -1875,7 +1875,7 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     args_idx += 1;
                 },
                 'p' => {
-                    var formatter = JSC.ZigConsoleClient.Formatter{
+                    var formatter = JSC.ConsoleObject.Formatter{
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };

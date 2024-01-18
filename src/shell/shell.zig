@@ -2439,7 +2439,6 @@ pub const Test = struct {
 };
 
 pub fn shellCmdFromJS(
-    allocator: Allocator,
     globalThis: *JSC.JSGlobalObject,
     string_args: JSValue,
     template_args: []const JSValue,
@@ -2453,7 +2452,7 @@ pub fn shellCmdFromJS(
     const last = string_iter.len -| 1;
     while (string_iter.next()) |js_value| {
         defer i += 1;
-        if (!try appendJSValueStr(allocator, globalThis, js_value, out_script)) {
+        if (!try appendJSValueStr(globalThis, js_value, out_script)) {
             globalThis.throw("Shell script string contains invalid UTF-16", .{});
             return false;
         }
@@ -2505,17 +2504,14 @@ pub fn shellCmdFromJS(
                 }
 
                 if (template_value.isString()) {
-                    if (!try appendJSValueStr(allocator, globalThis, template_value, out_script)) {
+                    if (!try appendJSValueStr(globalThis, template_value, out_script)) {
                         globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         return false;
                     }
                     continue;
                 }
 
-                const str = template_value.toBunString(globalThis);
-                const slice = str.toSlice(bun.default_allocator);
-                defer slice.deinit();
-                globalThis.throw("Invalid JS object used in shell: {s}", .{slice.slice()});
+                globalThis.throw("Invalid JS object used in shell: {}", .{template_value.fmtString(globalThis)});
                 return false;
             }
         }
@@ -2525,41 +2521,23 @@ pub fn shellCmdFromJS(
 
 /// This will disallow invalid surrogate pairs
 pub fn appendJSValueStr(
-    allocator: Allocator,
     globalThis: *JSC.JSGlobalObject,
     jsval: JSValue,
     outbuf: *std.ArrayList(u8),
 ) !bool {
     const bunstr = jsval.toBunString(globalThis);
-    bunstr.ref();
     defer bunstr.deref();
-    if (bunstr.isUTF16()) {
-        const slice: [*]const u16 = @ptrCast(@alignCast(bunstr.byteSlice().ptr));
-        const len = bunstr.byteSlice().len / 2;
-        const result = bun.simdutf.simdutf__validate_utf16le_with_errors(slice, len);
-        if (result.status != .success) {
-            return false;
-        }
-        const utf8 = bunstr.toUTF8(allocator);
-        defer utf8.deinit();
-        try outbuf.appendSlice(utf8.slice());
-        return true;
+
+    const str = bunstr.toUTF8WithoutRef(bun.default_allocator);
+    defer str.deinit();
+
+    // TODO: toUTF8 already validates. We shouldn't have to do this twice!
+    const is_ascii = str.isAllocated();
+    if (!is_ascii and !bun.simdutf.validate.utf8(str.slice())) {
+        return error.InvalidUTF8;
     }
 
-    if (bunstr.is8Bit()) {
-        if (bun.strings.isAllASCII(bunstr.byteSlice())) {
-            try outbuf.appendSlice(bunstr.byteSlice());
-            return true;
-        }
-        if (bunstr.isUTF8()) {
-            try outbuf.appendSlice(bunstr.byteSlice());
-            return true;
-        }
-        const utf8 = bunstr.toUTF8(allocator);
-        utf8.deinit();
-        try outbuf.appendSlice(utf8.slice());
-        return true;
-    }
+    try outbuf.appendSlice(str.slice());
 
-    @panic("unreachable i think");
+    return is_ascii;
 }

@@ -324,7 +324,7 @@ pub fn shellLex(
     }
 
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -398,7 +398,7 @@ pub fn shellParse(
         }
     }
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -464,7 +464,7 @@ pub fn shell(
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {

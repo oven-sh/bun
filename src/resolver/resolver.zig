@@ -2636,7 +2636,7 @@ pub const Resolver = struct {
             queue_slice.len -= 1;
 
             const open_dir = if (queue_top.fd != .zero)
-                std.fs.Dir{ .fd = bun.fdcast(queue_top.fd) }
+                queue_top.fd.asDir()
             else open_dir: {
                 // This saves us N copies of .toPosixPath
                 // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
@@ -2653,7 +2653,7 @@ pub const Resolver = struct {
                 else if (comptime Environment.isWindows) open_req: {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
                     if (dirfd_result.unwrap()) |result| {
-                        break :open_req std.fs.Dir{ .fd = bun.fdcast(result) };
+                        break :open_req result.asDir();
                     } else |err| {
                         break :open_req err;
                     }
@@ -3858,7 +3858,7 @@ pub const Resolver = struct {
                                 bin_folders = BinFolderArray.init(0) catch unreachable;
                             }
 
-                            const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+                            const this_dir = fd.asDir();
                             var file = this_dir.openDirZ(".bin", .{}) catch break :append_bin_dir;
                             defer file.close();
                             const bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;

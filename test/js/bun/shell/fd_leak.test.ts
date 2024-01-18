@@ -35,4 +35,19 @@ describe('fd leak', () => {
 
     leakTest('redirect_file', () => TestBuilder.command`echo hello > ${join(tmpdir(), 'test.txt')}`)
     leakTest('change_cwd', () => TestBuilder.command`cd ${tmpdir()} && cd -`)
+    leakTest('pipeline', () => TestBuilder.command`echo hi | cat`.stdout('hi\n'))
+    leakTest('pipeline2', () => TestBuilder.command`echo hi | echo lol | cat`.stdout('lol\n'))
+    leakTest("ls", () =>
+    TestBuilder.command`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls -R foo/`
+      .ensureTempDir()
+      .stdout((stdout) =>
+        expect(
+          stdout
+            .split("\n")
+            .filter((s) => s.length > 0)
+            .sort(),
+        ).toEqual(["lmao", "lol", "nice", "foo/bar:", "bar", "great", "wow"].sort()),
+      ),
+      100
+  );
 })

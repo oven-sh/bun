@@ -269,7 +269,7 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, false);
+    const print = bun.Output.scoped(.RefCountedEnvStr, true);
 
     // /// Use bun.default_allocator
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;
@@ -3156,16 +3156,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     const first_arg_len = std.mem.len(first_arg);
 
                     if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
-                        const cwd = switch (Syscall.dup(this.base.shell.cwd_fd)) {
-                            .err => |e| {
-                                var buf = std.ArrayList(u8).init(arena_allocator);
-                                const writer = buf.writer();
-                                e.format("bun: ", .{}, writer) catch bun.outOfMemory();
-                                this.writeFailingError(buf.items[0..], e.errno);
-                                return;
-                            },
-                            .result => |fd| fd,
-                        };
+                        // const cwd = switch (Syscall.dup(this.base.shell.cwd_fd)) {
+                        //     .err => |e| {
+                        //         var buf = std.ArrayList(u8).init(arena_allocator);
+                        //         const writer = buf.writer();
+                        //         e.format("bun: ", .{}, writer) catch bun.outOfMemory();
+                        //         this.writeFailingError(buf.items[0..], e.errno);
+                        //         return;
+                        //     },
+                        //     .result => |fd| fd,
+                        // };
+                        const cwd = this.base.shell.cwd_fd;
                         const coro_result = Builtin.init(
                             this,
                             this.base.interpreter,
@@ -3622,10 +3623,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             this.buf.deinit();
                         },
                         .fd => {
-                            // if (this.fd != bun.invalid_fd) {
-                            //     _ = Syscall.close(this.fd);
-                            //     this.fd = bun.invalid_fd;
-                            // }
+                            if (this.fd != bun.invalid_fd and this.fd != bun.STDIN_FD) {
+                                _ = Syscall.close(this.fd);
+                                this.fd = bun.invalid_fd;
+                            }
                         },
                         else => {},
                     }
@@ -4667,7 +4668,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     idle,
                     exec: struct {
                         err: ?Syscall.Error = null,
-                        task_count: usize,
+                        task_count: std.atomic.Value(usize),
                         tasks_done: usize = 0,
                         output_queue: std.DoublyLinkedList(BlockingOutput) = .{},
                         started_output_queue: bool = false,
@@ -4734,7 +4735,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                                 this.state = .{
                                     .exec = .{
-                                        .task_count = task_count,
+                                        .task_count = std.atomic.Value(usize).init(task_count),
                                     },
                                 };
 
@@ -4742,17 +4743,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 if (paths) |p| {
                                     for (p) |path_raw| {
                                         const path = path_raw[0..std.mem.len(path_raw) :0];
-                                        var task = ShellLsTask.create(this, this.opts, cwd, path, null);
+                                        var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, null);
                                         task.schedule();
                                     }
                                 } else {
-                                    var task = ShellLsTask.create(this, this.opts, cwd, ".", null);
+                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", null);
                                     task.schedule();
                                 }
                             },
                             .exec => {
                                 // It's done
-                                if (this.state.exec.tasks_done >= this.state.exec.task_count and this.state.exec.output_queue.len == 0) {
+                                if (this.state.exec.tasks_done >= this.state.exec.task_count.load(.Monotonic) and this.state.exec.output_queue.len == 0) {
                                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                                     this.state = .done;
                                     this.bltn.done(exit_code);
@@ -4787,7 +4788,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.state.exec.output_queue.append(node);
 
                     // Start it
-                    if (do_run and !this.state.exec.started_output_queue) {
+                    if (this.state.exec.output_queue.len == 1) {
+                        _ = do_run;
+                        // if (do_run and !this.state.exec.started_output_queue) {
                         this.state.exec.started_output_queue = true;
                         this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
                     }
@@ -4875,6 +4878,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     opts: Opts,
 
                     is_root: bool = true,
+                    task_count: *std.atomic.Value(usize),
+
                     cwd: bun.FileDescriptor,
                     /// Should be allocated with bun.default_allocator
                     path: [:0]const u8 = &[0:0]u8{},
@@ -4894,7 +4899,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         JSC.WorkPool.schedule(&this.task);
                     }
 
-                    pub fn create(ls: *Ls, opts: Opts, cwd: bun.FileDescriptor, path: [:0]const u8, event_loop: ?EventLoopRef) *@This() {
+                    pub fn create(ls: *Ls, opts: Opts, task_count: *std.atomic.Value(usize), cwd: bun.FileDescriptor, path: [:0]const u8, event_loop: ?EventLoopRef) *@This() {
                         const task = bun.default_allocator.create(@This()) catch bun.outOfMemory();
                         task.* = @This(){
                             .ls = ls,
@@ -4904,6 +4909,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .output = std.ArrayList(u8).init(bun.default_allocator),
                             // .event_loop = event_loop orelse JSC.VirtualMachine.get().eventLoop(),
                             .event_loop = event_loop orelse event_loop_ref.get(),
+                            .task_count = task_count,
                         };
                         return task;
                     }
@@ -4918,7 +4924,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             this.is_absolute,
                         );
 
-                        var subtask = @This().create(this.ls, this.opts, this.cwd, new_path, this.event_loop);
+                        var subtask = @This().create(this.ls, this.opts, this.task_count, this.cwd, new_path, this.event_loop);
+                        _ = this.task_count.fetchAdd(1, .Monotonic);
                         subtask.is_root = false;
                         subtask.schedule();
                     }
@@ -4988,6 +4995,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                         const writer = this.output.writer();
                         std.fmt.format(writer, "{s}\n", .{this.path}) catch bun.outOfMemory();
+                        return;
                     }
 
                     fn shouldSkipEntry(this: *@This(), name: [:0]const u8) bool {
@@ -5017,11 +5025,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
                         var this: *@This() = @fieldParentPtr(@This(), "task", task);
                         this.run();
+                        this.doneLogic();
+                    }
+
+                    fn doneLogic(this: *@This()) void {
                         if (comptime EventLoopKind == .js) {
                             this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
                         } else {
                             this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, "runFromMainThreadMini"));
                         }
+
+                        // if (this.parent) |parent| {
+                        //     _ = parent.children_done.fetchAdd(1, .Monotonic);
+                        //     if (parent.childrenAreDone()) parent.doneLogic();
+                        // }
                     }
 
                     pub fn takeOutput(this: *@This()) std.ArrayList(u8) {
@@ -7129,9 +7146,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
         };
 
-        /// This is modified version of BufferedInput for file descriptors only. This
-        /// struct cleans itself up when it is done, so no need to call `.deinit()` on
-        /// it.
+        /// This is modified version of BufferedInput for file descriptors only.
+        ///
+        /// This struct cleans itself up when it is done, so no need to call `.deinit()` on
+        /// it. IT DOES NOT CLOSE FILE DESCRIPTORS
         pub const BufferedWriter =
             struct {
             remain: []const u8 = "",
@@ -7331,20 +7349,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
-            fn closeFDIfOpen(this: *BufferedWriter) void {
+            fn close(this: *BufferedWriter) void {
                 if (this.poll_ref) |poll| {
                     this.poll_ref = null;
                     poll.deinit();
                 }
 
                 if (this.fd != bun.invalid_fd) {
-                    _ = bun.sys.close(this.fd);
-                    this.fd = bun.invalid_fd;
+                    // _ = bun.sys.close(this.fd);
+                    // this.fd = bun.invalid_fd;
                 }
             }
 
             pub fn deinit(this: *BufferedWriter) void {
-                this.closeFDIfOpen();
+                this.close();
                 this.parent.onDone(this.err);
             }
         };
@@ -7754,20 +7772,20 @@ pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type, comptime Eve
             }
         }
 
-        fn closeFDIfOpen(this: *@This()) void {
+        fn close(this: *@This()) void {
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
                 poll.deinit();
             }
 
             if (this.fd != bun.invalid_fd) {
-                _ = bun.sys.close(this.fd);
-                this.fd = bun.invalid_fd;
+                // _ = bun.sys.close(this.fd);
+                // this.fd = bun.invalid_fd;
             }
         }
 
         pub fn deinit(this: *@This()) void {
-            this.closeFDIfOpen();
+            this.close();
             this.parent.onDone(this.err);
         }
     };

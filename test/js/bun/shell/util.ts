@@ -39,7 +39,7 @@ export class TestBuilder {
   private promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
   private _testName: string | undefined = undefined;
 
-  private expected_stdout: string = "";
+  private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
   private expected_stderr: string = "";
   private expected_exit_code: number = 0;
   private expected_error: string | boolean | undefined = undefined;
@@ -59,7 +59,7 @@ export class TestBuilder {
 
   static command(strings: TemplateStringsArray, ...expressions: any[]): TestBuilder {
     try {
-      if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("Cmd", strings.join(""));
+      if (process.env.BUN_DEBUG_SHELL_LOG_CMD === "1") console.info("[ShellTestBuilder] Cmd", strings.join(""));
       const promise = Bun.$(strings, ...expressions);
       const This = new this({ type: "ok", val: promise });
       This._testName = strings.join("");
@@ -86,7 +86,7 @@ export class TestBuilder {
     return this;
   }
 
-  stdout(expected: string): this {
+  stdout(expected: string | ((stdout: string, tempDir: string) => void)): this {
     this.expected_stdout = expected;
     return this;
   }
@@ -150,8 +150,13 @@ export class TestBuilder {
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";
-    if (this.expected_stdout !== undefined)
-      expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
+    if (this.expected_stdout !== undefined) {
+      if (typeof this.expected_stdout === "string") {
+        expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
+      } else {
+        this.expected_stdout(stdout.toString(), tempdir)
+      }
+    }
     if (this.expected_stderr !== undefined)
       expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);

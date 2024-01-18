@@ -36,6 +36,10 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  test('failing stmt edgecase', async () => {
+    const { stdout } = await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`
+  })
+
   test("invalid js obj", async () => {
     const lol = {
       hi: "lmao",

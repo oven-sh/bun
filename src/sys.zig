@@ -1720,6 +1720,10 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 }
 
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        @panic("TODO: Implement `pipe()` for Windows");
+    }
+
     var fds: [2]i32 = undefined;
     const rc = system.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(

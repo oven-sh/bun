@@ -1508,7 +1508,7 @@ pub fn AbstractVM(inner: anytype) brk: {
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
-    loop: *uws.Loop,
+    loop: *JSC.PlatformEventLoop,
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
     env: ?*bun.DotEnv.Loader = null,
@@ -1569,7 +1569,7 @@ pub const MiniEventLoop = struct {
         return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
-            .loop = uws.Loop.get(),
+            .loop = if (comptime bun.Environment.isPosix) uws.Loop.get() else bun.Async.Loop.get(),
         };
     }
 

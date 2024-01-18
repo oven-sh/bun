@@ -134,16 +134,6 @@ pub fn Cow(comptime T: type, comptime VTable: type) type {
     };
 }
 
-pub const CowEnv = Cow(std.StringArrayHashMap([:0]const u8), struct {
-    pub fn copy(val: *std.StringArrayHashMap([:0]const u8)) std.StringArrayHashMap([:0]const u8) {
-        return val.clone() catch bun.outOfMemory();
-    }
-
-    pub fn deinit(val: *std.StringArrayHashMap([:0]const u8)) void {
-        val.deinit();
-    }
-});
-
 pub const CoroutineResult = enum {
     /// it's okay for the caller to continue its execution
     cont,
@@ -199,6 +189,14 @@ pub const IO = struct {
 pub const Interpreter = NewInterpreter(.js);
 pub const InterpreterMini = NewInterpreter(.mini);
 
+/// Environment strings need to be copied a lot
+/// So we make them reference counted
+///
+/// But sometimes we use strings that are statically allocated, or are allocated
+/// with a predetermined lifetime (e.g. strings in the AST). In that case we
+/// don't want to incur the cost of heap allocating them and refcounting them
+///
+/// So environment strings can be ref counted or borrowed slices
 pub const EnvStr = packed struct {
     ptr: u48,
     tag: Tag,
@@ -310,6 +308,27 @@ pub const RefCountedStr = struct {
         // } else {}
     }
 };
+
+/// TODO use this
+/// Either
+///    A: subshells (`$(...)` or `(...)`) or
+///    B: commands in a pipeline
+/// will need their own copy of the shell environment because they could modify it,
+/// and those changes shouldn't affect the surounding environment.
+///
+/// This results in a lot of copying, which is wasteful since most of the time
+/// A) or B) won't even mutate the environment anyway.
+///
+/// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
+pub const CowEnvMap = Cow(EnvMap, struct {
+    pub fn copy(val: *EnvMap) EnvMap {
+        return val.clone();
+    }
+
+    pub fn deinit(val: *EnvMap) void {
+        val.deinit();
+    }
+});
 
 pub const EnvMap = struct {
     map: MapType,
@@ -469,9 +488,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         resolve: JSValue = .undefined,
         reject: JSValue = .undefined,
-        /// Align to 64 bytes to prevent false sharing
-        has_pending_activity: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
-        started: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
+        has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+        started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         done: ?*bool = null,
 

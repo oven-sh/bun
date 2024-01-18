@@ -52,9 +52,12 @@ pub const ReadableStream = struct {
 
     pub const Strong = struct {
         held: JSC.Strong = .{},
-        globalThis: ?*JSGlobalObject = null,
 
-        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) !Strong {
+        pub fn globalThis(this: *const Strong) ?*JSGlobalObject {
+            return this.held.globalThis;
+        }
+
+        pub fn init(this: ReadableStream, global: *JSGlobalObject) !Strong {
             switch (this.ptr) {
                 .Blob => |stream| {
                     try stream.parent().incrementCount();
@@ -68,15 +71,14 @@ pub const ReadableStream = struct {
                 else => {},
             }
             return .{
-                .globalThis = globalThis,
-                .held = JSC.Strong.create(this.value, globalThis),
+                .held = JSC.Strong.create(this.value, global),
             };
         }
 
         pub fn get(this: *Strong) ?ReadableStream {
-            if (this.globalThis) |globalThis| {
+            if (this.globalThis()) |global| {
                 if (this.held.get()) |value| {
-                    return ReadableStream.fromJS(value, globalThis);
+                    return ReadableStream.fromJS(value, global);
                 }
             }
             return null;
@@ -85,8 +87,7 @@ pub const ReadableStream = struct {
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
                 // decrement the ref count and if it's zero we auto detach
-                readable.detachIfPossible(this.globalThis.?);
-                this.globalThis = null;
+                readable.detachIfPossible(this.globalThis().?);
             }
             this.held.deinit();
         }
@@ -96,10 +97,25 @@ pub const ReadableStream = struct {
         return this.value;
     }
 
+    pub fn reloadTag(this: *ReadableStream, globalThis: *JSC.JSGlobalObject) void {
+        if (ReadableStream.fromJS(this.value, globalThis)) |stream| {
+            this.* = stream;
+        } else {
+            this.value.unprotect();
+            this.* = .{ .ptr = .{ .Invalid = {} }, .value = .zero };
+        }
+    }
+
     pub fn toAnyBlob(
         stream: *ReadableStream,
         globalThis: *JSC.JSGlobalObject,
     ) ?JSC.WebCore.AnyBlob {
+        if (stream.isDisturbed(globalThis)) {
+            return null;
+        }
+
+        stream.reloadTag(globalThis);
+
         switch (stream.ptr) {
             .Blob => |blobby| {
                 var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
@@ -147,14 +163,19 @@ pub const ReadableStream = struct {
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
+        this.value.unprotect();
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
+        this.value.unprotect();
+    }
+
+    pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
+        ReadableStream__detach(this.value, globalObject);
+        this.value.unprotect();
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -171,8 +192,8 @@ pub const ReadableStream = struct {
         };
 
         if (ref_count == 0) {
-            this.value.unprotect();
             ReadableStream__detach(this.value, globalThis);
+            this.value.unprotect();
         }
     }
 
@@ -1251,11 +1272,12 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         reachable_from_js: bool = true,
         poll_ref: ?*Async.FilePoll = null,
 
+        pub usingnamespace NewReadyWatcher(@This(), .writable, ready);
+        const log = Output.scoped(.FileSink, false);
+
         const ThisFileSink = @This();
 
         pub const event_loop_kind = EventLoop;
-        pub usingnamespace NewReadyWatcher(@This(), .writable, ready);
-        const log = Output.scoped(.FileSink, false);
 
         pub fn isReachable(this: *const ThisFileSink) bool {
             return this.reachable_from_js or !this.signal.isDead();
@@ -1371,7 +1393,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         pub fn flushMaybePollWithSizeAndBuffer(this: *ThisFileSink, buffer: []const u8, writable_size: usize) StreamResult.Writable {
             std.debug.assert(this.fd != bun.invalid_fd);
 
-            var total: usize = this.written;
+            var total = this.written;
             const initial = total;
             const fd = this.fd;
             var remain = buffer;
@@ -1560,7 +1582,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                 }
 
                 if (this.auto_truncate)
-                    std.os.ftruncate(bun.fdcast(fd), total) catch {};
+                    _ = bun.sys.ftruncate(fd, @intCast(total));
 
                 if (this.auto_close) {
                     _ = bun.sys.close(fd);
@@ -1625,9 +1647,9 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                 this.allocator.destroy(this);
         }
 
-        pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ThisFileSink {
-            const this = try allocator.create(ThisFileSink);
-            this.* = ThisFileSink{
+        pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*FileSink {
+            const this = try allocator.create(FileSink);
+            this.* = FileSink{
                 .buffer = bun.ByteList{},
                 .allocator = allocator,
                 .next = next,
@@ -1639,7 +1661,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             this: *ThisFileSink,
             allocator: std.mem.Allocator,
         ) void {
-            this.* = ThisFileSink{
+            this.* = FileSink{
                 .buffer = bun.ByteList{},
                 .allocator = allocator,
                 .next = null,
@@ -2315,7 +2337,14 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 const wait = callframe.argumentsCount() > 0 and
                     callframe.argument(0).isBoolean() and
                     callframe.argument(0).asBoolean();
-                return this.sink.flushFromJS(globalThis, wait).result;
+                const maybe_value: JSC.Node.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
+                return switch (maybe_value) {
+                    .result => |value| value,
+                    .err => |err| blk: {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        break :blk JSC.JSValue.jsUndefined();
+                    },
+                };
             }
 
             return this.sink.flush().toJS(globalThis);
@@ -3780,10 +3809,6 @@ pub const ReadResult = union(enum) {
                     StreamResult{ .owned = bun.ByteList.init(slice) }
                 else if (done)
                     StreamResult{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
-                else if (view == .zero and done)
-                    StreamResult{ .temporary_and_done = bun.ByteList.init(slice) }
-                else if (view == .zero)
-                    StreamResult{ .temporary = bun.ByteList.init(slice) }
                 else
                     StreamResult{ .into_array = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } };
             },
@@ -3813,6 +3838,7 @@ pub const AutoSizer = struct {
 
 pub const FIFO = NewFIFO(.js);
 pub const FIFOMini = NewFIFO(.mini);
+
 pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
     return struct {
         buf: []u8 = &[_]u8{},
@@ -3920,7 +3946,7 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
                 if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
                     // it might be readable actually
                     this.close_on_empty_read = true;
-                    switch (bun.isReadable(@intCast(poll.fd))) {
+                    switch (bun.isReadable(poll.fd)) {
                         .ready => {
                             this.close_on_empty_read = false;
                             return null;
@@ -3943,7 +3969,7 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
 
                     // this happens if we've registered a watcher but we haven't
                     // ticked the event loop since registering it
-                    switch (bun.isReadable(@intCast(poll.fd))) {
+                    switch (bun.isReadable(poll.fd)) {
                         .ready => {
                             poll.flags.insert(.readable);
                             return null;
@@ -4261,9 +4287,9 @@ pub const File = struct {
         };
 
         if (comptime Environment.isPosix) {
-            if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
+            if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast()))) {
                 var termios = std.mem.zeroes(std.os.termios);
-                _ = std.c.tcgetattr(fd, &termios);
+                _ = std.c.tcgetattr(fd.cast(), &termios);
                 bun.C.cfmakeraw(&termios);
                 file.is_atty = true;
             }
@@ -4282,7 +4308,7 @@ pub const File = struct {
                     // it is important for us to clone it so we don't cause Weird Things to happen
                     if ((flags & std.os.O.NONBLOCK) == 0) {
                         fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                            .result => |_fd| bun.toFD(_fd),
                             .err => |err| return .{ .err = err },
                         };
 
@@ -4309,11 +4335,6 @@ pub const File = struct {
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
             }
 
-            if (bun.S.ISSOCK(stat.mode)) {
-                _ = Syscall.close(fd);
-                return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
-            }
-
             file.mode = @as(bun.Mode, @intCast(stat.mode));
             this.mode = file.mode;
 
@@ -4321,10 +4342,7 @@ pub const File = struct {
             file.seekable = this.seekable;
             size = @intCast(stat.size);
         } else if (comptime Environment.isWindows) outer: {
-            const std_file = std.fs.File{
-                .handle = bun.fdcast(fd),
-            };
-            size = @intCast(std_file.getEndPos() catch {
+            size = @intCast(fd.asFile().getEndPos() catch {
                 this.seekable = false;
                 break :outer;
             });
@@ -4841,30 +4859,6 @@ pub fn NewReadyWatcher(
     comptime flag_: Async.FilePoll.Flags,
     comptime onReady: anytype,
 ) type {
-    if (!@hasDecl(Context, "event_loop_kind")) {
-        @compileError("Need `pub const event_loop_kind = ...` on " ++ @typeName(Context));
-    }
-    const EventLoopKind = enum { js, mini };
-
-    const event_loop_kind: EventLoopKind = switch (Context.event_loop_kind) {
-        .js => .js,
-        .mini => .mini,
-    };
-
-    const EventLoopCtxPtr = switch (event_loop_kind) {
-        .js => *JSC.VirtualMachine,
-        .mini => *JSC.MiniEventLoop,
-    };
-
-    const event_loop_ptr = struct {
-        fn get() EventLoopCtxPtr {
-            return switch (event_loop_kind) {
-                .js => JSC.VirtualMachine.get(),
-                .mini => bun.JSC.MiniEventLoop.global,
-            };
-        }
-    };
-
     return struct {
         const flag = flag_;
         const ready = onReady;
@@ -4888,9 +4882,7 @@ pub fn NewReadyWatcher(
         }
 
         pub fn onPoll(this: *Context, sizeOrOffset: i64, _: u16) void {
-            defer {
-                if (comptime event_loop_kind == .js) JSC.VirtualMachine.get().drainMicrotasks();
-            }
+            defer JSC.VirtualMachine.get().drainMicrotasks();
             ready(this, sizeOrOffset);
         }
 
@@ -4899,21 +4891,17 @@ pub fn NewReadyWatcher(
                 @panic("TODO on Windows");
             }
 
-            const fd = @as(c_int, @intCast(fd_));
-            std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
+            std.debug.assert(this.poll_ref.?.fd == fd_);
             std.debug.assert(
-                // this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
-                this.poll_ref.?.unregister(JSC.AbstractVM(event_loop_ptr.get()).platformEventLoop(), false) == .result,
+                this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
-            // this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
-            this.poll_ref.?.disableKeepingProcessAlive(event_loop_ptr.get());
+            this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
         }
 
         pub fn pollRef(this: *Context) *Async.FilePoll {
             return this.poll_ref orelse brk: {
                 this.poll_ref = Async.FilePoll.init(
-                    // JSC.VirtualMachine.get(),
-                    event_loop_ptr.get(),
+                    JSC.VirtualMachine.get(),
                     this.fd,
                     .{},
                     Context,
@@ -4931,15 +4919,13 @@ pub fn NewReadyWatcher(
             return false;
         }
 
-        pub fn watch(this: *Context, fd_: anytype) void {
+        pub fn watch(this: *Context, fd: bun.FileDescriptor) void {
             if (comptime Environment.isWindows) {
                 @panic("Do not call watch() on windows");
             }
-            const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = Async.FilePoll.init(
-                    // JSC.VirtualMachine.get(),
-                    event_loop_ptr.get(),
+                    JSC.VirtualMachine.get(),
                     fd,
                     .{},
                     Context,
@@ -4949,8 +4935,7 @@ pub fn NewReadyWatcher(
             };
             std.debug.assert(poll_ref.fd == fd);
             std.debug.assert(!this.isWatching());
-            // switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
-            switch (poll_ref.register(JSC.AbstractVM(event_loop_ptr.get()).platformEventLoop(), flag, true)) {
+            switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
                 .err => |err| {
                     std.debug.panic("FilePoll.register failed: {d}", .{err.errno});
                 },

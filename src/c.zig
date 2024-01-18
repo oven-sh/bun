@@ -18,7 +18,7 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const errno = os.errno;
-const mode_t = C.mode_t;
+const mode_t = bun.Mode;
 // TODO: this is wrong on Windows
 const libc_stat = bun.Stat;
 
@@ -106,14 +106,14 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
 // TODO: change types to use `bun.FileDescriptor`
-pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
+pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
-                _ = bun.sys.rmdirat(bun.toFD(to_dir), destination.ptr);
+                _ = bun.sys.rmdirat(to_dir, destination.ptr);
 
-                try (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination).unwrap());
+                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
                 return;
             }
 
@@ -127,9 +127,8 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.f
     }
 }
 
-// TODO: change types to use `bun.FileDescriptor`
-pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(bun.toFD(from_dir), filename, bun.toFD(to_dir), destination)) {
+pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
@@ -152,16 +151,19 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
-pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
-    const from_dir_fd = bun.toFD(from_dir);
-    const in_handle = try bun.sys.openat(from_dir_fd, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
     defer _ = bun.sys.close(in_handle);
-    _ = bun.sys.unlinkat(from_dir_fd, filename);
-    try copyFileZSlowWithHandle(in_handle, bun.toFD(to_dir), destination);
+    _ = bun.sys.unlinkat(from_dir, filename);
+    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
+    if (comptime Environment.isWindows) {
+        @panic("TODO windows");
+    }
+
+    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
 
     // Attempt to delete incase it already existed.
     // This fixes ETXTBUSY on Linux
@@ -176,29 +178,26 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     defer _ = bun.sys.close(out_handle);
 
     if (comptime Environment.isLinux) {
-        _ = std.os.linux.fallocate(out_handle, 0, 0, @intCast(stat_.size));
+        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
     }
 
-    try bun.copyFile(bun.fdcast(in_handle), bun.fdcast(out_handle));
+    try bun.copyFile(in_handle.cast(), out_handle.cast());
 
     if (comptime Environment.isPosix) {
-        _ = fchmod(out_handle, stat_.mode);
-        _ = fchown(out_handle, stat_.uid, stat_.gid);
+        _ = fchmod(out_handle.cast(), stat_.mode);
+        _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
     }
 }
 
-pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
-    if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
-    }
-    return switch (mode & os.S.IFMT) {
-        os.S.IFBLK => std.fs.File.Kind.block_device,
-        os.S.IFCHR => std.fs.File.Kind.character_device,
-        os.S.IFDIR => std.fs.File.Kind.directory,
-        os.S.IFIFO => std.fs.File.Kind.named_pipe,
-        os.S.IFLNK => std.fs.File.Kind.sym_link,
-        os.S.IFREG => std.fs.File.Kind.file,
-        os.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
+pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
+    return switch (mode & bun.S.IFMT) {
+        bun.S.IFBLK => std.fs.File.Kind.block_device,
+        bun.S.IFCHR => std.fs.File.Kind.character_device,
+        bun.S.IFDIR => std.fs.File.Kind.directory,
+        bun.S.IFIFO => std.fs.File.Kind.named_pipe,
+        bun.S.IFLNK => std.fs.File.Kind.sym_link,
+        bun.S.IFREG => std.fs.File.Kind.file,
+        bun.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
         else => .unknown,
     };
 }
@@ -244,8 +243,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 allocator.free(slice);
             }
             const img_count = std.c._dyld_image_count();
-            var i: u32 = 0;
-            while (i < img_count) : (i += 1) {
+            for (0..img_count) |i| {
                 const name = std.c._dyld_get_image_name(i);
                 const item = try allocator.dupeZ(u8, mem.sliceTo(name, 0));
                 errdefer allocator.free(item);
@@ -380,7 +378,7 @@ const LazyStatus = enum {
     failed,
 };
 
-fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
+pub fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
     if (comptime Environment.isWindows) {
         return bun.windows.GetProcAddressA(handle, name);
     } else if (comptime Environment.isMac or Environment.isLinux) {

@@ -25,25 +25,6 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
 
 const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
-pub fn DeclEnum(comptime T: type) type {
-    const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
-    var decls = [_]std.builtin.Type.Declaration{};
-    inline for (fieldInfos, 0..) |field, i| {
-        enumFields[i] = .{
-            .name = field.name,
-            .value = i,
-        };
-    }
-    return @Type(.{
-        .Enum = .{
-            .tag_type = std.math.IntFittingRange(0, fieldInfos.len - 1),
-            .fields = &enumFields,
-            .decls = &decls,
-            .is_exhaustive = true,
-        },
-    });
-}
 
 pub const Flavor = enum {
     sync,
@@ -168,7 +149,7 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -176,7 +157,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
-                        .fd = @intCast(bun.toFD(fd)),
+                        .fd = fd,
                     },
                 },
             };
@@ -200,6 +181,55 @@ pub fn Maybe(comptime ResultType: type) type {
         }
     };
 }
+
+pub const BlobOrStringOrBuffer = union(enum) {
+    blob: JSC.WebCore.Blob,
+    string_or_buffer: StringOrBuffer,
+
+    pub fn deinit(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .blob => |blob| {
+                if (blob.store) |store| {
+                    store.deref();
+                }
+            },
+            .string_or_buffer => |*str| {
+                str.deinit();
+            },
+        }
+    }
+
+    pub fn slice(this: *const BlobOrStringOrBuffer) []const u8 {
+        return switch (this.*) {
+            .blob => |*blob| blob.sharedView(),
+            .string_or_buffer => |*str| str.slice(),
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        if (value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                store.ref();
+            }
+
+            return .{ .blob = blob.* };
+        }
+
+        return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
+    }
+
+    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        if (value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                store.ref();
+            }
+
+            return .{ .blob = blob.* };
+        }
+
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
+    }
+};
 
 pub const StringOrBuffer = union(enum) {
     string: bun.SliceWithUnderlyingString,
@@ -228,7 +258,8 @@ pub const StringOrBuffer = union(enum) {
             return try allocator.dupe(u8, array_buffer.byteSlice());
         }
 
-        var str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        defer str.deref();
 
         const result = try str.toOwnedSlice(allocator);
         defer globalObject.vm().reportExtraMemory(result.len);
@@ -305,9 +336,12 @@ pub const StringOrBuffer = union(enum) {
     ) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var str = bun.String.tryFromJS(value, global) orelse return null;
+                const str = bun.String.tryFromJS(value, global) orelse return null;
+
                 if (is_async) {
-                    var sliced = str.toThreadSafeSlice(allocator);
+                    defer str.deref();
+                    var possible_clone = str;
+                    var sliced = possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
@@ -316,7 +350,6 @@ pub const StringOrBuffer = union(enum) {
 
                     return StringOrBuffer{ .threadsafe_string = sliced };
                 } else {
-                    str.ref();
                     return StringOrBuffer{ .string = str.toSlice(allocator) };
                 }
             },
@@ -359,6 +392,7 @@ pub const StringOrBuffer = union(enum) {
         }
 
         var str = bun.String.tryFromJS(value, global) orelse return null;
+        defer str.deref();
         if (str.isEmpty()) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
         }
@@ -622,19 +656,12 @@ pub const PathLike = union(enum) {
         return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSlice {
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
 
         return sliceZWithForceCopy(this, buf, false);
-    }
-
-    pub inline fn sliceZAssume(
-        this: PathLike,
-    ) [:0]const u8 {
-        var sliced = this.slice();
-        return sliced.ptr[0..sliced.len :0];
     }
 
     pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -688,6 +715,7 @@ pub const PathLike = union(enum) {
             JSC.JSValue.JSType.DerivedStringObject,
             => {
                 var str = arg.toBunString(ctx);
+                defer str.deref();
 
                 arguments.eat();
 
@@ -1429,7 +1457,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+        const S = if (!Environment.isWindows) os.system.S else bun.C.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
@@ -2392,6 +2420,18 @@ pub const Process = struct {
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         const allocator = globalObject.allocator();
         const vm = globalObject.bunVM();
+
+        if (vm.worker) |worker| {
+            // was explicitly overridden for the worker?
+            if (worker.execArgv) |execArgv| {
+                const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
+                for (0..execArgv.len) |i| {
+                    array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
+                }
+                return array;
+            }
+        }
+
         var args = allocator.alloc(
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
@@ -2431,42 +2471,53 @@ pub const Process = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
+        var args_count: usize = vm.argv.len;
+        if (vm.worker) |worker| {
+            args_count = if (worker.argv) |argv| argv.len else 0;
+        }
+
         const args = allocator.alloc(
-            JSC.ZigString,
+            bun.String,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            vm.argv.len + 2,
+            args_count + 2,
         ) catch unreachable;
-        var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
+        var args_list = std.ArrayListUnmanaged(bun.String){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
 
         if (vm.standalone_module_graph != null) {
             // Don't break user's code because they did process.argv.slice(2)
-            // Even if they didn't type "bun", we still want to add it
+            // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.appendAssumeCapacity(
-                JSC.ZigString.init("bun"),
+                bun.String.static("bun"),
             );
         } else {
+            const exe_path = std.fs.selfExePathAlloc(allocator) catch null;
             args_list.appendAssumeCapacity(
-                JSC.ZigString.init(
-                    std.fs.selfExePathAlloc(allocator) catch "bun",
-                ).withEncoding(),
+                if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
             );
         }
 
         if (vm.main.len > 0)
-            args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());
+            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
 
         defer allocator.free(args);
-        {
-            for (vm.argv) |arg0| {
-                const argv0 = JSC.ZigString.init(arg0).withEncoding();
+
+        if (vm.worker) |worker| {
+            if (worker.argv) |argv| {
+                for (argv) |arg| {
+                    args_list.appendAssumeCapacity(bun.String.init(arg));
+                }
+            }
+        } else {
+            for (vm.argv) |arg| {
+                const str = bun.String.fromUTF8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-                args_list.appendAssumeCapacity(argv0);
+                args_list.appendAssumeCapacity(str);
             }
         }
 
-        return JSC.JSValue.createStringArray(globalObject, args_list.items.ptr, args_list.items.len, true);
+        return bun.String.toJSArray(globalObject, args_list.items);
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

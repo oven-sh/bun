@@ -170,6 +170,7 @@ pub const BunObject = struct {
 const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
+const uv = bun.windows.libuv;
 const Environment = bun.Environment;
 
 const Global = bun.Global;
@@ -220,7 +221,7 @@ const JSValue = @import("root").bun.JSC.JSValue;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -293,9 +294,8 @@ pub fn flushCSSImports() void {
 }
 
 pub fn getCSSImports() []ZigString {
-    var i: u16 = 0;
     const tail = css_imports_list_tail;
-    while (i < tail) : (i += 1) {
+    for (0..tail) |i| {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
@@ -706,7 +706,7 @@ pub fn inspect(
         }
     }
 
-    var formatOptions = ZigConsoleClient.FormatOptions{
+    var formatOptions = ConsoleObject.FormatOptions{
         .enable_colors = false,
         .add_newline = false,
         .flush = false,
@@ -780,7 +780,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ZigConsoleClient.format(
+    ConsoleObject.format(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -1105,7 +1105,18 @@ fn doResolve(
         }
     }
 
-    return doResolveWithArgs(globalThis, specifier.toBunString(globalThis), from.toBunString(globalThis), exception, is_esm, false);
+    const specifier_str = specifier.toBunString(globalThis);
+    defer specifier_str.deref();
+    const from_str = from.toBunString(globalThis);
+    defer from_str.deref();
+    return doResolveWithArgs(
+        globalThis,
+        specifier_str,
+        from_str,
+        exception,
+        is_esm,
+        false,
+    );
 }
 
 fn doResolveWithArgs(
@@ -1200,9 +1211,16 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
-    const value = doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
+    const source_str = source.toBunString(global);
+    defer source_str.deref();
+
+    const value = doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, exception_[0].?.value());
     };
+
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
@@ -1214,7 +1232,14 @@ export fn Bun__resolveSync(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
-    return doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
+
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
+    const source_str = source.toBunString(global);
+    defer source_str.deref();
+
+    return doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -1226,8 +1251,11 @@ export fn Bun__resolveSyncWithSource(
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
+    const specifier_str = specifier.toBunString(global);
+    defer specifier_str.deref();
+
     const exception = &exception_;
-    return doResolveWithArgs(global, specifier.toBunString(global), source.*, exception, is_esm, true) orelse {
+    return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -2362,11 +2390,16 @@ pub const Crypto = struct {
         fn hashToEncoding(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.BlobOrStringOrBuffer,
             encoding: JSC.Node.Encoding,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
 
             const len = evp.hash(globalThis.bunVM().rareData().boringEngine(), input.slice(), &output_digest_buf) orelse {
                 const err = BoringSSL.ERR_get_error();
@@ -2381,12 +2414,18 @@ pub const Crypto = struct {
         fn hashToBytes(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.BlobOrStringOrBuffer,
             output: ?JSC.ArrayBuffer,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             var output_digest_slice: []u8 = &output_digest_buf;
             defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
+
             if (output) |output_buf| {
                 const size = evp.size();
                 var bytes = output_buf.byteSlice();
@@ -2416,7 +2455,7 @@ pub const Crypto = struct {
         pub fn hash_(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.BlobOrStringOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
             var evp = EVP.byName(algorithm, globalThis) orelse {
@@ -2486,12 +2525,15 @@ pub const Crypto = struct {
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
             const encoding = arguments.ptr[1];
-            const buffer = JSC.Node.StringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
-                globalThis.throwInvalidArguments("expected string or buffer", .{});
+            const buffer = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
+                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                 return JSC.JSValue.zero;
             };
-
             defer buffer.deinit();
+            if (buffer == .blob and buffer.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
 
             this.evp.update(buffer.slice());
             const err = BoringSSL.ERR_get_error();
@@ -2613,10 +2655,15 @@ pub const Crypto = struct {
 
             fn hashToEncoding(
                 globalThis: *JSGlobalObject,
-                input: JSC.Node.StringOrBuffer,
+                input: JSC.Node.BlobOrStringOrBuffer,
                 encoding: JSC.Node.Encoding,
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
+
+                if (input == .blob and input.blob.isBunFile()) {
+                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                    return .zero;
+                }
 
                 if (comptime @typeInfo(@TypeOf(Hasher.hash)).Fn.params.len == 3) {
                     Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.get().rareData().boringEngine());
@@ -2629,7 +2676,7 @@ pub const Crypto = struct {
 
             fn hashToBytes(
                 globalThis: *JSGlobalObject,
-                input: JSC.Node.StringOrBuffer,
+                input: JSC.Node.BlobOrStringOrBuffer,
                 output: ?JSC.ArrayBuffer,
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
@@ -2659,9 +2706,16 @@ pub const Crypto = struct {
 
             pub fn hash_(
                 globalThis: *JSGlobalObject,
-                input: JSC.Node.StringOrBuffer,
+                input: JSC.Node.BlobOrStringOrBuffer,
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
+                defer input.deinit();
+
+                if (input == .blob and input.blob.isBunFile()) {
+                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                    return .zero;
+                }
+
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
                         inline else => |*str| {
@@ -2699,11 +2753,16 @@ pub const Crypto = struct {
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
-                const buffer = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
-                    globalThis.throwInvalidArguments("expected string or buffer", .{});
+                const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
+                    globalThis.throwInvalidArguments("expected blob or string or buffer", .{});
                     return JSC.JSValue.zero;
                 };
                 defer buffer.deinit();
+
+                if (buffer == .blob and buffer.blob.isBunFile()) {
+                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                    return .zero;
+                }
                 this.hashing.update(buffer.slice());
                 return thisValue;
             }
@@ -2713,9 +2772,10 @@ pub const Crypto = struct {
                 globalThis: *JSGlobalObject,
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
-                if (output) |string_or_buffer| {
-                    switch (string_or_buffer) {
-                        inline else => |str| {
+                if (output) |*string_or_buffer| {
+                    switch (string_or_buffer.*) {
+                        inline else => |*str| {
+                            defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                                 globalThis.throwInvalidArguments("Unknown encoding: \"{s}\"", .{str.slice()});
                                 return JSC.JSValue.zero;
@@ -2723,7 +2783,7 @@ pub const Crypto = struct {
 
                             return this.digestToEncoding(globalThis, encoding);
                         },
-                        .buffer => |buffer| {
+                        .buffer => |*buffer| {
                             return this.digestToBytes(
                                 globalThis,
                                 buffer.buffer,
@@ -2746,15 +2806,7 @@ pub const Crypto = struct {
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
                 } else {
-                    output_digest_buf = comptime brk: {
-                        var bytes: Hasher.Digest = undefined;
-                        var i: usize = 0;
-                        while (i < Hasher.digest) {
-                            bytes[i] = 0;
-                            i += 1;
-                        }
-                        break :brk bytes;
-                    };
+                    output_digest_buf = std.mem.zeroes(Hasher.Digest);
                 }
 
                 this.hashing.final(output_digest_slice);
@@ -3433,7 +3485,7 @@ const TOMLObject = struct {
         var out = bun.String.fromUTF8(slice);
         defer out.deref();
 
-        return out.toJSForParseJSON(globalThis);
+        return out.toJSByParseJSON(globalThis);
     }
 };
 
@@ -3583,11 +3635,8 @@ pub const Timer = struct {
                         } else {
                             args = args_buf[0..count];
                         }
-                        var arg = args.ptr;
-                        var i: u32 = 0;
-                        while (i < count) : (i += 1) {
-                            arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
-                            arg += 1;
+                        for (args, 0..) |*arg, i| {
+                            arg.* = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
                         }
                     }
                 }
@@ -3829,17 +3878,16 @@ pub const Timer = struct {
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         arguments: JSC.Strong = .{},
         has_scheduled_job: bool = false,
-
         pub const TimerReference = struct {
             id: ID = .{ .id = 0 },
             cancelled: bool = false,
 
             event_loop: *JSC.EventLoop,
-            timer: bun.io.Timer = .{
+            timer: if (Environment.isWindows) uv.uv_timer_t else bun.io.Timer = if (Environment.isWindows) std.mem.zeroes(uv.uv_timer_t) else .{
                 .tag = .TimerReference,
                 .next = std.mem.zeroes(std.os.timespec),
             },
-            request: bun.io.Request = .{
+            request: if (Environment.isWindows) u0 else bun.io.Request = if (Environment.isWindows) 0 else .{
                 .callback = &onRequest,
             },
             interval: i32 = -1,
@@ -3847,8 +3895,20 @@ pub const Timer = struct {
             scheduled_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
             pub const Pool = bun.HiveArray(TimerReference, 1024).Fallback;
+            fn onUVRequest(handle: *uv.uv_timer_t) callconv(.C) void {
+                const data = handle.data orelse @panic("Invalid data on uv timer");
+                var this: *TimerReference = @ptrCast(@alignCast(data));
+                if (this.cancelled) {
+                    _ = uv.uv_timer_stop(&this.timer);
+                }
+                // libuv runs on the same thread
+                return this.runFromJSThread();
+            }
 
             fn onRequest(req: *bun.io.Request) bun.io.Action {
+                if (Environment.isWindows) {
+                    @panic("This should not be called on Windows");
+                }
                 var this: *TimerReference = @fieldParentPtr(TimerReference, "request", req);
 
                 if (this.cancelled) {
@@ -3878,9 +3938,11 @@ pub const Timer = struct {
             }
 
             pub fn reschedule(this: *TimerReference) void {
-                this.request = .{
-                    .callback = &onRequest,
-                };
+                if (!Environment.isWindows) {
+                    this.request = .{
+                        .callback = &onRequest,
+                    };
+                }
                 this.schedule(this.interval);
             }
 
@@ -3911,19 +3973,33 @@ pub const Timer = struct {
             }
 
             pub fn create(event_loop: *JSC.EventLoop, id: ID) *TimerReference {
-                const timer = event_loop.timerReferencePool().get();
-                timer.* = .{
+                const this = event_loop.timerReferencePool().get();
+                this.* = .{
                     .id = id,
                     .event_loop = event_loop,
                 };
-                return timer;
+                if (Environment.isWindows) {
+                    this.timer.data = this;
+                    if (uv.uv_timer_init(uv.Loop.get(), &this.timer) != 0) {
+                        bun.outOfMemory();
+                    }
+                    // we manage the ref/unref in the same way that linux does
+                    uv.uv_unref(@ptrCast(&this.timer));
+                }
+                return this;
             }
 
             pub fn schedule(this: *TimerReference, interval: ?i32) void {
                 std.debug.assert(!this.cancelled);
                 _ = this.scheduled_count.fetchAdd(1, .Monotonic);
+                const ms: usize = @max(interval orelse this.interval, 1);
+                if (Environment.isWindows) {
+                    if (uv.uv_timer_start(&this.timer, TimerReference.onUVRequest, @intCast(ms), 0) != 0) @panic("unable to start timer");
+                    return;
+                }
+
                 this.timer.state = .PENDING;
-                this.timer.next = msToTimespec(@intCast(@max(interval orelse this.interval, 1)));
+                this.timer.next = msToTimespec(ms);
                 bun.io.Loop.get().schedule(&this.request);
             }
 

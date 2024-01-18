@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunEnv, bunExe, bunEnv as env } from "harness";
@@ -199,9 +200,9 @@ logLevel = "debug"
             });
             console.log(run_dir);
             if (withLogLevel) {
-              expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).toContain("ENOENT loading tsconfig.json extends");
             } else {
-              expect(stderr.toString().trim()).not.toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).not.toContain("ENOENT loading tsconfig.json extends");
             }
 
             expect(stdout.toString()).toBe("hi\n");

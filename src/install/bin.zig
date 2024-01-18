@@ -13,6 +13,7 @@ const Fs = @import("../fs.zig");
 const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
+const string = bun.string;
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -24,29 +25,6 @@ pub const Bin = extern struct {
 
     // Largest member must be zero initialized
     value: Value = Value{ .map = ExternalStringList{} },
-
-    pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        switch (this.tag) {
-            .file => this.value.file.assertDefined(),
-            .named_file => {
-                this.value.named_file[0].assertDefined();
-                this.value.named_file[1].assertDefined();
-            },
-            .dir => {
-                this.value.dir.assertDefined();
-            },
-            .map => {
-                const list = this.value.map.get(extern_strings);
-                for (list) |*extern_string| {
-                    extern_string.value.assertDefined();
-                }
-            },
-            else => {},
-        }
-    }
 
     pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
@@ -204,7 +182,7 @@ pub const Bin = extern struct {
         done: bool = false,
         dir_iterator: ?std.fs.Dir.Iterator = null,
         package_name: String,
-        package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = bun.fdcast(bun.invalid_fd) },
+        package_installed_node_modules: std.fs.Dir = bun.invalid_fd.asDir(),
         buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
@@ -327,29 +305,27 @@ pub const Bin = extern struct {
 
         fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
             // we use fchmodat to avoid any issues with current working directory
-            _ = C.fchmodat(folder, target, umask | 0o777, 0);
+            _ = C.fchmodat(folder, target, @intCast(umask | 0o777), 0);
         }
 
-        fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
-            if (comptime Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
-            std.os.symlinkatZ(target_path, this.package_installed_node_modules, dest_path) catch |err| {
+        fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            const node_modules = this.package_installed_node_modules.asDir();
+            std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
                 // Most likely, the symlink was already created by another package
                 if (err == error.PathAlreadyExists) {
-                    setPermissions(this.package_installed_node_modules, dest_path);
+                    setPermissions(node_modules.fd, dest_path);
                     var target_path_trim = target_path;
                     if (strings.hasPrefix(target_path_trim, "../")) {
                         target_path_trim = target_path_trim[3..];
                     }
-                    setPermissions(this.package_installed_node_modules, target_path_trim);
+                    setPermissions(node_modules.fd, target_path_trim);
                     return;
                 }
 
                 this.err = err;
             };
-            setPermissions(this.package_installed_node_modules, dest_path);
+            setPermissions(node_modules.fd, dest_path);
         }
 
         const dot_bin = ".bin" ++ std.fs.path.sep_str;
@@ -358,17 +334,20 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
             var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var from_remain: []u8 = &target_buf;
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+                const root_dir = this.package_installed_node_modules.asDir();
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
                     if (realpath_err == error.FileNotFound) {
                         if (comptime Environment.isWindows) {
-                            std.os.mkdiratW(root_dir.fd, bun.strings.w(".bin"), 0) catch |err| {
+                            std.os.mkdiratW(root_dir.fd, comptime bun.OSPathLiteral(".bin"), 0) catch |err| {
                                 this.err = err;
                                 return;
                             };
@@ -426,11 +405,6 @@ pub const Bin = extern struct {
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
 
-            if (comptime Environment.isWindows) {
-                // TODO: Bin.Linker.link() needs to be updated to generate .cmd files on Windows
-                @panic("TODO on Windows");
-            }
-
             switch (this.bin.tag) {
                 .none => {
                     if (comptime Environment.isDebug) {
@@ -458,7 +432,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSimlinkAndPermissions(target_path, dest_path);
+                    this.setSymlinkAndPermissions(target_path, dest_path);
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
@@ -478,13 +452,14 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSimlinkAndPermissions(target_path, dest_path);
+                    this.setSymlinkAndPermissions(target_path, dest_path);
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
                     const end = this.bin.value.map.len + extern_string_i;
                     const _from_remain = from_remain;
                     const _remain = remain;
+
                     while (extern_string_i < end) : (extern_string_i += 2) {
                         from_remain = _from_remain;
                         remain = _remain;
@@ -508,7 +483,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        this.setSimlinkAndPermissions(target_path, dest_path);
+                        this.setSymlinkAndPermissions(target_path, dest_path);
                     }
                 },
                 .dir => {
@@ -522,7 +497,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    const dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+                    const dir = this.package_installed_node_modules.asDir();
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
@@ -557,7 +532,7 @@ pub const Bin = extern struct {
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
-                                this.setSimlinkAndPermissions(from_path, to_path);
+                                this.setSymlinkAndPermissions(from_path, to_path);
                             },
                             else => {},
                         }
@@ -578,7 +553,7 @@ pub const Bin = extern struct {
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
-                if (this.global_bin_dir.fd >= bun.invalid_fd) {
+                if (this.global_bin_dir.fd >= bun.invalid_fd.int()) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -595,7 +570,7 @@ pub const Bin = extern struct {
                 remain[0] = std.fs.path.sep;
                 remain = remain[1..];
 
-                this.root_node_modules_folder = this.global_bin_dir.fd;
+                this.root_node_modules_folder = bun.toFD(this.global_bin_dir.fd);
             }
 
             const name = this.package_name.slice();
@@ -623,7 +598,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
+                    std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                 },
                 .named_file => {
                     const name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
@@ -632,7 +607,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
+                    std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -660,7 +635,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
+                        std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                     }
                 },
                 .dir => {
@@ -674,7 +649,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    const dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+                    const dir = this.package_installed_node_modules.asDir();
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
@@ -709,7 +684,7 @@ pub const Bin = extern struct {
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
                                 std.os.unlinkatZ(
-                                    this.root_node_modules_folder,
+                                    this.root_node_modules_folder.cast(),
                                     to_path,
                                     0,
                                 ) catch continue;

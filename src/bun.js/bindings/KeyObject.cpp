@@ -1369,11 +1369,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto resultData = result.releaseReturnValue();
-        auto size = resultData.size();
-        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-        if (size > 0)
-            memcpy(buffer->vector(), resultData.data(), size);
-
+        auto* buffer = createBuffer(globalObject, resultData);
         return JSC::JSValue::encode(buffer);
     }
     case CryptoKeyClass::OKP: {
@@ -1384,11 +1380,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto resultData = result.releaseReturnValue();
-        auto size = resultData.size();
-        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-        if (size > 0)
-            memcpy(buffer->vector(), resultData.data(), size);
-
+        auto* buffer = WebCore::createBuffer(globalObject, resultData);
         return JSC::JSValue::encode(buffer);
     }
     case CryptoKeyClass::EC: {
@@ -1424,11 +1416,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto resultData = result.releaseReturnValue();
-        auto size = resultData.size();
-        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-        if (size > 0)
-            memcpy(buffer->vector(), resultData.data(), size);
-
+        auto* buffer = WebCore::createBuffer(globalObject, resultData);
         return JSC::JSValue::encode(buffer);
     }
     case CryptoKeyClass::RSA: {
@@ -1447,10 +1435,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
             auto resultData = result.releaseReturnValue();
-            auto size = resultData.size();
-            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-            if (size > 0)
-                memcpy(buffer->vector(), resultData.data(), size);
+            auto* buffer = WebCore::createBuffer(globalObject, resultData);
 
             return JSC::JSValue::encode(buffer);
         }
@@ -1496,10 +1481,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
             auto resultData = result.releaseReturnValue();
-            auto size = resultData.size();
-            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-            if (size > 0)
-                memcpy(buffer->vector(), resultData.data(), size);
+            auto* buffer = WebCore::createBuffer(globalObject, resultData);
 
             return JSC::JSValue::encode(buffer);
         }
@@ -1776,10 +1758,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
             if (string == "buffer"_s) {
                 auto keyData = hmac.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
+                auto* buffer = createBuffer(globalObject, keyData);
 
                 return JSC::JSValue::encode(buffer);
             } else if (string == "jwk"_s) {
@@ -1793,10 +1772,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
             if (string == "buffer"_s) {
                 auto keyData = aes.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
+                auto* buffer = createBuffer(globalObject, keyData);
 
                 return JSC::JSValue::encode(buffer);
             } else if (string == "jwk"_s) {
@@ -1976,7 +1952,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                 }
 
-                BUF_MEM* bptr;
+                BUF_MEM* bptr = nullptr;
                 BIO_get_mem_ptr(bio, &bptr);
                 auto length = bptr->length;
                 if (string == "pem"_s) {
@@ -1984,9 +1960,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     return JSValue::encode(JSC::jsString(vm, str));
                 }
 
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
-                if (length > 0)
-                    memcpy(buffer->vector(), bptr->data, length);
+                auto* buffer = createBuffer(globalObject, bptr->data, length);
 
                 BIO_free(bio);
                 return JSC::JSValue::encode(buffer);
@@ -2147,7 +2121,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                 }
 
-                BUF_MEM* bptr;
+                BUF_MEM* bptr = nullptr;
                 BIO_get_mem_ptr(bio, &bptr);
                 auto length = bptr->length;
                 if (string == "pem"_s) {
@@ -2155,9 +2129,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     return JSValue::encode(JSC::jsString(vm, str));
                 }
 
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
-                if (length > 0)
-                    memcpy(buffer->vector(), bptr->data, length);
+                auto* buffer = createBuffer(globalObject, bptr->data, length);
 
                 BIO_free(bio);
                 return JSC::JSValue::encode(buffer);
@@ -2320,7 +2292,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                 }
 
-                BUF_MEM* bptr;
+                BUF_MEM* bptr = nullptr;
                 BIO_get_mem_ptr(bio, &bptr);
                 auto length = bptr->length;
                 if (string == "pem"_s) {
@@ -2329,9 +2301,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     return JSValue::encode(JSC::jsString(vm, str));
                 }
 
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
-                if (length > 0)
-                    memcpy(buffer->vector(), bptr->data, length);
+                auto* buffer = WebCore::createBuffer(globalObject, { bptr->data, length });
 
                 BIO_free(bio);
                 EVP_PKEY_free(evpKey);
@@ -2342,12 +2312,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
             if (string == "buffer"_s) {
                 auto keyData = raw.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
-
-                return JSC::JSValue::encode(buffer);
+                return JSC::JSValue::encode(WebCore::createBuffer(globalObject, keyData));
             }
 
             JSC::throwTypeError(globalObject, scope, "format is expected to be 'buffer'"_s);

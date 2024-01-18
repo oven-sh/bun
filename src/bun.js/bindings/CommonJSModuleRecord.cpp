@@ -29,6 +29,7 @@
  * different value. In that case, it will have a stale value.
  */
 
+#include "headers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
@@ -66,7 +67,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const char* input_ptr, uint64_t input_len);
+extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
 namespace Bun {
 using namespace JSC;
@@ -218,14 +219,18 @@ Structure* RequireFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* structure = Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    structure->setMayBePrototype(true);
+    return structure;
 }
 
 Structure* RequireResolveFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* structure = Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    structure->setMayBePrototype(true);
+    return structure;
 }
 
 RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)
@@ -317,8 +322,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     // dont need `module.parent` and creating commonjs module records is done a ton.
     auto idValue = thisObject->m_id.get();
     if (idValue) {
-        auto id = idValue->value(globalObject).utf8();
-        if (Bun__isBunMain(globalObject, id.data(), id.length())) {
+        auto id = idValue->value(globalObject);
+        auto idStr = Bun::toString(id);
+        if (Bun__isBunMain(globalObject, &idStr)) {
             thisObject->m_parent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
         }
@@ -518,7 +524,9 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
     }
 
     DECLARE_INFO;
@@ -655,7 +663,7 @@ bool JSCommonJSModule::evaluate(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
-    // This goes off of the assumption that you only call this `evaluate` using a generator that explicity
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
     // assigns the `default` export first.
     JSValue defaultValue = arguments.at(0);
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);
@@ -907,13 +915,39 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
+    BunString typeAttributeStr = { BunStringTag::Dead };
+    String typeAttribute = String();
+
+
+    // We need to be able to wire in the "type" import attribute from bundled code..
+    // so we do it via CommonJS require().
+    int32_t previousArgumentCount = callframe->argument(2).asInt32();
+    // If they called require(id), skip the check for the type attribute
+    if (UNLIKELY(previousArgumentCount == 2)) {
+        JSValue val = callframe->argument(3);
+        if (val.isObject()) {
+            JSObject* obj = val.getObject();
+            // This getter is expensive and rare.
+            if (auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+                if (typeValue.isString()) {
+                    typeAttribute = typeValue.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    typeAttributeStr = Bun::toString(typeAttribute);
+                }
+            }
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
 
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
         jsCast<JSCommonJSModule*>(callframe->argument(1)),
         specifierValue,
         &specifierStr,
-        &referrerStr);
+        &referrerStr,
+        LIKELY(typeAttribute.isEmpty())
+            ? nullptr
+            : &typeAttributeStr);
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
 }
@@ -968,7 +1002,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     ResolvedSource source,
     bool isBuiltIn)
 {
-    JSCommonJSModule* moduleObject;
+    JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
     JSValue specifierValue = Bun::toJS(globalObject, source.specifier);

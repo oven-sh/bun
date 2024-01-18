@@ -1066,7 +1066,7 @@ const union_unnamed_411 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_timer_cb = ?*const fn ([*c]uv_timer_t) callconv(.C) void;
+pub const uv_timer_cb = ?*const fn (*uv_timer_t) callconv(.C) void;
 pub const struct_uv_timer_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -2384,62 +2384,6 @@ pub const ReturnCodeI64 = extern struct {
 
     comptime {
         std.debug.assert(@as(i64, @bitCast(ReturnCodeI64{ .value = 4021000000000 })) == 4021000000000);
-    }
-};
-
-pub const S = struct {
-    pub const IFMT = 0o170000;
-
-    pub const IFDIR = 0o040000;
-    pub const IFCHR = 0o020000;
-    pub const IFBLK = 0o060000;
-    pub const IFREG = 0o100000;
-    pub const IFIFO = 0o010000;
-    pub const IFLNK = 0o120000;
-    pub const IFSOCK = 0o140000;
-
-    pub const ISUID = 0o4000;
-    pub const ISGID = 0o2000;
-    pub const ISVTX = 0o1000;
-    pub const IRUSR = 0o400;
-    pub const IWUSR = 0o200;
-    pub const IXUSR = 0o100;
-    pub const IRWXU = 0o700;
-    pub const IRGRP = 0o040;
-    pub const IWGRP = 0o020;
-    pub const IXGRP = 0o010;
-    pub const IRWXG = 0o070;
-    pub const IROTH = 0o004;
-    pub const IWOTH = 0o002;
-    pub const IXOTH = 0o001;
-    pub const IRWXO = 0o007;
-
-    pub inline fn ISREG(m: i32) bool {
-        return m & IFMT == IFREG;
-    }
-
-    pub inline fn ISDIR(m: i32) bool {
-        return m & IFMT == IFDIR;
-    }
-
-    pub inline fn ISCHR(m: i32) bool {
-        return m & IFMT == IFCHR;
-    }
-
-    pub inline fn ISBLK(m: i32) bool {
-        return m & IFMT == IFBLK;
-    }
-
-    pub inline fn ISFIFO(m: i32) bool {
-        return m & IFMT == IFIFO;
-    }
-
-    pub inline fn ISLNK(m: i32) bool {
-        return m & IFMT == IFLNK;
-    }
-
-    pub inline fn ISSOCK(m: i32) bool {
-        return m & IFMT == IFSOCK;
     }
 };
 

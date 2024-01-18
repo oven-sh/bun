@@ -11,7 +11,6 @@ const JSC = @import("root").bun.JSC;
 const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
@@ -133,6 +132,7 @@ pub const Tag = enum(u8) {
     GetFinalPathNameByHandle,
     CloseHandle,
     SetFilePointerEx,
+    SetEndOfFile,
 
     pub fn isWindows(this: Tag) bool {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
@@ -159,11 +159,15 @@ pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
 }
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
-    return Maybe(void).errnoSys(C.fchmod(fd, mode), .fchmod) orelse
+    if (comptime Environment.isWindows) {
+        return sys_uv.fchmod(fd, mode);
+    }
+
+    return Maybe(void).errnoSys(C.fchmod(fd.cast(), mode), .fchmod) orelse
         Maybe(void).success;
 }
 
-pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
+pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = sys.chdir(destination);
         return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
@@ -171,11 +175,11 @@ pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
-            log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), kernel32.GetLastError() });
+            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), kernel32.GetLastError() });
             return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
         }
 
-        log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), 0 });
+        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), 0 });
 
         return Maybe(void).success;
     }
@@ -208,8 +212,8 @@ pub fn chdir(destination: anytype) Maybe(void) {
             return Maybe(void).success;
         }
 
-        if (comptime Type == bun.OSPathSlice or Type == [:0]u16) {
-            return chdirOSPath(@as(bun.OSPathSlice, destination));
+        if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
+            return chdirOSPath(@as(bun.OSPathSliceZ, destination));
         }
 
         var wbuf: bun.WPathBuffer = undefined;
@@ -249,7 +253,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 
     var stat_ = mem.zeroes(bun.Stat);
 
-    const rc = fstatSym(fd, &stat_);
+    const rc = fstatSym(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({d}) = {d}", .{ fd, rc });
@@ -267,7 +271,10 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         .windows => {
             var wbuf: bun.WPathBuffer = undefined;
             const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
-            return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+            return if (rc != 0)
+                Maybe(void).success
+            else
+                Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
         },
 
         else => @compileError("mkdir is not implemented on this platform"),
@@ -296,12 +303,14 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
         const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
-
-        return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+        return if (rc != 0)
+            Maybe(void).success
+        else
+            Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
     }
 }
 
-pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
+pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
@@ -315,7 +324,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
 }
 
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
-    const result = fcntl_symbol(fd, cmd, arg);
+    const result = fcntl_symbol(fd.cast(), cmd, arg);
     if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
     return .{ .result = @as(usize, @intCast(result)) };
 }
@@ -393,7 +402,7 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else bun.fdcast(dirFd),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else dirFd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -417,12 +426,12 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
         .SUCCESS => {
-            return JSC.Maybe(bun.FileDescriptor){
+            return .{
                 .result = bun.toFD(fd),
             };
         },
@@ -493,7 +502,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         else if (dirfd == bun.invalid_fd)
             std.fs.cwd().fd
         else
-            bun.fdcast(dirfd),
+            dirfd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -535,7 +544,7 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfd, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -577,14 +586,14 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
     }
 }
 
-pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-        const rc = system.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
+        const rc = system.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
         if (comptime Environment.allow_assert)
             log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 
-        return Maybe(bun.FileDescriptor).errnoSys(rc, .open) orelse .{ .result = @intCast(rc) };
+        return Maybe(bun.FileDescriptor).errnoSys(rc, .open) orelse .{ .result = bun.toFD(rc) };
     }
 
     if (comptime Environment.isWindows) {
@@ -592,14 +601,14 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
     }
 
     while (true) {
-        const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, flags, perm);
+        const rc = Syscall.system.openat(dirfd.cast(), file_path, flags, perm);
         if (comptime Environment.allow_assert)
             log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
+            .SUCCESS => .{ .result = bun.toFD(rc) },
             .INTR => continue,
             else => |err| {
-                return Maybe(std.os.fd_t){
+                return .{
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = .open,
@@ -654,6 +663,9 @@ pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.F
 }
 
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.open(file_path, flags, perm);
+    }
     // this is what open() does anyway.
     return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
@@ -679,6 +691,7 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
 pub const max_count = switch (builtin.os.tag) {
     .linux => 0x7ffff000,
     .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
+    .windows => std.math.maxInt(u32),
     else => std.math.maxInt(isize),
 };
 
@@ -687,18 +700,18 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
 
     return switch (Environment.os) {
         .mac => {
-            const rc = system.@"write$NOCANCEL"(fd, bytes.ptr, adjusted_len);
+            const rc = system.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
             log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 return err;
             }
 
-            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+            return Maybe(usize){ .result = @intCast(rc) };
         },
         .linux => {
             while (true) {
-                const rc = sys.write(fd, bytes.ptr, adjusted_len);
+                const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
                 log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
@@ -706,10 +719,31 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                     return err;
                 }
 
-                return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+                return Maybe(usize){ .result = @intCast(rc) };
             }
         },
-        .windows => sys_uv.write(fd, bytes),
+        .windows => {
+            // "WriteFile sets this value to zero before doing any work or error checking."
+            var bytes_written: u32 = undefined;
+            std.debug.assert(bytes.len > 0);
+            const rc = std.os.windows.kernel32.WriteFile(
+                fd.cast(),
+                bytes.ptr,
+                adjusted_len,
+                &bytes_written,
+                null,
+            );
+            if (rc == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .WriteFile,
+                        .fd = fd,
+                    },
+                };
+            }
+            return Maybe(usize){ .result = bytes_written };
+        },
         else => @compileError("Not implemented yet"),
     };
 }
@@ -724,7 +758,7 @@ fn veclen(buffers: anytype) usize {
 
 pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
+        const rc = writev_sym(fd.cast(), @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
             log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -735,7 +769,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
+            const rc = writev_sym(fd.cast(), @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
             if (comptime Environment.allow_assert)
                 log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -752,7 +786,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
 
 pub fn pwritev(fd: bun.FileDescriptor, buffers: []const std.os.iovec_const, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = pwritev_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
+        const rc = pwritev_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
             log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -763,7 +797,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const std.os.iovec_const, posi
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, buffers.ptr, buffers.len, position);
+            const rc = pwritev_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -786,7 +820,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     }
 
     if (comptime Environment.isMac) {
-        const rc = readv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)));
+        const rc = readv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
             log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -797,7 +831,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = readv_sym(fd, buffers.ptr, buffers.len);
+            const rc = readv_sym(fd.cast(), buffers.ptr, buffers.len);
             if (comptime Environment.allow_assert)
                 log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -820,7 +854,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) 
     }
 
     if (comptime Environment.isMac) {
-        const rc = preadv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
+        const rc = preadv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
             log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -831,7 +865,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = preadv_sym(fd, buffers.ptr, buffers.len, position);
+            const rc = preadv_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -894,7 +928,7 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
 
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
-        const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
+        const rc = pread_sym(fd.cast(), buf.ptr, adjusted_len, ioffset);
         if (Maybe(usize).errnoSys(rc, .pread)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -920,7 +954,7 @@ pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usiz
 
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
-        const rc = pwrite_sym(fd, bytes.ptr, adjusted_len, ioffset);
+        const rc = pwrite_sym(fd.cast(), bytes.ptr, adjusted_len, ioffset);
         return if (Maybe(usize).errnoSysFd(rc, .pwrite, fd)) |err| {
             switch (err.getErrno()) {
                 .INTR => continue,
@@ -942,7 +976,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     return switch (Environment.os) {
         .mac => {
-            const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
+            const rc = system.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
             log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
@@ -954,7 +988,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         },
         .linux => {
             while (true) {
-                const rc = sys.read(fd, buf.ptr, adjusted_len);
+                const rc = sys.read(fd.cast(), buf.ptr, adjusted_len);
                 log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
@@ -978,7 +1012,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     }
 
     if (comptime Environment.isMac) {
-        const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, adjusted_len, flag, null, null);
+        const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
         log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
@@ -988,7 +1022,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = linux.recvfrom(fd, buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
+            const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
             log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
@@ -1049,9 +1083,9 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
     unreachable;
 }
 
-pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
+pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {
+        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
             return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
         }
 
@@ -1059,7 +1093,7 @@ pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
     }
 
     return while (true) {
-        if (Maybe(void).errnoSys(sys.ftruncate(fd, size), .ftruncate)) |err| {
+        if (Maybe(void).errnoSys(sys.ftruncate(fd.cast(), size), .ftruncate)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1083,9 +1117,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         return Maybe(void).todo();
     }
     while (true) {
-        // if (comptime Environment.allow_assert)
-        //     log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
-        if (Maybe(void).errnoSys(sys.renameat(from_dir, from, to_dir, to), .rename)) |err| {
+        if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
@@ -1146,11 +1178,11 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) 
     unreachable;
 }
 
-pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void) {
+pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u32) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
-        if (Maybe(void).errnoSys(system.fcopyfile(fd_in, fd_out, null, flags), .fcopyfile)) |err| {
+        if (Maybe(void).errnoSys(system.fcopyfile(fd_in.cast(), fd_out.cast(), null, flags), .fcopyfile)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1175,7 +1207,7 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return Maybe(void).todo();
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, std.os.AT.REMOVEDIR), .rmdir)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, std.os.AT.REMOVEDIR), .rmdir)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1189,7 +1221,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         return Maybe(void).todo();
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, flags), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -1207,7 +1239,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return Maybe(void).todo();
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
                 log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
@@ -1235,7 +1267,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..MAX_PATH_BYTES], 0);
-            if (Maybe([]u8).errnoSys(system.fcntl(fd, os.F.GETPATH, out_buffer), .fcntl)) |err| {
+            if (Maybe([]u8).errnoSys(system.fcntl(fd.cast(), os.F.GETPATH, out_buffer), .fcntl)) |err| {
                 return err;
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
@@ -1278,7 +1310,7 @@ pub fn mmap(
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
-    const rc = std.c.mmap(ptr, length, prot, flags, fd, ioffset);
+    const rc = std.c.mmap(ptr, length, prot, flags, fd.cast(), ioffset);
     const fail = std.c.MAP.FAILED;
     if (rc == fail) {
         return Maybe([]align(mem.page_size) u8){
@@ -1337,6 +1369,7 @@ pub const Error = struct {
     syscall: Syscall.Tag,
     path: []const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
+    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
@@ -1393,7 +1426,7 @@ pub const Error = struct {
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
-            .fd = bun.toFD(fd),
+            .fd = fd,
         };
     }
 
@@ -1432,7 +1465,11 @@ pub const Error = struct {
             const system_errno = brk: {
                 // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
                 @setRuntimeSafety(false);
-                break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
             if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
@@ -1447,8 +1484,8 @@ pub const Error = struct {
         }
 
         if (this.fd != bun.invalid_fd) {
-            if (this.fd <= std.math.maxInt(i32)) {
-                err.fd = @intCast(this.fd);
+            if (this.fd.int() <= std.math.maxInt(i32)) {
+                err.fd = this.fd;
             }
         }
 
@@ -1483,12 +1520,12 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
 
     // We don't use glibc here
     // It didn't work. Always returned 0.
-    const pipe_len = std.os.linux.fcntl(fd, F_GETPIPE_SZ, 0);
+    const pipe_len = std.os.linux.fcntl(fd.cast(), F_GETPIPE_SZ, 0);
     if (Maybe(usize).errnoSys(pipe_len, .fcntl)) |err| return err;
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
-    const new_pipe_len = std.os.linux.fcntl(fd, F_SETPIPE_SZ, capacity);
+    const new_pipe_len = std.os.linux.fcntl(fd.cast(), F_SETPIPE_SZ, capacity);
     if (Maybe(usize).errnoSys(new_pipe_len, .fcntl)) |err| return err;
     return Maybe(usize){ .result = new_pipe_len };
 }
@@ -1528,7 +1565,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
-pub fn existsOSPath(path: bun.OSPathSlice) bool {
+pub fn existsOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
         return system.access(path, 0) == 0;
     }
@@ -1536,7 +1573,7 @@ pub fn existsOSPath(path: bun.OSPathSlice) bool {
     if (comptime Environment.isWindows) {
         const result = kernel32.GetFileAttributesW(path.ptr);
         if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.strings.fmtUTF16(path), result });
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), result });
         }
         return result != windows.INVALID_FILE_ATTRIBUTES;
     }
@@ -1574,7 +1611,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
         };
         const attr = windows.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-            .RootDirectory = bun.toFD(fd),
+            .RootDirectory = fd,
             .Attributes = 0,
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
@@ -1592,7 +1629,7 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: []const u8) bool {
 
 pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 
-pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
+pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
     if (comptime Environment.isPosix) {
         return is_executable_file(path);
     }
@@ -1619,7 +1656,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
         //     else => false,
         // };
 
-        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.strings.fmtUTF16(path), out, result });
+        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.fmtUTF16(path), out, result });
 
         // return result;
     }
@@ -1651,7 +1688,7 @@ pub fn isExecutableFilePath(path: anytype) bool {
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysFd(
-            linux.lseek(fd, @intCast(offset), os.SEEK.SET),
+            linux.lseek(fd.cast(), @intCast(offset), os.SEEK.SET),
             .lseek,
             fd,
         ) orelse Maybe(void).success;
@@ -1659,7 +1696,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysFd(
-            std.c.lseek(fd, @intCast(offset), os.SEEK.SET),
+            std.c.lseek(fd.cast(), @intCast(offset), os.SEEK.SET),
             .lseek,
             fd,
         ) orelse Maybe(void).success;
@@ -1670,7 +1707,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         const offset_low: u64 = @as(u32, @intCast(offset & 0xFFFFFFFF));
         var plarge_integer: i64 = @bitCast(offset_high);
         const rc = kernel32.SetFilePointerEx(
-            bun.fdcast(fd),
+            fd.cast(),
             @as(windows.LARGE_INTEGER, @bitCast(offset_low)),
             &plarge_integer,
             windows.FILE_BEGIN,
@@ -1683,7 +1720,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 }
 
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
-    var fds: [2]bun.FileDescriptor = undefined;
+    var fds: [2]i32 = undefined;
     const rc = system.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(
         rc,
@@ -1691,7 +1728,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     )) |err| {
         return err;
     }
-    return .{ .result = fds };
+    return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
 }
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
@@ -1700,7 +1737,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,
-            bun.fdcast(fd),
+            fd.cast(),
             process,
             target,
             0,
@@ -1715,7 +1752,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
     }
 
-    const out = std.c.dup(fd);
+    const out = std.c.dup(fd.cast());
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
 

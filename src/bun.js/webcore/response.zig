@@ -567,7 +567,7 @@ pub const Response = struct {
             }
 
             if (response_init.fastGet(ctx, .statusText)) |status_text| {
-                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
+                result.status_text = bun.String.fromJS(status_text, ctx);
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {
@@ -1687,7 +1687,7 @@ pub const Fetch = struct {
         var method = Method.GET;
         var script_ctx = globalThis.bunVM();
 
-        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
+        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
 
         var url = ZigURL{};
         var first_arg = args.nextEat().?;
@@ -1911,7 +1911,23 @@ pub const Fetch = struct {
                     }
                 } else {
                     method = request.method;
+
+                    if (request.body.value == .Locked) {
+                        if (request.body.value.Locked.readable) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                globalThis.throw("ReadableStream has already been consumed", .{});
+                                if (hostname) |host| {
+                                    allocator.free(host);
+                                    hostname = null;
+                                }
+                                return .zero;
+                            }
+                        }
+                    }
+
+                    // TODO: remove second isDisturbed check in useAsAnyBlob
                     body = request.body.value.useAsAnyBlob();
+
                     if (request.headers) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                             if (hostname) |host| {
@@ -1928,6 +1944,7 @@ pub const Fetch = struct {
                 }
             }
         } else if (bun.String.tryFromJS(first_arg, globalThis)) |str| {
+            defer str.deref();
             if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
@@ -2145,14 +2162,17 @@ pub const Fetch = struct {
             var file_url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
             defer file_url_string.deref();
 
-            const bun_file = Blob.findOrCreateFileFromPath(
-                .{
-                    .path = .{
-                        .string = bun.PathString.init(
-                            temp_file_path,
-                        ),
-                    },
+            var pathlike: JSC.Node.PathOrFileDescriptor = .{
+                .path = .{
+                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
+                        globalThis.throwOutOfMemory();
+                        return .zero;
+                    }),
                 },
+            };
+
+            const bun_file = Blob.findOrCreateFileFromPath(
+                &pathlike,
                 globalThis,
             );
 
@@ -2201,7 +2221,7 @@ pub const Fetch = struct {
             prepare_body: {
                 const opened_fd_res: JSC.Node.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
-                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) std.os.O.RDONLY else std.os.O.RDONLY | std.os.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {

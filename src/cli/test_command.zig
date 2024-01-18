@@ -373,7 +373,7 @@ const Scanner = struct {
     exclusion_names: []const []const u8 = &.{},
     filter_names: []const []const u8 = &.{},
     dirs_to_scan: Fifo,
-    results: std.ArrayList(bun.PathString),
+    results: *std.ArrayList(bun.PathString),
     fs: *FileSystem,
     open_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
     scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -419,7 +419,7 @@ const Scanner = struct {
 
         while (this.dirs_to_scan.readItem()) |entry| {
             if (!Environment.isWindows) {
-                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                const dir = entry.relative_dir.asDir();
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
@@ -431,7 +431,7 @@ const Scanner = struct {
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
-                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                const dir = entry.relative_dir.asDir();
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
@@ -723,7 +723,7 @@ pub const TestCommand = struct {
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
                 .filter_names = filter_names,
-                .results = results,
+                .results = &results,
             };
             const dir_to_scan = brk: {
                 if (ctx.debug.test_directory.len > 0) {

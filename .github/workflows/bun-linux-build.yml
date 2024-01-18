@@ -12,6 +12,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
@@ -23,6 +24,7 @@ on:
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
@@ -256,6 +258,8 @@ jobs:
           bun install --verbose
           bun install --cwd=test --verbose
           bun install --cwd=packages/bun-internal-test --verbose
+
+          bun install --cwd=test/js/third_party/prisma --verbose
 
       # This is disabled because the cores are ~5.5gb each
       # so it is easy to hit 50gb coredump downloads. Only enable if you need to retrive one

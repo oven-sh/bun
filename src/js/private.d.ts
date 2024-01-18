@@ -199,6 +199,7 @@ interface BunLazyModules {
     isatty: (fd: number) => boolean;
     getWindowSize: (fd: number, out: number[2]) => boolean;
   };
+  "getStringWidth": (str: string) => number;
 
   // ReadableStream related
   [1]: any;
@@ -210,7 +211,7 @@ interface BunLazyModules {
 declare var $exports: any;
 
 interface CommonJSModuleRecord {
-  $require(id: string, mod: any): any;
+  $require(id: string, mod: any, args_count: number, args: Array): any;
   children: CommonJSModuleRecord[];
   exports: any;
   id: string;

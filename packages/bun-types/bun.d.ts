@@ -16,6 +16,7 @@
 declare module "bun" {
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
+  type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
   type PathLike = Bun.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
   interface Env {
@@ -2813,7 +2814,7 @@ declare module "bun" {
      *
      * @param data
      */
-    update(data: StringOrBuffer): T;
+    update(data: BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
@@ -2837,7 +2838,7 @@ declare module "bun" {
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
     static hash(
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2848,7 +2849,7 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
+    static hash(input: BlobOrStringOrBuffer, encoding: DigestEncoding): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -2890,7 +2891,10 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
+    update(
+      input: BlobOrStringOrBuffer,
+      inputEncoding?: CryptoEncoding,
+    ): CryptoHasher;
 
     /**
      * Perform a deep copy of the hasher
@@ -2920,7 +2924,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2933,7 +2937,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       encoding: DigestEncoding,
     ): string;
 
@@ -4005,8 +4009,8 @@ declare module "bun" {
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
       ? Buffer
@@ -4017,8 +4021,8 @@ declare module "bun" {
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
   }
 
   interface ResourceUsage {
@@ -4583,7 +4587,9 @@ declare module "bun" {
     constructor(pattern: string);
 
     /**
-     * Scan for files that match this glob pattern. Returns an async iterator.
+     * Scan a root directory recursively for files that match this glob pattern. Returns an async iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js
@@ -4604,7 +4610,9 @@ declare module "bun" {
     ): AsyncIterableIterator<string>;
 
     /**
-     * Scan for files that match this glob pattern. Returns an iterator.
+     * Synchronously scan a root directory recursively for files that match this glob pattern. Returns an iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js

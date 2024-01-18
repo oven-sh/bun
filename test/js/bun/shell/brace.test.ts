@@ -26,9 +26,4 @@ describe("$.braces", () => {
     const result = $.braces(`echo {123,{456,789},abc}`);
     expect(result).toEqual(["echo 123", "echo 456", "echo 789", "echo abc"]);
   });
-
-  test("nested 1", () => {
-    const result = $.braces(`echo {123,{456,789},abc}`);
-    expect(result).toEqual(["echo 123", "echo 456", "echo 789", "echo abc"]);
-  });
 });

@@ -2950,7 +2950,7 @@ pub const Subprocess = struct {
 
             if (comptime Environment.isLinux) {
                 const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
             }
         }
 

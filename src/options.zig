@@ -895,8 +895,6 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".node", Loader.napi },
     .{ ".txt", Loader.text },
     .{ ".text", Loader.text },
-
-    .{ ".bunsh", Loader.bunsh },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax

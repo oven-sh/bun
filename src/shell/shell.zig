@@ -162,6 +162,10 @@ pub const GlobalJS = struct {
         };
     }
 
+    pub inline fn throwError(this: @This(), err: bun.sys.Error) void {
+        this.globalThis.throwValue(err.toJSC(this.globalThis));
+    }
+
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) bun.shell.ShellErr {
         const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
         return .{

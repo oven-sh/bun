@@ -3175,7 +3175,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         switch (this.exec.bltn.start()) {
                             .result => {},
                             .err => |e| {
-                                const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bunsh: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toSystemError().message }) catch bun.outOfMemory();
+                                const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toSystemError().message }) catch bun.outOfMemory();
                                 this.writeFailingError(buf, 1);
                                 return;
                             },
@@ -3185,7 +3185,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
-                        const buf = std.fmt.allocPrint(arena_allocator, "bunsh: command not found: {s}\n", .{first_arg}) catch bun.outOfMemory();
+                        const buf = std.fmt.allocPrint(arena_allocator, "bun: command not found: {s}\n", .{first_arg}) catch bun.outOfMemory();
                         this.writeFailingError(buf, 1);
                         return;
                     };

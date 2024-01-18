@@ -1541,6 +1541,11 @@ pub const MiniEventLoop = struct {
         return this;
     }
 
+    pub fn throwError(_: *MiniEventLoop, err: bun.sys.Error) void {
+        bun.Output.prettyErrorln("{}", .{err});
+        bun.Output.flush();
+    }
+
     pub fn onAfterEventLoop(this: *MiniEventLoop) void {
         if (this.after_event_loop_callback) |cb| {
             const ctx = this.after_event_loop_callback_ctx;

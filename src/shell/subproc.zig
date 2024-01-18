@@ -84,7 +84,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         pid: std.os.pid_t,
         // on macOS, this is nothing
         // on linux, it's a pidfd
-        pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
+        pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = bun.invalid_fd,
 
         stdin: Writable,
         stdout: Readable,
@@ -1002,7 +1002,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         }
 
                         // first appeared in Linux 5.1
-                        const rc = std.os.linux.pidfd_send_signal(this.pidfd, @as(u8, @intCast(sig)), null, 0);
+                        const rc = std.os.linux.pidfd_send_signal(this.pidfd.cast(), @as(u8, @intCast(sig)), null, 0);
 
                         if (rc != 0) {
                             const errno = std.os.linux.getErrno(rc);
@@ -1043,7 +1043,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             this.pidfd = bun.invalid_fd;
 
             if (pidfd != bun.invalid_fd) {
-                _ = std.os.close(pidfd);
+                _ = bun.sys.close(pidfd);
             }
         }
 
@@ -1553,19 +1553,12 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     break :brk pid;
                 }
 
-                const kernel = @import("../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
-
-                // pidfd_nonblock only supported in 5.10+
-                var pidfd_flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
-                    std.os.O.NONBLOCK
-                else
-                    0;
+                var pidfd_flags = JSC.Subprocess.pidfdFlagsForLinux();
 
                 var rc = std.os.linux.pidfd_open(
                     @intCast(pid),
                     pidfd_flags,
                 );
-
                 while (true) {
                     switch (std.os.linux.getErrno(rc)) {
                         .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
@@ -1588,20 +1581,18 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                                 }
                             }
 
-                            const syserr = brk2: {
+                            const error_instance = brk2: {
                                 if (err == .NOSYS) {
                                     WaiterThread.setShouldUseWaiterThread();
                                     break :brk pid;
                                 }
 
-                                // break :brk2 bun.sys.Error.fromCode(err, .open).toJSC(globalThis);
                                 break :brk2 bun.sys.Error.fromCode(err, .open);
                             };
-
                             var status: u32 = 0;
                             // ensure we don't leak the child process on error
-                            _ = std.os.linux.waitpid(pid, &status, 0);
-                            return .{ .sys = syserr };
+                            _ = std.os.linux.wait4(pid, &status, 0, null);
+                            return .{ .err = .{ .sys = error_instance } };
                         },
                     }
                 }

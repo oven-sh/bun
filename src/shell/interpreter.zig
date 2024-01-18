@@ -3386,6 +3386,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // this.base.shell.cmd_local_env.clearRetainingCapacity();
                 if (this.redirection_fd != bun.invalid_fd) {
                     _ = Syscall.close(this.redirection_fd);
+                    this.redirection_fd = bun.invalid_fd;
                 }
                 // if (this.exit_code != null) {
                 //     if (this.cmd) |cmd| {

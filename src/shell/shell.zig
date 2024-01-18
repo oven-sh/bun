@@ -1674,18 +1674,26 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     try self.strpool.append(@intCast(char));
                     self.j += 1;
                     return;
+                } else {
+                    try self.appendUnicodeCharToStrPool(char);
                 }
-                const char_len = try std.unicode.utf8CodepointSequenceLength(@intCast(char));
-                const start = self.strpool.items.len;
-                const end = start + char_len;
-                try self.strpool.appendNTimes(0, char_len);
-                const slice = self.strpool.items[start..end];
-                const n = try std.unicode.utf8Encode(@intCast(char), slice);
-                if (bun.Environment.allow_assert) {
-                    std.debug.assert(n == char_len);
-                }
-                self.j += char_len;
             }
+        }
+
+        fn appendUnicodeCharToStrPool(self: *@This(), char: Chars.CodepointType) !void {
+            @setCold(true);
+
+            const ichar: i32 = @intCast(char);
+            const char_len_ = bun.strings.codepointSize(i32, ichar);
+            const is_invalid = char_len_ == 0;
+            const char_len = if (!is_invalid) char_len_ else 2;
+            var bytes: [4]u8 = undefined;
+            const n = bun.strings.encodeWTF8Rune(&bytes, if (!is_invalid) ichar else bun.strings.unicode_replacement);
+            if (bun.Environment.allow_assert) {
+                std.debug.assert(n == char_len);
+            }
+            self.j += char_len;
+            try self.strpool.appendSlice(bytes[0..n]);
         }
 
         fn break_word(self: *@This(), add_delimiter: bool) !void {
@@ -2126,26 +2134,6 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             Double,
         };
 
-        pub fn codepointByteLength(cp: CodepointType) !u3 {
-            if (comptime encoding == .ascii) return 1;
-            return try std.unicode.utfCodepointByteLength(@intCast(cp));
-        }
-
-        pub fn encodeCodepoint(cp: CodepointType, buf: []u8) !void {
-            if (comptime encoding == .ascii) {
-                buf[0] = cp;
-                return;
-            }
-            return try std.unicode.utf8Encode(@intCast(cp), buf);
-        }
-
-        pub fn encodeCodepointStack(cp: CodepointType, buf: *[4]u8) ![]u8 {
-            const this = comptime @This();
-            const len = this.codepointByteLength(cp);
-            try this.encodeCodepoint(cp, buf[0..len]);
-            return buf[0..len];
-        }
-
         pub fn init(bytes: []const u8) @This() {
             const src = if (comptime encoding == .ascii)
                 SrcAscii.init(bytes)
@@ -2203,49 +2191,6 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
         }
     };
 }
-
-pub fn escape(string: []const u8, out: *std.ArrayList(u8)) !void {
-    try out.append("\"");
-
-    try escapeAsciiSlow(string, out);
-
-    try out.append("\"");
-}
-
-fn escapeUnicodeSlow(string: []const u8, out: *std.ArrayList(u8)) !void {
-    var iter = CodepointIterator.init(string);
-    var cursor = CodepointIterator.Cursor{};
-    while (iter.next(&cursor)) {
-        const char = cursor.c;
-        switch (char) {
-            // if slash, slash the slash to escape it
-            '\\' => try out.appendSlice("\\\\"),
-            // escape the double quote
-            '"' => try out.appendSlice("\\\""),
-            '$' => try out.appendSlice("\\$"),
-            '`' => try out.appendSlice("\\`"),
-            else => try out.append(char),
-        }
-    }
-}
-
-fn escapeAsciiSlow(string: []const u8, out: *std.ArrayList(u8)) !void {
-    for (string) |char| {
-        switch (char) {
-            // if slash, slash the slash to escape it
-            '\\' => try out.appendSlice("\\\\"),
-            // escape the double quote
-            '"' => try out.appendSlice("\\\""),
-            '$' => try out.appendSlice("\\$"),
-            '`' => try out.appendSlice("\\`"),
-            else => try out.append(char),
-        }
-    }
-}
-
-// fn isValidGlobPattern(potential_pattern: []const u8) bool {
-
-// }
 
 /// Only these charaters allowed:
 /// - a-ZA-Z

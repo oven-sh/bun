@@ -670,13 +670,15 @@ pub const Expect = struct {
                     break;
                 }
             }
-        } else if (value.isString() and expected.isString()) {
-            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
-            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+        } else if (value.isStringLiteral() and expected.isStringLiteral()) {
+            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
+            defer value_string.deinit();
+            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
+            defer expected_string.deinit();
 
             if (expected_string.len == 0) { // edge case empty string is always contained
                 pass = true;
-            } else if (strings.contains(value_string, expected_string)) {
+            } else if (strings.contains(value_string.slice(), expected_string.slice())) {
                 pass = true;
             } else if (value_string.len == 0 and expected_string.len == 0) { // edge case two empty strings are true
                 pass = true;
@@ -961,12 +963,29 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isString() and expected.isString()) {
-            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
-            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator).slice();
-            if (strings.contains(value_string, expected_string)) {
-                pass = true;
-            } else if (value_string.len == 0 and expected_string.len == 0) { // edge case two empty strings are true
-                pass = true;
+            if (expected.isStringObject() and value.isStringLiteral()) pass = false else {
+                const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
+                defer value_string.deinit();
+                const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
+                defer expected_string.deinit();
+
+                // jest does not have a `typeof === "string"` check for `toContainEqual`.
+                // it immediately spreads the value into an array.
+
+                var expected_iter = strings.CodepointIterator.init(expected_string.slice());
+                const expected_codepoint = expected_iter.nextCodepoint();
+
+                if (expected_iter.nextCodepoint() != -1) pass = false else {
+                    var value_iter = strings.CodepointIterator.init(value_string.slice());
+                    var cursor = strings.CodepointIterator.Cursor{};
+
+                    while (value_iter.next(&cursor)) {
+                        if (cursor.c == expected_codepoint) {
+                            pass = true;
+                            break;
+                        }
+                    } else pass = false;
+                }
             }
         } else if (value.isIterable(globalObject)) {
             var expected_entry = ExpectedEntry{

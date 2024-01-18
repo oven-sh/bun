@@ -77,6 +77,12 @@ declare module "bun" {
      * ```
      */
     env(newEnv: Record<string, string>): this;
+    /**
+     * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
+     *
+     * This configures the shell to only buffer the output.
+     */
+    quiet(): this;
   }
 
   export interface Shell {

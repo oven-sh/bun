@@ -1154,6 +1154,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return .undefined;
         }
 
+        pub fn setQuiet(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            _ = globalThis;
+            _ = callframe;
+            this.root_shell.io.stdout = .pipe;
+            this.root_shell.io.stderr = .pipe;
+            return .undefined;
+        }
+
         pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             const value = callframe.argument(0);
             const str = bun.String.fromJS(value, globalThis);
@@ -2013,7 +2021,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             base: State,
             node: *const ast.Script,
             // currently_executing: ?ChildPtr,
-            io: IO,
+            io: ?IO = null,
             parent: ParentPtr,
             state: union(enum) {
                 normal: struct {
@@ -2041,16 +2049,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 shell_state: *ShellState,
                 node: *const ast.Script,
                 parent_ptr: ParentPtr,
-                io: IO,
+                io: ?IO,
             ) *Script {
                 const script = interpreter.allocator.create(Script) catch bun.outOfMemory();
                 script.* = .{
                     .base = .{ .kind = .script, .interpreter = interpreter, .shell = shell_state },
                     .node = node,
-                    .io = io,
                     .parent = parent_ptr,
+                    .io = io,
                 };
                 return script;
+            }
+
+            fn getIO(this: *Script) IO {
+                if (this.io) |io| return io;
+                return this.base.shell.io;
             }
 
             fn start(this: *Script) void {
@@ -2065,7 +2078,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         if (this.state.normal.idx >= this.node.stmts.len) return;
                         const stmt_node = &this.node.stmts[this.state.normal.idx];
                         this.state.normal.idx += 1;
-                        var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, this.io) catch bun.outOfMemory();
+                        var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, this.getIO()) catch bun.outOfMemory();
                         stmt.start();
                         return;
                     },
@@ -2495,7 +2508,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             exited_count: u32,
             cmds: ?[]CmdOrResult,
             pipes: ?[]Pipe,
-            io: IO,
+            io: ?IO,
             state: union(enum) {
                 idle,
                 executing,
@@ -2528,30 +2541,38 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 shell_state: *ShellState,
                 node: *const ast.Pipeline,
                 parent: ParentPtr,
-                io: IO,
+                io: ?IO,
             ) *Pipeline {
-                var pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
+                const pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
                 pipeline.* = .{
                     .base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state },
                     .node = node,
                     .parent = parent,
                     .exited_count = 0,
-                    .io = io,
                     .cmds = null,
                     .pipes = null,
+                    .io = io,
                 };
 
+                return pipeline;
+            }
+
+            fn getIO(this: *Pipeline) IO {
+                return this.io orelse this.base.shell.io;
+            }
+
+            fn setupCommands(this: *Pipeline) CoroutineResult {
                 const cmd_count = brk: {
                     var i: u32 = 0;
-                    for (node.items) |*item| {
+                    for (this.node.items) |*item| {
                         if (item.* == .cmd) i += 1;
                     }
                     break :brk i;
                 };
 
-                pipeline.cmds = if (cmd_count >= 1) interpreter.allocator.alloc(CmdOrResult, node.items.len) catch bun.outOfMemory() else null;
-                if (pipeline.cmds == null) return pipeline;
-                var pipes = interpreter.allocator.alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+                this.cmds = if (cmd_count >= 1) this.base.interpreter.allocator.alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+                if (this.cmds == null) return .cont;
+                var pipes = this.base.interpreter.allocator.alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
 
                 if (cmd_count > 1) {
                     var pipes_set: u32 = 0;
@@ -2561,31 +2582,31 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             closefd(pipe[1]);
                         }
                         const system_err = err.toSystemError();
-                        pipeline.writeFailingError("bun: {s}\n", .{system_err.message}, 1);
-                        return pipeline;
+                        this.writeFailingError("bun: {s}\n", .{system_err.message}, 1);
+                        return .yield;
                     }
                 }
 
                 var i: u32 = 0;
-                for (node.items) |*item| {
+                for (this.node.items) |*item| {
                     switch (item.*) {
                         .cmd => {
                             const kind = "subproc";
                             _ = kind;
-                            var cmd_io = io;
+                            var cmd_io = this.getIO();
                             const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin;
                             const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
                             cmd_io.stdin = stdin;
                             cmd_io.stdout = stdout;
-                            const subshell_state = switch (shell_state.dupeForSubshell(interpreter.allocator, cmd_io)) {
+                            const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io)) {
                                 .result => |s| s,
                                 .err => |err| {
                                     const system_err = err.toSystemError();
-                                    pipeline.writeFailingError("bun: {s}\n", .{system_err.message}, 1);
-                                    return pipeline;
+                                    this.writeFailingError("bun: {s}\n", .{system_err.message}, 1);
+                                    return .yield;
                                 },
                             };
-                            pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
+                            this.cmds.?[i] = .{ .cmd = Cmd.init(this.base.interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(this), cmd_io) };
                             i += 1;
                         },
                         // in a pipeline assignments have no effect
@@ -2594,9 +2615,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
                 }
 
-                pipeline.pipes = pipes;
+                this.pipes = pipes;
 
-                return pipeline;
+                return .cont;
             }
 
             pub fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype, exit_code: ExitCode) void {
@@ -2614,6 +2635,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn start(this: *Pipeline) void {
+                if (this.setupCommands() == .yield) return;
+
                 if (this.state == .waiting_write_err or this.state == .done) return;
                 const cmds = this.cmds orelse {
                     this.state = .done;
@@ -2632,8 +2655,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 for (cmds, 0..) |*cmd_or_result, i| {
-                    var stdin: IO.Kind = if (i == 0) this.io.stdin else .{ .fd = this.pipes.?[i - 1][0] };
-                    var stdout: IO.Kind = if (i == cmds.len - 1) this.io.stdout else .{ .fd = this.pipes.?[i][1] };
+                    var stdin: IO.Kind = if (i == 0) this.getIO().stdin else .{ .fd = this.pipes.?[i - 1][0] };
+                    var stdout: IO.Kind = if (i == cmds.len - 1) this.getIO().stdout else .{ .fd = this.pipes.?[i][1] };
 
                     std.debug.assert(cmd_or_result.* == .cmd);
                     var cmd = cmd_or_result.cmd;
@@ -3473,6 +3496,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     var buf = this.io.stdout.std.captured.?;
                     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
+                // else if (this.io.stdout == .pipe and this.base.shell.io.stdout == .pipe) {
+                //     var buf = this.base.shell.buffered_stdout();
+                //     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                // }
                 this.exec.subproc.buffered_closed.close(this, .{ .stdout = &this.exec.subproc.child.stdout });
                 this.exec.subproc.child.closeIO(.stdout);
             }
@@ -3484,6 +3511,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
                 if (this.io.stderr == .std and this.io.stderr.std.captured != null) {
                     var buf = this.io.stderr.std.captured.?;
+                    buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                } else if (this.io.stderr == .pipe and this.base.shell.io.stderr == .pipe) {
+                    var buf = this.base.shell.buffered_stderr();
                     buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
                 this.exec.subproc.buffered_closed.close(this, .{ .stderr = &this.exec.subproc.child.stderr });
@@ -3901,11 +3931,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 cmd.exit_code = this.exit_code.?;
 
                 // Aggregate output data if shell state is piped and this cmd is piped
-                if (cmd.io.stdout == .pipe and cmd.base.shell.io.stdout == .pipe) {
+                if (cmd.io.stdout == .pipe and cmd.base.shell.io.stdout == .pipe and this.stdout == .buf) {
                     cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
                 }
                 // Aggregate output data if shell state is piped and this cmd is piped
-                if (cmd.io.stderr == .pipe and cmd.base.shell.io.stderr == .pipe) {
+                if (cmd.io.stderr == .pipe and cmd.base.shell.io.stderr == .pipe and this.stdout == .buf) {
                     cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
                 }
 
@@ -6317,6 +6347,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 }
                             },
                             .exec => {
+                                const cwd = this.bltn.parentCmd().base.shell.cwd_fd;
                                 // Schedule task
                                 if (this.state.exec.state == .idle) {
                                     this.state.exec.state = .{ .waiting = .{} };
@@ -6324,7 +6355,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                         const root = root_raw[0..std.mem.len(root_raw)];
                                         const root_path_string = bun.PathString.init(root[0..root.len]);
                                         const is_absolute = ResolvePath.Platform.auto.isAbsolute(root);
-                                        var task = ShellRmTask.create(root_path_string, this, &this.state.exec.error_signal, is_absolute);
+                                        var task = ShellRmTask.create(root_path_string, this, cwd, &this.state.exec.error_signal, is_absolute);
                                         task.schedule();
                                         // task.
                                     }
@@ -6573,6 +6604,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     rm: *Rm,
                     opts: Opts,
 
+                    cwd: bun.FileDescriptor,
+
                     root_task: DirTask,
                     root_path: bun.PathString = bun.PathString.empty,
                     root_is_absolute: bool,
@@ -6738,11 +6771,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         }
                     };
 
-                    pub fn create(root_path: bun.PathString, rm: *Rm, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
+                    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
                         const task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
                         task.* = ShellRmTask{
                             .rm = rm,
                             .opts = rm.opts,
+                            .cwd = cwd,
                             .root_path = root_path,
                             .root_task = DirTask{
                                 .task_manager = task,
@@ -6838,7 +6872,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
                         const path = dir_task.path;
-                        const dirfd = bun.toFD(std.fs.cwd().fd);
+                        const dirfd = this.cwd;
 
                         // If `-d` is specified without `-r` then we can just use `rmdirat`
                         if (this.opts.remove_empty_dirs and !this.opts.recursive) {
@@ -6963,7 +6997,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     fn removeEntryDirAfterChildren(this: *ShellRmTask, dir_task: *DirTask) Maybe(void) {
-                        const dirfd = bun.toFD(std.fs.cwd().fd);
+                        const dirfd = bun.toFD(this.cwd);
                         var treat_as_dir = true;
                         const fd: bun.FileDescriptor = handle_entry: while (true) {
                             if (treat_as_dir) {
@@ -7044,7 +7078,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         buf: *[bun.MAX_PATH_BYTES]u8,
                         comptime is_file_in_dir: bool,
                     ) Maybe(void) {
-                        const dirfd = bun.toFD(std.fs.cwd().fd);
+                        const dirfd = bun.toFD(this.cwd);
                         switch (Syscall.unlinkatWithFlags(dirfd, path, 0)) {
                             .result => return this.verboseDeleted(parent_dir_task, path),
                             .err => |e| {

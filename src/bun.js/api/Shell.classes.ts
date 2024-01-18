@@ -46,6 +46,10 @@ export default [
         fn: "setEnv",
         length: 1,
       },
+      setQuiet: {
+        fn: "setQuiet",
+        length: 0,
+      },
     },
   }),
 ];

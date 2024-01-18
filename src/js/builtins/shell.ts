@@ -52,11 +52,13 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
 
     cwd(newCwd: string): this {
+      this.#throwIfRunning();
       this.#core.setCwd(newCwd);
       return this;
     }
 
     env(newEnv: Record<string, string>): this {
+      this.#throwIfRunning();
       this.#core.setEnv(newEnv);
       return this;
     }
@@ -67,6 +69,16 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
         if (this.#core.isRunning()) return;
         this.#core.run();
       }
+    }
+
+    quiet(): this {
+      this.#throwIfRunning();
+      this.#core.setQuiet();
+      return this;
+    }
+
+    #throwIfRunning() {
+      if (this.#hasRun) throw new Error('Shell is already running')
     }
 
     run(): this {

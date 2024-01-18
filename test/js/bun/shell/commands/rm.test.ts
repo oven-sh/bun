@@ -10,7 +10,7 @@ import { $ } from "bun";
 import path from "path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { ShellOutput } from "bun";
-import { sortedShellOutput } from "../util";
+import { TestBuilder, sortedShellOutput } from "../util";
 
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() == `${path}\n`);
@@ -76,6 +76,27 @@ describe("bunshell rm", () => {
         console.log("NICE", stderr.toString());
       }
       expect(await fileExists(tempdir)).toBeTrue();
+    }
+
+    // test with cwd
+    {
+      const tmpdir = TestBuilder.tmpdir();
+      const { stdout, stderr } =
+        await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; rm -rfv foo/`.cwd(
+          tmpdir,
+        );
+      expect(sortedShellOutput(stdout.toString())).toEqual(
+        sortedShellOutput(
+          `foo/lol
+foo/nice
+foo/lmao
+foo/bar
+foo/bar/great
+foo/bar/wow
+foo/
+`,
+        ),
+      );
     }
   });
 

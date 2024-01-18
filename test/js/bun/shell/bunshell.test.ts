@@ -36,9 +36,27 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
-  test('failing stmt edgecase', async () => {
-    const { stdout } = await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`
-  })
+  // test("quiet", async () => {
+  //   // Check its buffered
+  //   {
+  //     const { stdout, stderr } =
+  //       await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`.quiet();
+  //     expect(stdout.toString()).toEqual("hi\n");
+  //     expect(stderr.toString()).toEqual("lol\n");
+  //   }
+
+  //   // Check it doesn't write to stdout
+  //   const { stdout, stderr } = Bun.spawnSync([BUN, "-e", "await Bun.$`BUN_DEBUG_QUIET_LOGS=1 ${process.argv0} -e \"console.log('hi'); console.error('lol')\"`.quiet()"], {
+  //     env: { BUN_DEBUG_QUIET_LOGS: "1" },
+  //   });
+  //   expect(stdout.toString()).toBe("");
+  //   expect(stderr.toString()).toBe("");
+  // });
+
+  test("failing stmt edgecase", async () => {
+    const { stdout } =
+      await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`;
+  });
 
   test("invalid js obj", async () => {
     const lol = {

@@ -1264,7 +1264,7 @@ pub const Blob = struct {
 
         if (truncate) {
             if (Environment.isWindows) {
-                _ = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             } else {
                 _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }

@@ -750,7 +750,7 @@ const Task = struct {
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory(),
-                    .{ .fd = bun.fdcast(this.request.git_checkout.repo_dir) },
+                    this.request.git_checkout.repo_dir.asDir(),
                     this.request.git_checkout.name.slice(),
                     this.request.git_checkout.url.slice(),
                     this.request.git_checkout.resolved.slice(),
@@ -1524,7 +1524,7 @@ const PackageInstall = struct {
                     switch (entry.kind) {
                         // directories are created
                         .directory => {
-                            std.os.mkdirat(bun.fdcast(dest_dir_fd), entry.path, 0o755) catch {};
+                            std.os.mkdirat(dest_dir_fd.cast(), entry.path, 0o755) catch {};
                         },
                         // but each file in the directory is a symlink
                         .file => {
@@ -3877,7 +3877,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         this.env,
                         this.log,
-                        .{ .fd = bun.fdcast(repo_fd) },
+                        repo_fd.asDir(),
                         alias,
                         this.lockfile.str(&dep.committish),
                     );
@@ -5217,7 +5217,7 @@ pub const PackageManager = struct {
         log_level: LogLevel = .default,
         global: bool = false,
 
-        global_bin_dir: std.fs.Dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
+        global_bin_dir: std.fs.Dir = bun.invalid_fd.asDir(),
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
@@ -7906,7 +7906,7 @@ pub const PackageManager = struct {
                 const prev_node_modules_folder_path = this.node_modules_folder_path;
                 defer this.node_modules_folder_path = prev_node_modules_folder_path;
                 for (callbacks.items) |cb| {
-                    this.node_modules_folder = .{ .fd = bun.fdcast(cb.node_modules_folder.fd) };
+                    this.node_modules_folder = cb.node_modules_folder.fd.asDir();
                     this.current_tree_id = cb.node_modules_folder.tree_id;
                     this.node_modules_folder_path = cb.node_modules_folder.node_modules_folder_path;
                     this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution);

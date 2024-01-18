@@ -327,8 +327,7 @@ pub fn GlobWalker_(
                 };
 
                 this.iter_state.directory.fd = fd;
-                const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                const iterator = DirIterator.iterate(dir, .u8);
+                const iterator = DirIterator.iterate(fd.asDir(), .u8);
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 

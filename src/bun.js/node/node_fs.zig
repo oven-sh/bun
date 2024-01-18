@@ -5304,7 +5304,7 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
-            const rc = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+            const rc = std.os.windows.kernel32.SetEndOfFile(fd.cast());
             if (rc == 0) {
                 return .{
                     .err = Syscall.Error{

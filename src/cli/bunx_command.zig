@@ -54,8 +54,8 @@ pub const BunxCommand = struct {
         return new_str;
     }
 
-    fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: std.os.fd_t, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try std.os.openatZ(dir_fd, subpath_z, std.os.O.RDONLY, 0);
+    fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
+        const target_package_json_fd = try std.os.openatZ(dir_fd.cast(), subpath_z, std.os.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
         defer target_package_json.close();
 
@@ -94,7 +94,7 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try std.os.openat(dir_fd, dir_name, std.os.O.RDONLY, 0);
+                    const bin_dir = try std.os.openat(dir_fd.cast(), dir_name, std.os.O.RDONLY, 0);
                     defer std.os.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
@@ -117,7 +117,7 @@ pub const BunxCommand = struct {
         return error.NoBinFound;
     }
 
-    fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: std.os.fd_t, package_name: []const u8) ![]const u8 {
+    fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
         subpath[0.."node_modules/".len].* = "node_modules/".*;
         @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
@@ -136,12 +136,12 @@ pub const BunxCommand = struct {
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
         ) catch unreachable;
-        return try getBinNameFromSubpath(bundler, std.fs.cwd().fd, subpath_z);
+        return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
-    fn getBinName(bundler: *bun.Bundler, toplevel_fd: std.os.fd_t, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
+    fn getBinName(bundler: *bun.Bundler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
         return getBinNameFromProjectDirectory(bundler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;
@@ -379,7 +379,7 @@ pub const BunxCommand = struct {
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-            if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+            if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;

@@ -258,7 +258,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = .{ .handle = bun.fdcast(fd) },
+                .file = fd.asFile(),
             };
 
             if (this.update_snapshots) {

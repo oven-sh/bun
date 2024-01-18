@@ -65,16 +65,25 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
+    /// converts a `bun.FileDescriptor` into the native operating system fd
+    ///
+    /// On non-windows this does nothing, but on windows it converts UV descriptors
+    /// to Windows' *HANDLE, and casts the types for proper usage.
+    ///
+    /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
     pub inline fn cast(fd: FileDescriptor) std.os.fd_t {
-        return fdcast(fd);
+        if (!Environment.isWindows) return fd.int();
+        // if not having this check, the cast may crash zig compiler?
+        if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
+        return FDImpl.decode(fd).system();
     }
 
     pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
-        return std.fs.Dir{ .fd = fdcast(fd) };
+        return std.fs.Dir{ .fd = fd.cast() };
     }
 
     pub inline fn asFile(fd: FileDescriptor) std.fs.File {
-        return std.fs.File{ .handle = fdcast(fd) };
+        return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
@@ -547,7 +556,7 @@ pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs
     }
 
     const res = try sys.open(pathZ, flags, 0).unwrap();
-    return std.fs.File{ .handle = fdcast(res) };
+    return std.fs.File{ .handle = res.cast() };
 }
 
 pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
@@ -559,7 +568,8 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
             .read_write => flags |= std.os.O.RDWR,
         }
 
-        return std.fs.File{ .handle = fdcast(try sys.openA(path_, flags, 0).unwrap()) };
+        const fd = try sys.openA(path_, flags, 0).unwrap();
+        return fd.asFile();
     }
 
     return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
@@ -568,7 +578,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -578,7 +588,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -588,7 +598,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -1077,7 +1087,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const fd = fdcast(toFD(fd_));
+    const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1115,7 +1125,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 }
 
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
-    const fd = fdcast(toFD(fd_));
+    const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1671,19 +1681,6 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
     }
 
     return value;
-}
-
-/// converts a `bun.FileDescriptor` into the native operating system fd
-///
-/// On non-windows this does nothing, but on windows it converts UV descriptors
-/// to Windows' *HANDLE, and casts the types for proper usage.
-///
-/// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
-    if (!Environment.isWindows) return fd.int();
-    // if not having this check, the cast may crash zig compiler?
-    if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-    return FDImpl.decode(fd).system();
 }
 
 /// Converts a native file descriptor into a `bun.FileDescriptor`

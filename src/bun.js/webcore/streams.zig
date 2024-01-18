@@ -1374,7 +1374,7 @@ pub const FileSink = struct {
     pub fn flushMaybePollWithSizeAndBuffer(this: *FileSink, buffer: []const u8, writable_size: usize) StreamResult.Writable {
         std.debug.assert(this.fd != bun.invalid_fd);
 
-        var total: usize = this.written;
+        var total = this.written;
         const initial = total;
         const fd = this.fd;
         var remain = buffer;
@@ -1563,7 +1563,7 @@ pub const FileSink = struct {
             }
 
             if (this.auto_truncate)
-                std.os.ftruncate(bun.fdcast(fd), total) catch {};
+                _ = bun.sys.ftruncate(fd, @intCast(total));
 
             if (this.auto_close) {
                 _ = bun.sys.close(fd);
@@ -4312,10 +4312,7 @@ pub const File = struct {
             file.seekable = this.seekable;
             size = @intCast(stat.size);
         } else if (comptime Environment.isWindows) outer: {
-            const std_file = std.fs.File{
-                .handle = bun.fdcast(fd),
-            };
-            size = @intCast(std_file.getEndPos() catch {
+            size = @intCast(fd.asFile().getEndPos() catch {
                 this.seekable = false;
                 break :outer;
             });

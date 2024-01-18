@@ -259,7 +259,7 @@ declare module "bun:ffi" {
     f32 = 10,
 
     /**
-     * Booelan value
+     * Boolean value
      *
      * Must be `true` or `false`. `0` and `1` type coercion is not supported.
      *
@@ -339,7 +339,6 @@ declare module "bun:ffi" {
     function = 17,
   }
 
-  type UNTYPED = never;
   type Pointer = number & {};
 
   interface FFITypeToArgsType {
@@ -580,7 +579,7 @@ declare module "bun:ffi" {
         ? []
         : never
     ) => // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    [unknown] extends [Fns[K]["returns"]]
+      [unknown] extends [Fns[K]["returns"]]
       ? undefined
       : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
   };

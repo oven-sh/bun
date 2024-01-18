@@ -1684,15 +1684,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             @setCold(true);
 
             const ichar: i32 = @intCast(char);
-            const char_len_ = bun.strings.codepointSize(i32, ichar);
-            const is_invalid = char_len_ == 0;
-            const char_len = if (!is_invalid) char_len_ else 2;
             var bytes: [4]u8 = undefined;
-            const n = bun.strings.encodeWTF8Rune(&bytes, if (!is_invalid) ichar else bun.strings.unicode_replacement);
-            if (bun.Environment.allow_assert) {
-                std.debug.assert(n == char_len);
-            }
-            self.j += char_len;
+            const n = bun.strings.encodeWTF8Rune(&bytes, ichar);
+            self.j += n;
             try self.strpool.appendSlice(bytes[0..n]);
         }
 

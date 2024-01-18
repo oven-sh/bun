@@ -27,7 +27,7 @@ fn globIgnoreFn(val: []const u8) bool {
 
 const GlobWalker = Glob.GlobWalker_(globIgnoreFn);
 
-pub fn getGlobPatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_patterns: *std.ArrayList([]u8), workdir_: []const u8) !void {
+pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_patterns: *std.ArrayList([]u8), workdir_: []const u8, root_buf: *bun.PathBuffer) ![]const u8 {
     bun.JSAst.Expr.Data.Store.create(bun.default_allocator);
     bun.JSAst.Stmt.Data.Store.create(bun.default_allocator);
 
@@ -96,8 +96,8 @@ pub fn getGlobPatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_p
                 },
             }
         }
-        std.os.chdir(parent_trimmed) catch unreachable;
-        return;
+        @memcpy(root_buf[0..parent_trimmed.len], parent_trimmed);
+        return root_buf[0..parent_trimmed.len];
 
         // const name = switch (name_prop.expr.data) {
         //     .e_string => |n| n.data,
@@ -122,6 +122,9 @@ pub fn getGlobPatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_p
     }
 
     try out_patterns.append(try allocator.dupe(u8, "**/package.json"));
+    const root_dir = strings.withoutTrailingSlash(workdir_);
+    @memcpy(root_buf[0..root_dir.len], root_dir);
+    return root_buf[0..root_dir.len];
 
     // if we were not able to find a workspace root, try globbing for package.json files
 
@@ -332,6 +335,7 @@ pub fn getPackageName(allocator: std.mem.Allocator, log: *bun.logger.Log, path: 
 pub const PackageFilterIterator = struct {
     patterns: []const []const u8,
     pattern_idx: usize = 0,
+    root_dir: []const u8,
 
     walker: GlobWalker = undefined,
     iter: GlobWalker.Iterator = undefined,
@@ -340,11 +344,12 @@ pub const PackageFilterIterator = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, patterns: []const []const u8) !PackageFilterIterator {
+    pub fn init(allocator: std.mem.Allocator, patterns: []const []const u8, root_dir: []const u8) !PackageFilterIterator {
         return PackageFilterIterator{
             .patterns = patterns,
             .allocator = allocator,
             .arena = std.heap.ArenaAllocator.init(allocator),
+            .root_dir = root_dir,
         };
     }
 
@@ -372,7 +377,8 @@ pub const PackageFilterIterator = struct {
     fn initWalker(self: *PackageFilterIterator) !void {
         const pattern = self.patterns[self.pattern_idx];
         var arena = self.arena;
-        const walker_init_res = try self.walker.init(&arena, pattern, true, true, false, true, true);
+        const cwd = try arena.allocator().dupe(u8, self.root_dir);
+        const walker_init_res = try self.walker.initWithCwd(&arena, pattern, cwd, true, true, false, true, true);
         switch (walker_init_res) {
             .err => |err| {
                 // TODO

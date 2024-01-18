@@ -25,7 +25,7 @@ function Install-Bun {
   $MinBuild = 17763;
   $MinBuildName = "Windows 10 1809"
   $WinVer = [System.Environment]::OSVersion.Version
-  if ($WinVer.Major -lt 10) {
+  if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
     Write-Warning "Bun requires at $($MinBuildName) or newer.`n`nThe install will still continue but it may not work.`n"
     exit 1
   }

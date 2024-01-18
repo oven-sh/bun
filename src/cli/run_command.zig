@@ -384,7 +384,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
-    ) !bool {
+    ) !ExecResult {
         var argv_ = [_]string{executable};
         var argv: []const string = &argv_;
 
@@ -417,13 +417,13 @@ pub const RunCommand = struct {
                             if (@errorReturnTrace()) |trace| {
                                 std.debug.dumpStackTrace(trace.*);
                             }
-                            return false;
+                            return ExecResult.failure;
                         }
                     }
                 }
             }
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-            return false;
+            return ExecResult.failure;
         };
         switch (result) {
             .Exited => |code| {
@@ -452,7 +452,7 @@ pub const RunCommand = struct {
                         Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
                     }
                 }
-                return false;
+                return ExecResult.withCode(code);
             },
             .Signal, .Stopped => |sig| {
                 // forward the signal to the shell / parent process
@@ -462,13 +462,14 @@ pub const RunCommand = struct {
                 } else if (!silent) {
                     std.debug.panic("\"{s}\" stopped by signal code 0, which isn't supposed to be possible", .{executable});
                 }
+                // here we exit immediately, so we don't need to return a code
                 Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
             },
             .Unknown => |sig| {
                 if (!silent) {
                     Output.errGeneric("\"<b>{s}<r>\" stopped with unknown state <b>{d}<r>", .{ basenameOrBun(executable), sig });
                 }
-                return false;
+                return ExecResult.failure;
             },
         }
 
@@ -1009,10 +1010,35 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    const ExecResult = union(enum) {
+        code: u8,
+        failure,
+        ok,
+
+        pub fn withCode(code: u8) ExecResult {
+            return ExecResult{ .code = code };
+        }
+
+        // const ok = ExecResult{.ok = void};
+        // const failure = ExecResult.failure;
+
+        pub fn notFailure(self: ExecResult) bool {
+            return switch (self) {
+                .ok => true,
+                .failure => false,
+                .code => |code| code == 0,
+            };
+        }
+    };
+
     pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
         // without filters just behave like normal exec
         if (ctx.filters.len == 0) {
-            _ = try exec(ctx, bin_dirs_only, true);
+            switch (try exec(ctx, bin_dirs_only, true)) {
+                .ok => return,
+                .failure => Global.exit(1),
+                .code => |code| Global.exit(code),
+            }
             return;
         }
 
@@ -1058,7 +1084,7 @@ pub const RunCommand = struct {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
                 continue;
             };
-            ok = ok and res;
+            ok = ok and res.notFailure();
             // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
             Output.flush();
         }
@@ -1067,7 +1093,7 @@ pub const RunCommand = struct {
         }
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !ExecResult {
         var ctx = ctx_;
 
         // Step 1. Figure out what we're trying to run
@@ -1103,9 +1129,9 @@ pub const RunCommand = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                return false;
+                return ExecResult.failure;
             };
-            return true;
+            return ExecResult.ok;
         }
 
         if (log_errors or force_using_bun) {
@@ -1171,7 +1197,7 @@ pub const RunCommand = struct {
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
                             if (!ctx.debug.silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
-                            return false;
+                            return ExecResult.failure;
                         };
 
                         var shebang: string = shebang_buf[0..shebang_size];
@@ -1203,10 +1229,10 @@ pub const RunCommand = struct {
                         if (@errorReturnTrace()) |trace| {
                             std.debug.dumpStackTrace(trace.*);
                         }
-                        return false;
+                        return ExecResult.failure;
                     };
 
-                    return true;
+                    return ExecResult.ok;
                 }
             }
         }
@@ -1224,7 +1250,7 @@ pub const RunCommand = struct {
                     0 => {
                         // naked "bun run"
                         RunCommand.printHelp(package_json);
-                        return true;
+                        return ExecResult.ok;
                     },
                     else => {
                         if (scripts.get(script_name_to_search)) |script_content| {
@@ -1242,7 +1268,7 @@ pub const RunCommand = struct {
                                     &.{},
                                     ctx.debug.silent,
                                 )) {
-                                    return false;
+                                    return ExecResult.failure;
                                 }
                             }
 
@@ -1254,7 +1280,7 @@ pub const RunCommand = struct {
                                 this_bundler.env,
                                 passthrough,
                                 ctx.debug.silent,
-                            )) return false;
+                            )) return ExecResult.failure;
 
                             temp_script_buffer[0.."post".len].* = "post".*;
 
@@ -1268,11 +1294,11 @@ pub const RunCommand = struct {
                                     &.{},
                                     ctx.debug.silent,
                                 )) {
-                                    return false;
+                                    return ExecResult.failure;
                                 }
                             }
 
-                            return true;
+                            return ExecResult.ok;
                         } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
                             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
                         {
@@ -1290,7 +1316,7 @@ pub const RunCommand = struct {
                                 if (@errorReturnTrace()) |trace| {
                                     std.debug.dumpStackTrace(trace.*);
                                 }
-                                return false;
+                                return ExecResult.failure;
                             };
                         }
                     },
@@ -1301,10 +1327,8 @@ pub const RunCommand = struct {
         if (script_name_to_search.len == 0) {
             if (comptime log_errors) {
                 Output.prettyError("<r>No \"scripts\" in package.json found.\n", .{});
-                return false;
             }
-
-            return false;
+            return ExecResult.failure;
         }
 
         const PATH = this_bundler.env.map.get("PATH") orelse "";
@@ -1348,14 +1372,14 @@ pub const RunCommand = struct {
         }
 
         if (ctx.runtime_options.if_present) {
-            return true;
+            return ExecResult.ok;
         }
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
         }
 
-        return false;
+        return ExecResult.failure;
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {

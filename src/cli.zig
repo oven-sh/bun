@@ -1737,8 +1737,12 @@ pub const Command = struct {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    if (try RunCommand.exec(ctx, true, false)) {
-                        return;
+                    switch (try RunCommand.exec(ctx, true, false)) {
+                        .failure => {},
+                        .ok => return,
+                        .code => |code| {
+                            Global.exit(code);
+                        },
                     }
 
                     Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{

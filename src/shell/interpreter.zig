@@ -275,6 +275,7 @@ pub const RefCountedStr = struct {
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;
 
     fn init(slice: []const u8) *RefCountedStr {
+        print("init: {s}", .{slice});
         const this = bun.default_allocator.create(RefCountedStr) catch bun.outOfMemory();
         this.* = .{
             .refcount = 1,
@@ -571,20 +572,32 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn deinit(this: *ShellState) void {
+                this.deinitImpl(true, true);
+            }
+
+            /// If called by interpreter we have to:
+            /// 1. not free this *ShellState, because its on a field on the interpreter
+            /// 2. don't free buffered_stdout and buffered_stderr, because that is used for output
+            fn deinitImpl(this: *ShellState, comptime destroy_this: bool, comptime free_buffered_io: bool) void {
                 log("[ShellState] deinit {x}", .{@intFromPtr(this)});
-                if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+
+                if (comptime free_buffered_io) {
+                    if (this._buffered_stdout == .owned) {
+                        this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    }
+                    if (this._buffered_stderr == .owned) {
+                        this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    }
                 }
-                if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
-                }
+
                 this.shell_env.deinit();
                 this.cmd_local_env.deinit();
                 this.export_env.deinit();
                 this.__cwd.deinit();
                 this.__prev_cwd.deinit();
                 closefd(this.cwd_fd);
-                bun.default_allocator.destroy(this);
+
+                if (comptime destroy_this) bun.default_allocator.destroy(this);
             }
 
             pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO) Maybe(*ShellState) {
@@ -1078,11 +1091,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) void {
             if (child.ptr.is(Script)) {
                 const script = child.as(Script);
-                _ = script; // autofix
-                // if (script.base.shell.kind != .subshell_inherit) {
-                child.deinit();
-                // }
+                script.deinitFromInterpreter();
                 this.finish(exit_code);
+                return;
             }
             @panic("Bad child");
         }
@@ -1120,6 +1131,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             this.reject.deinit();
             this.arena.deinit();
             this.allocator.destroy(this);
+            this.root_shell.deinitImpl(false, true);
         }
 
         pub fn setResolve(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -2063,7 +2075,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             fn finish(this: *Script, exit_code: ExitCode) void {
                 if (this.parent.ptr.is(ThisInterpreter)) {
                     log("SCRIPT DONE YO!", .{});
-                    this.base.interpreter.finish(exit_code);
+                    // this.base.interpreter.finish(exit_code);
+                    this.base.interpreter.childDone(InterpreterChildPtr.init(this), exit_code);
                     return;
                 }
 
@@ -2083,12 +2096,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn deinit(this: *Script) void {
-                // Subshell, command substitution
-                // if (this.base.shell.kind == .subshell) {
-                //     this.base.shell.deinit();
-                // } else {
+                if (this.parent.ptr.is(ThisInterpreter)) {
+                    return;
+                }
+
                 this.base.shell.deinit();
-                // }
+            }
+
+            pub fn deinitFromInterpreter(this: *Script) void {
+                this.base.shell.deinitImpl(false, false);
             }
         };
 
@@ -2896,8 +2912,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             });
 
             pub fn isSubproc(this: *Cmd) bool {
-                _ = this;
-                return true;
+                return this.exec == .subproc;
             }
 
             /// If starting a command results in an error (failed to find executable in path for example)
@@ -3606,6 +3621,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         .buf => {
                             this.buf.deinit();
                         },
+                        .fd => {
+                            // if (this.fd != bun.invalid_fd) {
+                            //     _ = Syscall.close(this.fd);
+                            //     this.fd = bun.invalid_fd;
+                            // }
+                        },
                         else => {},
                     }
                 }
@@ -3816,7 +3837,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 },
                                 .result => |f| f,
                             };
-                            cmd.redirection_fd = redirfd;
+                            // cmd.redirection_fd = redirfd;
                             if (node.redirect.stdin) {
                                 cmd.exec.bltn.stdin = .{ .fd = redirfd };
                             }
@@ -3902,7 +3923,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub fn deinit(this: *Builtin) void {
                 this.callImpl(void, "deinit", .{});
 
-                _ = Syscall.close(this.cwd);
+                // No need to free it because it belongs to the parent cmd
+                // _ = Syscall.close(this.cwd);
+
                 this.stdout.deinit();
                 this.stderr.deinit();
                 this.stdin.deinit();

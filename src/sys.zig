@@ -1757,6 +1757,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     }
 
     const out = std.c.dup(fd.cast());
+    log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
 

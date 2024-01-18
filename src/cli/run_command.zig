@@ -1055,42 +1055,63 @@ pub const RunCommand = struct {
                 .result => {},
             }
         }
-        var workspace_paths = std.ArrayList([]u8).init(ctx.allocator);
+
+        var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, olddir);
+        defer filter_instance.deinit();
+
+        var patterns = std.ArrayList([]u8).init(ctx.allocator);
         defer {
-            for (workspace_paths.items) |path| {
+            for (patterns.items) |path| {
                 ctx.allocator.free(path);
             }
-            workspace_paths.deinit();
+            patterns.deinit();
         }
-        try FilterArg.getFilteredPackages(ctx, olddir, &workspace_paths);
+        // try FilterArg.getFilteredPackages(ctx, olddir, &workspace_paths);
+        try FilterArg.getGlobPatterns(ctx.allocator, ctx.log, &patterns, olddir);
 
-        if (workspace_paths.items.len == 0) {
-            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
-            Global.exit(1);
-        }
-
-        var ok = true;
-        for (workspace_paths.items) |path| {
-            Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
-            switch (bun.sys.chdir(path)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ path, err });
-                    Global.crash();
-                },
-                .result => {},
+        var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items);
+        defer package_json_iter.deinit();
+        while (try package_json_iter.next()) |package_json_path| {
+            const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
+            const path = strings.withoutTrailingSlash(dirpath);
+            std.debug.print("package_json_path: {s}\n", .{package_json_path});
+            if (filter_instance.has_name_filters) {
+                // TODO
+                Global.crash();
+                // const name = try FilterArg.getPackageName(ctx.allocator, ctx.log, package_json_path);
+            } else {
+                const matches = filter_instance.matchesPath(path);
+                std.debug.print("{s} match result: {}\n", .{ path, matches });
             }
-            fsinstance.top_level_dir = path;
-            const res = exec(ctx, bin_dirs_only, true) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
-                continue;
-            };
-            ok = ok and res.notFailure();
-            // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
-            Output.flush();
         }
-        if (!ok) {
-            Global.exit(1);
-        }
+
+        // if (workspace_paths.items.len == 0) {
+        //     Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        //     Global.exit(1);
+        // }
+
+        // var ok = true;
+        // for (workspace_paths.items) |path| {
+        //     Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
+        //     switch (bun.sys.chdir(path)) {
+        //         .err => |err| {
+        //             Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ path, err });
+        //             Global.crash();
+        //         },
+        //         .result => {},
+        //     }
+        //     fsinstance.top_level_dir = path;
+        //     const res = exec(ctx, bin_dirs_only, true) catch |err| {
+        //         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
+        //         continue;
+        //     };
+        //     ok = ok and res.notFailure();
+        //     // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
+        //     Output.flush();
+        // }
+        // if (!ok) {
+        //     Global.exit(1);
+        // }
     }
 
     pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !ExecResult {

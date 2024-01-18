@@ -10,6 +10,23 @@ const Glob = @import("../glob.zig");
 
 const Package = @import("../install/lockfile.zig").Package;
 
+fn globIgnoreFn(val: []const u8) bool {
+    if (val.len == 0) {
+        return false;
+    }
+    // skip hidden directories
+    if (val[0] == '.') {
+        return true;
+    }
+    // skip ndoe_modules
+    if (strings.eql(val, "node_modules")) {
+        return true;
+    }
+    return false;
+}
+
+const GlobWalker = Glob.GlobWalker_(globIgnoreFn);
+
 fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *bun.logger.Log, workspace_map: *Package.WorkspaceMap, workdir_: []const u8) !void {
     bun.JSAst.Expr.Data.Store.create(bun.default_allocator);
     bun.JSAst.Stmt.Data.Store.create(bun.default_allocator);
@@ -83,7 +100,7 @@ fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *bun.logger.Log, work
 
     // if we were not able to find a workspace root, try globbing for package.json files
 
-    var walker = Glob.BunGlobWalker{};
+    var walker = GlobWalker{};
     var arena = std.heap.ArenaAllocator.init(allocator);
     const walker_init_res = try walker.init(&arena, "**/package.json", true, true, false, true, true);
     switch (walker_init_res) {
@@ -95,7 +112,7 @@ fn findWorkspaceMembers(allocator: std.mem.Allocator, log: *bun.logger.Log, work
     }
     defer walker.deinit(true);
 
-    var iter = Glob.BunGlobWalker.Iterator{ .walker = &walker };
+    var iter = GlobWalker.Iterator{ .walker = &walker };
     const iter_init_res = try iter.init();
     switch (iter_init_res) {
         .err => |err| {

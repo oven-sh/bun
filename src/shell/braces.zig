@@ -146,7 +146,7 @@ pub fn fastDetect(src: []const u8) bool {
                     has_close = true;
                 },
             }
-            if (has_close and has_close) return true;
+            if (has_close and has_open) return true;
         }
         return false;
     }
@@ -163,6 +163,7 @@ pub fn expand(
     var out_key_counter: u16 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
+        
         return try expandFlat(tokens, expansions_table.items[0..], out, 0, &out_key_counter, 0, 0, tokens.len);
     }
 

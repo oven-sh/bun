@@ -537,7 +537,10 @@ pub fn braces(
         globalThis.throw("braces: expected at least 1 argument, got 0", .{});
         return JSC.JSValue.jsUndefined();
     };
-    const brace_str = brace_str_js.getZigString(globalThis);
+    const brace_str = brace_str_js.toBunString(globalThis);
+    defer brace_str.deref();
+    const brace_slice = brace_str.toUTF8(bun.default_allocator);
+    defer brace_slice.deinit();
 
     var tokenize: bool = false;
     var parse: bool = false;
@@ -558,7 +561,7 @@ pub fn braces(
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
+    var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
         globalThis.throwError(err, "failed to tokenize braces");
         return .undefined;
     };
@@ -592,10 +595,15 @@ pub fn braces(
         return bun_str.toJS(globalThis);
     }
 
+    if (expansion_count == 0) {
+        return bun.String.toJSArray(globalThis, &.{brace_str});
+    }
+
     var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expansion_count) catch {
         globalThis.throwOutOfMemory();
         return .undefined;
     };
+
     for (0..expansion_count) |i| {
         expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
     }

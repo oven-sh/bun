@@ -87,14 +87,14 @@ declare module "bun" {
 
     /**
      * Perform bash-like brace expansion on the given pattern.
-    * @param pattern - Brace pattern to expand
-    *
-    * @example
-    * ```js
-    * const result = braces('index.{js,jsx,ts,tsx}');
-    * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
-    * ```
-    */
+     * @param pattern - Brace pattern to expand
+     *
+     * @example
+     * ```js
+     * const result = braces('index.{js,jsx,ts,tsx}');
+     * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
+     * ```
+     */
     braces(pattern: string): string[];
   }
 

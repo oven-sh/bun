@@ -6166,13 +6166,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                     };
 
                                                     for (filepath_args) |filepath| {
-                                                        const path = filepath[0..std.mem.len(filepath)];
+                                                        const path = filepath[0..bun.len(filepath)];
                                                         const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
-                                                        const is_root = if (comptime bun.Environment.isWindows) brk: {
-                                                            const disk_designator = std.fs.path.diskDesignator(resolved_path);
-                                                            // TODO is this check correct?
-                                                            break :brk std.mem.eql(u8, disk_designator, resolved_path);
-                                                        } else std.mem.eql(u8, resolved_path, "/");
+                                                        const is_root = std.fs.path.dirname(resolved_path) == null;
 
                                                         if (is_root) {
                                                             const error_string = this.bltn.fmtErrorArena(.rm, "\"{s}\" may not be removed\n", .{resolved_path});
@@ -6773,11 +6769,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             _ = this.rm.state.exec.incrementOutputCount(.output_count);
                         }
                         dir_task.deleted_entries.appendSlice(path[0..path.len]) catch bun.outOfMemory();
-                        if (comptime bun.Environment.isWindows) {
-                            dir_task.deleted_entries.appendSlice(&[_]u8{ 0, '\n' }) catch bun.outOfMemory();
-                        } else {
-                            dir_task.deleted_entries.append('\n') catch bun.outOfMemory();
-                        }
+                        dir_task.deleted_entries.append('\n') catch bun.outOfMemory();
                         return Maybe(void).success;
                     }
 

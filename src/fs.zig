@@ -631,15 +631,11 @@ pub const FileSystem = struct {
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
             pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
-                return std.fs.Dir{
-                    .fd = bun.fdcast(this.dir_fd),
-                };
+                return this.dir_fd.asDir();
             }
 
             pub inline fn file(this: *TmpfilePosix) std.fs.File {
-                return std.fs.File{
-                    .handle = bun.fdcast(this.fd),
-                };
+                return this.fd.asFile();
             }
 
             pub fn close(this: *TmpfilePosix) void {
@@ -685,9 +681,7 @@ pub const FileSystem = struct {
             }
 
             pub inline fn file(this: *TmpfileWindows) std.fs.File {
-                return std.fs.File{
-                    .handle = bun.fdcast(this.fd),
-                };
+                return this.fd.asFile();
             }
 
             pub fn close(this: *TmpfileWindows) void {
@@ -911,9 +905,8 @@ pub const FileSystem = struct {
                     std.os.O.DIRECTORY,
                     0,
                 );
-            return std.fs.Dir{
-                .fd = bun.fdcast(try dirfd.unwrap()),
-            };
+            const fd = try dirfd.unwrap();
+            return fd.asDir();
         }
 
         fn readdir(

@@ -11,7 +11,6 @@ const JSC = @import("root").bun.JSC;
 const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
@@ -403,7 +402,7 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else bun.fdcast(dirFd),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else dirFd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -532,7 +531,7 @@ pub fn ntCreateFile(
         else if (dir == bun.invalid_fd)
             std.fs.cwd().fd
         else
-            bun.fdcast(dir),
+            dir.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -730,7 +729,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             var bytes_written: u32 = undefined;
             std.debug.assert(bytes.len > 0);
             const rc = std.os.windows.kernel32.WriteFile(
-                bun.fdcast(fd),
+                fd.cast(),
                 bytes.ptr,
                 adjusted_len,
                 &bytes_written,
@@ -1079,9 +1078,9 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
     }
 }
 
-pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
+pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {
+        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
             return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
         }
 
@@ -1675,7 +1674,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         const offset_low: u64 = @as(u32, @intCast(offset & 0xFFFFFFFF));
         var plarge_integer: i64 = @bitCast(offset_high);
         const rc = kernel32.SetFilePointerEx(
-            bun.fdcast(fd),
+            fd.cast(),
             @as(windows.LARGE_INTEGER, @bitCast(offset_low)),
             &plarge_integer,
             windows.FILE_BEGIN,
@@ -1693,7 +1692,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,
-            bun.fdcast(fd),
+            fd.cast(),
             process,
             target,
             0,

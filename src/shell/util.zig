@@ -14,11 +14,6 @@ const Output = @import("root").bun.Output;
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 const os = std.os;
 
-fn destroyPipe(pipe: [2]os.fd_t) void {
-    os.close(pipe[0]);
-    if (pipe[0] != pipe[1]) os.close(pipe[1]);
-}
-
 pub const OutKind = enum { stdout, stderr };
 
 pub const Stdio = union(enum) {

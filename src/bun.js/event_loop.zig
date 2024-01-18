@@ -355,6 +355,7 @@ const ShellRmDirTaskMini = bun.shell.InterpreterMini.Builtin.Rm.ShellRmTask.DirT
 const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
+const ShellSubprocessResultTask = JSC.Subprocess.WaiterThread.ShellSubprocessQueue.ResultTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -417,7 +418,7 @@ pub const Task = TaggedPointerUnion(.{
     // WaitPidResultTask,
     // These need to be referenced like this so they both don't become `WaitPidResultTask`
     JSC.Subprocess.WaiterThread.WaitPidResultTask,
-    bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
+    ShellSubprocessResultTask,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -994,6 +995,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(WaitPidResultTask))) => {
                     var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellSubprocessResultTask))) => {
+                    var any: *ShellSubprocessResultTask = task.get(ShellSubprocessResultTask).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {

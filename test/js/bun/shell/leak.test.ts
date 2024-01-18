@@ -52,6 +52,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
           "foo/lol",
           "foo/nice"].sort()),
         ),
+        10
   ],
 ];
 
@@ -62,8 +63,8 @@ describe("fd leak", () => {
       const baseline = openSync("/dev/null", "r");
       closeSync(baseline);
       for (let i = 0; i < runs; i++) {
-        // await builder().quiet().run();
-        await builder().run();
+        await builder().quiet().run();
+        // await builder().run();
       }
       const fd = openSync("/dev/null", "r");
       closeSync(fd);
@@ -90,7 +91,7 @@ describe("fd leak", () => {
               for (let i = 0; i < ${runs}; i++) {
                 Bun.gc(true);
                 await (async function() {
-                  await ${builder.toString().slice("() =>".length)}.run()
+                  await ${builder.toString().slice("() =>".length)}.quiet().run()
                 })()
                 Bun.gc(true);
                 const val = process.memoryUsage.rss();

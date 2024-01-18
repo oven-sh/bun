@@ -530,11 +530,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             const Kind = enum {
                 normal,
-                /// Inherit environment, this is used for:
-                /// - cmd subst: $(...)
-                /// - subshell syntax: (...)
-                /// - cmds in a pipeline
-                subshell_inherit,
+                cmd_subst,
+                subshell,
+                pipeline,
             };
 
             pub fn buffered_stdout(this: *ShellState) *bun.ByteList {
@@ -600,7 +598,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 if (comptime destroy_this) bun.default_allocator.destroy(this);
             }
 
-            pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO) Maybe(*ShellState) {
+            pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) Maybe(*ShellState) {
                 const duped = allocator.create(ShellState) catch bun.outOfMemory();
 
                 const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
@@ -611,16 +609,22 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const stdout: Bufio = if (io.stdout == .std) brk: {
                     if (io.stdout.std.captured != null) break :brk .{ .borrowed = io.stdout.std.captured.? };
                     break :brk .{ .owned = .{} };
-                } else .{ .owned = .{} };
+                } else if (kind == .pipeline)
+                    .{ .borrowed = this.buffered_stdout() }
+                else
+                    .{ .owned = .{} };
 
                 const stderr: Bufio = if (io.stderr == .std) brk: {
                     if (io.stderr.std.captured != null) break :brk .{ .borrowed = io.stderr.std.captured.? };
                     break :brk .{ .owned = .{} };
-                } else .{ .owned = .{} };
+                } else if (kind == .pipeline)
+                    .{ .borrowed = this.buffered_stderr() }
+                else
+                    .{ .owned = .{} };
 
                 duped.* = .{
                     .io = io,
-                    .kind = .subshell_inherit,
+                    .kind = kind,
                     ._buffered_stdout = stdout,
                     ._buffered_stderr = stderr,
                     .shell_env = this.shell_env.clone(),
@@ -1551,7 +1555,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             var io: IO = .{};
                             io.stdout = .pipe;
                             io.stderr = this.base.shell.io.stderr;
-                            const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io)) {
+                            const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                                 .result => |s| s,
                                 .err => |e| {
                                     global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
@@ -1578,7 +1582,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
                                 io.stderr = this.base.shell.io.stderr;
-                                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io)) {
+                                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                                     .result => |s| s,
                                     .err => |e| {
                                         global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
@@ -2598,7 +2602,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
                             cmd_io.stdin = stdin;
                             cmd_io.stdout = stdout;
-                            const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io)) {
+                            const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
                                 .result => |s| s,
                                 .err => |err| {
                                     const system_err = err.toSystemError();
@@ -6561,6 +6565,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         }
                         // _ = this.state.exec.output_done.fetchAdd(1, .SeqCst);
                         _ = this.state.exec.incrementOutputCount(.output_done);
+                        if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
+                            this.bltn.done(if (this.state.exec.err != null) 1 else 0);
+                            return;
+                        }
                         return;
                     }
                     this.queueBlockingOutput(verbose.toBlockingOutput());

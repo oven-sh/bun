@@ -353,8 +353,23 @@ pub const Os = struct {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows) {
-            globalThis.throwTODO("hostname() is not implemented on Windows");
-            return .zero;
+            var name_buffer: [129:0]u16 = undefined;
+            if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
+                const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                defer str.deref();
+                return str.toJS(globalThis);
+            }
+
+            var result: std.os.windows.ws2_32.WSADATA = undefined;
+            if (std.os.windows.ws2_32.WSAStartup(0x202, &result) == 0) {
+                if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
+                    const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                    defer str.deref();
+                    return str.toJS(globalThis);
+                }
+            }
+
+            return JSC.ZigString.init("unknown").withEncoding().toValueGC(globalThis);
         }
 
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;

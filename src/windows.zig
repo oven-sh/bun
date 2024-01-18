@@ -12,6 +12,7 @@ pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
 pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
+pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
@@ -2989,3 +2990,8 @@ pub fn getLastErrno() bun.C.E {
         },
     };
 }
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: PWSTR,
+    nSize: c_int,
+) BOOL;

@@ -84,7 +84,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         pid: std.os.pid_t,
         // on macOS, this is nothing
         // on linux, it's a pidfd
-        pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = bun.invalid_fd,
+        pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) bun.invalid_fd else 0,
 
         stdin: Writable,
         stdout: Readable,

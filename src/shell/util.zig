@@ -42,13 +42,13 @@ pub const Stdio = union(enum) {
     pub fn setUpChildIoPosixSpawn(
         stdio: @This(),
         actions: *PosixSpawn.Actions,
-        pipe_fd: [2]i32,
-        std_fileno: i32,
+        pipe_fd: [2]bun.FileDescriptor,
+        comptime std_fileno: bun.FileDescriptor,
     ) !void {
         switch (stdio) {
             .array_buffer, .blob, .pipe => {
                 std.debug.assert(!(stdio == .blob and stdio.blob.needsToReadFile()));
-                const idx: usize = if (std_fileno == 0) 0 else 1;
+                const idx: usize = if (std_fileno == bun.STDIN_FD) 0 else 1;
 
                 try actions.dup2(pipe_fd[idx], std_fileno);
                 try actions.close(pipe_fd[1 - idx]);
@@ -57,7 +57,7 @@ pub const Stdio = union(enum) {
                 if (stdio.inherit.captured != null) {
                     // Same as above
                     std.debug.assert(!(stdio == .blob and stdio.blob.needsToReadFile()));
-                    const idx: usize = if (std_fileno == 0) 0 else 1;
+                    const idx: usize = if (std_fileno == bun.STDIN_FD) 0 else 1;
 
                     try actions.dup2(pipe_fd[idx], std_fileno);
                     try actions.close(pipe_fd[1 - idx]);

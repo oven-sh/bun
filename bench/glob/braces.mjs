@@ -13,7 +13,7 @@ function benchPattern(pattern, name) {
   group({ name: `${name} pattern: "${pattern}"`, summary: true }, () => {
     bench("Bun", () => {
       for (let i = 0; i < iterations; i++) {
-        Bun.braces(pattern);
+        Bun.$.braces(pattern);
       }
     });
 

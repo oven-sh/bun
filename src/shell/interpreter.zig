@@ -51,6 +51,9 @@ const ast = shell.AST;
 const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+const stdin_no = 0;
+const stdout_no = 1;
+const stderr_no = 2;
 
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
@@ -180,9 +183,9 @@ pub const IO = struct {
     };
 
     fn to_subproc_stdio(this: IO, stdio: *[3]bun.shell.subproc.Stdio) void {
-        stdio[bun.STDIN_FD] = this.stdin.to_subproc_stdio();
-        stdio[bun.STDOUT_FD] = this.stdout.to_subproc_stdio();
-        stdio[bun.STDERR_FD] = this.stderr.to_subproc_stdio();
+        stdio[stdin_no] = this.stdin.to_subproc_stdio();
+        stdio[stdout_no] = this.stdout.to_subproc_stdio();
+        stdio[stderr_no] = this.stderr.to_subproc_stdio();
     }
 };
 
@@ -2859,9 +2862,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 fn fromStdio(io: *const [3]bun.shell.subproc.Stdio) BufferedIoClosed {
                     return .{
-                        .stdin = if (io[bun.STDIN_FD].isPiped()) false else null,
-                        .stdout = if (io[bun.STDOUT_FD].isPiped()) .{ .owned = io[bun.STDOUT_FD] == .pipe } else null,
-                        .stderr = if (io[bun.STDERR_FD].isPiped()) .{ .owned = io[bun.STDERR_FD] == .pipe } else null,
+                        .stdin = if (io[stdin_no].isPiped()) false else null,
+                        .stdout = if (io[stdout_no].isPiped()) .{ .owned = io[stdout_no] == .pipe } else null,
+                        .stderr = if (io[stderr_no].isPiped()) .{ .owned = io[stderr_no] == .pipe } else null,
                     };
                 }
             };
@@ -2901,7 +2904,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // switch (this.base.shell.io.stderr) {
                 //     .std => |val| {
                 //         this.state = .{ .waiting_write_err = BufferedWriter{
-                //             .fd = bun.STDERR_FD,
+                //             .fd = stderr_no,
                 //             .remain = buf,
                 //             .parent = BufferedWriter.ParentPtr.init(this),
                 //             .bytelist = val.captured,
@@ -2910,7 +2913,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 //     },
                 //     .fd => {
                 //         this.state = .{ .waiting_write_err = BufferedWriter{
-                //             .fd = bun.STDERR_FD,
+                //             .fd = stderr_no,
                 //             .remain = buf,
                 //             .parent = BufferedWriter.ParentPtr.init(this),
                 //         } };
@@ -3216,17 +3219,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                                 if (this.node.redirect.stdin) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stdin_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stdout_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stderr_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
@@ -3239,17 +3242,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                                 req.getBodyValue().toBlobIfPossible();
                                 if (this.node.redirect.stdin) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDIN_FD, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdin_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDOUT_FD, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdout_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), bun.STDERR_FD, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stderr_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
@@ -3309,15 +3312,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.Cmd.RedirectFlags, val: shell.subproc.Stdio) void {
                 if (flags.stdin) {
-                    stdio.*[bun.STDIN_FD] = val;
+                    stdio.*[stdin_no] = val;
                 }
 
                 if (flags.stdout) {
-                    stdio.*[bun.STDOUT_FD] = val;
+                    stdio.*[stdout_no] = val;
                 }
 
                 if (flags.stderr) {
-                    stdio.*[bun.STDERR_FD] = val;
+                    stdio.*[stderr_no] = val;
                 }
             }
 
@@ -3559,7 +3562,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 pub fn asFd(this: *BuiltinIO) ?bun.FileDescriptor {
                     return switch (this.*) {
                         .fd => this.fd,
-                        .captured => if (this.captured.out_kind == .stdout) @as(bun.FileDescriptor, bun.STDOUT_FD) else @as(bun.FileDescriptor, bun.STDERR_FD),
+                        .captured => if (this.captured.out_kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
                         else => null,
                     };
                 }
@@ -3567,7 +3570,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 pub fn expectFd(this: *BuiltinIO) bun.FileDescriptor {
                     return switch (this.*) {
                         .fd => this.fd,
-                        .captured => if (this.captured.out_kind == .stdout) @as(bun.FileDescriptor, bun.STDOUT_FD) else @as(bun.FileDescriptor, bun.STDERR_FD),
+                        .captured => if (this.captured.out_kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
                         else => @panic("No fd"),
                     };
                 }
@@ -3693,19 +3696,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .ignore => .ignore,
                 };
 
-                cmd.exec = .{ .bltn = Builtin{
-                    .kind = kind,
-                    .stdin = stdin,
-                    .stdout = stdout,
-                    .stderr = stderr,
-                    .exit_code = null,
-                    .arena = arena,
-                    .args = args,
-                    .export_env = export_env,
-                    .cmd_local_env = cmd_local_env,
-                    .cwd = cwd,
-                    .impl = undefined,
-                } };
+                cmd.exec = .{
+                    .bltn = Builtin{
+                        .kind = kind,
+                        .stdin = stdin,
+                        .stdout = stdout,
+                        .stderr = stderr,
+                        .exit_code = null,
+                        .arena = arena,
+                        .args = args,
+                        .export_env = export_env,
+                        .cmd_local_env = cmd_local_env,
+                        .cwd = cwd,
+                        .impl = undefined,
+                    },
+                };
 
                 switch (kind) {
                     .@"export" => {
@@ -4926,8 +4931,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
                             }
 
-                            const dir = std.fs.Dir{ .fd = fd };
-                            var iterator = DirIterator.iterate(dir);
+                            var iterator = DirIterator.iterate(fd.asDir(), .u8);
                             var entry = iterator.next();
 
                             while (switch (entry) {
@@ -6843,7 +6847,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             return Maybe(void).success;
                         }
 
-                        var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) });
+                        var iterator = DirIterator.iterate(fd.asDir(), .u8);
                         var entry = iterator.next();
 
                         var i: usize = 0;

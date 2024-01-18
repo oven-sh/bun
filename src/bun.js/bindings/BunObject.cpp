@@ -224,6 +224,28 @@ static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
     return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
 }
 
+static JSValue constructBunShell(VM& vm, JSObject* bunObject)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto shellTemplateFunction = shellShellTemplateFunctionCodeGenerator(vm);
+    auto mainShellFunc = JSFunction::create(vm, shellTemplateFunction, globalObject->globalScope());
+    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+    // auto mainShellFunc = shellShellCodeGenerator;
+#ifdef BUN_DEBUG
+    auto parseIdent = Identifier::fromString(vm, String("parse"_s));
+    auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
+    mainShellFunc->putDirect(vm, parseIdent, parseFunc);
+
+    auto lexIdent = Identifier::fromString(vm, String("lex"_s));
+    auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
+    mainShellFunc->putDirect(vm, lexIdent, lexFunc);
+#endif
+
+    mainShellFunc->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    return mainShellFunc;
+}
+
 extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue Bun__DNSResolver__resolve(JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue Bun__DNSResolver__resolveSrv(JSGlobalObject*, JSC::CallFrame*);
@@ -501,6 +523,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
 
 /* Source for BunObject.lut.h
 @begin bunObjectTable
+    $                                              constructBunShell                                                   ReadOnly|DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump  BunObject_callback_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump    DontEnum|DontDelete|Function 1
@@ -524,7 +547,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     assetPrefix                                    BunObject_getter_wrap_assetPrefix                                   DontEnum|DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
-    braces                                         BunObject_callback_braces                                           DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 1
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
@@ -625,22 +647,6 @@ public:
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
-
-        auto shellTemplateFunction = shellShellTemplateFunctionCodeGenerator(vm);
-        auto mainShellFunc = JSFunction::create(vm, shellTemplateFunction, globalObject->globalScope());
-        // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
-        // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
-        // auto mainShellFunc = shellShellCodeGenerator;
-#ifdef BUN_DEBUG
-        auto parseIdent = Identifier::fromString(vm, String("parse"_s));
-        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
-        mainShellFunc->putDirect(vm, parseIdent, parseFunc);
-
-        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
-        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
-        mainShellFunc->putDirect(vm, lexIdent, lexFunc);
-#endif
-        object->putDirect(vm, Identifier::fromString(vm, String("$"_s)), mainShellFunc);
         return object;
     }
 };

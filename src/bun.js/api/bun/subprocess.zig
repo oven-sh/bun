@@ -1823,17 +1823,17 @@ pub const Subprocess = struct {
         }
 
         // TODO: move pipe2 to bun.sys so it can return [2]bun.FileDesriptor
-        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
+        const stdin_pipe = if (stdio[0].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
-        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
+        const stdout_pipe = if (stdio[1].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
-        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
+        const stderr_pipe = if (stdio[2].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
@@ -2530,7 +2530,7 @@ pub const Subprocess = struct {
         fn setUpChildIoPosixSpawn(
             stdio: @This(),
             actions: *PosixSpawn.Actions,
-            pipe_fd: [2]i32,
+            pipe_fd: [2]bun.FileDescriptor,
             std_fileno: bun.FileDescriptor,
         ) !void {
             switch (stdio) {

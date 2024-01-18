@@ -184,7 +184,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
             pub fn onStart(_: *Writable) void {}
 
-            pub fn init(subproc: *Subprocess, stdio: Stdio, fd: i32, globalThis: GlobalRef) !Writable {
+            pub fn init(subproc: *Subprocess, stdio: Stdio, fd: bun.FileDescriptor, globalThis: GlobalRef) !Writable {
                 switch (stdio) {
                     .pipe => {
                         // var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
@@ -225,7 +225,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return Writable{ .buffered_input = buffered_input };
                     },
                     .fd => {
-                        return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
+                        return Writable{ .fd = fd };
                     },
                     .inherit => {
                         return Writable{ .inherit = {} };
@@ -286,8 +286,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
         };
 
-        pub const Readable =
-            union(enum) {
+        pub const Readable = union(enum) {
             fd: bun.FileDescriptor,
 
             pipe: Pipe,
@@ -355,7 +354,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 }
             };
 
-            pub fn init(subproc: *Subprocess, comptime kind: OutKind, stdio: Stdio, fd: i32, allocator: std.mem.Allocator, max_size: u32) Readable {
+            pub fn init(subproc: *Subprocess, comptime kind: OutKind, stdio: Stdio, fd: bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
                 return switch (stdio) {
                     .ignore => Readable{ .ignore = {} },
                     .pipe => {
@@ -384,7 +383,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return Readable{ .inherit = {} };
                     },
                     .path => Readable{ .ignore = {} },
-                    .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
+                    .blob, .fd => Readable{ .fd = fd },
                     .array_buffer => {
                         var subproc_readable_ptr = subproc.getIO(kind);
                         subproc_readable_ptr.* = Readable{
@@ -1242,7 +1241,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
         };
 
-        pub const WatchFd = if (Environment.isLinux) std.os.fd_t else i32;
+        pub const WatchFd = bun.FileDescriptor;
 
         pub fn spawnAsync(
             globalThis_: GlobalRef,
@@ -1258,7 +1257,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
             var spawn_args = spawn_args_;
 
-            var out_watchfd: if (Environment.isLinux) ?std.os.fd_t else ?i32 = null;
+            var out_watchfd: ?WatchFd = null;
 
             const subprocess = switch (spawnMaybeSyncImpl(
                 .{
@@ -1430,15 +1429,15 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 spawn_args.env_array.capacity = spawn_args.env_array.items.len;
             }
 
-            const stdin_pipe = if (spawn_args.stdio[0].isPiped()) os.pipe2(0) catch |err| {
+            const stdin_pipe = if (spawn_args.stdio[0].isPiped()) bun.sys.pipe().unwrap() catch |err| {
                 return .{ .err = globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)}) };
             } else undefined;
 
-            const stdout_pipe = if (spawn_args.stdio[1].isPiped()) os.pipe2(0) catch |err| {
+            const stdout_pipe = if (spawn_args.stdio[1].isPiped()) bun.sys.pipe().unwrap() catch |err| {
                 return .{ .err = globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)}) };
             } else undefined;
 
-            const stderr_pipe = if (spawn_args.stdio[2].isPiped()) os.pipe2(0) catch |err| {
+            const stderr_pipe = if (spawn_args.stdio[2].isPiped()) bun.sys.pipe().unwrap() catch |err| {
                 return .{ .err = globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)}) };
             } else undefined;
 
@@ -1610,12 +1609,12 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             subprocess.* = Subprocess{
                 .globalThis = globalThis_,
                 .pid = pid,
-                .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
-                .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis_) catch bun.outOfMemory(),
+                .pidfd = if (Environment.isLinux and WaiterThread.shouldUseWaiterThread()) bun.toFD(pidfd) else if (Environment.isLinux) bun.invalid_fd else 0,
+                .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[0], stdin_pipe[1], globalThis_) catch bun.outOfMemory(),
                 // Readable initialization functions won't touch the subrpocess pointer so it's okay to hand it to them even though it technically has undefined memory at the point of Readble initialization
                 // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = Subprocess.Readable.init(subprocess, .stdout, spawn_args.stdio[bun.STDOUT_FD], stdout_pipe[0], globalThis.getAllocator(), Subprocess.default_max_buffer_size),
-                .stderr = Subprocess.Readable.init(subprocess, .stderr, spawn_args.stdio[bun.STDERR_FD], stderr_pipe[0], globalThis.getAllocator(), Subprocess.default_max_buffer_size),
+                .stdout = Subprocess.Readable.init(subprocess, .stdout, spawn_args.stdio[1], stdout_pipe[0], globalThis.getAllocator(), Subprocess.default_max_buffer_size),
+                .stderr = Subprocess.Readable.init(subprocess, .stderr, spawn_args.stdio[2], stderr_pipe[0], globalThis.getAllocator(), Subprocess.default_max_buffer_size),
                 .flags = .{
                     .is_sync = is_sync,
                 },
@@ -1627,12 +1626,12 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
 
             var send_exit_notification = false;
-            const watchfd = if (comptime Environment.isLinux) brk: {
+            const watchfd = bun.toFD(if (comptime Environment.isLinux) brk: {
                 break :brk pidfd;
             } else brk: {
                 break :brk pid;
-            };
-            out_watchfd.* = watchfd;
+            });
+            out_watchfd.* = bun.toFD(watchfd);
 
             if (comptime !is_sync) {
                 if (!WaiterThread.shouldUseWaiterThread()) {
@@ -2036,7 +2035,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         var process = queue[i];
 
                         // this case shouldn't really happen
-                        if (process.pid == bun.invalid_fd) {
+                        if (process.pid == bun.invalid_fd.int()) {
                             _ = this.queue.orderedRemove(i);
                             _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                             queue = this.queue.items;
@@ -2243,7 +2242,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 //                     return Writable{ .buffered_input = buffered_input };
 //                 },
 //                 .fd => {
-//                     return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
+//                     return Writable{ .fd = fd };
 //                 },
 //                 .inherit => {
 //                     return Writable{ .inherit = {} };
@@ -2402,7 +2401,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 //                     return Readable{ .inherit = {} };
 //                 },
 //                 .path => Readable{ .ignore = {} },
-//                 .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
+//                 .blob, .fd => Readable{ .fd = fd },
 //                 .array_buffer => {
 //                     var subproc_readable_ptr = subproc.getIO(kind);
 //                     subproc_readable_ptr.* = Readable{
@@ -3657,7 +3656,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 //         //     subprocess.* = Subprocess{
 //         //         .globalThis = globalThis,
 //         //         .pid = pid,
-//         //         .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
+//         //         .pidfd = if (WaiterThread.shouldUseWaiterThread()) bun.invalid_fd else @truncate(pidfd),
 //         //         .stdin = Subprocess.Writable.init(spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
 //         //             globalThis.throw("out of memory", .{});
 //         //             return null;
@@ -3684,7 +3683,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 //         subprocess.* = Subprocess{
 //             .globalThis = globalThis,
 //             .pid = pid,
-//             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
+//             .pidfd = if (WaiterThread.shouldUseWaiterThread()) bun.invalid_fd else @truncate(pidfd),
 //             .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
 //                 globalThis.throw("out of memory", .{});
 //                 return null;

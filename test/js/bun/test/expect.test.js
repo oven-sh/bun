@@ -4093,4 +4093,211 @@ describe("expect()", () => {
       expect(parsed).toEqual([obj, obj]);
     });
   });
+
+  const mocked = mock(() => {});
+  mocked();
+
+  test("fail to return undefined", () => {
+    expect(expect().not.fail()).toBeUndefined();
+  });
+  test("pass to return undefined", () => {
+    expect(expect().pass()).toBeUndefined();
+  });
+  test("rejects to return undefined", () => {
+    expect(expect(Promise.reject("error")).rejects.toBe("error")).toBeUndefined();
+  });
+  test("resolves to return undefined", () => {
+    expect(expect(Promise.resolve(1)).resolves.toBe(1)).toBeUndefined();
+  });
+  test("toBe to return undefined", () => {
+    expect(expect(true).toBe(true)).toBeUndefined();
+  });
+  test("toBeArray to return undefined", () => {
+    expect(expect([]).toBeArray()).toBeUndefined();
+  });
+  test("toBeArrayOfSize to return undefined", () => {
+    expect(expect([]).toBeArrayOfSize(0)).toBeUndefined();
+  });
+  test("toBeBoolean to return undefined", () => {
+    expect(expect(true).toBeBoolean()).toBeUndefined();
+  });
+  test("toBeCloseTo to return undefined", () => {
+    expect(expect(0).toBeCloseTo(0)).toBeUndefined();
+  });
+  test("toBeDate to return undefined", () => {
+    expect(expect(new Date()).toBeDate()).toBeUndefined();
+  });
+  test("toBeDefined to return undefined", () => {
+    expect(expect(true).toBeDefined()).toBeUndefined();
+  });
+  test("toBeEmpty to return undefined", () => {
+    expect(expect("").toBeEmpty()).toBeUndefined();
+  });
+  test("toBeEven to return undefined", () => {
+    expect(expect(2).toBeEven()).toBeUndefined();
+  });
+  test("toBeFalse to return undefined", () => {
+    expect(expect(false).toBeFalse()).toBeUndefined();
+  });
+  test("toBeFalsy to return undefined", () => {
+    expect(expect(false).toBeFalsy()).toBeUndefined();
+  });
+  test("toBeFinite to return undefined", () => {
+    expect(expect(42).toBeFinite()).toBeUndefined();
+  });
+  test("toBeFunction to return undefined", () => {
+    expect(expect(() => {}).toBeFunction()).toBeUndefined();
+  });
+  test("toBeGreaterThan to return undefined", () => {
+    expect(expect(1).toBeGreaterThan(0)).toBeUndefined();
+  });
+  test("toBeGreaterThanOrEqual to return undefined", () => {
+    expect(expect(1).toBeGreaterThanOrEqual(0)).toBeUndefined();
+  });
+  test("toBeInstanceOf to return undefined", () => {
+    expect(expect(new String()).toBeInstanceOf(String)).toBeUndefined();
+  });
+  test("toBeInteger to return undefined", () => {
+    expect(expect(1).toBeInteger()).toBeUndefined();
+  });
+  test("toBeLessThan to return undefined", () => {
+    expect(expect(0).toBeLessThan(1)).toBeUndefined();
+  });
+  test("toBeLessThanOrEqual to return undefined", () => {
+    expect(expect(0).toBeLessThanOrEqual(1)).toBeUndefined();
+  });
+  test("toBeNaN to return undefined", () => {
+    expect(expect(NaN).toBeNaN()).toBeUndefined();
+  });
+  test("toBeNegative to return undefined", () => {
+    expect(expect(-1).toBeNegative()).toBeUndefined();
+  });
+  test("toBeNil to return undefined", () => {
+    expect(expect().toBeNil()).toBeUndefined();
+  });
+  test("toBeNull to return undefined", () => {
+    expect(expect(null).toBeNull()).toBeUndefined();
+  });
+  test("toBeNumber to return undefined", () => {
+    expect(expect(0).toBeNumber()).toBeUndefined();
+  });
+  test("toBeOdd to return undefined", () => {
+    expect(expect(1).toBeOdd()).toBeUndefined();
+  });
+  test("toBePositive to return undefined", () => {
+    expect(expect(1).toBePositive()).toBeUndefined();
+  });
+  test("toBeString to return undefined", () => {
+    expect(expect("").toBeString()).toBeUndefined();
+  });
+  test("toBeSymbol to return undefined", () => {
+    expect(expect(Symbol()).toBeSymbol()).toBeUndefined();
+  });
+  test("toBeTrue to return undefined", () => {
+    expect(expect(true).toBeTrue()).toBeUndefined();
+  });
+  test("toBeTruthy to return undefined", () => {
+    expect(expect(true).toBeTruthy()).toBeUndefined();
+  });
+  test("toBeTypeOf to return undefined", () => {
+    expect(expect(1).toBeTypeOf("number")).toBeUndefined();
+  });
+  test("toBeUndefined to return undefined", () => {
+    expect(expect(undefined).toBeUndefined()).toBeUndefined();
+  });
+  test("toBeWithin to return undefined", () => {
+    expect(expect(1).toBeWithin(0, 2)).toBeUndefined();
+  });
+  test("toContain to return undefined", () => {
+    expect(expect([1]).toContain(1)).toBeUndefined();
+  });
+  test.todo("toContainEqual to return undefined", () => {
+    expect(expect([1]).toContainEqual(1)).toBeUndefined();
+  });
+  test("toEndWith to return undefined", () => {
+    expect(expect("abc").toEndWith("c")).toBeUndefined();
+  });
+  test("toEqual to return undefined", () => {
+    expect(expect(1).toEqual(1)).toBeUndefined();
+  });
+  test("toEqualIgnoringWhitespace to return undefined", () => {
+    expect(expect("a b c").toEqualIgnoringWhitespace("a b c")).toBeUndefined();
+  });
+  test("toHaveBeenCalled to return undefined", () => {
+    expect(expect(mocked).toHaveBeenCalled()).toBeUndefined();
+  });
+  test("toHaveBeenCalledTimes to return undefined", () => {
+    expect(expect(mocked).toHaveBeenCalledTimes(1)).toBeUndefined();
+  });
+  test("toHaveBeenCalledWith to return undefined", () => {
+    expect(expect(mocked).toHaveBeenCalledWith()).toBeUndefined();
+  });
+  test("toHaveBeenLastCalledWith to return undefined", () => {
+    expect(expect(mocked).toHaveBeenLastCalledWith()).toBeUndefined();
+  });
+  test.todo("toHaveBeenNthCalledWith to return undefined", () => {
+    expect(expect(() => {}).toHaveBeenNthCalledWith()).toBeUndefined();
+  });
+  test.todo("toHaveLastReturnedWith to return undefined", () => {
+    expect(expect(() => {}).toHaveLastReturnedWith()).toBeUndefined();
+  });
+  test("toHaveLength to return undefined", () => {
+    expect(expect([1]).toHaveLength(1)).toBeUndefined();
+  });
+  test.todo("toHaveNthReturnedWith to return undefined", () => {
+    expect(expect(() => {}).toHaveNthReturnedWith()).toBeUndefined();
+  });
+  test.todo("toHaveProperty to return undefined", () => {
+    expect(expect({}).toHaveProperty()).toBeUndefined();
+  });
+  test.todo("toHaveReturnedTimes to return undefined", () => {
+    expect(expect(() => {}).toHaveReturnedTimes()).toBeUndefined();
+  });
+  test.todo("toHaveReturnedWith to return undefined", () => {
+    expect(expect(() => {}).toHaveReturnedWith()).toBeUndefined();
+  });
+  test("toInclude to return undefined", () => {
+    expect(expect("abc").toInclude("a")).toBeUndefined();
+  });
+  test.todo("toIncludeRepeated to return undefined", () => {
+    expect(expect("abc").toIncludeRepeated("a")).toBeUndefined();
+  });
+  test("toMatch to return undefined", () => {
+    expect(expect("abc").toMatch("a")).toBeUndefined();
+  });
+  test.todo("toMatchInlineSnapshot to return undefined", () => {
+    expect(expect("abc").toMatchInlineSnapshot()).toBeUndefined();
+  });
+  test("toMatchObject to return undefined", () => {
+    expect(expect({}).toMatchObject({})).toBeUndefined();
+  });
+  test("toMatchSnapshot to return undefined", () => {
+    expect(expect("abc").toMatchSnapshot()).toBeUndefined();
+  });
+  test("toSatisfy to return undefined", () => {
+    expect(expect(1).toSatisfy(() => true)).toBeUndefined();
+  });
+  test("toStartWith to return undefined", () => {
+    expect(expect("abc").toStartWith("a")).toBeUndefined();
+  });
+  test("toStrictEqual to return undefined", () => {
+    expect(expect(1).toStrictEqual(1)).toBeUndefined();
+  });
+  test("toThrow to return undefined", () => {
+    expect(
+      expect(() => {
+        throw "";
+      }).toThrow(),
+    ).toBeUndefined();
+  });
+  test.todo("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
+    expect(expect(() => {}).toThrowErrorMatchingInlineSnapshot()).toBeUndefined();
+  });
+  test.todo("toThrowErrorMatchingSnapshot to return undefined", () => {
+    expect(expect(() => {}).toThrowErrorMatchingSnapshot()).toBeUndefined();
+  });
+
+  test(' " " to contain ""', () => {
+    expect(" ").toContain("");
+  });
 });

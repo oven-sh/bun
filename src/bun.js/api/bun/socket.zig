@@ -1423,10 +1423,15 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.detached) return;
 
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
 
             const callback = handlers.onEnd;
-            if (callback == .zero) return;
+            if (callback == .zero) {
+                this.poll_ref.unref(handlers.vm);
+
+                // If you don't handle TCP fin, we assume you're done.
+                this.markInactive();
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can

@@ -136,6 +136,16 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
+        pub inline fn errno(err: anytype, syscall: Syscall.Tag) @This() {
+            return @This(){
+                // always truncate
+                .err = .{
+                    .errno = @truncate(@intFromEnum(err)),
+                    .syscall = syscall,
+                },
+            };
+        }
+
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,

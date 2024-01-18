@@ -821,7 +821,7 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
+                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
                     defer save_dir_.deleteTree(version_name) catch {};
 
                     if (comptime Environment.isWindows) {

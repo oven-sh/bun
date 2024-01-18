@@ -955,15 +955,15 @@ pub const RunCommand = struct {
             \\<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \<file or script\>
         ;
 
-        const outro_text =
+        const examples_text =
             \\<b>Examples:<r>
             \\  <d>Run a JavaScript or TypeScript file<r>
             \\  <b><green>bun run<r> <blue>./index.js<r>
             \\  <b><green>bun run<r> <blue>./index.tsx<r>
             \\
             \\  <d>Run a package.json script<r>
-            \\  <b><green>bun run <blue>dev<r>
-            \\  <b><green>bun run <blue>lint<r>
+            \\  <b><green>bun run<r> <blue>dev<r>
+            \\  <b><green>bun run<r> <blue>lint<r>
             \\
             \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
             \\
@@ -974,6 +974,8 @@ pub const RunCommand = struct {
         Output.pretty("<b>Flags:<r>", .{});
         Output.flush();
         clap.simpleHelp(&Arguments.run_params);
+        Output.pretty("\n\n" ++ examples_text, .{});
+        Output.flush();
 
         if (package_json) |pkg| {
             if (pkg.scripts) |scripts| {
@@ -986,7 +988,7 @@ pub const RunCommand = struct {
                 var iterator = scripts.iterator();
 
                 if (scripts.count() > 0) {
-                    Output.pretty("\n\n<b>package.json scripts ({d} found):<r>", .{scripts.count()});
+                    Output.pretty("\n<b>package.json scripts ({d} found):<r>", .{scripts.count()});
                     // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
                     while (iterator.next()) |entry| {
                         Output.prettyln("\n", .{});
@@ -996,18 +998,17 @@ pub const RunCommand = struct {
 
                     // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
 
+                    Output.prettyln("\n", .{});
                     Output.flush();
-
-                    // return true;
                 } else {
-                    Output.prettyln("<r><yellow>No \"scripts\" found in package.json.<r>", .{});
+                    Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
                     Output.flush();
-                    // return true;
                 }
+            } else {
+                Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
+                Output.flush();
             }
         }
-        Output.pretty("\n\n" ++ outro_text, .{});
-        Output.flush();
     }
 
     pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
@@ -1160,93 +1161,89 @@ pub const RunCommand = struct {
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (package_json.scripts) |scripts| {
-                switch (script_name_to_search.len) {
-                    0 => {
-                        // naked "bun run"
-                        RunCommand.printHelp(package_json);
-                        return true;
-                    },
-                    else => {
-                        if (scripts.get(script_name_to_search)) |script_content| {
-                            // allocate enough to hold "post${scriptname}"
-                            var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
-                            defer ctx.allocator.free(temp_script_buffer);
-
-                            if (scripts.get(temp_script_buffer[1..])) |prescript| {
-                                if (!try runPackageScriptForeground(
-                                    ctx.allocator,
-                                    prescript,
-                                    temp_script_buffer[1..],
-                                    this_bundler.fs.top_level_dir,
-                                    this_bundler.env,
-                                    &.{},
-                                    ctx.debug.silent,
-                                )) {
-                                    return false;
-                                }
-                            }
-
-                            if (!try runPackageScriptForeground(
-                                ctx.allocator,
-                                script_content,
-                                script_name_to_search,
-                                this_bundler.fs.top_level_dir,
-                                this_bundler.env,
-                                passthrough,
-                                ctx.debug.silent,
-                            )) return false;
-
-                            temp_script_buffer[0.."post".len].* = "post".*;
-
-                            if (scripts.get(temp_script_buffer)) |postscript| {
-                                if (!try runPackageScriptForeground(
-                                    ctx.allocator,
-                                    postscript,
-                                    temp_script_buffer,
-                                    this_bundler.fs.top_level_dir,
-                                    this_bundler.env,
-                                    &.{},
-                                    ctx.debug.silent,
-                                )) {
-                                    return false;
-                                }
-                            }
-
-                            return true;
-                        } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
-                            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
-                        {
-                            Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
-                                if (Output.enable_ansi_colors) {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                                } else {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                                }
-
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                                    std.fs.path.basename(script_name_to_search),
-                                    @errorName(err),
-                                });
-                                if (@errorReturnTrace()) |trace| {
-                                    std.debug.dumpStackTrace(trace.*);
-                                }
-                                Global.exit(1);
-                            };
-                        }
-                    },
-                }
-            }
-        }
 
         if (script_name_to_search.len == 0) {
-            if (comptime log_errors) {
-                Output.prettyError("<r>No \"scripts\" in package.json found.\n", .{});
-                Global.exit(0);
+            // naked "bun run"
+            if (root_dir_info.enclosing_package_json) |package_json| {
+                RunCommand.printHelp(package_json);
+            } else {
+                RunCommand.printHelp(null);
+                Output.prettyln("\n<r><yellow>No package.json found.<r>\n", .{});
+                Output.flush();
             }
 
-            return false;
+            return true;
+        }
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (package_json.scripts) |scripts| {
+                if (scripts.get(script_name_to_search)) |script_content| {
+                    // allocate enough to hold "post${scriptname}"
+                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
+                    defer ctx.allocator.free(temp_script_buffer);
+
+                    if (scripts.get(temp_script_buffer[1..])) |prescript| {
+                        if (!try runPackageScriptForeground(
+                            ctx.allocator,
+                            prescript,
+                            temp_script_buffer[1..],
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            &.{},
+                            ctx.debug.silent,
+                        )) {
+                            return false;
+                        }
+                    }
+
+                    if (!try runPackageScriptForeground(
+                        ctx.allocator,
+                        script_content,
+                        script_name_to_search,
+                        this_bundler.fs.top_level_dir,
+                        this_bundler.env,
+                        passthrough,
+                        ctx.debug.silent,
+                    )) return false;
+
+                    temp_script_buffer[0.."post".len].* = "post".*;
+
+                    if (scripts.get(temp_script_buffer)) |postscript| {
+                        if (!try runPackageScriptForeground(
+                            ctx.allocator,
+                            postscript,
+                            temp_script_buffer,
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            &.{},
+                            ctx.debug.silent,
+                        )) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+                    (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
+                {
+                    Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                        if (Output.enable_ansi_colors) {
+                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                        } else {
+                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                        }
+
+                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                            std.fs.path.basename(script_name_to_search),
+                            @errorName(err),
+                        });
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
+                        Global.exit(1);
+                    };
+                }
+            }
         }
 
         const PATH = this_bundler.env.map.get("PATH") orelse "";

@@ -963,7 +963,7 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isString() and expected.isString()) {
-            if (expected.isStringObject() and value.isStringLiteral()) pass = false else {
+            if (expected.isStringObjectLike() and value.isStringLiteral()) pass = false else {
                 const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
                 defer value_string.deinit();
                 const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
@@ -972,15 +972,16 @@ pub const Expect = struct {
                 // jest does not have a `typeof === "string"` check for `toContainEqual`.
                 // it immediately spreads the value into an array.
 
+                var expected_codepoint_cursor = strings.CodepointIterator.Cursor{};
                 var expected_iter = strings.CodepointIterator.init(expected_string.slice());
-                const expected_codepoint = expected_iter.nextCodepoint();
+                _ = expected_iter.next(&expected_codepoint_cursor);
 
-                if (expected_iter.nextCodepoint() != -1) pass = false else {
+                if (expected_iter.next(&expected_codepoint_cursor)) pass = false else {
                     var value_iter = strings.CodepointIterator.init(value_string.slice());
                     var cursor = strings.CodepointIterator.Cursor{};
 
                     while (value_iter.next(&cursor)) {
-                        if (cursor.c == expected_codepoint) {
+                        if (cursor.c == expected_codepoint_cursor.c) {
                             pass = true;
                             break;
                         }

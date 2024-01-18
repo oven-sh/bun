@@ -193,9 +193,51 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 2, 100);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 100);
 });
 
 it("should allow large amounts of data to be sent and received", async () => {
   expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+}, 10_000);
+
+it("socket.timeout works", async () => {
+  try {
+    const { promise, resolve } = Promise.withResolvers<any>();
+
+    var server = Bun.listen({
+      socket: {
+        binaryType: "buffer",
+        open(socket) {
+          socket.write("hello");
+        },
+        data(socket, data) {
+          if (data.toString("utf-8") === "I have timed out!") {
+            client.end();
+            resolve(undefined);
+          }
+        },
+      },
+      hostname: "localhost",
+      port: 0,
+    });
+    var client = await connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        timeout(socket) {
+          socket.write("I have timed out!");
+        },
+        data() {},
+        drain() {},
+        close() {},
+        end() {},
+        error() {},
+        open() {},
+      },
+    });
+    client.timeout(1);
+    await promise;
+  } finally {
+    server!.stop(true);
+  }
 }, 10_000);

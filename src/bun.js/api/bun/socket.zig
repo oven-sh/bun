@@ -171,7 +171,7 @@ const Handlers = struct {
 
     pub const Scope = struct {
         handlers: *Handlers,
-        socket_context: *uws.SocketContext,
+        socket_context: ?*uws.SocketContext,
 
         pub fn exit(this: *Scope, ssl: bool, wrapped: WrappedType) void {
             var vm = this.handlers.vm;
@@ -180,7 +180,7 @@ const Handlers = struct {
         }
     };
 
-    pub fn enter(this: *Handlers, context: *uws.SocketContext) Scope {
+    pub fn enter(this: *Handlers, context: ?*uws.SocketContext) Scope {
         this.markActive();
         return .{
             .handlers = this,
@@ -203,7 +203,7 @@ const Handlers = struct {
         return true;
     }
 
-    pub fn markInactive(this: *Handlers, ssl: bool, ctx: *uws.SocketContext, wrapped: WrappedType) void {
+    pub fn markInactive(this: *Handlers, ssl: bool, ctx: ?*uws.SocketContext, wrapped: WrappedType) void {
         Listener.log("markInactive", .{});
         this.active_connections -= 1;
         if (this.active_connections == 0) {
@@ -217,7 +217,8 @@ const Handlers = struct {
                 this.unprotect();
                 // will deinit when is not wrapped or when is the TCP wrapped connection
                 if (wrapped != .tls) {
-                    ctx.deinit(ssl);
+                    if (ctx) |ctx_|
+                        ctx_.deinit(ssl);
                 }
                 bun.default_allocator.destroy(this);
             }
@@ -776,7 +777,7 @@ pub const Listener = struct {
     pub fn onCreate(comptime ssl: bool, socket: uws.NewSocketHandler(ssl)) void {
         JSC.markBinding(@src());
         log("onCreate", .{});
-        var listener: *Listener = socket.context().ext(ssl, *Listener).?.*;
+        var listener: *Listener = socket.context().?.ext(ssl, *Listener).?.*;
         const Socket = NewSocket(ssl);
         std.debug.assert(ssl == listener.ssl);
 
@@ -1135,6 +1136,7 @@ fn NewSocket(comptime ssl: bool) type {
         // `Listener` keep a list of all the sockets JSValue in there
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+
         const This = @This();
         const log = Output.scoped(.Socket, false);
         const WriteResult = union(enum) {
@@ -1214,21 +1216,20 @@ fn NewSocket(comptime ssl: bool) type {
         }
         pub fn onTimeout(
             this: *This,
-            _: Socket,
+            socket: Socket,
         ) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
             if (this.detached) return;
-            this.detached = true;
-            defer this.markInactive();
 
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
-
             const callback = handlers.onTimeout;
             if (callback == .zero) return;
-            var vm = handlers.vm;
-            defer vm.drainMicrotasks();
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter(socket.context());
+            defer scope.exit(ssl, this.wrapped);
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1306,13 +1307,16 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn markInactive(this: *This) void {
             if (this.is_active) {
-                // we have to close the socket before the socket context is closed
-                // otherwise we will get a segfault
-                // uSockets will defer closing the TCP socket until the next tick
-                if (!this.socket.isClosed()) {
-                    this.socket.close(0, null);
-                    // onClose will call markInactive again
-                    return;
+                if (!this.detached) {
+                    // we have to close the socket before the socket context is closed
+                    // otherwise we will get a segfault
+                    // uSockets will defer closing the TCP socket until the next tick
+                    if (!this.socket.isClosed()) {
+                        this.detached = true;
+                        this.socket.close(0, null);
+                        // onClose will call markInactive again
+                        return;
+                    }
                 }
                 this.is_active = false;
                 const vm = this.handlers.vm;
@@ -1418,18 +1422,16 @@ fn NewSocket(comptime ssl: bool) type {
             log("onEnd", .{});
             if (this.detached) return;
 
-            this.detached = true;
-            defer this.markInactive();
-
             const handlers = this.handlers;
 
-            this.poll_ref.unref(handlers.vm);
-
             const callback = handlers.onEnd;
-            if (callback == .zero) return;
+            if (callback == .zero) {
+                this.poll_ref.unref(handlers.vm);
 
-            var vm = handlers.vm;
-            defer vm.drainMicrotasks();
+                // If you don't handle TCP fin, we assume you're done.
+                this.markInactive();
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1516,11 +1518,13 @@ fn NewSocket(comptime ssl: bool) type {
             log("onClose", .{});
             this.detached = true;
             defer this.markInactive();
+
             const handlers = this.handlers;
             this.poll_ref.unref(handlers.vm);
 
             const callback = handlers.onClose;
-            if (callback == .zero) return;
+            if (callback == .zero)
+                return;
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1950,7 +1954,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
                         this.socket.flush();
-                        this.detached = true;
+                        // markInactive does .detached = true
                         this.markInactive();
                     }
                     break :brk JSValue.jsNumber(result.wrote);
@@ -1978,8 +1982,9 @@ fn NewSocket(comptime ssl: bool) type {
                 if (!this.socket.isClosed()) {
                     this.socket.close(0, null);
                 }
-                this.markInactive();
             }
+
+            this.markInactive();
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
@@ -2826,7 +2831,7 @@ fn NewSocket(comptime ssl: bool) type {
             const TCPHandler = NewWrappedHandler(false);
 
             // reconfigure context to use the new wrapper handlers
-            Socket.unsafeConfigure(this.socket.context(), true, true, WrappedSocket, TCPHandler);
+            Socket.unsafeConfigure(this.socket.context().?, true, true, WrappedSocket, TCPHandler);
             const old_context = this.socket.context();
             const TLSHandler = NewWrappedHandler(true);
             const new_socket = this.socket.wrapTLS(

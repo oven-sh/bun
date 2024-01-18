@@ -243,11 +243,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
         }
-        pub fn context(this: ThisSocket) *SocketContext {
+
+        /// This can be null if the socket was closed.
+        pub fn context(this: ThisSocket) ?*SocketContext {
             return us_socket_context(
                 comptime ssl_int,
                 this.socket,
-            ).?;
+            );
         }
 
         pub fn flush(this: ThisSocket) void {

@@ -674,14 +674,14 @@ describe("lex shell", () => {
       await TestBuilder.command`echo hi && $(echo uh oh`.error("Unclosed command substitution").run();
       await TestBuilder.command`echo hi && $(echo uh oh)`
         .stdout("hi\n")
-        .stderr("bunsh: command not found: uh\n")
+        .stderr("bun: command not found: uh\n")
         .exitCode(1)
         .run();
 
       await TestBuilder.command`echo hi && \`echo uh oh`.error("Unclosed command substitution").run();
       await TestBuilder.command`echo hi && \`echo uh oh\``
         .stdout("hi\n")
-        .stderr("bunsh: command not found: uh\n")
+        .stderr("bun: command not found: uh\n")
         .exitCode(1)
         .run();
 

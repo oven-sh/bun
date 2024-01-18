@@ -2538,10 +2538,10 @@ pub fn appendJSValueStr(
     // TODO: toUTF8 already validates. We shouldn't have to do this twice!
     const is_ascii = str.isAllocated();
     if (!is_ascii and !bun.simdutf.validate.utf8(str.slice())) {
-        return true;
+        return false;
     }
 
     try outbuf.appendSlice(str.slice());
 
-    return false;
+    return true;
 }

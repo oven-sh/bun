@@ -72,6 +72,8 @@ pub fn assert(cond: bool, comptime msg: []const u8) void {
     }
 }
 
+const ExitCode = if (bun.Environment.isWindows) u16 else u8;
+
 pub const StateKind = enum(u8) {
     script,
     stmt,
@@ -1073,7 +1075,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return value;
         }
 
-        fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: u8) void {
+        fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) void {
             if (child.ptr.is(Script)) {
                 const script = child.as(Script);
                 _ = script; // autofix
@@ -1085,14 +1087,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             @panic("Bad child");
         }
 
-        fn finish(this: *ThisInterpreter, exit_code: u8) void {
+        fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
             log("finish", .{});
             if (comptime EventLoopKind == .js) {
                 // defer this.deinit();
                 // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
                 // this.buffered_stdout.
                 this.reject.deinit();
-                _ = this.resolve.call(&[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
+                _ = this.resolve.call(&[_]JSValue{if (comptime bun.Environment.isWindows) JSValue.jsNumberFromU16(exit_code) else JSValue.jsNumberFromChar(exit_code)});
             } else {
                 this.done.?.* = true;
             }
@@ -1676,7 +1678,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
-            fn childDone(this: *Expansion, child: ChildPtr, exit_code: u8) void {
+            fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
                 _ = exit_code;
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state != .done and this.state != .err);
@@ -2058,7 +2060,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
-            fn finish(this: *Script, exit_code: u8) void {
+            fn finish(this: *Script, exit_code: ExitCode) void {
                 if (this.parent.ptr.is(ThisInterpreter)) {
                     log("SCRIPT DONE YO!", .{});
                     this.base.interpreter.finish(exit_code);
@@ -2071,7 +2073,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
-            fn childDone(this: *Script, child: ChildPtr, exit_code: u8) void {
+            fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
                 child.deinit();
                 if (this.state.normal.idx >= this.node.stmts.len) {
                     this.finish(exit_code);
@@ -2182,7 +2184,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.parent.childDone(this, 0);
             }
 
-            pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: u8) void {
+            pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) void {
                 _ = exit_code;
 
                 if (child.ptr.is(Expansion)) {
@@ -2238,7 +2240,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             node: *const ast.Stmt,
             parent: *Script,
             idx: usize,
-            last_exit_code: ?u8,
+            last_exit_code: ?ExitCode,
             currently_executing: ?ChildPtr,
             io: IO,
             // state: union(enum) {
@@ -2318,7 +2320,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
-            pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: u8) void {
+            pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) void {
                 const data = child.ptr.repr.data;
                 log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
                 this.last_exit_code = exit_code;
@@ -2344,8 +2346,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             /// Based on precedence rules conditional can only be child of a stmt or
             /// another conditional
             parent: ParentPtr,
-            left: ?u8 = null,
-            right: ?u8 = null,
+            left: ?ExitCode = null,
+            right: ?ExitCode = null,
             io: IO,
             currently_executing: ?ChildPtr = null,
 
@@ -2427,7 +2429,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
-            pub fn childDone(this: *Cond, child: ChildPtr, exit_code: u8) void {
+            pub fn childDone(this: *Cond, child: ChildPtr, exit_code: ExitCode) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.left == null or this.right == null);
                     std.debug.assert(this.currently_executing != null);
@@ -2502,7 +2504,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             const CmdOrResult = union(enum) {
                 cmd: *Cmd,
-                result: u8,
+                result: ExitCode,
             };
 
             pub fn init(
@@ -2543,7 +2545,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             closefd(pipe[1]);
                         }
                         const system_err = err.toSystemError();
-                        pipeline.writeFailingError("bunsh: {s}\n", .{system_err.message}, 1);
+                        pipeline.writeFailingError("bun: {s}\n", .{system_err.message}, 1);
                         return pipeline;
                     }
                 }
@@ -2563,7 +2565,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .result => |s| s,
                                 .err => |err| {
                                     const system_err = err.toSystemError();
-                                    pipeline.writeFailingError("bunsh: {s}\n", .{system_err.message}, 1);
+                                    pipeline.writeFailingError("bun: {s}\n", .{system_err.message}, 1);
                                     return pipeline;
                                 },
                             };
@@ -2581,7 +2583,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return pipeline;
             }
 
-            pub fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype, exit_code: u8) void {
+            pub fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype, exit_code: ExitCode) void {
                 _ = exit_code; // autofix
 
                 const HandleIOWrite = struct {
@@ -2644,7 +2646,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.parent.childDone(this, 0);
             }
 
-            pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: u8) void {
+            pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.cmds.?.len > 0);
                 }
@@ -2671,7 +2673,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.exited_count += 1;
 
                 if (this.exited_count >= this.cmds.?.len) {
-                    var last_exit_code: u8 = 0;
+                    var last_exit_code: ExitCode = 0;
                     for (this.cmds.?) |cmd_or_result| {
                         if (cmd_or_result == .result) {
                             last_exit_code = cmd_or_result.result;
@@ -2749,7 +2751,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             redirection_fd: bun.FileDescriptor = bun.invalid_fd,
 
             exec: Exec = .none,
-            exit_code: ?u8 = null,
+            exit_code: ?ExitCode = null,
             io: IO,
             freed: bool = false,
 
@@ -2900,7 +2902,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             /// If starting a command results in an error (failed to find executable in path for example)
             /// then it should write to the stderr of the entire shell script process
-            pub fn writeFailingError(this: *Cmd, buf: []const u8, exit_code: u8) void {
+            pub fn writeFailingError(this: *Cmd, buf: []const u8, exit_code: ExitCode) void {
                 _ = exit_code; // autofix
 
                 const HandleIOWrite = struct {
@@ -3083,7 +3085,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return;
             }
 
-            pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: u8) void {
+            pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
                 _ = exit_code; // autofix
 
                 if (child.ptr.is(Assigns)) {
@@ -3143,7 +3145,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .err => |e| {
                                 var buf = std.ArrayList(u8).init(arena_allocator);
                                 const writer = buf.writer();
-                                e.format("bunsh: ", .{}, writer) catch bun.outOfMemory();
+                                e.format("bun: ", .{}, writer) catch bun.outOfMemory();
                                 this.writeFailingError(buf.items[0..], e.errno);
                                 return;
                             },
@@ -3276,7 +3278,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         },
                         .atom => {
                             if (this.redirection_file.items.len == 0) {
-                                const buf = std.fmt.allocPrint(spawn_args.arena.allocator(), "bunsh: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"}) catch bun.outOfMemory();
+                                const buf = std.fmt.allocPrint(spawn_args.arena.allocator(), "bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"}) catch bun.outOfMemory();
                                 this.writeFailingError(buf, 1);
                                 return;
                             }
@@ -3286,7 +3288,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const extra: bun.Mode = if (this.node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
                             const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
                                 .err => |e| {
-                                    const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
+                                    const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bun: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     return this.writeFailingError(buf, 1);
                                 },
                                 .result => |f| f,
@@ -3364,7 +3366,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             /// Called by Subprocess
-            pub fn onExit(this: *Cmd, exit_code: u8) void {
+            pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
                 log("cmd exit code={d} ({x})", .{ exit_code, @intFromPtr(this) });
                 this.exit_code = exit_code;
 
@@ -3478,7 +3480,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             stdin: BuiltinIO,
             stdout: BuiltinIO,
             stderr: BuiltinIO,
-            exit_code: ?u8 = null,
+            exit_code: ?ExitCode = null,
 
             export_env: *EnvMap,
             cmd_local_env: *EnvMap,
@@ -3798,7 +3800,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     switch (file) {
                         .atom => {
                             if (cmd.redirection_file.items.len == 0) {
-                                const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: ambiguous redirect: at `{s}`\n", .{@tagName(kind)}) catch bun.outOfMemory();
+                                const buf = std.fmt.allocPrint(arena.allocator(), "bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)}) catch bun.outOfMemory();
                                 cmd.writeFailingError(buf, 1);
                                 return .yield;
                             }
@@ -3808,7 +3810,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const extra: bun.Mode = if (node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
                             const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
                                 .err => |e| {
-                                    const buf = std.fmt.allocPrint(arena.allocator(), "bunsh: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
+                                    const buf = std.fmt.allocPrint(arena.allocator(), "bun: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     cmd.writeFailingError(buf, 1);
                                     return .yield;
                                 },
@@ -3866,7 +3868,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 return @fieldParentPtr(Cmd, "exec", union_ptr);
             }
 
-            pub fn done(this: *Builtin, exit_code: u8) void {
+            pub fn done(this: *Builtin, exit_code: ExitCode) void {
                 // if (comptime bun.Environment.allow_assert) {
                 //     std.debug.assert(this.exit_code != null);
                 // }
@@ -4052,7 +4054,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     this.print_state.?.err = e;
-                    const exit_code: u8 = if (e != null) e.?.errno else 0;
+                    const exit_code: ExitCode = if (e != null) e.?.errno else 0;
                     this.bltn.done(exit_code);
                 }
 
@@ -4665,7 +4667,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return Maybe(void).success;
                 }
 
-                pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: u8) Maybe(void) {
+                pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                     if (this.bltn.stderr.needsIO()) {
                         this.state = .{
                             .waiting_write_err = BufferedWriter{
@@ -4728,7 +4730,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .exec => {
                                 // It's done
                                 if (this.state.exec.tasks_done >= this.state.exec.task_count and this.state.exec.output_queue.len == 0) {
-                                    const exit_code: u8 = if (this.state.exec.err != null) 1 else 0;
+                                    const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                                     this.state = .done;
                                     this.bltn.done(exit_code);
                                     return;
@@ -5463,7 +5465,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     done,
                     waiting_write_err: struct {
                         writer: BufferedWriter,
-                        exit_code: u8,
+                        exit_code: ExitCode,
                     },
                     err: Syscall.Error,
                 } = .idle,
@@ -5612,7 +5614,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     return this.next();
                 }
 
-                pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: u8) Maybe(void) {
+                pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                     if (this.bltn.stderr.needsIO()) {
                         this.state = .{
                             .waiting_write_err = .{
@@ -6013,7 +6015,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             return atomicvar.load(.SeqCst);
                         }
                     },
-                    done: struct { exit_code: u8 },
+                    done: struct { exit_code: ExitCode },
                     err: Syscall.Error,
                 } = .idle,
 
@@ -7372,7 +7374,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             unknownTag(this.tagInt());
         }
 
-        pub fn childDone(this: @This(), child: anytype, exit_code: u8) void {
+        pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) void {
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {

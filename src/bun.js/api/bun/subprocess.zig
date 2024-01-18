@@ -806,6 +806,121 @@ pub const Subprocess = struct {
         return array;
     }
 
+    pub const BufferedPipeInput = struct {
+        remain: []const u8 = "",
+        input_buffer: uv.uv_buf_t = std.mem.zeroes(uv.uv_buf_t),
+        write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+        pipe: ?*uv.uv_pipe_t,
+        poll_ref: ?*Async.FilePoll = null,
+        written: usize = 0,
+
+        source: union(enum) {
+            blob: JSC.WebCore.AnyBlob,
+            array_buffer: JSC.ArrayBuffer.Strong,
+        },
+
+        pub fn writeIfPossible(this: *BufferedPipeInput, comptime is_sync: bool) void {
+            this.writeAllowBlocking(is_sync);
+        }
+        pub fn uvWriteCallback(req: *uv.uv_write_t, status: c_int) callconv(.C) void {
+            const this = bun.cast(*BufferedPipeInput, req.data);
+            const pipe = this.pipe orelse return;
+            if (status < 0) {
+                if (status == uv.UV_EAGAIN and this.pipe != null) {
+                    //EAGAIN
+                    const err = uv.uv_write(req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
+                    if (err < 0) {
+                        log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
+                        this.deinit();
+                    }
+                    return;
+                }
+                // fail
+                log("uv_write({d}) fail: {d}", .{ this.remain.len, status });
+                this.deinit();
+                return;
+            }
+
+            this.written += this.remain.len;
+            this.remain = "";
+            // we are done!
+            this.close();
+        }
+        pub fn writeAllowBlocking(this: *BufferedPipeInput, allow_blocking: bool) void {
+            const pipe = this.pipe orelse return;
+
+            var to_write = this.remain;
+
+            this.input_buffer = uv.uv_buf_t.init(to_write);
+            if (allow_blocking) {
+                while (true) {
+                    if (to_write.len == 0) {
+                        // we are done!
+                        this.close();
+                        return;
+                    }
+                    const status = uv.uv_try_write(@ptrCast(pipe), @ptrCast(&this.input_buffer), 1);
+                    if (status < 0) {
+                        if (status == uv.UV_EAGAIN) {
+                            //EAGAIN
+                            this.write_req.data = this;
+                            const err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
+                            if (err < 0) {
+                                log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
+                                this.deinit();
+                            }
+                            return;
+                        }
+                        // fail
+                        log("uv_try_write({d}) fail: {d}", .{ to_write.len, status });
+                        this.deinit();
+                        return;
+                    }
+                    const bytes_written: usize = @intCast(status);
+                    this.written += bytes_written;
+                    this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                    to_write = to_write[bytes_written..];
+                }
+            } else {
+                this.write_req.data = this;
+                const err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
+                if (err < 0) {
+                    log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
+                    this.deinit();
+                }
+            }
+        }
+
+        pub fn write(this: *BufferedPipeInput) void {
+            this.writeAllowBlocking(false);
+        }
+
+        fn close(this: *BufferedPipeInput) void {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            if (this.pipe) |pipe| {
+                _ = uv.uv_close(@ptrCast(pipe), null);
+                this.pipe = null;
+            }
+        }
+
+        pub fn deinit(this: *BufferedPipeInput) void {
+            this.close();
+
+            switch (this.source) {
+                .blob => |*blob| {
+                    blob.detach();
+                },
+                .array_buffer => |*array_buffer| {
+                    array_buffer.deinit();
+                },
+            }
+        }
+    };
+
     pub const BufferedInput = struct {
         remain: []const u8 = "",
         fd: bun.FileDescriptor = bun.invalid_fd,
@@ -946,10 +1061,9 @@ pub const Subprocess = struct {
         }
     };
 
-    pub const StreamType = if (Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
     pub const BufferedOutput = struct {
         internal_buffer: bun.ByteList = .{},
-        stream: StreamType = undefined,
+        stream: FIFOType = undefined,
         auto_sizer: ?JSC.WebCore.AutoSizer = null,
         /// stream strong ref if any is available
         readable_stream_ref: if (Environment.isWindows) JSC.WebCore.ReadableStream.Strong else u0 = if (Environment.isWindows) .{} else 0,
@@ -957,7 +1071,7 @@ pub const Subprocess = struct {
         status: Status = .{
             .pending = {},
         },
-
+        const FIFOType = if (Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
         pub const Status = union(enum) {
             pending: void,
             done: void,
@@ -1404,13 +1518,17 @@ pub const Subprocess = struct {
             readable_stream: JSC.WebCore.ReadableStream,
         },
         fd: bun.FileDescriptor,
-        buffered_input: BufferedInput,
+        buffered_input: if (Environment.isWindows) BufferedPipeInput else BufferedInput,
+        uvpipe: *uv.uv_pipe_t,
         memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
 
         pub fn ref(this: *Writable) void {
             switch (this.*) {
+                .uvpipe => |pipe| {
+                    uv.uv_ref(@ptrCast(pipe));
+                },
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
                         poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
@@ -1422,6 +1540,9 @@ pub const Subprocess = struct {
 
         pub fn unref(this: *Writable) void {
             switch (this.*) {
+                .uvpipe => |pipe| {
+                    uv.uv_unref(@ptrCast(pipe));
+                },
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
                         poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
@@ -1441,19 +1562,32 @@ pub const Subprocess = struct {
         pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
         pub fn onStart(_: *Writable) void {}
 
-        pub fn initWithPipe(stdio: Stdio, _: *uv.uv_pipe_t, _: *JSC.JSGlobalObject) !Writable {
+        pub fn initWithPipe(stdio: Stdio, pipe: *uv.uv_pipe_t, _: *JSC.JSGlobalObject) !Writable {
             switch (stdio) {
-                .pipe => |_| {
-                    @panic("TODO");
+                .pipe => |maybe_readable| {
+                    if (maybe_readable) |_| {
+                        @panic("TODO: sink readable into pipe");
+                    }
+                    return Writable{ .fd = bun.FDImpl.fromSystem(pipe.handle).encode() };
                 },
                 .array_buffer, .blob => {
-                    @panic("TODO");
+                    var buffered_input: BufferedPipeInput = .{ .pipe = pipe, .source = undefined };
+                    switch (stdio) {
+                        .array_buffer => |array_buffer| {
+                            buffered_input.source = .{ .array_buffer = array_buffer };
+                        },
+                        .blob => |blob| {
+                            buffered_input.source = .{ .blob = blob };
+                        },
+                        else => unreachable,
+                    }
+                    return Writable{ .buffered_input = buffered_input };
                 },
                 .memfd => {
                     return Writable{ .memfd = stdio.memfd };
                 },
                 .fd => {
-                    @panic("TODO");
+                    return Writable{ .fd = bun.FDImpl.fromSystem(pipe.handle).encode() };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -1517,6 +1651,7 @@ pub const Subprocess = struct {
 
         pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
             return switch (this) {
+                .uvpipe => JSValue.jsUndefined(),
                 .pipe => |pipe| pipe.toJS(globalThis),
                 .fd => |fd| JSValue.jsNumber(fd),
                 .memfd, .ignore => JSValue.jsUndefined(),
@@ -1528,6 +1663,9 @@ pub const Subprocess = struct {
 
         pub fn finalize(this: *Writable) void {
             return switch (this.*) {
+                .uvpipe => |pipe| {
+                    _ = uv.uv_close(@ptrCast(pipe), null);
+                },
                 .pipe => |pipe| {
                     pipe.close();
                 },
@@ -1548,6 +1686,9 @@ pub const Subprocess = struct {
 
         pub fn close(this: *Writable) void {
             return switch (this.*) {
+                .uvpipe => |pipe| {
+                    _ = uv.uv_close(@ptrCast(pipe), null);
+                },
                 .pipe => {},
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);

@@ -877,7 +877,7 @@ const union_unnamed_386 = extern union {
     io: struct_unnamed_387,
     connect: struct_unnamed_388,
 };
-pub const uv_shutdown_cb = ?*const fn ([*c]uv_shutdown_t, c_int) callconv(.C) void;
+pub const uv_shutdown_cb = ?*const fn (*uv_shutdown_t, c_int) callconv(.C) void;
 pub const struct_uv_shutdown_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1103,7 +1103,7 @@ const union_unnamed_412 = extern union {
     io: struct_unnamed_413,
     connect: struct_unnamed_414,
 };
-pub const uv_write_cb = ?*const fn ([*c]uv_write_t, c_int) callconv(.C) void;
+pub const uv_write_cb = ?*const fn (*uv_write_t, c_int) callconv(.C) void;
 pub const struct_uv_write_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,

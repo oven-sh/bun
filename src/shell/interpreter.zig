@@ -489,8 +489,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         root_shell: ShellState,
 
-        resolve: JSValue = .undefined,
-        reject: JSValue = .undefined,
+        resolve: JSC.Strong = .{},
+        reject: JSC.Strong = .{},
         has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
         started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -1091,7 +1091,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // defer this.deinit();
                 // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
                 // this.buffered_stdout.
-                _ = this.resolve.call(this.global, &[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
+                this.reject.deinit();
+                _ = this.resolve.call(&[_]JSValue{JSValue.jsNumberFromChar(exit_code)});
             } else {
                 this.done.?.* = true;
             }
@@ -1103,7 +1104,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             if (comptime EventLoopKind == .js) {
                 // defer this.deinit();
                 // this.promise.reject(this.global, the_error.toJSC(this.global));
-                _ = this.resolve.call(this.resolve, &[_]JSValue{JSValue.jsNumberFromChar(1)});
+                this.resolve.deinit();
+                _ = this.reject.call(&[_]JSValue{JSValue.jsNumberFromChar(1)});
             }
         }
 
@@ -1112,21 +1114,29 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             for (this.jsobjs) |jsobj| {
                 jsobj.unprotect();
             }
+            this.resolve.deinit();
+            this.reject.deinit();
             this.arena.deinit();
             this.allocator.destroy(this);
         }
 
         pub fn setResolve(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            _ = globalThis;
             const value = callframe.argument(0);
-            this.resolve = value;
+            if (!value.isCallable(globalThis.vm())) {
+                globalThis.throwInvalidArguments("resolve must be a function", .{});
+                return .undefined;
+            }
+            this.resolve.set(globalThis, value);
             return .undefined;
         }
 
         pub fn setReject(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            _ = globalThis;
             const value = callframe.argument(0);
-            this.reject = value;
+            if (!value.isCallable(globalThis.vm())) {
+                globalThis.throwInvalidArguments("reject must be a function", .{});
+                return .undefined;
+            }
+            this.reject.set(globalThis, value);
             return .undefined;
         }
 

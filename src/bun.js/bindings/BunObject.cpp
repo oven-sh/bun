@@ -227,23 +227,39 @@ static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
-    auto shellTemplateFunction = shellShellTemplateFunctionCodeGenerator(vm);
-    auto mainShellFunc = JSFunction::create(vm, shellTemplateFunction, globalObject->globalScope());
+    JSValue interpreter = BunObject_getter_wrap_ShellInterpreter(vm, bunObject);
+
+    JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto args = JSC::MarkedArgumentBuffer();
+    args.append(interpreter);
+    JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(!shell.isObject())) {
+        throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
+        return {};
+    }
+    auto* bunShell = shell.getObject();
+
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
     // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
     // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
     // auto mainShellFunc = shellShellCodeGenerator;
 #ifdef BUN_DEBUG
-    auto parseIdent = Identifier::fromString(vm, String("parse"_s));
+    auto parseIdent
+        = Identifier::fromString(vm, String("parse"_s));
     auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
-    mainShellFunc->putDirect(vm, parseIdent, parseFunc);
+    bunShell->putDirect(vm, parseIdent, parseFunc);
 
     auto lexIdent = Identifier::fromString(vm, String("lex"_s));
     auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
-    mainShellFunc->putDirect(vm, lexIdent, lexFunc);
+    bunShell->putDirect(vm, lexIdent, lexFunc);
 #endif
 
-    mainShellFunc->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-    return mainShellFunc;
+    return bunShell;
 }
 
 extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
@@ -538,7 +554,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     SHA384                                         BunObject_getter_wrap_SHA384                                        DontDelete|PropertyCallback
     SHA512                                         BunObject_getter_wrap_SHA512                                        DontDelete|PropertyCallback
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
-    ShellInterpreter                               BunObject_getter_wrap_ShellInterpreter                              DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     _Os                                            BunObject_callback__Os                                              DontEnum|DontDelete|Function 1

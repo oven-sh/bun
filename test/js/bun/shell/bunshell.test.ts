@@ -17,7 +17,6 @@ import {
   runWithErrorPromise,
   tempDirWithFiles,
 } from "harness";
-import { ShellOutput } from "bun";
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];

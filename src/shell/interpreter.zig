@@ -3496,10 +3496,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     var buf = this.io.stdout.std.captured.?;
                     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
-                // else if (this.io.stdout == .pipe and this.base.shell.io.stdout == .pipe) {
-                //     var buf = this.base.shell.buffered_stdout();
-                //     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
-                // }
                 this.exec.subproc.buffered_closed.close(this, .{ .stdout = &this.exec.subproc.child.stdout });
                 this.exec.subproc.child.closeIO(.stdout);
             }
@@ -3511,9 +3507,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
                 if (this.io.stderr == .std and this.io.stderr.std.captured != null) {
                     var buf = this.io.stderr.std.captured.?;
-                    buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
-                } else if (this.io.stderr == .pipe and this.base.shell.io.stderr == .pipe) {
-                    var buf = this.base.shell.buffered_stderr();
                     buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
                 this.exec.subproc.buffered_closed.close(this, .{ .stderr = &this.exec.subproc.child.stderr });
@@ -3935,7 +3928,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
                 }
                 // Aggregate output data if shell state is piped and this cmd is piped
-                if (cmd.io.stderr == .pipe and cmd.base.shell.io.stderr == .pipe and this.stdout == .buf) {
+                if (cmd.io.stderr == .pipe and cmd.base.shell.io.stderr == .pipe and this.stderr == .buf) {
                     cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
                 }
 

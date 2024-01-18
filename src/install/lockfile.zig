@@ -3437,7 +3437,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 workspace,
                             },
-                            .posix,
+                            .auto,
                         ),
                     );
                 });

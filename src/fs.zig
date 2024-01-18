@@ -897,14 +897,17 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
-            const dirfd = if (Environment.isWindows)
-                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, true, true)
-            else
-                bun.sys.openA(
-                    unsafe_dir_string,
-                    std.os.O.DIRECTORY,
-                    0,
-                );
+            const dirfd = if (Environment.isWindows) brk: {
+                var buf: bun.PathBuffer = undefined;
+                @memcpy(buf[0..unsafe_dir_string.len], unsafe_dir_string);
+                buf[unsafe_dir_string.len] = 0;
+                const dir_string = buf[0..unsafe_dir_string.len :0];
+                break :brk bun.sys.sys_uv.open(dir_string, std.os.O.DIRECTORY, 0);
+            } else bun.sys.openA(
+                unsafe_dir_string,
+                std.os.O.DIRECTORY,
+                0,
+            );
             const fd = try dirfd.unwrap();
             return fd.asDir();
         }

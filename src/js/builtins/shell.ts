@@ -92,8 +92,10 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   };
 
   BunShell.Promise = ShellPromise;
+
   if (IS_BUN_DEVELOPMENT) {
     BunShell.Interpreter = ShellInterpreter;
   }
+
   return BunShell;
 }

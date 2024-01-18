@@ -485,8 +485,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             kind: Kind = .normal,
 
             /// These MUST use the `bun.default_allocator` Allocator
-            buffered_stdout: bun.ByteList = .{},
-            buffered_stderr: bun.ByteList = .{},
+            _buffered_stdout: Bufio = .{ .owned = .{} },
+            _buffered_stderr: Bufio = .{ .owned = .{} },
 
             /// TODO Performance optimization: make these env maps copy-on-write
             /// Shell env for expansion by the shell
@@ -504,13 +504,30 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             // FIXME TODO deinit
             cwd_fd: bun.FileDescriptor,
 
+            const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
+
             const Kind = enum {
                 normal,
-                /// does not inherit environment
-                subshell,
-                /// DOES inherit environment
+                /// Inherit environment, this is used for:
+                /// - cmd subst: $(...)
+                /// - subshell syntax: (...)
+                /// - cmds in a pipeline
                 subshell_inherit,
             };
+
+            pub fn buffered_stdout(this: *ShellState) *bun.ByteList {
+                return switch (this._buffered_stdout) {
+                    .owned => &this._buffered_stdout.owned,
+                    .borrowed => this._buffered_stdout.borrowed,
+                };
+            }
+
+            pub fn buffered_stderr(this: *ShellState) *bun.ByteList {
+                return switch (this._buffered_stderr) {
+                    .owned => &this._buffered_stderr.owned,
+                    .borrowed => this._buffered_stderr.borrowed,
+                };
+            }
 
             pub inline fn cwdZ(this: *ShellState) [:0]const u8 {
                 if (this.__cwd.items.len == 0) return "";
@@ -533,18 +550,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn deinit(this: *ShellState) void {
-                this.buffered_stdout.deinitWithAllocator(bun.default_allocator);
-                this.buffered_stderr.deinitWithAllocator(bun.default_allocator);
+                log("[ShellState] deinit {x}", .{@intFromPtr(this)});
+                if (this._buffered_stdout == .owned) {
+                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                }
+                if (this._buffered_stderr == .owned) {
+                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                }
                 this.shell_env.deinit();
                 this.cmd_local_env.deinit();
                 this.export_env.deinit();
                 this.__cwd.deinit();
                 this.__prev_cwd.deinit();
                 closefd(this.cwd_fd);
+                bun.default_allocator.destroy(this);
             }
 
-            pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) Maybe(*ShellState) {
-                if (comptime bun.Environment.allow_assert) std.debug.assert(kind != .normal);
+            pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO) Maybe(*ShellState) {
                 const duped = allocator.create(ShellState) catch bun.outOfMemory();
 
                 const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
@@ -552,12 +574,22 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .result => |fd| fd,
                 };
 
+                const stdout: Bufio = if (io.stdout == .std) brk: {
+                    if (io.stdout.std.captured != null) break :brk .{ .borrowed = io.stdout.std.captured.? };
+                    break :brk .{ .owned = .{} };
+                } else .{ .owned = .{} };
+
+                const stderr: Bufio = if (io.stderr == .std) brk: {
+                    if (io.stderr.std.captured != null) break :brk .{ .borrowed = io.stderr.std.captured.? };
+                    break :brk .{ .owned = .{} };
+                } else .{ .owned = .{} };
+
                 duped.* = .{
                     .io = io,
-                    .kind = kind,
-                    .buffered_stdout = .{},
-                    .buffered_stderr = .{},
-                    .shell_env = if (kind == .subshell) EnvMap.init(allocator) else this.shell_env.clone(),
+                    .kind = .subshell_inherit,
+                    ._buffered_stdout = stdout,
+                    ._buffered_stderr = stderr,
+                    .shell_env = this.shell_env.clone(),
                     .cmd_local_env = EnvMap.init(allocator),
                     .export_env = this.export_env.clone(),
 
@@ -722,7 +754,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         return .yield;
                     },
                     .pipe => {
-                        const bufio: *bun.ByteList = &@field(this, "buffered_" ++ @tagName(iotype));
+                        const func = @field(ShellState, "buffered_" ++ @tagName(iotype));
+                        const bufio: *bun.ByteList = @call(.auto, func, .{this});
                         bufio.append(bun.default_allocator, buf) catch bun.outOfMemory();
                         // this.parent.childDone(this, 1);
                         return .cont;
@@ -939,8 +972,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
 
             if (comptime EventLoopKind == .js) {
-                interpreter.root_shell.io.stdout = .{ .std = .{ .captured = &interpreter.root_shell.buffered_stdout } };
-                interpreter.root_shell.io.stderr = .{ .std = .{ .captured = &interpreter.root_shell.buffered_stderr } };
+                interpreter.root_shell.io.stdout = .{ .std = .{ .captured = &interpreter.root_shell._buffered_stdout.owned } };
+                interpreter.root_shell.io.stderr = .{ .std = .{ .captured = &interpreter.root_shell._buffered_stderr.owned } };
             }
 
             return .{ .result = interpreter };
@@ -1024,9 +1057,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: u8) void {
             if (child.ptr.is(Script)) {
                 const script = child.as(Script);
-                if (script.base.shell.kind != .subshell) {
-                    child.deinit();
-                }
+                _ = script; // autofix
+                // if (script.base.shell.kind != .subshell_inherit) {
+                child.deinit();
+                // }
                 this.finish(exit_code);
             }
             @panic("Bad child");
@@ -1160,7 +1194,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             _ = globalThis; // autofix
             _ = callframe; // autofix
 
-            const stdout = this.ioToJSValue(&this.root_shell.buffered_stdout);
+            const stdout = this.ioToJSValue(this.root_shell.buffered_stdout());
             return stdout;
         }
 
@@ -1172,7 +1206,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             _ = globalThis; // autofix
             _ = callframe; // autofix
 
-            const stdout = this.ioToJSValue(&this.root_shell.buffered_stderr);
+            const stdout = this.ioToJSValue(this.root_shell.buffered_stderr());
             return stdout;
         }
 
@@ -1468,7 +1502,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             var io: IO = .{};
                             io.stdout = .pipe;
                             io.stderr = this.base.shell.io.stderr;
-                            const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit)) {
+                            const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io)) {
                                 .result => |s| s,
                                 .err => |e| {
                                     global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
@@ -1495,7 +1529,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
                                 io.stderr = this.base.shell.io.stderr;
-                                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .subshell_inherit)) {
+                                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io)) {
                                     .result => |s| s,
                                     .err => |e| {
                                         global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
@@ -1628,7 +1662,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         std.debug.assert(this.child_state == .cmd_subst);
                     }
 
-                    const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout.slice();
+                    const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout().slice();
                     if (!this.child_state.cmd_subst.quoted) {
                         this.postSubshellExpansion(stdout);
                     } else {
@@ -2021,11 +2055,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn deinit(this: *Script) void {
                 // Subshell, command substitution
-                if (this.base.shell.kind == .subshell) {
-                    this.base.shell.deinit();
-                } else {
-                    this.base.shell.deinit();
-                }
+                // if (this.base.shell.kind == .subshell) {
+                //     this.base.shell.deinit();
+                // } else {
+                this.base.shell.deinit();
+                // }
             }
         };
 
@@ -2497,7 +2531,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
                             cmd_io.stdin = stdin;
                             cmd_io.stdout = stdout;
-                            pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, shell_state, item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
+                            const subshell_state = switch (shell_state.dupeForSubshell(interpreter.allocator, cmd_io)) {
+                                .result => |s| s,
+                                .err => |err| {
+                                    const system_err = err.toSystemError();
+                                    pipeline.writeFailingError("bunsh: {s}\n", .{system_err.message}, 1);
+                                    return pipeline;
+                                },
+                            };
+                            pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
                             i += 1;
                         },
                         // in a pipeline assignments have no effect
@@ -2591,6 +2633,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 };
 
                 log("pipeline child done {x} ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
+                if (child.ptr.is(Cmd)) {
+                    const cmd = child.as(Cmd);
+                    cmd.base.shell.deinit();
+                }
+
                 child.deinit();
                 this.cmds.?[idx] = .{ .result = exit_code };
                 this.exited_count += 1;
@@ -2753,7 +2800,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                                 // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
                                 if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe) {
-                                    cmd.base.shell.buffered_stdout.append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                                    cmd.base.shell.buffered_stdout().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                                 }
 
                                 stdout.state = .{ .closed = readable.pipe.buffer.internal_buffer };
@@ -2766,7 +2813,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                                 // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
                                 if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe) {
-                                    cmd.base.shell.buffered_stderr.append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                                    cmd.base.shell.buffered_stderr().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                                 }
 
                                 stderr.state = .{ .closed = readable.pipe.buffer.internal_buffer };
@@ -3072,8 +3119,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             arena,
                             this.node,
                             &this.args,
-                            this.base.shell.export_env.cloneWithAllocator(arena_allocator),
-                            this.base.shell.cmd_local_env.cloneWithAllocator(arena_allocator),
+                            &this.base.shell.export_env,
+                            &this.base.shell.cmd_local_env,
+                            // this.base.shell.export_env.cloneWithAllocator(arena_allocator),
+                            // this.base.shell.cmd_local_env.cloneWithAllocator(arena_allocator),
                             cwd,
                             &this.io,
                             false,
@@ -3295,7 +3344,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
             pub fn deinit(this: *Cmd) void {
                 log("cmd deinit {x}", .{@intFromPtr(this)});
-                this.base.shell.cmd_local_env.clearRetainingCapacity();
+                // this.base.shell.cmd_local_env.clearRetainingCapacity();
                 if (this.redirection_fd != bun.invalid_fd) {
                     _ = Syscall.close(this.redirection_fd);
                 }
@@ -3391,12 +3440,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             stderr: BuiltinIO,
             exit_code: ?u8 = null,
 
+            export_env: *EnvMap,
+            cmd_local_env: *EnvMap,
+
             arena: *bun.ArenaAllocator,
             /// The following are allocated with the above arena
             args: *const std.ArrayList(?[*:0]const u8),
             args_slice: ?[]const [:0]const u8 = null,
-            export_env: EnvMap,
-            cmd_local_env: EnvMap,
             cwd: bun.FileDescriptor,
 
             impl: union(Kind) {
@@ -3590,8 +3640,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 arena: *bun.ArenaAllocator,
                 node: *const ast.Cmd,
                 args: *const std.ArrayList(?[*:0]const u8),
-                export_env: EnvMap,
-                cmd_local_env: EnvMap,
+                export_env: *EnvMap,
+                cmd_local_env: *EnvMap,
                 cwd: bun.FileDescriptor,
                 io_: *IO,
                 comptime in_cmd_subst: bool,
@@ -3786,11 +3836,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 // Aggregate output data if shell state is piped and this cmd is piped
                 if (cmd.io.stdout == .pipe and cmd.base.shell.io.stdout == .pipe) {
-                    cmd.base.shell.buffered_stdout.append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
+                    cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
                 }
                 // Aggregate output data if shell state is piped and this cmd is piped
                 if (cmd.io.stderr == .pipe and cmd.base.shell.io.stderr == .pipe) {
-                    cmd.base.shell.buffered_stderr.append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
+                    cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
                 }
 
                 cmd.parent.childDone(cmd, this.exit_code.?);
@@ -3840,7 +3890,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 const io: *BuiltinIO = &@field(this, @tagName(io_kind));
                 return switch (io.*) {
-                    .captured => if (comptime io_kind == .stdout) &this.parentCmd().base.shell.buffered_stdout else &this.parentCmd().base.shell.buffered_stderr,
+                    .captured => if (comptime io_kind == .stdout) this.parentCmd().base.shell.buffered_stdout() else this.parentCmd().base.shell.buffered_stderr(),
                     else => null,
                 };
             }

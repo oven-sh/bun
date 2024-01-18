@@ -1355,27 +1355,27 @@ it("should support promise returned from error", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req) {
-        throw new Error(req.url);
+      throw new Error(req.url);
     },
     async error(e) {
-      if(e.message.endsWith("/async-fulfilled")) {
-        return new Response("OK");        
+      if (e.message.endsWith("/async-fulfilled")) {
+        return new Response("OK");
       }
-      
-      if(e.message.endsWith("/async-rejected")) {
+
+      if (e.message.endsWith("/async-rejected")) {
         throw new Error("");
       }
 
-      if(e.message.endsWith("/async-rejected-pending")) {
+      if (e.message.endsWith("/async-rejected-pending")) {
         await Bun.sleep(100);
         throw new Error("");
       }
-     
-      if(e.message.endsWith("/async-pending")) {
+
+      if (e.message.endsWith("/async-pending")) {
         await Bun.sleep(100);
-        return new Response("OK");        
+        return new Response("OK");
       }
-    }
+    },
   });
 
   {

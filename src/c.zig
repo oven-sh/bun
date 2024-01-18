@@ -112,8 +112,7 @@ pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: b
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
                 _ = bun.sys.rmdirat(to_dir, destination.ptr);
-
-                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
+                try bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap();
                 return;
             }
 

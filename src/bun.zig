@@ -2447,7 +2447,7 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
 
 extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
 
-pub fn getUserName(output_buffer: []const u8) ?[]const u8 {
+pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     if (Environment.isWindows) {
         var size: u32 = @intCast(output_buffer.len);
         if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {

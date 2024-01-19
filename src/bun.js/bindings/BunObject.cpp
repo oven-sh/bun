@@ -37,6 +37,7 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
@@ -249,16 +250,16 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
     // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
     // auto mainShellFunc = shellShellCodeGenerator;
-#ifdef BUN_DEBUG
-    auto parseIdent
-        = Identifier::fromString(vm, String("parse"_s));
-    auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
-    bunShell->putDirect(vm, parseIdent, parseFunc);
+    if (has_bun_garbage_collector_flag_enabled) {
+        auto parseIdent
+            = Identifier::fromString(vm, String("parse"_s));
+        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
+        bunShell->putDirect(vm, parseIdent, parseFunc);
 
-    auto lexIdent = Identifier::fromString(vm, String("lex"_s));
-    auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
-    bunShell->putDirect(vm, lexIdent, lexFunc);
-#endif
+        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
+        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
+        bunShell->putDirect(vm, lexIdent, lexFunc);
+    }
 
     return bunShell;
 }

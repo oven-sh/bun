@@ -456,7 +456,7 @@ describe("deno_task", () => {
   });
 
   test("shell variables", async () => {
-    await TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && deno eval 'console.log(Deno.env.get("VAR"))'"`
+    await TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && ${BUN} -e ${"console.log(process.env.VAR)"}`
       .stdout("\n1\nundefined\n")
       .run();
 

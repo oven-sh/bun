@@ -76,7 +76,7 @@ declare module "bun" {
      * expect(stdout.toString()).toBe("LOL!");
      * ```
      */
-    env(newEnv: Record<string, string>): this;
+    env(newEnv: Record<string, string> | undefined): this;
     /**
      * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
      *

@@ -263,8 +263,17 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
     ) JSValue {
-        if (this.pid_rusage == null) {
-            return JSValue.jsUndefined();
+        if(Environment.isWindows) {
+            if (this.pid_rusage == null) {
+                this.pid_rusage = uv_getrusage(&this.pid);
+                if (this.pid_rusage == null) {
+                    return JSValue.jsUndefined();
+                }
+            }
+        } else {
+            if (this.pid_rusage == null) {
+                return JSValue.jsUndefined();
+            }
         }
         const pid_rusage = this.pid_rusage.?;
         const resource_usage = ResourceUsage{

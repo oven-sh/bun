@@ -127,7 +127,6 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       return this;
     },
-
   };
 
   if (IS_BUN_DEVELOPMENT) {

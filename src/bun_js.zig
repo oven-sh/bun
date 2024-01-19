@@ -159,6 +159,7 @@ pub const Run = struct {
 
         if (strings.endsWithComptime(entry_path, ".bun.sh")) {
             try bootBunShell(&ctx, entry_path);
+            Global.exit(0);
             return;
         }
 

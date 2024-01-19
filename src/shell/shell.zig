@@ -853,7 +853,7 @@ pub const Parser = struct {
                     _ = self.expect(.Delimit);
                     break :brk false;
                 },
-                .Eof, .Semicolon => false,
+                .Eof, .Semicolon, .Newline => false,
                 else => |t| brk: {
                     if (self.inside_subshell != null and self.inside_subshell.?.closing_tok() == t) break :brk false;
                     break :brk true;
@@ -1007,12 +1007,12 @@ pub const Parser = struct {
     }
 
     fn delimits(self: *Parser, tok: Token) bool {
-        return tok == .Delimit or tok == .Semicolon or tok == .Eof or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
+        return tok == .Delimit or tok == .Semicolon or tok == .Semicolon or tok == .Eof or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
     }
 
     fn expect_delimit(self: *Parser) Token {
         std.debug.assert(self.delimits(self.peek()));
-        if (self.check(.Delimit) or self.check(.Semicolon) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
+        if (self.check(.Delimit) or self.check(.Semicolon) or self.check(.Newline) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
             return self.advance();
         }
         unreachable;

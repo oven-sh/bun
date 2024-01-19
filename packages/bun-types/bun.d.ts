@@ -1885,7 +1885,7 @@ declare module "bun" {
 
     error?: (
       this: Server,
-      request: Errorlike,
+      request: ErrorLike,
     ) => Response | Promise<Response> | undefined | Promise<undefined>;
 
     /**
@@ -1904,7 +1904,6 @@ declare module "bun" {
     id?: string | null;
   }
 
-  type AnyFunction = (...args: any[]) => any;
   interface ServeOptions extends GenericServeOptions {
     /**
      * What port should the server listen on?
@@ -2129,7 +2128,7 @@ declare module "bun" {
     unix: string;
     tls?: TLSOptions;
   }
-  interface Errorlike extends Error {
+  interface ErrorLike extends Error {
     code?: string;
     errno?: number;
     syscall?: string;
@@ -3902,7 +3901,7 @@ declare module "bun" {
         /**
          * If an error occurred in the call to waitpid2, this will be the error.
          */
-        error?: Errorlike,
+        error?: ErrorLike,
       ): void | Promise<void>;
 
       /**

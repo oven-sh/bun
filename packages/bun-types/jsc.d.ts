@@ -1,5 +1,4 @@
 declare module "bun:jsc" {
-  import type { AnyFunction } from "bun";
   /**
    * This used to be called "describe" but it could be confused with the test runner.
    */
@@ -31,13 +30,13 @@ declare module "bun:jsc" {
   function setRandomSeed(value: number): void;
   function isRope(input: string): boolean;
   function callerSourceOrigin(): string;
-  function noFTL(func: AnyFunction): AnyFunction;
-  function noOSRExitFuzzing(func: AnyFunction): AnyFunction;
-  function optimizeNextInvocation(func: AnyFunction): void;
-  function numberOfDFGCompiles(func: AnyFunction): number;
+  function noFTL(func: (...args: any[]) => any): (...args: any[]) => any;
+  function noOSRExitFuzzing(func: (...args: any[]) => any): (...args: any[]) => any;
+  function optimizeNextInvocation(func: (...args: any[]) => any): void;
+  function numberOfDFGCompiles(func: (...args: any[]) => any): number;
   function releaseWeakRefs(): void;
-  function totalCompileTime(func: AnyFunction): number;
-  function reoptimizationRetryCount(func: AnyFunction): number;
+  function totalCompileTime(func: (...args: any[]) => any): number;
+  function reoptimizationRetryCount(func: (...args: any[]) => any): number;
   function drainMicrotasks(): void;
 
   /**

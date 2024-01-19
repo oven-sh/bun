@@ -1590,7 +1590,6 @@ pub const Arguments = struct {
             LinkTypeEnum;
 
         const LinkTypeEnum = enum {
-            auto,
             file,
             dir,
             junction,
@@ -1669,8 +1668,15 @@ pub const Arguments = struct {
                         }
                         return null;
                     }
+
+                    // not a string. fallthrough to auto detect.
                 }
-                break :link_type .auto;
+
+                var buf: bun.PathBuffer = undefined;
+                const stat = bun.sys.stat(old_path.sliceZ(&buf));
+
+                // if there's an error node defaults to file.
+                break :link_type if (stat == .result and bun.C.S.ISDIR(@intCast(stat.result.mode))) .dir else .file;
             };
 
             return Symlink{
@@ -5639,8 +5645,6 @@ pub const NodeFS = struct {
                 args.old_path.sliceZ(&this.sync_error_buf),
                 args.new_path.sliceZ(&to_buf),
                 switch (args.link_type) {
-                    // TODO: auto mode
-                    .auto => 0,
                     .file => 0,
                     .dir => uv.UV_FS_SYMLINK_DIR,
                     .junction => uv.UV_FS_SYMLINK_JUNCTION,

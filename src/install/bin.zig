@@ -14,6 +14,7 @@ const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
 const string = bun.string;
+
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -330,26 +331,67 @@ pub const Bin = extern struct {
             } else {
                 const WinBinLinkingShim = @import("./windows/BinLinkingShim.zig");
 
-                const StaticBuffers = struct {
-                    var shim_buf: [65536]u8 = undefined;
-                    var filename_buf: bun.WPathBuffer = undefined;
+                var shim_buf: [65536]u8 = undefined;
+                var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;
+                var filename1_buf: bun.WPathBuffer = undefined;
+                var filename2_buf: bun.WPathBuffer = undefined;
+
+                std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
+
+                std.debug.print("install <{s}> -> <{s}>", .{ target_path[3..], dest_path });
+
+                const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);
+                var destination_wpath: []u16 = bun.strings.convertUTF8toUTF16InBuffer(&filename2_buf, dest_path);
+
+                // TODO: normalize these paths a little better BEFORE they enter this function.
+                // currently the input is like '..\nanoid\bin/nanoid.cjs', which is awful. we need only 'nanoid\bin\nanoid.cjs'
+
+                const first_content_chunk = contents: {
+                    const fd = bun.sys.openatWindows(
+                        this.package_installed_node_modules,
+                        target_wpath,
+                        std.os.O.RDONLY,
+                    ).unwrap() catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                    defer _ = bun.sys.close(fd);
+                    const reader = fd.asFile().reader();
+                    const read = reader.read(&read_in_buf) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                    if (read == 0) {
+                        this.err = error.FileNotFound;
+                        return;
+                    }
+                    break :contents read_in_buf[0..read];
                 };
-
-                var target_wpath = bun.strings.convertUTF8toUTF16InBuffer(StaticBuffers.filename_buf, target_path);
-                const end = target_wpath.len;
-                target_wpath.len += 5;
-                target_wpath[end..].* = ".bunx".*;
-
-                const contents = "TODO";
 
                 const shim = WinBinLinkingShim{
                     .bin_path = target_wpath,
-                    .shebang = WinBinLinkingShim.Shebang.parse(contents, target_wpath)
+                    .shebang = WinBinLinkingShim.Shebang.parse(first_content_chunk, target_wpath) catch {
+                        this.err = error.InvalidBinContent;
+                        return;
+                    },
                 };
-                const metadata = 
 
-                if (node_modules.createFileW(target_wpath, .{
-                    .exclusive = true,
+                const len = shim.encodedLength();
+                if (len > shim_buf.len) {
+                    this.err = error.InvalidBinContent;
+                    return;
+                }
+                const metadata = shim_buf[0..len];
+                shim.encodeInto(metadata) catch {
+                    this.err = error.InvalidBinContent;
+                    return;
+                };
+
+                destination_wpath.len += 5;
+                @memcpy(destination_wpath[destination_wpath.len - 5 ..], &[_]u16{ '.', 'b', 'u', 'n', 'x' });
+
+                if (node_modules.createFileW(destination_wpath, .{
+                    .truncate = true,
                 })) |file| {
                     defer file.close();
                     file.writer().writeAll(metadata) catch |err| {
@@ -363,10 +405,10 @@ pub const Bin = extern struct {
                     }
                 }
 
-                target_wpath.len -= 1;
-                target_wpath[end + 1 ..].* = "exe".*;
+                destination_wpath.len -= 1;
+                @memcpy(destination_wpath[destination_wpath.len - 3 ..], &[_]u16{ 'e', 'x', 'e' });
 
-                if (node_modules.createFileW(target_wpath, .{
+                if (node_modules.createFileW(destination_wpath, .{
                     .exclusive = true,
                 })) |file| {
                     defer file.close();
@@ -380,8 +422,6 @@ pub const Bin = extern struct {
                         return;
                     }
                 }
-
-                // WinBinLinkingShim.embedded_executable_data;
             }
         }
 

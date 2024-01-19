@@ -5229,7 +5229,7 @@ pub fn concatIfNeeded(
 pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
-) []const u16 {
+) []u16 {
     if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
 
     const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(input, buf);

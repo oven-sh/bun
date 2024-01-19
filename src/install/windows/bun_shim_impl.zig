@@ -46,18 +46,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Flags = @import("./BunXShimData.zig").Flags;
+const Flags = @import("./BinLinkingShim.zig").Flags;
 
 const dbg = builtin.mode == .Debug;
 
 const assert = std.debug.assert;
 const fmt16 = std.unicode.fmtUtf16le;
-
-comptime {
-    assert(builtin.single_threaded);
-    assert(!builtin.link_libcpp);
-    assert(!builtin.link_libc);
-}
 
 const w = std.os.windows;
 
@@ -111,6 +105,8 @@ const nt = struct {
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
     ) callconv(w.WINAPI) Status;
+
+    pub extern "ntdll" fn NtClose(Handle: w.HANDLE) callconv(w.WINAPI) Status;
 };
 
 /// A copy of all kernel32 declarations this program uses
@@ -130,6 +126,16 @@ const k32 = struct {
 
     // https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub extern "kernel32" fn GetLastError() callconv(w.WINAPI) w.Win32Error;
+
+    pub extern "kernel32" fn SetConsoleMode(
+        hConsoleHandle: w.HANDLE, // [in]
+        dwMode: w.DWORD, // [in]
+    ) callconv(w.WINAPI) w.BOOL;
+
+    pub extern "kernel32" fn GetConsoleMode(
+        hConsoleHandle: w.HANDLE, // [in]
+        lpMode: *w.DWORD, // [out]
+    ) callconv(w.WINAPI) w.BOOL;
 };
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
@@ -151,6 +157,8 @@ const FailReason = enum {
     InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
+    InvalidShimValidation,
+    InvalidShimBounds,
 
     pub fn render(reason: FailReason) []const u8 {
         return switch (reason) {
@@ -161,6 +169,8 @@ const FailReason = enum {
             .CouldNotOpenShim => "could not open bin metadata file",
             .CouldNotReadShim => "could not read bin metadata",
             .InvalidShimDataSize => "bin metadata is corrupt (size)",
+            .InvalidShimValidation => "bin metadata is corrupt (validate)",
+            .InvalidShimBounds => "bin metadata is corrupt (bounds)",
             .CreateProcessFailed => "could not create process",
         };
     }
@@ -170,9 +180,25 @@ const FailReason = enum {
 /// is good enough to get it to optimize this check away. Could be wrong.
 export fn __chkstk() callconv(.C) void {}
 
-/// DIFFERENCE FROM C MEMCPY, DOES NOT SUPPORT LEN=0
-inline fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) void {
+inline fn memcpyNonZero(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) void {
     std.debug.assert(len != 0);
+
+    var d = dest.?;
+    var s = src.?;
+    var n = len;
+    while (true) {
+        d[0] = s[0];
+        n -= 1;
+        if (n == 0) break;
+        d += 1;
+        s += 1;
+    }
+}
+
+/// there is at least one place zig or the optimizer inserts a memcpy
+/// so we have to export an implementation of memcpy
+export fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) void {
+    if (len == 0) return;
 
     var d = dest.?;
     var s = src.?;
@@ -252,6 +278,16 @@ noinline fn fail(comptime reason: FailReason) noreturn {
 
 noinline fn failWithReason(reason: FailReason) noreturn {
     @setCold(true);
+
+    {
+        const console_handle = w.teb().ProcessEnvironmentBlock.ProcessParameters.hStdError;
+        var mode: w.DWORD = 0;
+        if (k32.GetConsoleMode(console_handle, &mode) != 0) {
+            mode |= w.ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            _ = k32.SetConsoleMode(console_handle, mode);
+        }
+    }
+
     // TODO: do not use std.debug becuase we dont need the bloat it adds to the binary
     printError("\x1b[31;1merror\x1b[0;2m:\x1b[0m {s}\n" ++
         \\
@@ -267,7 +303,7 @@ noinline fn failWithReason(reason: FailReason) noreturn {
     nt.RtlExitUserProcess(255);
 }
 
-fn mainImplementation() noreturn {
+pub fn mainImplementation() noreturn {
     // peb! w.teb is a couple instructions of inline asm
     const teb: *w.TEB = @call(.always_inline, w.teb, .{});
     const peb = teb.ProcessEnvironmentBlock;
@@ -278,8 +314,6 @@ fn mainImplementation() noreturn {
     // these are all different views of the same data
     const image_path_b_len = ImagePathName.Length;
     const image_path_b_u16 = ImagePathName.Buffer;
-    const image_path_b_u8: [*]u8 = @ptrCast(image_path_b_u16);
-    _ = image_path_b_u8;
     const cmd_line_b_len = CommandLine.Length;
     const cmd_line_u16 = CommandLine.Buffer;
     const cmd_line_u8: [*]u8 = @ptrCast(cmd_line_u16);
@@ -293,17 +327,22 @@ fn mainImplementation() noreturn {
 
     var buf1: [
         w.PATH_MAX_WIDE + "\"\" ".len
-        //+ "\\\\?\\".len
     ]u16 = undefined;
+
+    // This is used for CreateProcessW's lpCommandLine
+    // "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
+    var buf2: [32767 + 1]u16 = undefined;
 
     const buf1_u8 = @as([*]u8, @ptrCast(&buf1[0]));
     const buf1_u16 = @as([*]u16, @ptrCast(&buf1[0]));
 
-    // @as(*align(2) u64, @ptrCast(&buf_a[0])).* = @as(u64, @bitCast([4]u16{ '\\', '\\', '?', '\\' }));
+    const buf2_u8 = @as([*]u8, @ptrCast(&buf2[0]));
+    const buf2_u16 = @as([*:0]u16, @ptrCast(&buf2[0]));
 
-    buf1[0] = '"';
-    memcpy(
-        buf1_u8 + 2,
+    @as(*align(1) u64, @ptrCast(&buf1_u8[0])).* = @as(u64, @bitCast([4]u16{ '\\', '?', '?', '\\' }));
+
+    memcpyNonZero(
+        buf1_u8 + 2 * 4,
         @as([*]u8, @ptrCast(ImagePathName.Buffer)),
         ImagePathName.Length - 6,
     );
@@ -314,24 +353,22 @@ fn mainImplementation() noreturn {
     // we use this for manual path manipulation
     const basename_slash_ptr = (memrchr(u16, buf1_u16, '\\', image_path_b_len / 2) orelse fail(.NoBasename));
     std.debug.assert(basename_slash_ptr[0] == '\\');
-    const basename_ptr = basename_slash_ptr + 1;
 
-    @as(*align(1) u64, @ptrCast(&buf1_u8[image_path_b_len - 2 * 2])).* = @as(u64, @bitCast([4]u16{ 'b', 'u', 'n', 'x' }));
+    @as(*align(1) u64, @ptrCast(&buf1_u8[image_path_b_len + 2 * 1])).* = @as(u64, @bitCast([4]u16{ 'b', 'u', 'n', 'x' }));
 
     // open the metadata file
     var metadata_handle: w.HANDLE = undefined;
-    const path_len_bytes: c_ushort = @intCast(
-        @intFromPtr(&buf1_u8[2]) + image_path_b_len - @intFromPtr(basename_ptr) + 2,
-    );
+    const path_len_bytes: c_ushort = image_path_b_len + 2 + 2 * 4;
     var nt_name = w.UNICODE_STRING{
         .Length = path_len_bytes,
         .MaximumLength = path_len_bytes,
-        .Buffer = basename_ptr,
+        .Buffer = buf1_u16,
     };
     if (dbg) debug("NtCreateFile({s})\n", .{fmt16(unicodeStringToU16(nt_name))});
+    if (dbg) debug("NtCreateFile({any})\n", .{(unicodeStringToU16(nt_name))});
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = ProcessParameters.CurrentDirectory.Handle,
+        .RootDirectory = null,
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -365,33 +402,29 @@ fn mainImplementation() noreturn {
         inline else => |is_quote| {
             const search_str = if (is_quote) '"' else ' ';
             var num_left: usize = cmd_line_b_len;
-            while (true) {
-                if (memchr(args_start_u8, search_str, num_left)) |find| {
-                    if (@intFromPtr(find) % 2 == 0 and find[1] == 0) {
-                        if (@intFromPtr(find) - @intFromPtr(cmd_line_u8) == cmd_line_b_len - 2) {
-                            args_start_u8 = find + 2;
-                            args_len_b = 0;
-                            break;
-                        }
-                        args_start_u8 = if (is_quote) find + 4 else find + 2;
-                        if (is_quote) {
-                            assert(find[2] == ' ' and find[3] == 0);
-                        }
-                        while (args_start_u8[0] == ' ' and args_start_u8[1] == 0) args_start_u8 += 2;
-                        args_len_b = cmd_line_b_len - (@intFromPtr(args_start_u8) - @intFromPtr(cmd_line_u8));
+            while (memchr(args_start_u8, search_str, num_left)) |find| {
+                if (@intFromPtr(find) % 2 == 0 and find[1] == 0) {
+                    if (@intFromPtr(find) - @intFromPtr(cmd_line_u8) == cmd_line_b_len - 2) {
                         break;
                     }
-                    num_left -= @intFromPtr(find) - @intFromPtr(args_start_u8);
-                    args_start_u8 = find + 1;
-                } else {
-                    args_start_u8 += num_left;
+                    args_start_u8 = if (is_quote) find + 4 else find + 2;
+                    if (is_quote) {
+                        assert(find[2] == ' ' and find[3] == 0);
+                    }
+                    while (args_start_u8[0] == ' ' and args_start_u8[1] == 0) args_start_u8 += 2;
+                    args_start_u8 -= 2;
+                    args_len_b = cmd_line_b_len - (@intFromPtr(args_start_u8) - @intFromPtr(cmd_line_u8));
                     break;
                 }
+
+                num_left -= @intFromPtr(find) - @intFromPtr(args_start_u8);
+                args_start_u8 = find + 1;
             }
         },
     }
 
-    if (dbg) debug("UserArgs: '{s}'\n", .{args_start_u8[0..args_len_b]});
+    if (dbg) debug("UserArgs: '{s}' ({d} bytes)\n", .{ args_start_u8[0..args_len_b], args_len_b });
+    if (dbg) debug("UserArgs: '{any}'\n", .{args_start_u8[0..args_len_b]});
 
     // Read the metadata file into the memory right after the image path.
     //
@@ -409,7 +442,7 @@ fn mainImplementation() noreturn {
     std.debug.assert(dirname_slash_ptr[0] == '\\');
     std.debug.assert(dirname_slash_ptr != basename_slash_ptr);
 
-    const read_ptr = dirname_slash_ptr + 1;
+    var read_ptr = @as([*]u8, @ptrCast(dirname_slash_ptr)) + 2;
     const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
 
     const read_status = nt.NtReadFile(metadata_handle, null, null, null, &io, read_ptr, @intCast(read_max_len), null, null);
@@ -424,42 +457,131 @@ fn mainImplementation() noreturn {
         else => fail(.CouldNotReadShim),
     };
 
-    if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
+    _ = w.ntdll.NtClose(metadata_handle);
 
-    const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr + read_len - @sizeOf(Flags))).*;
+    if (dbg) debug("BufferAfterRead: '{}'\n", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
+
+    // uncomment if you need to debug the hexdump. this would be only useful if you have
+    // incorrect bounds in the read above. however, i already fixed that bug so you probably
+    // wont ever need this. but it is here ... in case you do
+    // if (dbg) debug("BufferAfterReadHex:\n'{}'\n", .{std.fmt.fmtSliceHexLower(std.mem.sliceAsBytes((buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])))});
+
+    read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + read_len - 2);
+    const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
 
     if (dbg) {
+        const flags_u16: u16 = @as(*align(1) u16, @ptrCast(read_ptr)).*;
+        debug("FlagsInt: {d}\n", .{flags_u16});
+
         debug("Flags:\n", .{});
         inline for (comptime std.meta.fieldNames(Flags)) |name| {
             debug("    {s}: {}\n", .{ name, @field(flags, name) });
         }
     }
 
-    const lpApplicationName: ?w.LPWSTR, const lpCommandLine: w.LPWSTR = switch (flags.has_shebang) {
-        false => args: {
-            // no shebang, which means the application name is going to be the joined file exe
-            // and then the command line is simply going to be our original command line
-            const quote_in_buf = @as(*align(1) u16, @ptrCast(&buf1_u8[image_path_b_len + 2]));
-            std.debug.assert(quote_in_buf.* == '"');
-            quote_in_buf.* = 0;
-            // NOTE: i am writing into the os-provided memory. it does not seem to cause a crash.
-            @as(*align(1) u16, @ptrCast(&args_start_u8[args_len_b])).* = 0;
-            break :args .{
-                @alignCast(@ptrCast(buf1_u8 + 2)),
-                @alignCast(@ptrCast(args_start_u8)),
-            };
+    if (!flags.isValid())
+        fail(.InvalidShimValidation);
+
+    const spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
+        false => spawn_command_line: {
+            // no shebang, which means the command line is simply going to be the joined file exe
+            // followed by the existing command line.
+
+            // change the \ from '\??\' to '""
+            // the ending quote is assumed to already exist as per the format
+            buf1_u16[3] = '"';
+
+            const yy: [*]u8 = @ptrFromInt(@intFromPtr(dirname_slash_ptr) + read_len - 2);
+
+            if (args_len_b > 0) {
+                memcpyNonZero(
+                    yy,
+                    args_start_u8,
+                    args_len_b,
+                );
+            }
+
+            @as(*align(1) u16, @ptrCast(yy + args_len_b)).* = 0;
+
+            break :spawn_command_line @alignCast(@ptrCast(buf1_u8 + 6));
         },
-        true => {
-            printError("TODO", .{});
-            nt.RtlExitUserProcess(20);
+        true => spawn_command_line: {
+            // with shebang we are going to setup buf2 as our command line:
+            // [args, which always includes a trailing space][entrypoint from buf1]
+            const ShebangMetadataPacked = packed struct {
+                bin_path_len_bytes: u32,
+                args_len_bytes: u32,
+            };
+
+            read_ptr -= @sizeOf(ShebangMetadataPacked);
+            const shebang_metadata: ShebangMetadataPacked = @as(*align(1) ShebangMetadataPacked, @ptrCast(read_ptr)).*;
+
+            const shebang_metadata_args_len_bytes = shebang_metadata.args_len_bytes;
+            const shebang_metadata_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
+
+            if (dbg) {
+                debug("bin_path_len_bytes: {}\n", .{shebang_metadata.bin_path_len_bytes});
+                debug("args_len_bytes: {}\n", .{shebang_metadata.args_len_bytes});
+            }
+
+            switch (shebang_metadata_args_len_bytes == 0) {
+                inline else => |is_zero| {
+                    if (!is_zero) {
+                        // magic number related to how BinLinkingShim.zig writes the metadata
+                        const validation_length_offset = 14;
+
+                        // very careful here to not overflow u32, so that we properly error if you hijack the file
+                        if ((@as(u64, shebang_metadata_args_len_bytes) +| @as(u64, shebang_metadata_bin_path_len_bytes)) + validation_length_offset != read_len) {
+                            if (dbg)
+                                debug("read_len: {}\n", .{read_len});
+
+                            fail(.InvalidShimBounds);
+                        }
+
+                        read_ptr -= shebang_metadata_args_len_bytes;
+
+                        memcpyNonZero(buf2_u8, @ptrCast(read_ptr), shebang_metadata_args_len_bytes);
+                    }
+
+                    // the compiler should already optimize this, but i want to be very intentful about what i'm doing
+                    // the shebang metadata is read, then instantly compared, and that comparison is only done once
+                    // the branch without a shebang should not "add zero" to anything.
+                    const arg_len = if (is_zero) comptime 0 else shebang_metadata_args_len_bytes;
+
+                    @as(*align(1) u16, @ptrCast(buf2_u8 + arg_len)).* = '"';
+
+                    const yy = @intFromPtr(dirname_slash_ptr) - @intFromPtr(buf1_u8) + shebang_metadata_bin_path_len_bytes + 2 * 4;
+
+                    memcpyNonZero(
+                        buf2_u8 + arg_len + 2,
+                        buf1_u8 + 2 * 4,
+                        yy,
+                    );
+
+                    if (args_len_b > 0) {
+                        memcpyNonZero(
+                            buf2_u8 + yy,
+                            args_start_u8,
+                            args_len_b,
+                        );
+                    }
+
+                    @as(*align(1) u16, @ptrFromInt(@intFromPtr(buf2_u8) + yy + args_len_b)).* = 0;
+                },
+            }
+
+            if (dbg) {
+                debug("BufferAfterShebang: '{}'\n", .{
+                    fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2]),
+                });
+            }
+
+            break :spawn_command_line buf2_u16;
         },
     };
 
-    // printError("TODO: Rearrange the arguments and Spawn the process", .{});
-
-    // std.debug.print("{}\n", .{
-    //     std.unicode.fmtUtf16le(buf[0 .. dirname_start + size / 2]),
-    // });
+    if (dbg)
+        debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
 
     // I attempted to use lower level methods for this, but it really seems
     // too difficult and not worth the stability risks.
@@ -496,8 +618,8 @@ fn mainImplementation() noreturn {
         .hStdError = ProcessParameters.hStdError,
     };
     const did_process_spawn = k32.CreateProcessW(
-        lpApplicationName,
-        lpCommandLine,
+        null,
+        spawn_command_line,
         null,
         null,
         1, // true
@@ -508,19 +630,34 @@ fn mainImplementation() noreturn {
         &process,
     );
     if (did_process_spawn == 0) {
-        const spawn_err = k32.GetLastError();
-        printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
+        if (dbg) {
+            const spawn_err = k32.GetLastError();
+            printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
+        }
         fail(.CreateProcessFailed);
     }
 
-    nt.RtlExitUserProcess(0);
+    _ = w.kernel32.WaitForSingleObject(process.hProcess, w.INFINITE);
+
+    var exit_code: w.DWORD = 255;
+    if (w.kernel32.GetExitCodeProcess(process.hProcess, &exit_code) != 0) {
+        if (dbg) {
+            const spawn_err = k32.GetLastError();
+            printError("GetExitCodeProcess failed: {s}\n", .{@tagName(spawn_err)});
+        }
+
+        // should have 255 still set
+    }
+
+    _ = nt.NtClose(process.hProcess);
+    _ = nt.NtClose(process.hThread);
+
+    nt.RtlExitUserProcess(exit_code);
 }
 
 fn mainCRTStartup() callconv(std.os.windows.WINAPI) noreturn {
     @call(.always_inline, mainImplementation, .{});
 }
-
-pub const main = mainImplementation;
 
 comptime {
     if (builtin.output_mode == .Obj)

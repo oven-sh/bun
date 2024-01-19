@@ -1,9 +1,10 @@
 //! Windows '.bunx' files follow this format:
 //!
-//! [WSTR:bin path][u16'"'][u16' '](shebang?)[flags:u8]
+//! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
 //!
 //! if shebang:
-//! [WSTR:shebang][u32:program_part_b_len][u32:arg_part_b_len]
+//! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
+//! - args always ends with a trailing space
 //!
 const std = @import("std");
 
@@ -14,16 +15,41 @@ const lastIndexOfScalar = std.mem.lastIndexOfScalar;
 const calcUtf16LeLen = std.unicode.calcUtf16LeLen;
 const utf8ToUtf16Le = std.unicode.utf8ToUtf16Le;
 
+fn eqlComptime(a: []const u8, comptime b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
 /// Relative to node_modules. Do not include slash
 bin_path: []const u16,
 /// Information found within the target file's shebang
 shebang: ?Shebang,
 
 pub const Flags = packed struct(u16) {
+    // the shim doesnt use this right now
     is_node_or_bun: bool,
+    // this is for validation that the shim is not corrupt and to detect offset memory reads
+    // if this format is ever modified, we will set this flag to false to indicate version 2+
+    is_version_1: bool = true,
+    // indicates if a shebang is present
     has_shebang: bool,
+    // this is for validation that the shim is not corrupt and to detect offset memory reads
+    must_be_5474: u13 = 5474,
 
-    unused: u14 = 0,
+    pub fn isValid(flags: Flags) bool {
+        const mask: u16 = @bitCast(Flags{
+            .is_node_or_bun = false,
+            .is_version_1 = true,
+            .has_shebang = false,
+            .must_be_5474 = std.math.maxInt(u13),
+        });
+
+        const compare_to: u16 = @bitCast(Flags{
+            .is_node_or_bun = false,
+            .has_shebang = false,
+        });
+
+        return (@as(u16, @bitCast(flags)) & comptime mask) == comptime compare_to;
+    }
 };
 
 pub const embedded_executable_data = @embedFile("./bun_shim_impl.exe");
@@ -34,11 +60,17 @@ fn wU8(comptime s: []const u8) []const u8 {
 }
 
 pub const Shebang = struct {
-    program: []const u8,
-    args: []const u8,
+    launcher: []const u8,
+    utf16_len: u32,
     is_bun: bool,
-    program_utf16_len: u32,
-    args_utf16_len: u32,
+
+    pub fn init(launcher: []const u8, is_bun: bool) !Shebang {
+        return .{
+            .launcher = launcher,
+            .utf16_len = @intCast(calcUtf16LeLen(launcher) catch return error.InvalidUtf8),
+            .is_bun = is_bun,
+        };
+    }
 
     const ExtensionType = enum {
         run_with_bun,
@@ -47,15 +79,18 @@ pub const Shebang = struct {
     };
 
     const BunExtensions = std.ComptimeStringMap(ExtensionType, .{
-        .{ wU8(".js"), {} },
-        .{ wU8(".mjs"), {} },
-        .{ wU8(".cjs"), {} },
-        .{ wU8(".jsx"), {} },
-        .{ wU8(".ts"), {} },
-        .{ wU8(".cts"), {} },
-        .{ wU8(".mts"), {} },
-        .{ wU8(".tsx"), {} },
-        .{ wU8(".sh"), {} },
+        .{ wU8(".js"), .run_with_bun },
+        .{ wU8(".mjs"), .run_with_bun },
+        .{ wU8(".cjs"), .run_with_bun },
+        .{ wU8(".jsx"), .run_with_bun },
+        .{ wU8(".ts"), .run_with_bun },
+        .{ wU8(".cts"), .run_with_bun },
+        .{ wU8(".mts"), .run_with_bun },
+        .{ wU8(".tsx"), .run_with_bun },
+        .{ wU8(".sh"), .run_with_bun },
+        .{ wU8(".cmd"), .run_with_cmd },
+        .{ wU8(".bat"), .run_with_cmd },
+        .{ wU8(".ps1"), .run_with_powershell },
     });
 
     /// std.fs.path.basename but utf16
@@ -101,19 +136,10 @@ pub const Shebang = struct {
 
     pub fn parseFromBinPath(bin_path: []const u16) ?Shebang {
         if (BunExtensions.get(@alignCast(std.mem.sliceAsBytes(extensionW(bin_path))))) |i| {
-            const prog, const args = switch (i) {
-                .run_with_bun => .{ "bun", "run" },
-                .run_with_cmd => .{ "cmd", "/c" },
-                .run_with_powershell => .{ "powershell", "-ExecutionPolicy Bypass -File" },
-            };
-            return .{
-                .program = prog,
-                .args = args,
-                // unreachable is safe because the strings are known above
-                .program_utf16_len = calcUtf16LeLen(prog) catch unreachable,
-                // unreachable is safe because the strings are known above
-                .args_utf16_len = calcUtf16LeLen(args) catch unreachable,
-                .is_bun = true,
+            return switch (i) {
+                .run_with_bun => comptime Shebang.init("bun run", true) catch unreachable,
+                .run_with_cmd => comptime Shebang.init("cmd /c", false) catch unreachable,
+                .run_with_powershell => comptime Shebang.init("powershell -ExecutionPolicy Bypass -File", false) catch unreachable,
             };
         }
         return null;
@@ -129,7 +155,7 @@ pub const Shebang = struct {
     /// Since a command line cannot be longer than 32766 characters,
     /// this function does not accept inputs longer than `max_shebang_input_length`
     pub fn parse(contents: []const u8, bin_path: []const u16) !?Shebang {
-        if (contents.len < 2) {
+        if (contents.len < 3) {
             return parseFromBinPath(bin_path);
         }
 
@@ -137,76 +163,28 @@ pub const Shebang = struct {
             return parseFromBinPath(bin_path);
         }
 
-        const program, const args = first: {
-            var i: usize = 2;
-            while (i < contents.len) : (i += 1) {
-                if (contents[i] == ' ') {
-                    const eol = if (indexOfScalar(u8, contents[i + 1 ..], '\n')) |eol|
-                        eol + i + 1
-                    else
-                        contents.len;
-
-                    break :first .{ contents[2..i], contents[i + 1 .. eol] };
-                }
-
-                // program only
-                if (contents[i] == '\n') {
-                    break;
-                }
-
-                // if we fall out of ascii range + some other symbols,
-                // let's stop early because we are probably hitting binary data
-                if (contents[i] < 32 or contents[i] > 126) {
-                    return parseFromBinPath(bin_path);
-                }
-
-                // give up at potentially corrupt/invalid shebang
-                // this is also done because the shim does not allocate too much space
-                if (i > 512) {
-                    return parseFromBinPath(bin_path);
-                }
+        const line = line: {
+            var line_i = indexOfScalar(u8, contents, '\n') orelse return parseFromBinPath(bin_path);
+            if (contents[line_i - 1] == '\r') {
+                line_i -= 1;
             }
-
-            // if there are no spaces but only a newline, it is just the program
-            return .{
-                .program = contents[2..i],
-                .args = "",
-                .program_utf16_len = @intCast(calcUtf16LeLen(contents[2..i]) catch return error.InvalidUtf8),
-                .args_utf16_len = 0,
-                .is_bun = false,
-            };
+            break :line contents[2..line_i];
         };
 
-        if (std.mem.eql(u8, program, "/usr/bin/env")) {
-            if (indexOfScalar(u8, args, ' ')) |space| {
-                return .{
-                    .program = args[0..space],
-                    .args = args[space + 1 ..],
-                    .program_utf16_len = @intCast(calcUtf16LeLen(args[0..space]) catch return error.InvalidUtf8),
-                    .args_utf16_len = @intCast(calcUtf16LeLen(args[space + 1 ..]) catch return error.InvalidUtf8),
-                    .is_bun = std.mem.eql(u8, args[0..space], "bun") or std.mem.eql(u8, args[0..space], "node"),
-                };
-            }
-            return .{
-                .program = args,
-                .args = "",
-                .program_utf16_len = @intCast(calcUtf16LeLen(args) catch return error.InvalidUtf8),
-                .args_utf16_len = 0,
-                .is_bun = std.mem.eql(u8, args, "bun") or std.mem.eql(u8, args, "node"),
-            };
+        var tokenizer = std.mem.tokenizeScalar(u8, line, ' ');
+        const first = tokenizer.next() orelse return parseFromBinPath(bin_path);
+        if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
+            const rest = tokenizer.rest();
+            const program = tokenizer.next() orelse return parseFromBinPath(bin_path);
+            const is_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
+            return try Shebang.init(rest, is_bun);
         }
 
-        return .{
-            .program = program,
-            .args = args,
-            .program_utf16_len = @intCast(calcUtf16LeLen(program) catch return error.InvalidUtf8),
-            .args_utf16_len = @intCast(calcUtf16LeLen(args) catch return error.InvalidUtf8),
-            .is_bun = false,
-        };
+        return try Shebang.init(line, false);
     }
 
     pub fn encodedLength(shebang: Shebang) usize {
-        return (shebang.program_utf16_len + " ".len + shebang.args_utf16_len) * @sizeOf(u16) +
+        return (" ".len + shebang.utf16_len) * @sizeOf(u16) +
             @sizeOf(u32) * 2;
     }
 };
@@ -224,44 +202,37 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
     std.debug.assert(buf.len == options.encodedLength());
     std.debug.assert(options.bin_path[0] != '/');
 
+    std.debug.print("{}\n", .{options});
+
     var wbuf = @as([*]u16, @alignCast(@ptrCast(&buf[0])))[0 .. buf.len / 2];
 
     @memcpy(wbuf[0..options.bin_path.len], options.bin_path);
     wbuf = wbuf[options.bin_path.len..];
 
     wbuf[0] = '"';
-    wbuf[1] = ' ';
+    wbuf[1] = 0;
     wbuf = wbuf[2..];
 
     const is_node_or_bun = if (options.shebang) |s| s.is_bun else false;
     const flags = Flags{
-        .has_shebang = !is_node_or_bun and options.shebang != null,
-        .is_node_or_bun = true,
+        .has_shebang = options.shebang != null,
+        .is_node_or_bun = is_node_or_bun,
     };
 
     if (options.shebang) |s| {
-        {
-            const encoded = std.unicode.utf8ToUtf16Le(
-                wbuf[0..s.program_utf16_len],
-                s.program,
-            ) catch return error.InvalidUtf8;
-            std.debug.assert(encoded == s.program_utf16_len);
-            wbuf = wbuf[s.program_utf16_len..];
-        }
+        const encoded = std.unicode.utf8ToUtf16Le(
+            wbuf[0..s.utf16_len],
+            s.launcher,
+        ) catch return error.InvalidUtf8;
+        std.debug.assert(encoded == s.utf16_len);
+        wbuf = wbuf[s.utf16_len..];
+
         wbuf[0] = ' ';
         wbuf = wbuf[1..];
-        {
-            const encoded = std.unicode.utf8ToUtf16Le(
-                wbuf[0..s.args_utf16_len],
-                s.args,
-            ) catch return error.InvalidUtf8;
-            std.debug.assert(encoded == s.args_utf16_len);
-            wbuf = wbuf[s.args_utf16_len..];
-        }
 
-        @as(*align(1) u32, @ptrCast(&wbuf[0])).* = s.program_utf16_len * 2;
-        @as(*align(1) u32, @ptrCast(&wbuf[2])).* = s.args_utf16_len * 2;
-        wbuf = wbuf[4..];
+        @as(*align(1) u32, @ptrCast(&wbuf[0])).* = @intCast(options.bin_path.len * 2);
+        @as(*align(1) u32, @ptrCast(&wbuf[2])).* = (s.utf16_len) * 2 + 2; // include the spaces!
+        wbuf = wbuf[(@sizeOf(u32) * 2) / @sizeOf(u16) ..];
     }
 
     @as(*align(1) Flags, @ptrCast(&wbuf[0])).* = flags;
@@ -289,7 +260,7 @@ pub fn main() !u8 {
     const shebang = if (argv.len > 2)
         try Shebang.parse(argv[2], bin_path)
     else
-        null;
+        Shebang.parseFromBinPath(bin_path);
 
     const opts = @This(){
         .bin_path = bin_path,
@@ -298,8 +269,9 @@ pub fn main() !u8 {
 
     std.log.info("bin_path: {s}", .{std.unicode.fmtUtf16le(bin_path)});
     if (shebang) |s| {
-        std.log.info("shebang.program: '{s}'", .{s.program});
-        std.log.info("shebang.args: '{s}'", .{s.args});
+        std.log.info("shebang: '{s}'", .{s.launcher});
+        std.log.info("shebang.is_bun: '{}'", .{s.is_bun});
+        std.log.info("shebang.args_utf16_len: '{d}'", .{s.utf16_len});
     }
 
     const alloc = try std.heap.page_allocator.alloc(u8, encodedLength(opts));

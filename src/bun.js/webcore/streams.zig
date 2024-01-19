@@ -588,7 +588,7 @@ pub const StreamStart = union(Tag) {
                     },
                 };
             },
-           .UVStreamSink, .HTTPSResponseSink, .HTTPResponseSink => {
+            .UVStreamSink, .HTTPSResponseSink, .HTTPResponseSink => {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
@@ -2023,7 +2023,7 @@ pub const ArrayBufferSink = struct {
 
 pub const UVStreamSink = struct {
     stream: *uv.uv_stream_t,
-    
+
     allocator: std.mem.Allocator,
     done: bool = false,
     signal: Signal = .{},
@@ -2036,24 +2036,21 @@ pub const UVStreamSink = struct {
         req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
 
         pub fn init(parent: *UVStreamSink, data: []const u8) *AsyncWriteInfo {
-            var info = bun.new(AsyncWriteInfo, .{
-                .sink = parent
-            });
-            info.req.data = parent;
+            var info = bun.new(AsyncWriteInfo, .{ .sink = parent });
+            info.req.data = info;
             info.input_buffer = uv.uv_buf_t.init(bun.default_allocator.dupe(u8, data) catch bun.outOfMemory());
             return info;
         }
-        
-        fn uvWriteCallback(req: *uv.uv_write_t, status: c_int) callconv(.C) void {
+
+        fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
             const this = bun.cast(*AsyncWriteInfo, req.data);
             defer this.deinit();
-            const rc = @as(uv.ReturnCode, @enumFromInt(status));
-            if (rc.errEnum()) |err| {
+            if (status.errEnum()) |err| {
                 _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
                 return;
             }
         }
-        
+
         pub fn run(this: *AsyncWriteInfo) void {
             if (uv.uv_write(&this.req, @ptrCast(this.sink.stream), @ptrCast(&this.input_buffer), 1, AsyncWriteInfo.uvWriteCallback).errEnum()) |err| {
                 _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
@@ -2068,29 +2065,27 @@ pub const UVStreamSink = struct {
     };
 
     fn writeAsync(this: *UVStreamSink, data: []const u8) void {
-        if(this.done) return;
+        if (this.done) return;
 
         AsyncWriteInfo.init(this, data).run();
     }
-    
-    fn writeMaybeSync(this: *UVStreamSink, data: []const u8) void {
-        if(this.done) return;
 
-         var to_write = data;
-         while (to_write.len > 0) {
+    fn writeMaybeSync(this: *UVStreamSink, data: []const u8) void {
+        if (this.done) return;
+
+        var to_write = data;
+        while (to_write.len > 0) {
             var input_buffer = uv.uv_buf_t.init(to_write);
             const status = uv.uv_try_write(@ptrCast(this.stream), @ptrCast(&input_buffer), 1);
-            if (status < 0) {
-                if (status == uv.UV_EAGAIN) {
+            if (status.errEnum()) |err| {
+                if (err == bun.C.E.AGAIN) {
                     this.writeAsync(to_write);
                     return;
                 }
-                if(@as(uv.ReturnCode, @enumFromInt(status)).errEnum()) |err| {
-                    _ = this.end(bun.sys.Error.fromCode(err, .write));
-                }
+                _ = this.end(bun.sys.Error.fromCode(err, .write));
                 return;
             }
-            const bytes_written: usize = @intCast(status);
+            const bytes_written: usize = @intCast(status.int());
             to_write = to_write[bytes_written..];
         }
     }
@@ -2119,7 +2114,6 @@ pub const UVStreamSink = struct {
     }
 
     pub fn finalize(this: *UVStreamSink) void {
-        
         if (this.buffer.cap > 0) {
             this.buffer.listManaged(this.allocator).deinit();
             this.buffer = bun.ByteList.init("");
@@ -2185,6 +2179,7 @@ pub const UVStreamSink = struct {
         if (this.next) |*next| {
             return next.end(err);
         }
+        _ = uv.uv_close(@ptrCast(this.stream), null);
         this.signal.close(err);
         return .{ .result = {} };
     }
@@ -2205,7 +2200,7 @@ pub const UVStreamSink = struct {
         if (this.done) {
             return .{ .result = JSC.JSValue.jsNumber(0) };
         }
-
+        _ = uv.uv_close(@ptrCast(this.stream), null);
         std.debug.assert(this.next == null);
 
         if (this.buffer.cap > 0) {

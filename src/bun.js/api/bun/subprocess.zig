@@ -822,22 +822,12 @@ pub const Subprocess = struct {
         pub fn writeIfPossible(this: *BufferedPipeInput, comptime is_sync: bool) void {
             this.writeAllowBlocking(is_sync);
         }
-        
-        pub fn uvWriteCallback(req: *uv.uv_write_t, status: c_int) callconv(.C) void {
+
+        pub fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
             const this = bun.cast(*BufferedPipeInput, req.data);
-            const pipe = this.pipe orelse return;
-            if (status < 0) {
-                if (status == uv.UV_EAGAIN and this.pipe != null) {
-                    //EAGAIN
-                    const err = uv.uv_write(req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
-                    if (err < 0) {
-                        log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
-                        this.deinit();
-                    }
-                    return;
-                }
-                // fail
-                log("uv_write({d}) fail: {d}", .{ this.remain.len, status });
+            if(this.pipe == null) return;
+            if (status.errEnum()) |_| {
+                log("uv_write({d}) fail: {d}", .{ this.remain.len, status.int() });
                 this.deinit();
                 return;
             }
@@ -862,23 +852,23 @@ pub const Subprocess = struct {
                         return;
                     }
                     const status = uv.uv_try_write(@ptrCast(pipe), @ptrCast(&this.input_buffer), 1);
-                    if (status < 0) {
-                        if (status == uv.UV_EAGAIN) {
+                    if (status.errEnum()) |err| {
+                        if (err == bun.C.E.AGAIN) {
                             //EAGAIN
                             this.write_req.data = this;
-                            const err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
-                            if (err < 0) {
-                                log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
+                            const write_err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
+                            if (write_err < 0) {
+                                log("uv_write({d}) fail: {d}", .{ this.remain.len, write_err });
                                 this.deinit();
                             }
                             return;
                         }
                         // fail
-                        log("uv_try_write({d}) fail: {d}", .{ to_write.len, status });
+                        log("uv_try_write({d}) fail: {d}", .{ to_write.len, status.int() });
                         this.deinit();
                         return;
                     }
-                    const bytes_written: usize = @intCast(status);
+                    const bytes_written: usize = @intCast(status.int());
                     this.written += bytes_written;
                     this.remain = this.remain[@min(bytes_written, this.remain.len)..];
                     to_write = to_write[bytes_written..];
@@ -1513,7 +1503,7 @@ pub const Subprocess = struct {
         }
     };
 
-    const SinkType = if(Environment.isWindows) *JSC.WebCore.UVStreamSink else *JSC.WebCore.FileSink;
+    const SinkType = if (Environment.isWindows) *JSC.WebCore.UVStreamSink else *JSC.WebCore.FileSink;
     const BufferedInputType = if (Environment.isWindows) BufferedPipeInput else BufferedInput;
     const Writable = union(enum) {
         pipe: SinkType,
@@ -1530,7 +1520,7 @@ pub const Subprocess = struct {
         pub fn ref(this: *Writable) void {
             switch (this.*) {
                 .pipe => {
-                    if(Environment.isWindows) {
+                    if (Environment.isWindows) {
                         _ = uv.uv_ref(@ptrCast(this.pipe.stream));
                     } else if (this.pipe.poll_ref) |poll| {
                         poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
@@ -1543,7 +1533,7 @@ pub const Subprocess = struct {
         pub fn unref(this: *Writable) void {
             switch (this.*) {
                 .pipe => {
-                    if(Environment.isWindows) {
+                    if (Environment.isWindows) {
                         _ = uv.uv_unref(@ptrCast(this.pipe.stream));
                     } else if (this.pipe.poll_ref) |poll| {
                         poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());

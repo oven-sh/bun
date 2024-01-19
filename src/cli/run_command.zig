@@ -1057,17 +1057,22 @@ pub const RunCommand = struct {
             }
         }
 
-        // const root_dir = try Fs.FileSystem.instance.fs.readDirectory(
-        //     Fs.FileSystem.instance.top_level_dir,
-        //     null,
-        //     0,
-        //     true,
-        // );
-        // switch (root_dir.*) {
-        //     .entries => |e| {
-        //         _ = e;
-        //     },
-        // }
+        const root_dir = try Fs.FileSystem.instance.fs.readDirectory(
+            Fs.FileSystem.instance.top_level_dir,
+            null,
+            0,
+            true,
+        );
+        switch (root_dir.*) {
+            .entries => |e| {
+                // _ = e.data.get("package.json");
+                _ = e;
+            },
+            .err => |err| {
+                _ = err;
+                Global.crash();
+            },
+        }
 
         var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, olddir);
         defer filter_instance.deinit();
@@ -1142,6 +1147,8 @@ pub const RunCommand = struct {
                 .result => {},
             }
             fsinstance.top_level_dir = path;
+            // TODO is this necessary? which assignment is correct here?
+            fsinstance.fs.cwd = path;
             const res = exec(ctx, bin_dirs_only, true) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
                 continue;

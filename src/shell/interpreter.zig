@@ -1133,9 +1133,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
             this.resolve.deinit();
             this.reject.deinit();
-            this.arena.deinit();
-            this.allocator.destroy(this);
             this.root_shell.deinitImpl(false, true);
+            this.allocator.destroy(this);
         }
 
         pub fn setResolve(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

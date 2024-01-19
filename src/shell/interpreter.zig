@@ -3319,9 +3319,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 }
                             } else {
                                 const jsval = this.base.interpreter.jsobjs[val.idx];
-                                const slice = jsval.toBunString(global_handle.get().globalThis).toSlice(bun.default_allocator);
-                                defer slice.deinit();
-                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {s}", .{slice.slice()});
+                                global_handle.get().globalThis.throw(
+                                    "Unknown JS value used in shell: {}",
+                                    .{jsval.fmtString(global_handle.get().globalThis)},
+                                );
                                 return;
                             }
                         },
@@ -3906,9 +3907,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 @panic("FIXME TODO HANDLE BLOB");
                             } else {
                                 const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                                const slice = jsval.toBunString(global_handle.get().globalThis).toSlice(bun.default_allocator);
-                                defer slice.deinit();
-                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {s}", .{slice.slice()});
+                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global_handle.get().globalThis)});
                                 return .yield;
                             }
                         },

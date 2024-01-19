@@ -341,9 +341,6 @@ pub const Bin = extern struct {
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);
                 var destination_wpath: []u16 = bun.strings.convertUTF8toUTF16InBuffer(&filename2_buf, dest_path);
 
-                // TODO: normalize these paths a little better BEFORE they enter this function.
-                // currently the input is like '..\nanoid\bin/nanoid.cjs', which is awful. we need only 'nanoid\bin\nanoid.cjs'
-
                 const first_content_chunk = contents: {
                     const fd = bun.sys.openatWindows(
                         this.package_installed_node_modules,

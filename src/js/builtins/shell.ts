@@ -176,8 +176,20 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   BunShell[cwdSymbol] = defaultCwd;
   BunShell[envSymbol] = defaultEnv;
-  BunShell.Shell = Shell;
-  BunShell.ShellPromise = ShellPromise;
 
+  Object.defineProperties(BunShell, {
+    Shell: {
+      value: Shell,
+      configurable: false,
+      enumerable: true,
+      writable: false,
+    },
+    ShellPromise: {
+      value: ShellPromise,
+      configurable: false,
+      enumerable: true,
+      writable: false,
+    },
+  });
   return BunShell;
 }

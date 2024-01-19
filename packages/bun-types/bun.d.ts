@@ -59,7 +59,7 @@ declare module "bun" {
     | SpawnOptions.Writable
     | ReadableStream;
 
-  interface ShellPromise extends Promise<ShellOutput> {
+  class ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
     /**
      * Change the current working directory of the shell.
@@ -85,6 +85,10 @@ declare module "bun" {
     quiet(): this;
   }
 
+  interface ShellConstructor {
+    new (): Shell;
+  }
+
   export interface Shell {
     (
       strings: TemplateStringsArray,
@@ -102,11 +106,38 @@ declare module "bun" {
      * ```
      */
     braces(pattern: string): string[];
+
+    /**
+     *
+     * Change the default environment variables for shells created by this instance.
+     *
+     * @param newEnv Default environment variables to use for shells created by this instance.
+     * @default process.env
+     *
+     * ## Example
+     *
+     * ```js
+     * import {$} from 'bun';
+     * $.env({ BUN: "bun" });
+     * await $`echo $BUN`;
+     * // "bun"
+     * ```
+     */
+    env(newEnv?: Record<string, string | undefined>): this;
+
+    /**
+     *
+     * @param newCwd Default working directory to use for shells created by this instance.
+     */
+    cwd(newCwd?: string): this;
+
+    readonly ShellPromise: typeof ShellPromise;
+    readonly Shell: ShellConstructor;
   }
 
   export interface ShellOutput {
-    readonly stdout: NodeJS.Buffer;
-    readonly stderr: NodeJS.Buffer;
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
     readonly exitCode: number;
   }
 
@@ -4015,8 +4046,8 @@ declare module "bun" {
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
-        ? number
-        : undefined;
+      ? number
+      : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
       ? Buffer
@@ -4027,8 +4058,8 @@ declare module "bun" {
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-        ? number
-        : undefined;
+      ? number
+      : undefined;
   }
 
   interface ResourceUsage {

@@ -55,8 +55,11 @@ describe("bunshell", () => {
 
     escapeTest("1 2 3");
     escapeTest(`lol $NICE`, `"lol \\$NICE"`);
-    escapeTest(`"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`, `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`);
-  })
+    escapeTest(
+      `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
+      `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
+    );
+  });
 
   describe("quiet", async () => {
     test("basic", async () => {

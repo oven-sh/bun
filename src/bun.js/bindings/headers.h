@@ -697,6 +697,13 @@ ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame*
 
 #endif
 
+CPP_DECL JSC__JSValue UVStreamSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue UVStreamSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL void UVStreamSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* UVStreamSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void UVStreamSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void UVStreamSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue UVStreamSink__close(JSC__JSGlobalObject* arg0, void* arg1);

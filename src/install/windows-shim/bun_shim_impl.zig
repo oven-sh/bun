@@ -553,7 +553,7 @@ pub inline fn launcher(comptime is_standalone: bool, bun_ctx: anytype) noreturn 
                     // Fast path since we are already in the bun executable... just run it back yall
                     debug("direct_launch_with_bun_js\n", .{});
                     bun_ctx.direct_launch_with_bun_js(
-                        buf1_u16[4 .. (@intFromPtr(dirname_slash_ptr) - @intFromPtr(buf1_u8) + shebang_bin_path_len_bytes + 4) / 2],
+                        buf1_u16[4 .. (@intFromPtr(dirname_slash_ptr) - @intFromPtr(buf1_u8) + shebang_bin_path_len_bytes + 3) / 2],
                         bun_ctx.cli_context,
                     );
                     fail(.CouldNotDirectLaunch);
@@ -670,37 +670,6 @@ pub fn startupFromBunJS(context: FromBunRunContext) noreturn {
     launcher(false, context);
 }
 
-fn mainCRTStartup() callconv(std.os.windows.WINAPI) noreturn {
-    @setAlignStack(16);
+pub fn main() callconv(std.os.windows.WINAPI) noreturn {
     launcher(true, .{});
-    std.os.windows.ntdll.RtlExitUserProcess(0);
-}
-
-/// TODO: stop clang from inserting this. I think this empty declaration
-/// is good enough to get it to optimize this check away. Could be wrong.
-fn __chkstk() callconv(.C) void {}
-
-/// there is at least one place zig or the optimizer inserts a memcpy
-/// so we have to export an implementation of memcpy
-fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(.C) void {
-    if (len == 0) return;
-
-    var d = dest.?;
-    var s = src.?;
-    var n = len;
-    while (true) {
-        d[0] = s[0];
-        n -= 1;
-        if (n == 0) break;
-        d += 1;
-        s += 1;
-    }
-}
-
-comptime {
-    if (builtin.output_mode == .Obj and !is_bun) {
-        @export(mainCRTStartup, .{ .name = "mainCRTStartup" });
-        @export(memcpy, .{ .name = "memcpy" });
-        @export(__chkstk, .{ .name = "__chkstk" });
-    }
 }

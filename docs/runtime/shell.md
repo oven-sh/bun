@@ -1,0 +1,282 @@
+Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
+
+{% callout type="note" %}
+**Alpha-quality software**: Bun Shell is a new API still under development. If you have feature requests or run into bugs, please open an issue.
+{% /callout %}
+
+Quickstart:
+
+```js
+import { $ } from "bun";
+
+const response = await fetch("https://example.com");
+const buffer = Buffer.alloc(100);
+
+// Use Response as stdin.
+await $`echo < ${response} > wc -c`; // 120
+```
+
+## Features:
+
+- **Cross-platform**: works on Windows, Linux & macOS. Instead of `rimraf` or `cross-env`', you can use Bun Shell without installing extra dependencies. Common shell commands like `ls`, `cd`, `rm` are implemented natively.
+- **Familiar**: Bun Shell is a bash-like shell, supporting redirection, pipes, environment variables and more.
+- **Globs**: Glob patterns are supported natively, including `**`, `*`, `{expansion}`, and more.
+- **Template literals**: Template literals are used to execute shell commands. This allows for easy interpolation of variables and expressions.
+- **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
+- **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
+
+## Getting started
+
+The simplest shell command is `echo`. To run it, use the `$` template literal tag:
+
+```js
+import { $ } from "bun";
+
+await $`echo "Hello World!"`; // Hello World!
+```
+
+What if you want to access the output of the command as text? Use `.text()`:
+
+```js
+import { $ } from "bun";
+
+const welcome = await $`echo "Hello World!"`.text();
+
+console.log(welcome); // Hello World!\n
+```
+
+By default, shell commands print to stdout. To quiet the output, call `.quiet()`:
+
+```js
+import { $ } from "bun";
+
+await $`echo "Hello World!"`.quiet(); // No output
+```
+
+To get stdout, stderr, and the exit code, use await or .run:
+
+```js
+import { $ } from "bun";
+
+const { stdout, stderr, exitCode } = await $`echo "Hello World!"`;
+
+console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
+console.log(stderr); // Buffer(0) []
+console.log(exitCode); // 0
+```
+
+## Redirecting to JavaScript objects (`>`)
+
+To redirect stdout to a JavaScript object, use the `>` operator:
+
+```js
+import { $ } from "bun";
+
+const buffer = Buffer.alloc(100);
+const result = await $`echo "Hello World!" > ${buffer}`;
+
+console.log(result.exitCode); // 0
+console.log(buffer.toString()); // Hello World!\n
+```
+
+The following JavaScript objects are supported for redirection to:
+
+- `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (writes to the underlying buffer)
+- `Bun.file(path)`, `Bun.file(fd)` (writes to the file)
+
+## Redirecting from JavaScript objects (`<`)
+
+To redirect the output from JavaScript objects to stdin, use the `<` operator:
+
+```js
+import { $, file } from "bun";
+
+const response = new Response("hello i am a response body");
+
+const result = await $`cat < ${response}`.text();
+
+console.log(result); // hello i am a response body
+```
+
+The following JavaScript objects are supported for redirection from:
+
+- `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (reads from the underlying buffer)
+- `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
+- `Response` (reads from the body)
+
+## Piping (`|`)
+
+Like in bash, you can pipe the output of one command to another:
+
+```js
+import { $ } from "bun";
+
+const result = await $`echo "Hello World!" | wc -w`.text();
+
+console.log(result); // 2\n
+```
+
+You can also pipe with JavaScript objects:
+
+```js
+import { $ } from "bun";
+
+const response = new Response("hello i am a response body");
+
+const result = await $`cat < ${response} | wc -w`.text();
+
+console.log(result); // 6\n
+```
+
+## Environment variables
+
+Environment variables can be set like in bash:
+
+```js
+import { $ } from "bun";
+
+await $`FOO=foo bun -e 'console.log(process.env.FOO)'`; // foo\n
+```
+
+You can use string interpolation to set environment variables:
+
+```js
+import { $ } from "bun";
+
+const foo = "bar123";
+
+await $`FOO=${foo + "456"} bun -e 'console.log(process.env.FOO)'`; // bar123456\n
+```
+
+Input is escaped by default, preventing shell injection attacks:
+
+```js
+import { $ } from "bun";
+
+const foo = "bar123; rm -rf /tmp";
+
+await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tmp\n
+```
+
+### Changing the environment variables
+
+You can change the environment variables of a command by passing an object to `.env()`:
+
+```js
+import { $ } from "bun";
+
+await $`echo $FOO`.env({ FOO: "bar" }); // bar
+```
+
+You can change the default environment variables for all commands by calling `$.env`:
+
+```js
+import { $ } from "bun";
+
+$.env({ FOO: "bar" });
+
+// the globally-set $FOO
+await $`echo $FOO`; // bar
+
+// the locally-set $FOO
+await $`echo $FOO`.env({ FOO: "baz" }); // baz
+```
+
+### Changing the working directory
+
+You can change the working directory of a command by passing a string to `.cwd()`:
+
+```js
+import { $ } from "bun";
+
+await $`pwd`.cwd("/tmp"); // /tmp
+```
+
+You can change the default working directory for all commands by calling `$.cwd`:
+
+```js
+import { $ } from "bun";
+
+$.cwd("/tmp");
+
+// the globally-set working directory
+await $`pwd`; // /tmp
+
+// the locally-set working directory
+await $`pwd`.cwd("/"); // /
+```
+
+## Reading output
+
+To read the output of a command as a string, use `.text()`:
+
+```js
+import { $ } from "bun";
+
+const result = await $`echo "Hello World!"`.text();
+
+console.log(result); // Hello World!\n
+```
+
+### Reading output as JSON
+
+To read the output of a command as JSON, use `.json()`:
+
+```js
+import { $ } from "bun";
+
+const result = await $`echo '{"foo": "bar"}'`.json();
+
+console.log(result); // { foo: "bar" }
+```
+
+### Reading output line-by-line
+
+To read the output of a command line-by-line, use `.lines()`:
+
+```js
+import { $ } from "bun";
+
+for await (let line of await $`echo "Hello World!"`.lines()) {
+  console.log(line); // Hello World!
+}
+```
+
+There are issues with this API. If the command fails, it may return no content with no easy way to distinguish between a command that returns no content and a command that fails.
+
+### Reading output as a Blob
+
+To read the output of a command as a Blob, use `.blob()`:
+
+```js
+import { $ } from "bun";
+
+const result = await $`echo "Hello World!"`.blob();
+
+console.log(result); // Blob(13) { size: 13, type: "text/plain" }
+```
+
+## Builtin Commands
+
+For cross-platform compatibility, Bun Shell implements a set of builtin commands, in addition to reading commands from the PATH environment variable.
+
+- `cd`: change the working directory
+- `ls`: list files in a directory
+- `rm`: remove files and directories
+- `echo`: print text
+- `pwd`: print the working directory
+- `bun`: run bun in bun
+
+**Partially** implemented:
+
+- `mv`: move files and directories (missing cross-device support)
+
+**Not** implemented yet, but planned:
+
+- `mkdir`: create directories
+- `cp`: copy files and directories
+- `cat`: concatenate files
+
+## Credits
+
+Large parts of this API were inspired by [zx](https://github.com/google/zx) and [dax](https://github.com/dsherret/dax). Thank you to the authors of those projects.

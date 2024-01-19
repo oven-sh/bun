@@ -35,7 +35,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       core.setResolve(resolve);
       core.setReject(reject);
 
-      this.#immediate = setImmediate(autoStartShell, this);
+      this.#immediate = setImmediate(autoStartShell, this).unref();
     }
 
     get interpreter() {

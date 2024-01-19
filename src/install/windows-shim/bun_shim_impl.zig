@@ -33,9 +33,8 @@
 //! - It is optimized stupidly overkill for speed. There was no reason to go
 //!   this far. Dave was simply extremely bored one evening.
 //!
-//! - Does not use libc or any other dependencies besides:
-//!     - `ntdll.dll` is used for reading the file
-//!     - `kernel32.dll` is used for spawning the process.
+//! - Does not use libc or any other dependencies besides `ntdll.dll` and `kernel32.dll`
+//!   (This is why some libc functions are reimplemented here)
 //!
 //! - Must be compiled as an object file with Zig, and then linked manually. Otherwise you'll
 //!   include Zig's initializer code and other builtins. This also lets us forcefully link
@@ -62,26 +61,14 @@ const w = std.os.windows;
 const nt = struct {
     const Status = w.NTSTATUS;
 
-    /// not documented, i found this referenced in start.zig
-    /// You must call this at the end of your program to terminate itself.
-    pub extern "ntdll" fn RtlExitUserProcess(
-        ExitStatus: u32, // [in]
-    ) callconv(w.WINAPI) noreturn;
+    /// undocumented
+    const RtlExitUserProcess = w.ntdll.RtlExitUserProcess;
+
+    /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntclose
+    const NtClose = w.ntdll.NtClose;
 
     /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
-    pub extern "ntdll" fn NtCreateFile(
-        FileHandle: *w.HANDLE, // [out]
-        DesiredAccess: w.ACCESS_MASK, // [in]
-        ObjectAttributes: *w.OBJECT_ATTRIBUTES, // [in]
-        IoStatusBlock: *w.IO_STATUS_BLOCK, // [out]
-        AllocationSize: ?*w.LARGE_INTEGER, // [in, optional]
-        FileAttributes: w.ULONG, // [in]
-        ShareAccess: w.ULONG, // [in]
-        CreateDisposition: w.ULONG, // [in]
-        CreateOptions: w.ULONG, // [in]
-        EaBuffer: ?*anyopaque, // [in]
-        EaLength: w.ULONG, // [in]
-    ) callconv(w.WINAPI) Status;
+    const NtCreateFile = w.ntdll.NtCreateFile;
 
     /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
     extern "ntdll" fn NtReadFile(
@@ -108,41 +95,28 @@ const nt = struct {
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
     ) callconv(w.WINAPI) Status;
-
-    pub extern "ntdll" fn NtClose(Handle: w.HANDLE) callconv(w.WINAPI) Status;
 };
 
 /// A copy of all kernel32 declarations this program uses
 const k32 = struct {
-    pub extern "kernel32" fn CreateProcessW(
-        lpApplicationName: ?w.LPWSTR, // [in, optional]
-        lpCommandLine: w.LPWSTR, // [in, out, optional]
-        lpProcessAttributes: ?*w.SECURITY_ATTRIBUTES, // [in, optional]
-        lpThreadAttributes: ?*w.SECURITY_ATTRIBUTES, // [in, optional]
-        bInheritHandles: w.BOOL, // [in]
-        dwCreationFlags: w.DWORD, // [in]
-        lpEnvironment: ?*anyopaque, // [in, optional]
-        lpCurrentDirectory: ?w.LPWSTR, // [in, optional]
-        lpStartupInfo: *w.STARTUPINFOW, // [in]
-        lpProcessInformation: *w.PROCESS_INFORMATION, // [out]
-    ) callconv(w.WINAPI) w.BOOL;
-
-    // https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
-    pub extern "kernel32" fn GetLastError() callconv(w.WINAPI) w.Win32Error;
-
-    pub extern "kernel32" fn SetConsoleMode(
+    const CreateProcessW = w.kernel32.CreateProcessW;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
+    const GetLastError = w.kernel32.GetLastError;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
+    const WaitForSingleObject = w.kernel32.WaitForSingleObject;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
+    const GetExitCodeProcess = w.kernel32.GetExitCodeProcess;
+    /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
+    const GetConsoleMode = w.kernel32.GetConsoleMode;
+    /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
+    extern "kernel32" fn SetConsoleMode(
         hConsoleHandle: w.HANDLE, // [in]
         dwMode: w.DWORD, // [in]
-    ) callconv(w.WINAPI) w.BOOL;
-
-    pub extern "kernel32" fn GetConsoleMode(
-        hConsoleHandle: w.HANDLE, // [in]
-        lpMode: *w.DWORD, // [out]
     ) callconv(w.WINAPI) w.BOOL;
 };
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
-    // comptime assert(builtin.mode == .Debug);
+    comptime assert(builtin.mode == .Debug);
     if (is_bun) {
         bunDebugMessage(fmt, args);
     } else {
@@ -190,7 +164,7 @@ const FailReason = enum {
 };
 
 inline fn memcpyNonZero(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) void {
-    if (dbg) std.debug.assert(len != 0);
+    std.debug.assert(len != 0);
 
     var d = dest.?;
     var s = src.?;
@@ -204,7 +178,6 @@ inline fn memcpyNonZero(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: us
     }
 }
 
-// TODO: get the faster one in here
 inline fn memchr(in: [*]u8, to_find: u8, len: usize) ?[*]u8 {
     return if (std.mem.indexOfScalar(u8, in[0..len], to_find)) |offset| (in + offset) else null;
 }
@@ -271,13 +244,11 @@ noinline fn fail(comptime reason: FailReason) noreturn {
 noinline fn failWithReason(reason: FailReason) noreturn {
     @setCold(true);
 
-    {
-        const console_handle = w.teb().ProcessEnvironmentBlock.ProcessParameters.hStdError;
-        var mode: w.DWORD = 0;
-        if (k32.GetConsoleMode(console_handle, &mode) != 0) {
-            mode |= w.ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-            _ = k32.SetConsoleMode(console_handle, mode);
-        }
+    const console_handle = w.teb().ProcessEnvironmentBlock.ProcessParameters.hStdError;
+    var mode: w.DWORD = 0;
+    if (k32.GetConsoleMode(console_handle, &mode) != 0) {
+        mode |= w.ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        _ = k32.SetConsoleMode(console_handle, mode);
     }
 
     // TODO: do not use std.debug becuase we dont need the bloat it adds to the binary
@@ -460,7 +431,7 @@ pub inline fn launcher(comptime is_standalone: bool, bun_ctx: anytype) noreturn 
         else => fail(.CouldNotReadShim),
     };
 
-    _ = w.ntdll.NtClose(metadata_handle);
+    _ = nt.NtClose(metadata_handle);
 
     if (dbg) debug("BufferAfterRead: '{}'\n", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
@@ -646,10 +617,10 @@ pub inline fn launcher(comptime is_standalone: bool, bun_ctx: anytype) noreturn 
         fail(.CreateProcessFailed);
     }
 
-    _ = w.kernel32.WaitForSingleObject(process.hProcess, w.INFINITE);
+    _ = k32.WaitForSingleObject(process.hProcess, w.INFINITE);
 
     var exit_code: w.DWORD = 255;
-    _ = w.kernel32.GetExitCodeProcess(process.hProcess, &exit_code);
+    _ = k32.GetExitCodeProcess(process.hProcess, &exit_code);
 
     _ = nt.NtClose(process.hProcess);
     _ = nt.NtClose(process.hThread);
@@ -663,9 +634,12 @@ pub const FromBunRunContext = struct {
     handle: w.HANDLE,
     force_use_bun: bool,
     direct_launch_with_bun_js: *const fn (wpath: []u16, args: *anyopaque) void,
+    /// Command.Context
     cli_context: *anyopaque,
 };
 
+/// This is called from run_command.zig which allows us to skip the CreateProcessW call to create THIS process,
+/// and simply invoke the logic it has from an open file handle. This saves ~10ms on the windows dev machine I use.
 pub fn startupFromBunJS(context: FromBunRunContext) noreturn {
     launcher(false, context);
 }

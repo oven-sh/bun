@@ -3368,6 +3368,10 @@ pub const JSValue = enum(JSValueReprInt) {
             return this == .DerivedStringObject;
         }
 
+        pub inline fn isStringObjectLike(this: JSType) bool {
+            return this == .StringObject or this == .DerivedStringObject;
+        }
+
         pub inline fn isStringLike(this: JSType) bool {
             return switch (this) {
                 .String, .StringObject, .DerivedStringObject => true,
@@ -4209,7 +4213,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return false;
         }
 
-        return jsType(this).isStringObject() or jsType(this).isDerivedStringObject();
+        return jsType(this).isStringObjectLike();
     }
 
     pub fn isBigInt(this: JSValue) bool {

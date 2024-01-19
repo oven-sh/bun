@@ -954,7 +954,10 @@ pub const Expect = struct {
             pass: *bool,
         };
 
-        if (value.jsTypeLoose().isArrayLike()) {
+        const value_type = value.jsType();
+        const expected_type = expected.jsType();
+
+        if (value_type.isArrayLike()) {
             var itr = value.arrayIterator(globalObject);
             while (itr.next()) |item| {
                 if (item.jestDeepEquals(expected, globalObject)) {
@@ -962,8 +965,8 @@ pub const Expect = struct {
                     break;
                 }
             }
-        } else if (value.isString() and expected.isString()) {
-            if (expected.isStringObjectLike() and value.isStringLiteral()) pass = false else {
+        } else if (value_type.isStringLike() and expected_type.isStringLike()) {
+            if (expected_type.isStringObjectLike() and value_type.isString()) pass = false else {
                 const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
                 defer value_string.deinit();
                 const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
@@ -976,17 +979,10 @@ pub const Expect = struct {
                 var expected_iter = strings.CodepointIterator.init(expected_string.slice());
                 _ = expected_iter.next(&expected_codepoint_cursor);
 
-                if (expected_iter.next(&expected_codepoint_cursor)) pass = false else {
-                    var value_iter = strings.CodepointIterator.init(value_string.slice());
-                    var cursor = strings.CodepointIterator.Cursor{};
-
-                    while (value_iter.next(&cursor)) {
-                        if (cursor.c == expected_codepoint_cursor.c) {
-                            pass = true;
-                            break;
-                        }
-                    } else pass = false;
-                }
+                pass = if (expected_iter.next(&expected_codepoint_cursor))
+                    false
+                else
+                    strings.indexOf(value_string.slice(), expected_string.slice()) != null;
             }
         } else if (value.isIterable(globalObject)) {
             var expected_entry = ExpectedEntry{

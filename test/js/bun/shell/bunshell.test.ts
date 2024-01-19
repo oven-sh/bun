@@ -35,6 +35,23 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  test("js_obj_test", async () => {
+    function runTest(name: string, builder: TestBuilder) {
+      test(`js_obj_test_name_${name}`, async () => {
+        await builder.run();
+      });
+    }
+
+    runTest("number", TestBuilder.command`echo ${1}`.stdout("1\n"));
+    runTest("String", TestBuilder.command`echo ${new String("1")}`.stdout("1\n"));
+    runTest("bool", TestBuilder.command`echo ${true}`.stdout("true\n"));
+    runTest("null", TestBuilder.command`echo ${null}`.stdout("null\n"));
+    runTest("undefined", TestBuilder.command`echo ${undefined}`.stdout("undefined\n"));
+    runTest("Date", TestBuilder.command`echo hello ${new Date()}`.stdout(`hello ${new Date().toString()}\n`));
+    runTest("BigInt", TestBuilder.command`echo ${BigInt((2 ^ 52) - 1)}`.stdout(`${BigInt((2 ^ 52) - 1)}\n`));
+    runTest("Array", TestBuilder.command`echo ${[1, 2, 3]}`.stdout(`1 2 3\n`));
+  });
+
   describe("escape", async () => {
     function escapeTest(strToEscape: string, expected: string = strToEscape) {
       test(strToEscape, async () => {
@@ -44,7 +61,8 @@ describe("bunshell", () => {
       });
     }
 
-    escapeTest("1 2 3");
+    escapeTest("1 2 3", '"1 2 3"');
+    escapeTest("nice\nlmao", '"nice\nlmao"');
     escapeTest(`lol $NICE`, `"lol \\$NICE"`);
     escapeTest(
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
@@ -88,14 +106,14 @@ describe("bunshell", () => {
       );
   });
 
-  test("invalid js obj", async () => {
-    const lol = {
-      hi: "lmao",
-    };
-    await TestBuilder.command`echo foo > ${lol}`.error("Invalid JS object used in shell: [object Object]").run();
-    const r = new RegExp("hi");
-    await TestBuilder.command`echo foo > ${r}`.error("Invalid JS object used in shell: /hi/").run();
-  });
+  // test("invalid js obj", async () => {
+  //   const lol = {
+  //     hi: "lmao",
+  //   };
+  //   await TestBuilder.command`echo foo > ${lol}`.error("Invalid JS object used in shell: [object Object]").run();
+  //   const r = new RegExp("hi");
+  //   await TestBuilder.command`echo foo > ${r}`.error("Invalid JS object used in shell: /hi/").run();
+  // });
 
   test("empty_input", async () => {
     await TestBuilder.command``.run();

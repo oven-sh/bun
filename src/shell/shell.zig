@@ -2468,86 +2468,128 @@ pub fn shellCmdFromJS(
         // try script.appendSlice(str.full());
         if (i < last) {
             const template_value = template_args[i];
-            if (!template_value.isEmpty()) {
-                if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
-                    _ = array_buffer;
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ bun.shell.LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
+            if (!(try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsobjref_buf[0..]))) return false;
+        }
+    }
+    return true;
+}
 
-                if (template_value.as(JSC.WebCore.Blob)) |blob| {
-                    if (blob.store) |store| {
-                        if (store.data == .file) {
-                            if (store.data.file.pathlike == .path) {
-                                const path = store.data.file.pathlike.path.slice();
-                                if (!try appendUTF8Text(path, out_script, true)) {
-                                    globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                                    return false;
-                                }
-                                continue;
-                            }
-                        }
-                    }
+pub fn handleTemplateValue(
+    globalThis: *JSC.JSGlobalObject,
+    template_value: JSValue,
+    out_jsobjs: *std.ArrayList(JSValue),
+    out_script: *std.ArrayList(u8),
+    jsobjref_buf: []u8,
+) !bool {
+    if (!template_value.isEmpty()) {
+        if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
+            _ = array_buffer;
+            const idx = out_jsobjs.items.len;
+            template_value.protect();
+            try out_jsobjs.append(template_value);
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ bun.shell.LEX_JS_OBJREF_PREFIX, idx });
+            try out_script.appendSlice(slice);
+            return true;
+        }
 
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
-                    _ = rstream;
-
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (template_value.as(JSC.WebCore.Response)) |req| {
-                    _ = req;
-
-                    const idx = out_jsobjs.items.len;
-                    template_value.protect();
-                    try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
-                    try out_script.appendSlice(slice);
-                    continue;
-                }
-
-                if (template_value.isString()) {
-                    if (!try appendJSValueStr(globalThis, template_value, out_script, true)) {
-                        globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                        return false;
-                    }
-                    continue;
-                }
-
-                if (template_value.isObject()) {
-                    if (template_value.getTruthy(globalThis, "raw")) |maybe_str| {
-                        const bunstr = maybe_str.toBunString(globalThis);
-                        defer bunstr.deref();
-                        if (!try appendBunStr(bunstr, out_script, false)) {
+        if (template_value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                if (store.data == .file) {
+                    if (store.data.file.pathlike == .path) {
+                        const path = store.data.file.pathlike.path.slice();
+                        if (!try appendUTF8Text(path, out_script, true)) {
                             globalThis.throw("Shell script string contains invalid UTF-16", .{});
                             return false;
                         }
-                        continue;
+                        return true;
                     }
                 }
+            }
 
-                globalThis.throw("Invalid JS object used in shell: {}", .{template_value.fmtString(globalThis)});
+            const idx = out_jsobjs.items.len;
+            template_value.protect();
+            try out_jsobjs.append(template_value);
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            try out_script.appendSlice(slice);
+            return true;
+        }
+
+        if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
+            _ = rstream;
+
+            const idx = out_jsobjs.items.len;
+            template_value.protect();
+            try out_jsobjs.append(template_value);
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            try out_script.appendSlice(slice);
+            return true;
+        }
+
+        if (template_value.as(JSC.WebCore.Response)) |req| {
+            _ = req;
+
+            const idx = out_jsobjs.items.len;
+            template_value.protect();
+            try out_jsobjs.append(template_value);
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            try out_script.appendSlice(slice);
+            return true;
+        }
+
+        if (template_value.isString()) {
+            if (!try appendJSValueStr(globalThis, template_value, out_script, true)) {
+                globalThis.throw("Shell script string contains invalid UTF-16", .{});
                 return false;
             }
+            return true;
         }
+
+        if (template_value.jsType().isArray()) {
+            var array = template_value.arrayIterator(globalThis);
+            const last = array.len -| 1;
+            var i: u32 = 0;
+            while (array.next()) |arr| : (i += 1) {
+                if (!(try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsobjref_buf))) return false;
+                if (i < last) {
+                    const str = bun.String.init(" ");
+                    if (!try appendBunStr(str, out_script, false)) return false;
+                }
+            }
+            return true;
+        }
+
+        if (template_value.isObject()) {
+            if (template_value.getTruthy(globalThis, "raw")) |maybe_str| {
+                const bunstr = maybe_str.toBunString(globalThis);
+                defer bunstr.deref();
+                if (!try appendBunStr(bunstr, out_script, false)) {
+                    globalThis.throw("Shell script string contains invalid UTF-16", .{});
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        if (template_value.isPrimitive()) {
+            if (!try appendJSValueStr(globalThis, template_value, out_script, true)) {
+                globalThis.throw("Shell script string contains invalid UTF-16", .{});
+                return false;
+            }
+            return true;
+        }
+
+        if (template_value.implementsToString(globalThis)) {
+            if (!try appendJSValueStr(globalThis, template_value, out_script, true)) {
+                globalThis.throw("Shell script string contains invalid UTF-16", .{});
+                return false;
+            }
+            return true;
+        }
+
+        globalThis.throw("Invalid JS object used in shell: {}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
+        return false;
     }
+
     return true;
 }
 
@@ -2592,7 +2634,9 @@ pub fn appendBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime all
     return true;
 }
 
-const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"' };
+/// Characters that need to escaped
+const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"', ' ' };
+/// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
 /// assumes WTF-8
@@ -2659,6 +2703,10 @@ pub fn needsEscapeUnicode(str: []const u8) bool {
     return false;
 }
 
+/// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
+/// indicates the *possibility* that the string must be escaped, so it can have
+/// false positives, but it is faster than running the shell lexer through the
+/// input string for a more correct implementation.
 pub fn needsEscape(str: []const u8) bool {
     if (str.len < 128) return needsEscapeSlow(str);
 

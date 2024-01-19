@@ -20,7 +20,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellPromise extends Promise<ShellOutput> {
     #core: ShellInterpreter;
     #hasRun: boolean = false;
-    #immediate;
+    // #immediate;
     constructor(core: ShellInterpreter) {
       var resolve, reject;
 
@@ -35,7 +35,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       core.setResolve(resolve);
       core.setReject(reject);
 
-      this.#immediate = setImmediate(autoStartShell, this).unref();
+      // this.#immediate = setImmediate(autoStartShell, this).unref();
     }
 
     get interpreter() {
@@ -70,8 +70,8 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     #run() {
       if (!this.#hasRun) {
         this.#hasRun = true;
-        clearImmediate(this.#immediate);
-        this.#immediate = undefined;
+        // clearImmediate(this.#immediate);
+        // this.#immediate = undefined;
 
         if (this.#core.isRunning()) return;
         this.#core.run();

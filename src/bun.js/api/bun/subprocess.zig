@@ -2791,7 +2791,7 @@ pub const Subprocess = struct {
     fn uvExitCallback(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
         const subprocess: *Subprocess = @alignCast(@ptrCast(process.data.?));
         subprocess.globalThis.assertOnJSThread();
-        subprocess.exit_code = @intCast(exit_status);
+        subprocess.exit_code = @as(u8, @truncate(@as(u64, @intCast(exit_status))));
         subprocess.signal_code = if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
         subprocess.pid_rusage = uv_getrusage(process);
         subprocess.onExit(subprocess.globalThis, subprocess.this_jsvalue);

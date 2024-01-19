@@ -329,7 +329,7 @@ pub const Bin = extern struct {
                 };
                 setPermissions(node_modules.fd, dest_path);
             } else {
-                const WinBinLinkingShim = @import("./windows/BinLinkingShim.zig");
+                const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
                 var shim_buf: [65536]u8 = undefined;
                 var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;

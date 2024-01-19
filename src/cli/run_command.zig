@@ -1246,6 +1246,77 @@ pub const RunCommand = struct {
             }
         }
 
+        if (Environment.isWindows) try_bunx_file: {
+            const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
+            const w = std.os.windows;
+            const debug = Output.scoped(.BunRunXFastPath, false);
+
+            // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
+            // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways
+            var path_to_try_open: bun.WPathBuffer = undefined;
+            var ptr: []u16 = &path_to_try_open;
+            const root = comptime bun.strings.w("\\??\\");
+            @memcpy(ptr[0..root.len], root);
+            ptr = ptr[4..];
+            const cwd_len = w.kernel32.GetCurrentDirectoryW(
+                path_to_try_open.len - 4,
+                ptr.ptr,
+            );
+            if (cwd_len == 0) break :try_bunx_file;
+            ptr = ptr[cwd_len..];
+            const prefix = comptime bun.strings.w("\\node_modules\\.bin\\");
+            @memcpy(ptr[0..prefix.len], prefix);
+            ptr = ptr[prefix.len..];
+            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], script_name_to_search);
+            ptr = ptr[encoded.len..];
+            const ext = comptime bun.strings.w(".bunx");
+            @memcpy(ptr[0..ext.len], ext);
+            ptr[ext.len] = 0;
+
+            const path_to_use = path_to_try_open[0 .. root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len];
+
+            debug("Attempting to find and load bunx file: '{}'", .{
+                std.unicode.fmtUtf16le(path_to_use),
+            });
+            const handle = w.OpenFile(path_to_use, .{
+                .access_mask = w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
+                .share_access = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
+                .creation = w.FILE_OPEN,
+                .io_mode = .blocking,
+            }) catch |err| {
+                debug("Failed to open bunx file: '{}'", .{err});
+                break :try_bunx_file;
+            };
+
+            var command_line: [32768]u16 = undefined;
+            var i: usize = 0;
+            for (ctx.passthrough) |str| {
+                command_line[i] = ' ';
+                const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
+                i += result.len + 1;
+            }
+
+            const run_ctx = WinBunShimImpl.FromBunRunContext{
+                .handle = handle,
+                .base_path = path_to_use[4..],
+                .arguments = command_line[0..i],
+                .force_use_bun = ctx.debug.run_in_bun,
+                .direct_launch_with_bun_js = &directLaunchWithBunJSFromShim,
+                .cli_context = &ctx,
+            };
+
+            if (Environment.isDebug) {
+                debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
+                debug("run_ctx.base_path: '{}'", .{std.unicode.fmtUtf16le(run_ctx.base_path)});
+                debug("run_ctx.arguments: '{}'", .{std.unicode.fmtUtf16le(run_ctx.arguments)});
+                debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
+            }
+
+            // this function does not return. spooky
+            WinBunShimImpl.startupFromBunJS(run_ctx);
+            comptime unreachable;
+        }
+
         const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
@@ -1344,6 +1415,19 @@ pub const RunCommand = struct {
         };
     }
 };
+
+fn directLaunchWithBunJSFromShim(wpath: []u16, args: *anyopaque) void {
+    const ctx: *Command.Context = @alignCast(@ptrCast(args));
+    var u8buffer: [32768]u8 = undefined;
+    const utf8 = bun.strings.convertUTF16toUTF8InBuffer(&u8buffer, wpath) catch {
+        return;
+    };
+    Run.boot(ctx.*, utf8) catch |err| {
+        ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+        Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
+        Global.exit(1);
+    };
+}
 
 test "replacePackageManagerRun" {
     var copy_script = std.ArrayList(u8).init(default_allocator);

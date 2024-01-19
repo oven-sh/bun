@@ -20,7 +20,7 @@
 //!         - https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_get_ea_information
 //!
 //! The approach implemented instead is a `.bunx` file which sits right next to the renamed
-//! shim exe. We read that (see BunXShim.zig for the creation of this file) and do some
+//! launcher exe. We read that (see BunXShim.zig for the creation of this file) and do some
 //! clever tricks and then we can NtCreateProcess with the correct arguments.
 //!
 //! Prior Art:
@@ -46,9 +46,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Flags = @import("./BinLinkingShim.zig").Flags;
+const is_bun = @hasDecl(@import("root"), "bun");
+const bunDebugMessage = @import("root").bun.Output.scoped(.bun_shim_impl, false);
 
 const dbg = builtin.mode == .Debug;
+
+const Flags = @import("./BinLinkingShim.zig").Flags;
 
 const assert = std.debug.assert;
 const fmt16 = std.unicode.fmtUtf16le;
@@ -139,8 +142,12 @@ const k32 = struct {
 };
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
-    comptime assert(dbg);
-    printError(fmt, args);
+    // comptime assert(builtin.mode == .Debug);
+    if (is_bun) {
+        bunDebugMessage(fmt, args);
+    } else {
+        printError(fmt, args);
+    }
 }
 
 fn unicodeStringToU16(str: w.UNICODE_STRING) []u16 {
@@ -159,6 +166,7 @@ const FailReason = enum {
     CreateProcessFailed,
     InvalidShimValidation,
     InvalidShimBounds,
+    CouldNotDirectLaunch,
 
     pub fn render(reason: FailReason) []const u8 {
         return switch (reason) {
@@ -172,33 +180,17 @@ const FailReason = enum {
             .InvalidShimValidation => "bin metadata is corrupt (validate)",
             .InvalidShimBounds => "bin metadata is corrupt (bounds)",
             .CreateProcessFailed => "could not create process",
+
+            .CouldNotDirectLaunch => if (is_bun)
+                "bin metadata is corrupt (invalid utf16)"
+            else
+                unreachable,
         };
     }
 };
 
-/// TODO: stop clang from inserting this. I think this empty declaration
-/// is good enough to get it to optimize this check away. Could be wrong.
-export fn __chkstk() callconv(.C) void {}
-
 inline fn memcpyNonZero(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) void {
-    std.debug.assert(len != 0);
-
-    var d = dest.?;
-    var s = src.?;
-    var n = len;
-    while (true) {
-        d[0] = s[0];
-        n -= 1;
-        if (n == 0) break;
-        d += 1;
-        s += 1;
-    }
-}
-
-/// there is at least one place zig or the optimizer inserts a memcpy
-/// so we have to export an implementation of memcpy
-export fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) void {
-    if (len == 0) return;
+    if (dbg) std.debug.assert(len != 0);
 
     var d = dest.?;
     var s = src.?;
@@ -303,7 +295,7 @@ noinline fn failWithReason(reason: FailReason) noreturn {
     nt.RtlExitUserProcess(255);
 }
 
-pub fn mainImplementation() noreturn {
+pub inline fn launcher(comptime is_standalone: bool, bun_ctx: anytype) noreturn {
     // peb! w.teb is a couple instructions of inline asm
     const teb: *w.TEB = @call(.always_inline, w.teb, .{});
     const peb = teb.ProcessEnvironmentBlock;
@@ -312,8 +304,8 @@ pub fn mainImplementation() noreturn {
     const ImagePathName = ProcessParameters.ImagePathName;
 
     // these are all different views of the same data
-    const image_path_b_len = ImagePathName.Length;
-    const image_path_b_u16 = ImagePathName.Buffer;
+    const image_path_b_len = if (is_standalone) ImagePathName.Length else bun_ctx.base_path.len * 2;
+    const image_path_b_u16 = if (is_standalone) ImagePathName.Buffer else bun_ctx.base_path.ptr;
     const cmd_line_b_len = CommandLine.Length;
     const cmd_line_u16 = CommandLine.Buffer;
     const cmd_line_u8: [*]u8 = @ptrCast(cmd_line_u16);
@@ -339,12 +331,14 @@ pub fn mainImplementation() noreturn {
     const buf2_u8 = @as([*]u8, @ptrCast(&buf2[0]));
     const buf2_u16 = @as([*:0]u16, @ptrCast(&buf2[0]));
 
-    @as(*align(1) u64, @ptrCast(&buf1_u8[0])).* = @as(u64, @bitCast([4]u16{ '\\', '?', '?', '\\' }));
+    if (is_standalone) {
+        @as(*align(1) u64, @ptrCast(&buf1_u8[0])).* = @as(u64, @bitCast([4]u16{ '\\', '?', '?', '\\' }));
+    }
 
     memcpyNonZero(
         buf1_u8 + 2 * 4,
-        @as([*]u8, @ptrCast(ImagePathName.Buffer)),
-        ImagePathName.Length - 6,
+        @ptrCast(image_path_b_u16),
+        if (is_standalone) cmd_line_b_len - 6 else bun_ctx.base_path.len * 2,
     );
 
     // backtrack on the image name to find
@@ -358,69 +352,78 @@ pub fn mainImplementation() noreturn {
 
     // open the metadata file
     var metadata_handle: w.HANDLE = undefined;
-    const path_len_bytes: c_ushort = image_path_b_len + 2 + 2 * 4;
-    var nt_name = w.UNICODE_STRING{
-        .Length = path_len_bytes,
-        .MaximumLength = path_len_bytes,
-        .Buffer = buf1_u16,
-    };
-    if (dbg) debug("NtCreateFile({s})\n", .{fmt16(unicodeStringToU16(nt_name))});
-    if (dbg) debug("NtCreateFile({any})\n", .{(unicodeStringToU16(nt_name))});
-    var attr = w.OBJECT_ATTRIBUTES{
-        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = null,
-        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        .ObjectName = &nt_name,
-        .SecurityDescriptor = null,
-        .SecurityQualityOfService = null,
-    };
     var io: w.IO_STATUS_BLOCK = undefined;
-    const rc = nt.NtCreateFile(
-        &metadata_handle,
-        FILE_GENERIC_READ,
-        &attr,
-        &io,
-        null,
-        w.FILE_ATTRIBUTE_NORMAL,
-        w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
-        w.FILE_OPEN,
-        w.FILE_NON_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT,
-        null,
-        0,
-    );
-    if (rc != .SUCCESS) {
-        if (dbg) debug("error opening: {s}\n", .{@tagName(rc)});
-        if (rc == .OBJECT_NAME_NOT_FOUND)
-            fail(.ShimNotFound);
-        fail(.CouldNotOpenShim);
+    if (is_standalone) {
+        const path_len_bytes: c_ushort = image_path_b_len + 2 + 2 * 4;
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = buf1_u16,
+        };
+        if (dbg) debug("NtCreateFile({s})\n", .{fmt16(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({any})\n", .{(unicodeStringToU16(nt_name))});
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        const rc = nt.NtCreateFile(
+            &metadata_handle,
+            FILE_GENERIC_READ,
+            &attr,
+            &io,
+            null,
+            w.FILE_ATTRIBUTE_NORMAL,
+            w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
+            w.FILE_OPEN,
+            w.FILE_NON_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT,
+            null,
+            0,
+        );
+        if (rc != .SUCCESS) {
+            if (dbg) debug("error opening: {s}\n", .{@tagName(rc)});
+            if (rc == .OBJECT_NAME_NOT_FOUND)
+                fail(.ShimNotFound);
+            fail(.CouldNotOpenShim);
+        }
+    } else {
+        metadata_handle = bun_ctx.handle;
     }
 
     // get a slice to where the CLI arguments are
-    var args_start_u8 = cmd_line_u8 + 2;
     var args_len_b: usize = 0;
-    switch (cmd_line_u16[0] == '"') {
-        inline else => |is_quote| {
-            const search_str = if (is_quote) '"' else ' ';
-            var num_left: usize = cmd_line_b_len;
-            while (memchr(args_start_u8, search_str, num_left)) |find| {
-                if (@intFromPtr(find) % 2 == 0 and find[1] == 0) {
-                    if (@intFromPtr(find) - @intFromPtr(cmd_line_u8) == cmd_line_b_len - 2) {
+    var args_start_u8 = cmd_line_u8 + 2;
+    if (is_standalone) {
+        switch (cmd_line_u16[0] == '"') {
+            inline else => |is_quote| {
+                const search_str = if (is_quote) '"' else ' ';
+                var num_left: usize = cmd_line_b_len;
+                while (memchr(args_start_u8, search_str, num_left)) |find| {
+                    if (@intFromPtr(find) % 2 == 0 and find[1] == 0) {
+                        if (@intFromPtr(find) - @intFromPtr(cmd_line_u8) == cmd_line_b_len - 2) {
+                            break;
+                        }
+                        args_start_u8 = if (is_quote) find + 4 else find + 2;
+                        if (is_quote) {
+                            assert(find[2] == ' ' and find[3] == 0);
+                        }
+                        while (args_start_u8[0] == ' ' and args_start_u8[1] == 0) args_start_u8 += 2;
+                        args_start_u8 -= 2;
+                        args_len_b = cmd_line_b_len - (@intFromPtr(args_start_u8) - @intFromPtr(cmd_line_u8));
                         break;
                     }
-                    args_start_u8 = if (is_quote) find + 4 else find + 2;
-                    if (is_quote) {
-                        assert(find[2] == ' ' and find[3] == 0);
-                    }
-                    while (args_start_u8[0] == ' ' and args_start_u8[1] == 0) args_start_u8 += 2;
-                    args_start_u8 -= 2;
-                    args_len_b = cmd_line_b_len - (@intFromPtr(args_start_u8) - @intFromPtr(cmd_line_u8));
-                    break;
-                }
 
-                num_left -= @intFromPtr(find) - @intFromPtr(args_start_u8);
-                args_start_u8 = find + 1;
-            }
-        },
+                    num_left -= @intFromPtr(find) - @intFromPtr(args_start_u8);
+                    args_start_u8 = find + 1;
+                }
+            },
+        }
+    } else {
+        args_start_u8 = @ptrCast(bun_ctx.arguments.ptr);
+        args_len_b = std.mem.sliceAsBytes(bun_ctx.arguments).len;
     }
 
     if (dbg) debug("UserArgs: '{s}' ({d} bytes)\n", .{ args_start_u8[0..args_len_b], args_len_b });
@@ -482,6 +485,11 @@ pub fn mainImplementation() noreturn {
     if (!flags.isValid())
         fail(.InvalidShimValidation);
 
+    const environment_forces_bun = if (is_standalone)
+        false
+    else
+        bun_ctx.force_use_bun;
+
     const spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
         false => spawn_command_line: {
             // no shebang, which means the command line is simply going to be the joined file exe
@@ -516,59 +524,60 @@ pub fn mainImplementation() noreturn {
             read_ptr -= @sizeOf(ShebangMetadataPacked);
             const shebang_metadata: ShebangMetadataPacked = @as(*align(1) ShebangMetadataPacked, @ptrCast(read_ptr)).*;
 
-            const shebang_metadata_args_len_bytes = shebang_metadata.args_len_bytes;
-            const shebang_metadata_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
+            const shebang_arg_len = shebang_metadata.args_len_bytes;
+            const shebang_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
 
             if (dbg) {
                 debug("bin_path_len_bytes: {}\n", .{shebang_metadata.bin_path_len_bytes});
                 debug("args_len_bytes: {}\n", .{shebang_metadata.args_len_bytes});
             }
 
-            switch (shebang_metadata_args_len_bytes == 0) {
-                inline else => |is_zero| {
-                    if (!is_zero) {
-                        // magic number related to how BinLinkingShim.zig writes the metadata
-                        const validation_length_offset = 14;
+            // magic number related to how BinLinkingShim.zig writes the metadata
+            const validation_length_offset = 14;
 
-                        // very careful here to not overflow u32, so that we properly error if you hijack the file
-                        if ((@as(u64, shebang_metadata_args_len_bytes) +| @as(u64, shebang_metadata_bin_path_len_bytes)) + validation_length_offset != read_len) {
-                            if (dbg)
-                                debug("read_len: {}\n", .{read_len});
+            // very careful here to not overflow u32, so that we properly error if you hijack the file
+            if (shebang_arg_len == 0 or
+                (@as(u64, shebang_arg_len) +| @as(u64, shebang_bin_path_len_bytes)) + validation_length_offset != read_len)
+            {
+                if (dbg)
+                    debug("read_len: {}\n", .{read_len});
 
-                            fail(.InvalidShimBounds);
-                        }
-
-                        read_ptr -= shebang_metadata_args_len_bytes;
-
-                        memcpyNonZero(buf2_u8, @ptrCast(read_ptr), shebang_metadata_args_len_bytes);
-                    }
-
-                    // the compiler should already optimize this, but i want to be very intentful about what i'm doing
-                    // the shebang metadata is read, then instantly compared, and that comparison is only done once
-                    // the branch without a shebang should not "add zero" to anything.
-                    const arg_len = if (is_zero) comptime 0 else shebang_metadata_args_len_bytes;
-
-                    @as(*align(1) u16, @ptrCast(buf2_u8 + arg_len)).* = '"';
-
-                    const yy = @intFromPtr(dirname_slash_ptr) - @intFromPtr(buf1_u8) + shebang_metadata_bin_path_len_bytes + 2 * 4;
-
-                    memcpyNonZero(
-                        buf2_u8 + arg_len + 2,
-                        buf1_u8 + 2 * 4,
-                        yy,
-                    );
-
-                    if (args_len_b > 0) {
-                        memcpyNonZero(
-                            buf2_u8 + yy,
-                            args_start_u8,
-                            args_len_b,
-                        );
-                    }
-
-                    @as(*align(1) u16, @ptrFromInt(@intFromPtr(buf2_u8) + yy + args_len_b)).* = 0;
-                },
+                fail(.InvalidShimBounds);
             }
+
+            if (flags.is_node_or_bun and environment_forces_bun) {
+                // forget the shebang, run it!
+                if (is_standalone) {
+                    // TODO:
+                } else {
+                    // Fast path since we are already in the bun executable... just run it back yall
+                    debug("direct_launch_with_bun_js\n", .{});
+                    bun_ctx.direct_launch_with_bun_js(
+                        buf1_u16[4 .. (@intFromPtr(dirname_slash_ptr) - @intFromPtr(buf1_u8) + shebang_bin_path_len_bytes + 4) / 2],
+                        bun_ctx.cli_context,
+                    );
+                    fail(.CouldNotDirectLaunch);
+                }
+            }
+
+            read_ptr -= shebang_arg_len;
+
+            // Copy the shebang bin path
+            memcpyNonZero(buf2_u8, @ptrCast(read_ptr), shebang_arg_len);
+
+            @as(*align(1) u16, @ptrCast(buf2_u8 + shebang_arg_len)).* = '"';
+
+            const yy = @intFromPtr(dirname_slash_ptr) - @intFromPtr(buf1_u8) + shebang_bin_path_len_bytes + 2 * 4;
+
+            // Copy the filename in
+            memcpyNonZero(buf2_u8 + shebang_arg_len + 2, buf1_u8 + 2 * 4, yy);
+
+            // Copy the arguments in
+            if (args_len_b > 0) {
+                memcpyNonZero(buf2_u8 + yy, args_start_u8, args_len_b);
+            }
+
+            @as(*align(1) u16, @ptrFromInt(@intFromPtr(buf2_u8) + yy + args_len_b)).* = 0;
 
             if (dbg) {
                 debug("BufferAfterShebang: '{}'\n", .{
@@ -640,14 +649,7 @@ pub fn mainImplementation() noreturn {
     _ = w.kernel32.WaitForSingleObject(process.hProcess, w.INFINITE);
 
     var exit_code: w.DWORD = 255;
-    if (w.kernel32.GetExitCodeProcess(process.hProcess, &exit_code) != 0) {
-        if (dbg) {
-            const spawn_err = k32.GetLastError();
-            printError("GetExitCodeProcess failed: {s}\n", .{@tagName(spawn_err)});
-        }
-
-        // should have 255 still set
-    }
+    _ = w.kernel32.GetExitCodeProcess(process.hProcess, &exit_code);
 
     _ = nt.NtClose(process.hProcess);
     _ = nt.NtClose(process.hThread);
@@ -655,11 +657,50 @@ pub fn mainImplementation() noreturn {
     nt.RtlExitUserProcess(exit_code);
 }
 
+pub const FromBunRunContext = struct {
+    base_path: []u16,
+    arguments: []u16,
+    handle: w.HANDLE,
+    force_use_bun: bool,
+    direct_launch_with_bun_js: *const fn (wpath: []u16, args: *anyopaque) void,
+    cli_context: *anyopaque,
+};
+
+pub fn startupFromBunJS(context: FromBunRunContext) noreturn {
+    launcher(false, context);
+}
+
 fn mainCRTStartup() callconv(std.os.windows.WINAPI) noreturn {
-    @call(.always_inline, mainImplementation, .{});
+    @setAlignStack(16);
+    launcher(true, .{});
+    std.os.windows.ntdll.RtlExitUserProcess(0);
+}
+
+/// TODO: stop clang from inserting this. I think this empty declaration
+/// is good enough to get it to optimize this check away. Could be wrong.
+fn __chkstk() callconv(.C) void {}
+
+/// there is at least one place zig or the optimizer inserts a memcpy
+/// so we have to export an implementation of memcpy
+fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(.C) void {
+    if (len == 0) return;
+
+    var d = dest.?;
+    var s = src.?;
+    var n = len;
+    while (true) {
+        d[0] = s[0];
+        n -= 1;
+        if (n == 0) break;
+        d += 1;
+        s += 1;
+    }
 }
 
 comptime {
-    if (builtin.output_mode == .Obj)
+    if (builtin.output_mode == .Obj and !is_bun) {
         @export(mainCRTStartup, .{ .name = "mainCRTStartup" });
+        @export(memcpy, .{ .name = "memcpy" });
+        @export(__chkstk, .{ .name = "__chkstk" });
+    }
 }

@@ -4046,8 +4046,8 @@ declare module "bun" {
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
       ? Buffer
@@ -4058,8 +4058,8 @@ declare module "bun" {
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
   }
 
   interface ResourceUsage {

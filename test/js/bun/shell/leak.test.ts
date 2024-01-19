@@ -44,15 +44,9 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
               .split("\n")
               .filter(s => s.length > 0)
               .sort(),
-          ).toEqual(["foo/",
-          "foo/bar",
-          "foo/bar/great",
-          "foo/bar/wow",
-          "foo/lmao",
-          "foo/lol",
-          "foo/nice"].sort()),
+          ).toEqual(["foo/", "foo/bar", "foo/bar/great", "foo/bar/wow", "foo/lmao", "foo/lol", "foo/nice"].sort()),
         ),
-        10
+    100,
   ],
 ];
 
@@ -72,7 +66,7 @@ describe("fd leak", () => {
     });
   }
 
-  function memLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
+  function memLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 100 * (1 << 20)) {
     test(`memleak_${name}`, async () => {
       const tempfile = join(tmpdir(), "script.ts");
 
@@ -86,7 +80,7 @@ describe("fd leak", () => {
 
 
             test("${name}", async () => {
-              const hundredMb = (1 << 20) * 100;
+              const hundredMb = ${threshold}
               let prev: number | undefined = undefined;
               for (let i = 0; i < ${runs}; i++) {
                 Bun.gc(true);
@@ -109,7 +103,8 @@ describe("fd leak", () => {
       // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
 
       const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile]);
-      console.log(stdout.toString(), stderr.toString());
+      // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
+      console.log('\n\nSTDERR:', stderr.toString());
       expect(exitCode).toBe(0);
     });
   }
@@ -118,4 +113,9 @@ describe("fd leak", () => {
     fdLeakTest(...args);
     memLeakTest(...args);
   });
+
+  // Use text of this file so its big enough to cause a leak
+  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer((1 << 20) * 100)}`, 100);
+  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
+  memLeakTest("String", () => TestBuilder.command`echo ${Array((4096)).fill('a').join('')}`.stdout(() => {}), 100, 4096);
 });

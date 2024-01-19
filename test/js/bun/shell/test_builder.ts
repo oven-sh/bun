@@ -106,6 +106,14 @@ export class TestBuilder {
     return fs.mkdtempSync(join(tmp, "test_builder"))
   }
 
+  setTempdir(tempdir: string): this {
+    this.tempdir = tempdir;
+      if (this.promise.type === "ok") {
+        this.promise.val.cwd(this.tempdir!);
+      }
+      return this;
+  }
+
   getTempDir(): string {
     if (this.tempdir === undefined) {
       this.tempdir = TestBuilder.tmpdir();

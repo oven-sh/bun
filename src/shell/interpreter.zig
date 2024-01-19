@@ -2881,7 +2881,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const readable = io.stdout;
 
                                 // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                                if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe) {
+                                if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.stdout) {
                                     cmd.base.shell.buffered_stdout().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                                 }
 
@@ -2894,7 +2894,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const readable = io.stderr;
 
                                 // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                                if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe) {
+                                if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.stdout) {
                                     cmd.base.shell.buffered_stderr().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                                 }
 
@@ -3496,7 +3496,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     std.debug.assert(this.exec == .subproc);
                 }
                 log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
-                if (this.io.stdout == .std and this.io.stdout.std.captured != null) {
+                if (this.io.stdout == .std and this.io.stdout.std.captured != null and !this.node.redirect.stdout) {
                     var buf = this.io.stdout.std.captured.?;
                     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
@@ -3509,7 +3509,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     std.debug.assert(this.exec == .subproc);
                 }
                 log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
-                if (this.io.stderr == .std and this.io.stderr.std.captured != null) {
+                if (this.io.stderr == .std and this.io.stderr.std.captured != null and !this.node.redirect.stderr) {
                     var buf = this.io.stderr.std.captured.?;
                     buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }

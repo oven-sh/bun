@@ -5,7 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, mkdir } from "fs/promises";
 import { join, relative } from "path";
 import { TestBuilder, redirect } from "./util";
 import { tmpdir } from "os";
@@ -27,6 +27,9 @@ let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  temp_dir = join(tmpdir(), temp_dir);
+  await mkdir(temp_dir, { recursive: true });
+
   for (const file of temp_files) {
     const writer = Bun.file(join(temp_dir, file)).writer();
     writer.write("foo");

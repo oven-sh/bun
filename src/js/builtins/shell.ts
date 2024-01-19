@@ -85,17 +85,56 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
   }
 
+  var defaultEnv = process.env || {};
+  const originalDefaultEnv = defaultEnv;
+  var defaultCwd: string | undefined = undefined;
+
   var BunShell = function BunShell() {
     const core = new ShellInterpreter(...arguments);
-    core.setEnv(process.env);
+
+    // cwd must be set before env or else it will be injected into env as "PWD=/"
+    if (defaultCwd) core.setCwd(defaultCwd);
+
+    if (defaultEnv) core.setEnv(defaultEnv);
+
     return new ShellPromise(core);
   };
 
-  BunShell.Promise = ShellPromise;
+  var BunShellPrototype = {
+    __proto__: null,
+    Promise: ShellPromise,
+    env: function env(newEnv: Record<string, string | undefined>) {
+      if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
+        defaultEnv = originalDefaultEnv;
+      } else if (newEnv) {
+        defaultEnv = Object.assign({}, newEnv);
+      } else {
+        throw new TypeError("env must be an object or undefined");
+      }
+
+      return this;
+    },
+    cwd: function cwd(newCwd: string | undefined) {
+      if (typeof newCwd === "undefined" || typeof newCwd === "string") {
+        if (newCwd === "" || newCwd === ".") {
+          newCwd = undefined;
+        }
+
+        defaultCwd = newCwd;
+      } else {
+        throw new TypeError("cwd must be a string or undefined");
+      }
+
+      return this;
+    },
+
+  };
 
   if (IS_BUN_DEVELOPMENT) {
-    BunShell.Interpreter = ShellInterpreter;
+    BunShellPrototype.Interpreter = ShellInterpreter;
   }
+
+  Object.setPrototypeOf(BunShell, BunShellPrototype);
 
   return BunShell;
 }

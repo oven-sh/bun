@@ -11,12 +11,16 @@ import { TestBuilder, redirect } from "./util";
 import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 import {
+  bunEnv,
   randomInvalidSurrogatePair,
   randomLoneSurrogate,
   runWithError,
   runWithErrorPromise,
   tempDirWithFiles,
 } from "harness";
+
+$.env(bunEnv);
+$.cwd(process.cwd());
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
@@ -176,7 +180,7 @@ describe("bunshell", () => {
     }
     `;
 
-    await $`${BUN} -e "${code}" 2> ${buffer}`;
+    await $`${BUN} -e "${code}" 2> ${buffer}`.env(bunEnv);
 
     console.log(buffer);
     expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(
@@ -231,12 +235,12 @@ describe("bunshell", () => {
 
   describe("variables", () => {
     test("cmd_local_var", async () => {
-      const { stdout } = await $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
+      const { stdout } = await $`FOO=bar BOOP=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
       const str = stdout.toString();
       expect(JSON.parse(str)).toEqual({
-        ...process.env,
+        ...bunEnv,
         FOO: "bar",
-        BUN_DEBUG_QUIET_LOGS: "1",
+        BOOP: "1",
       });
     });
 
@@ -248,20 +252,19 @@ describe("bunshell", () => {
     });
 
     test("shell var", async () => {
-      const { stdout } =
-        await $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
+      const { stdout } = await $`FOO=bar BAR=baz && BAZ=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
       const str = stdout.toString();
 
       const procEnv = JSON.parse(str);
       expect(procEnv.FOO).toBeUndefined();
       expect(procEnv.BAR).toBeUndefined();
-      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1" });
+      expect(procEnv).toEqual({ ...bunEnv, BAZ: "1" });
     });
 
     test("export var", async () => {
       const buffer = Buffer.alloc(8192);
       const buffer2 = Buffer.alloc(8192);
-      await $`export FOO=bar && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
+      await $`export FOO=bar && BAZ=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
 
       const str1 = stringifyBuffer(buffer);
       const str2 = stringifyBuffer(buffer2);
@@ -269,21 +272,20 @@ describe("bunshell", () => {
       console.log("Str1", str1);
 
       let procEnv = JSON.parse(str1);
-      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+      expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
-      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+      expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar", BUN_TEST_VAR: "1" });
     });
 
     test("syntax edgecase", async () => {
       const buffer = new Uint8Array(8192);
-      const shellProc =
-        await $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
+      const shellProc = await $`FOO=bar BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
 
       const str = stringifyBuffer(buffer);
 
       const procEnv = JSON.parse(str);
 
-      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+      expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     });
   });
 
@@ -369,13 +371,13 @@ describe("deno_task", () => {
     await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
     await TestBuilder.command`echo "test$(echo "1    2")"`.stdout("test1    2\n").run();
     await TestBuilder.command`echo test$(echo "1 2 3")`.stdout("test1 2 3\n").run();
-    await TestBuilder.command`VAR=1 BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(process.env.VAR)' && echo $VAR`
+    await TestBuilder.command`VAR=1 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)' && echo $VAR`
       .stdout("1\n\n")
       .run();
-    await TestBuilder.command`VAR=1 VAR2=2 BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(process.env.VAR + process.env.VAR2)'`
+    await TestBuilder.command`VAR=1 VAR2=2 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR + process.env.VAR2)'`
       .stdout("12\n")
       .run();
-    await TestBuilder.command`EMPTY= BUN_DEBUG_QUIET_LOGS=1 bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`
+    await TestBuilder.command`EMPTY= BUN_TEST_VAR=1 bun -e 'console.log(\`EMPTY: \${process.env.EMPTY}\`)'`
       .stdout("EMPTY: \n")
       .run();
     await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
@@ -419,7 +421,7 @@ describe("deno_task", () => {
   });
 
   test("env variables", async () => {
-    await TestBuilder.command`echo $VAR && export VAR=1 && echo $VAR && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(process.env.VAR)'`
+    await TestBuilder.command`echo $VAR && export VAR=1 && echo $VAR && BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)'`
       .stdout("\n1\n1\n")
       .run();
 
@@ -429,44 +431,44 @@ describe("deno_task", () => {
   });
 
   test("pipeline", async () => {
-    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
       .run();
 
     await TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").run();
 
-    // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
+    // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
     //   .stdout("1 2\n")
     //   .run();
 
-    await TestBuilder.command`echo 2 | echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    await TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
       .run();
 
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
       .stderr("2\n")
       .run();
 
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       // .stdout("1\n2\n")
       .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
       .run();
 
-    // await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
+    // await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_TEST_VAR=1 ${BUN} -e 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
     //   .stderr("2\n1\n")
     //   .run();
 
-    await TestBuilder.command`echo 1 |& BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    await TestBuilder.command`echo 1 |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       // .stdout("1\n")
       .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
       .run();
 
-    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
+    await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
       .fileEquals("output.txt", "1\n")
       .run();
 
-    await TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
+    await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
       .fileEquals("output.txt", "1\n")
       .run();
   });
@@ -485,13 +487,13 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 2 3 > "$PWD/test.txt"`.fileEquals("test.txt", "1 2 3\n").run();
 
     // stdout
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(5)' 1> test.txt`
+    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 1> test.txt`
       .stderr("5\n")
       .fileEquals("test.txt", "1\n")
       .run();
 
     // stderr
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(5)' 2> test.txt`
+    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> test.txt`
       .stdout("1\n")
       .fileEquals("test.txt", "5\n")
       .run();
@@ -504,7 +506,7 @@ describe("deno_task", () => {
     //   .run();
 
     // /dev/null
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); console.error(5)' 2> /dev/null`
+    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> /dev/null`
       .stdout("1\n")
       .run();
 
@@ -512,7 +514,7 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`.fileEquals("test.txt", "1\n2\n").run();
 
     // &> and &>> redirect
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
+    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_TEST_VAR=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
       .fileEquals("file.txt", "1\n23\n456\n789\n")
       .run();
 
@@ -539,26 +541,26 @@ describe("deno_task", () => {
 
   test("change env", async () => {
     {
-      const { stdout } = await $`echo $FOO`.env({ FOO: "bar" });
+      const { stdout } = await $`echo $FOO`.env({ ...bunEnv, FOO: "bar" });
       expect(stdout.toString()).toEqual("bar\n");
     }
 
     {
-      const { stdout } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
-        ...process.env,
+      const { stdout } = await $`BUN_TEST_VAR=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
+        ...bunEnv,
         FOO: "bar",
       });
-      expect(JSON.parse(stdout.toString())).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+      expect(JSON.parse(stdout.toString())).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     }
 
     {
-      const { stdout } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
+      const { stdout } = await $`BUN_TEST_VAR=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
+        ...bunEnv,
         FOO: "bar",
       });
       expect(JSON.parse(stdout.toString())).toEqual({
-        // bun sets NODE_ENV=development if it isn't set
-        NODE_ENV: "development",
-        BUN_DEBUG_QUIET_LOGS: "1",
+        ...bunEnv,
+        BUN_TEST_VAR: "1",
         FOO: "bar",
       });
     }

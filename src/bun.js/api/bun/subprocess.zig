@@ -822,6 +822,7 @@ pub const Subprocess = struct {
         pub fn writeIfPossible(this: *BufferedPipeInput, comptime is_sync: bool) void {
             this.writeAllowBlocking(is_sync);
         }
+        
         pub fn uvWriteCallback(req: *uv.uv_write_t, status: c_int) callconv(.C) void {
             const this = bun.cast(*BufferedPipeInput, req.data);
             const pipe = this.pipe orelse return;
@@ -846,6 +847,7 @@ pub const Subprocess = struct {
             // we are done!
             this.close();
         }
+
         pub fn writeAllowBlocking(this: *BufferedPipeInput, allow_blocking: bool) void {
             const pipe = this.pipe orelse return;
 
@@ -1080,7 +1082,7 @@ pub const Subprocess = struct {
 
         pub fn init(fd: bun.FileDescriptor) BufferedOutput {
             if (Environment.isWindows) {
-                @compileError("Cannot use BufferedOutput with fd on Windows use please use .initWithPipe");
+                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipe");
             }
             return BufferedOutput{
                 .internal_buffer = .{},
@@ -1099,7 +1101,7 @@ pub const Subprocess = struct {
 
         pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
             if (Environment.isWindows) {
-                @compileError("Cannot use BufferedOutput with fd on Windows use please use .initWithPipeAndSlice");
+                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipeAndSlice");
             }
             return BufferedOutput{
                 // fixed capacity
@@ -1125,7 +1127,7 @@ pub const Subprocess = struct {
 
         pub fn initWithAllocator(allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
             if (Environment.isWindows) {
-                @compileError("Cannot use BufferedOutput with fd on Windows use please use .initWithPipeAndAllocator");
+                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipeAndAllocator");
             }
             var this = init(fd);
             this.auto_sizer = .{
@@ -1511,14 +1513,16 @@ pub const Subprocess = struct {
         }
     };
 
+    const SinkType = if(Environment.isWindows) *JSC.WebCore.UVStreamSink else *JSC.WebCore.FileSink;
+    const BufferedInputType = if (Environment.isWindows) BufferedPipeInput else BufferedInput;
     const Writable = union(enum) {
-        pipe: *JSC.WebCore.FileSink,
+        pipe: SinkType,
         pipe_to_readable_stream: struct {
-            pipe: *JSC.WebCore.FileSink,
+            pipe: SinkType,
             readable_stream: JSC.WebCore.ReadableStream,
         },
         fd: bun.FileDescriptor,
-        buffered_input: if (Environment.isWindows) BufferedPipeInput else BufferedInput,
+        buffered_input: BufferedInputType,
         memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
@@ -1526,7 +1530,9 @@ pub const Subprocess = struct {
         pub fn ref(this: *Writable) void {
             switch (this.*) {
                 .pipe => {
-                    if (this.pipe.poll_ref) |poll| {
+                    if(Environment.isWindows) {
+                        _ = uv.uv_ref(@ptrCast(this.pipe.stream));
+                    } else if (this.pipe.poll_ref) |poll| {
                         poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
@@ -1537,7 +1543,9 @@ pub const Subprocess = struct {
         pub fn unref(this: *Writable) void {
             switch (this.*) {
                 .pipe => {
-                    if (this.pipe.poll_ref) |poll| {
+                    if(Environment.isWindows) {
+                        _ = uv.uv_unref(@ptrCast(this.pipe.stream));
+                    } else if (this.pipe.poll_ref) |poll| {
                         poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
@@ -1555,13 +1563,28 @@ pub const Subprocess = struct {
         pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
         pub fn onStart(_: *Writable) void {}
 
-        pub fn initWithPipe(stdio: Stdio, pipe: *uv.uv_pipe_t, _: *JSC.JSGlobalObject) !Writable {
+        pub fn initWithPipe(stdio: Stdio, pipe: *uv.uv_pipe_t, globalThis: *JSC.JSGlobalObject) !Writable {
             switch (stdio) {
                 .pipe => |maybe_readable| {
-                    if (maybe_readable) |_| {
-                        @panic("TODO: sink readable into pipe");
+                    const sink = try globalThis.bunVM().allocator.create(JSC.WebCore.UVStreamSink);
+                    sink.* = .{
+                        .buffer = bun.ByteList{},
+                        .stream = @ptrCast(pipe),
+                        .allocator = globalThis.bunVM().allocator,
+                        .done = false,
+                        .signal = .{},
+                        .next = null,
+                    };
+                    if (maybe_readable) |readable| {
+                        return Writable{
+                            .pipe_to_readable_stream = .{
+                                .pipe = sink,
+                                .readable_stream = readable,
+                            },
+                        };
                     }
-                    return Writable{ .fd = bun.FDImpl.fromSystem(pipe.handle).encode() };
+
+                    return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
                     var buffered_input: BufferedPipeInput = .{ .pipe = pipe, .source = undefined };
@@ -1579,8 +1602,8 @@ pub const Subprocess = struct {
                 .memfd => {
                     return Writable{ .memfd = stdio.memfd };
                 },
-                .fd => {
-                    return Writable{ .fd = bun.FDImpl.fromSystem(pipe.handle).encode() };
+                .fd => |fd| {
+                    return Writable{ .fd = fd };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };

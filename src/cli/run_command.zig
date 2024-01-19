@@ -477,6 +477,47 @@ pub const RunCommand = struct {
         return true;
     }
 
+    pub fn bootMaybeSubprocess(ctx_: Command.Context, entry_path: string, comptime subprocess: bool) !ExecResult {
+        if (comptime subprocess) {
+            const pid = std.c.fork();
+            if (pid == 0) {
+                // child
+                Run.boot(ctx_, entry_path) catch {
+                    Global.exit(1);
+                };
+                Global.exit(0);
+            } else {
+                //p arent
+                var cstatus: c_int = 0;
+                switch (std.c.getErrno(std.c.waitpid(pid, &cstatus, 0))) {
+                    .SUCCESS => {
+                        const status: u32 = @intCast(cstatus);
+                        const os = std.os;
+                        if (os.W.IFEXITED(status)) {
+                            const code = os.W.EXITSTATUS(status);
+                            return ExecResult.withCode(@intCast(code));
+                            // Term{ .Exited = os.W.EXITSTATUS(status) };
+                        } else if (os.W.IFSIGNALED(status)) {
+                            const code = os.W.TERMSIG(status);
+                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
+                        } else if (os.W.IFSTOPPED(status)) {
+                            const code = os.W.STOPSIG(status);
+                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
+                        } else {
+                            // shouldn't be possible, but in case we get an invalid status code just ignore it
+                            return ExecResult.ok;
+                        }
+                    },
+                    // if the waitpid call failed, we can't get the exit code
+                    else => return ExecResult.failure,
+                }
+            }
+        } else {
+            try Run.boot(ctx_, entry_path);
+            return ExecResult.ok;
+        }
+    }
+
     pub fn ls(ctx: Command.Context) !void {
         const args = ctx.args;
 
@@ -1035,7 +1076,7 @@ pub const RunCommand = struct {
     pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
         // without filters just behave like normal exec
         if (ctx.filters.len == 0) {
-            switch (try exec(ctx, bin_dirs_only, true)) {
+            switch (try exec(ctx, bin_dirs_only, true, false)) {
                 .ok => return,
                 .failure => Global.exit(1),
                 .code => |code| Global.exit(code),
@@ -1143,7 +1184,7 @@ pub const RunCommand = struct {
             fsinstance.top_level_dir = path;
             // TODO is this necessary? which assignment is correct here?
             fsinstance.fs.cwd = path;
-            const res = exec(ctx, bin_dirs_only, true) catch |err| {
+            const res = exec(ctx, bin_dirs_only, true, true) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
                 continue;
             };
@@ -1160,7 +1201,7 @@ pub const RunCommand = struct {
         }
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !ExecResult {
+    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool, comptime subprocess: bool) !ExecResult {
         var ctx = ctx_;
 
         // Step 1. Figure out what we're trying to run
@@ -1182,7 +1223,7 @@ pub const RunCommand = struct {
         if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or
             (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
-            Run.boot(ctx, ".") catch |err| {
+            return bootMaybeSubprocess(ctx, ".", subprocess) catch |err| {
                 if (Output.enable_ansi_colors) {
                     ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                 } else {
@@ -1198,7 +1239,7 @@ pub const RunCommand = struct {
                 }
                 return ExecResult.failure;
             };
-            return ExecResult.ok;
+            // return ExecResult.ok;
         }
 
         if (log_errors or force_using_bun) {
@@ -1282,7 +1323,8 @@ pub const RunCommand = struct {
 
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-                    Run.boot(ctx, out_path) catch |err| {
+
+                    return bootMaybeSubprocess(ctx, out_path, subprocess) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                         } else {
@@ -1299,7 +1341,7 @@ pub const RunCommand = struct {
                         return ExecResult.failure;
                     };
 
-                    return ExecResult.ok;
+                    // return ExecResult.ok;
                 }
             }
         }
@@ -1369,7 +1411,7 @@ pub const RunCommand = struct {
                         } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
                             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
                         {
-                            Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                            return bootMaybeSubprocess(ctx, try ctx.allocator.dupe(u8, script_name_to_search), subprocess) catch |err| {
                                 if (Output.enable_ansi_colors) {
                                     ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                                 } else {

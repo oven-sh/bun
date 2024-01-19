@@ -1737,7 +1737,7 @@ pub const Command = struct {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    switch (try RunCommand.exec(ctx, true, false)) {
+                    switch (try RunCommand.exec(ctx, true, false, false)) {
                         .failure => {},
                         .ok => return,
                         .code => |code| {

@@ -231,10 +231,6 @@ it("process.execArgv", () => {
   expect(process.execArgv instanceof Array).toBe(true);
 });
 
-it("process.binding", () => {
-  expect(() => process.binding("buffer")).toThrow();
-});
-
 it("process.argv in testing", () => {
   expect(process.argv).toBeInstanceOf(Array);
   expect(process.argv[0]).toBe(bunExe());

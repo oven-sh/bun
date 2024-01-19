@@ -66,7 +66,11 @@ console.log(stderr); // Buffer(0) []
 console.log(exitCode); // 0
 ```
 
-## Redirecting to JavaScript objects (`>`)
+## Redirection
+
+Bun Shell supports redirection with `<`, `>`, and `|` operators.
+
+### To JavaScript objects (`>`)
 
 To redirect stdout to a JavaScript object, use the `>` operator:
 
@@ -85,7 +89,7 @@ The following JavaScript objects are supported for redirection to:
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (writes to the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (writes to the file)
 
-## Redirecting from JavaScript objects (`<`)
+### From JavaScript objects (`<`)
 
 To redirect the output from JavaScript objects to stdin, use the `<` operator:
 
@@ -105,7 +109,7 @@ The following JavaScript objects are supported for redirection from:
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
 
-## Piping (`|`)
+### Piping (`|`)
 
 Like in bash, you can pipe the output of one command to another:
 
@@ -324,7 +328,7 @@ await $.braces(`echo {1,2,3}`);
 
 ### `$.raw` (unescaped strings)
 
-This function returns a string that is not escaped by Bun Shell:
+For security purposes, Bun Shell escapes input by default. If you need to disable that, this function returns a string that is not escaped by Bun Shell:
 
 ```js
 import { $ } from "bun";

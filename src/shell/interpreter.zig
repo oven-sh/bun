@@ -1085,10 +1085,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         }
 
         fn ioToJSValue(this: *ThisInterpreter, buf: *bun.ByteList) JSValue {
-            var bytelist = buf.*;
+            const bytelist = buf.*;
             buf.* = .{};
-            const arraybuf = JSC.ArrayBuffer.fromBytes(bytelist.slice(), .Uint8Array);
-            const value = arraybuf.toJSUnchecked(this.global, null);
+            const value = JSC.MarkedArrayBuffer.toNodeBuffer(
+                .{
+                    .allocator = bun.default_allocator,
+                    .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
+                },
+                this.global,
+            );
+
             return value;
         }
 

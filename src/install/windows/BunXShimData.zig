@@ -38,7 +38,13 @@ const Shebang = struct {
     program_utf16_len: u32,
     args_utf16_len: u32,
 
-    const BunExtensions = std.ComptimeStringMap(void, .{
+    const ExtensionType = enum {
+        run_with_bun,
+        run_with_cmd,
+        run_with_powershell,
+    };
+
+    const BunExtensions = std.ComptimeStringMap(ExtensionType, .{
         .{ wU8(".js"), {} },
         .{ wU8(".mjs"), {} },
         .{ wU8(".cjs"), {} },
@@ -50,6 +56,7 @@ const Shebang = struct {
         .{ wU8(".sh"), {} },
     });
 
+    /// std.fs.path.basename but utf16
     fn basenameW(path: []const u16) []const u16 {
         if (path.len == 0)
             return &[_]u16{};
@@ -91,12 +98,19 @@ const Shebang = struct {
     }
 
     pub fn parseFromBinPath(bin_path: []const u16) ?Shebang {
-        if (BunExtensions.has(@alignCast(std.mem.sliceAsBytes(extensionW(bin_path))))) {
+        if (BunExtensions.get(@alignCast(std.mem.sliceAsBytes(extensionW(bin_path))))) |i| {
+            const prog, const args = switch (i) {
+                .run_with_bun => .{ "bun", "run" },
+                .run_with_cmd => .{ "cmd", "/c" },
+                .run_with_powershell => .{ "powershell", "-ExecutionPolicy Bypass -File" },
+            };
             return .{
-                .program = "bun",
-                .args = "",
-                .program_utf16_len = comptime calcUtf16LeLen("bun") catch unreachable,
-                .args_utf16_len = 0,
+                .program = prog,
+                .args = args,
+                // unreachable is safe because the strings are known above
+                .program_utf16_len = calcUtf16LeLen(prog) catch unreachable,
+                // unreachable is safe because the strings are known above
+                .args_utf16_len = calcUtf16LeLen(args) catch unreachable,
                 .is_bun = true,
             };
         }

@@ -6,6 +6,7 @@
 //!
 //! Notes about NTDLL:
 //! - https://www.geoffchappell.com/studies/windows/win32/ntdll/index.htm
+//! - http://undocumented.ntinternals.net/index.html
 //! - https://github.com/ziglang/zig/issues/1840#issuecomment-558486115
 //!
 //! An earlier approach to this problem involved using extended attributes, but I found
@@ -32,8 +33,9 @@
 //! - It is optimized stupidly overkill for speed. There was no reason to go
 //!   this far. Dave was simply extremely bored one evening.
 //!
-//! - Does not use libc or any other dependencies besides `ntdll.dll`, the low level windows API.
-//!     - You cannot use `std.fs`, `std.ChildProcess`, `std.debug.print`, and most of `std.os`
+//! - Does not use libc or any other dependencies besides:
+//!     - `ntdll.dll` is used for reading the file
+//!     - `kernel32.dll` is used for spawning the process.
 //!
 //! - Must be compiled as an object file with Zig, and then linked manually. Otherwise you'll
 //!   include Zig's initializer code and other builtins. This also lets us forcefully link
@@ -44,7 +46,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Encoding = @import("./WinBunxEncoding.zig");
+const Encoding = @import("./BunXShimData.zig");
 
 const dbg = builtin.mode == .Debug;
 
@@ -164,8 +166,20 @@ inline fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) vo
 }
 
 // TODO: get the faster one in here
-fn memchr(in: [*]u8, to_find: u8, len: usize) ?[*]u8 {
+inline fn memchr(in: [*]u8, to_find: u8, len: usize) ?[*]u8 {
     return if (std.mem.indexOfScalar(u8, in[0..len], to_find)) |offset| (in + offset) else null;
+}
+
+inline fn memrchr(comptime T: type, in: [*]T, to_find: T, len: usize) ?[*]T {
+    std.debug.assert(len != 0);
+    var n = len;
+    var ptr = in + len - 1;
+    while (true) {
+        if (ptr[0] == to_find) return ptr;
+        n -= 1;
+        if (n == 0) return null;
+        ptr -= 1;
+    }
 }
 
 pub fn writeToHandle(handle: w.HANDLE, data: []const u8) error{}!usize {
@@ -181,10 +195,18 @@ pub fn writeToHandle(handle: w.HANDLE, data: []const u8) error{}!usize {
         null,
         null,
     );
-    _ = rc;
-    // if (rc != .SUCCESS) return error.WriteError;
-    // TODO: is this right?
-    return data.len;
+    if (rc != .SUCCESS) {
+        if (rc == .END_OF_FILE) {
+            return data.len;
+        }
+
+        // For this binary it we dont really care about errors here
+        // as this is just used for printing code, which will pretty much always pass.
+        // return error.WriteError;
+        return data.len;
+    }
+
+    return io.Information;
 }
 
 const NtWriter = std.io.Writer(w.HANDLE, error{}, writeToHandle);
@@ -248,34 +270,42 @@ fn mainImplementation() noreturn {
         debug("ImagePathName: {}\n", .{fmt16(image_path_b_u16[0 .. image_path_b_len / 2])});
     }
 
-    var buf_a: [
+    var buf1: [
         w.PATH_MAX_WIDE + "\"\" ".len
         //+ "\\\\?\\".len
     ]u16 = undefined;
 
+    const buf1_u8 = @as([*]u8, @ptrCast(&buf1[0]));
+    const buf1_u16 = @as([*]u16, @ptrCast(&buf1[0]));
+
     // @as(*align(2) u64, @ptrCast(&buf_a[0])).* = @as(u64, @bitCast([4]u16{ '\\', '\\', '?', '\\' }));
 
-    buf_a[0] = '"';
+    buf1[0] = '"';
     memcpy(
-        @as([*]u8, @ptrCast(&buf_a[1])),
+        buf1_u8 + 2,
         @as([*]u8, @ptrCast(ImagePathName.Buffer)),
         ImagePathName.Length - 6,
     );
 
-    const basename_start = (std.mem.lastIndexOfScalar(u16, image_path_b_u16[0 .. image_path_b_len / 2], '\\') orelse fail(.NoBasename)) + 1;
-    const dirname_start = (std.mem.lastIndexOfScalar(u16, image_path_b_u16[0 .. basename_start - 2], '\\') orelse fail(.NoDirname)) + 2;
+    // backtrack on the image name to find
+    // - the first character of the basename
+    // - the first character of the dirname
+    // we use this for manual path manipulation
+    const basename_slash_ptr = (memrchr(u16, buf1_u16, '\\', image_path_b_len / 2) orelse fail(.NoBasename));
+    std.debug.assert(basename_slash_ptr[0] == '\\');
+    const basename_ptr = basename_slash_ptr + 1;
 
-    @as(*align(2) u64, @ptrCast(&buf_a[image_path_b_len / 2 - 2])).* = @as(u64, @bitCast([4]u16{ 'b', 'u', 'n', 'x' }));
-
-    if (dbg) debug("BUF:{}\n", .{fmt16(buf_a[0..100])});
+    @as(*align(1) u64, @ptrCast(&buf1_u8[image_path_b_len - 2 * 2])).* = @as(u64, @bitCast([4]u16{ 'b', 'u', 'n', 'x' }));
 
     // open the metadata file
     var metadata_handle: w.HANDLE = undefined;
-    const path_len_bytes: c_ushort = @intCast(image_path_b_len + 2 - basename_start * 2);
+    const path_len_bytes: c_ushort = @intCast(
+        @intFromPtr(&buf1_u8[2]) + image_path_b_len - @intFromPtr(basename_ptr) + 2,
+    );
     var nt_name = w.UNICODE_STRING{
         .Length = path_len_bytes,
         .MaximumLength = path_len_bytes,
-        .Buffer = buf_a[basename_start + 1 ..].ptr,
+        .Buffer = basename_ptr,
     };
     if (dbg) debug("NtCreateFile({s})\n", .{fmt16(unicodeStringToU16(nt_name))});
     var attr = w.OBJECT_ATTRIBUTES{
@@ -307,10 +337,9 @@ fn mainImplementation() noreturn {
         fail(.CouldNotOpenShim);
     }
 
-    // read the metadata file into the memory right after the image path
-
-    // get a pointer to where the CLI arguments start
+    // get a slice to where the CLI arguments are
     var args_start = cmd_line_u8 + 2;
+    var args_len_b: usize = 0;
     switch (cmd_line_u16[0] == '"') {
         inline else => |is_quote| {
             const search_str = if (is_quote) '"' else ' ';
@@ -318,9 +347,17 @@ fn mainImplementation() noreturn {
             while (true) {
                 if (memchr(args_start, search_str, num_left)) |find| {
                     if (@intFromPtr(find) % 2 == 0 and find[1] == 0) {
+                        if (@intFromPtr(find) - @intFromPtr(cmd_line_u8) == cmd_line_b_len - 2) {
+                            args_start = find + 2;
+                            args_len_b = 0;
+                            break;
+                        }
                         args_start = if (is_quote) find + 4 else find + 2;
-                        assert(find[2] == ' ' and find[3] == 0);
+                        if (is_quote) {
+                            assert(find[2] == ' ' and find[3] == 0);
+                        }
                         while (args_start[0] == ' ' and args_start[1] == 0) args_start += 2;
+                        args_len_b = cmd_line_b_len - (@intFromPtr(args_start) - @intFromPtr(cmd_line_u8));
                         break;
                     }
                     num_left -= @intFromPtr(find) - @intFromPtr(args_start);
@@ -333,38 +370,71 @@ fn mainImplementation() noreturn {
         },
     }
 
-    if (dbg) debug("UserArgs: '{s}'\n", .{args_start[0 .. cmd_line_b_len / 2]});
+    if (dbg) debug("UserArgs: '{s}'\n", .{args_start[0..args_len_b]});
 
-    const read_ptr = @as([*]u8, @ptrCast(&buf_a[dirname_start]));
-    const read_len = buf_a.len * 2 - dirname_start * 2;
+    // Read the metadata file into the memory right after the image path.
+    //
+    // i'm really proud of this technique, because it will create an absolute path, but
+    // without needing to store the absolute path in the binary. it also reuses the memory
+    // from the earlier memcpy
+    const len4dirname = @intFromPtr(basename_slash_ptr) - @intFromPtr(buf1_u16) - 4;
+    if (dbg) debug("len_for_dirname: '{d}'\n", .{len4dirname});
+    const dirname_slash_ptr = (memrchr(
+        u16,
+        buf1_u16 + 2,
+        '\\',
+        (len4dirname) / 2,
+    ) orelse fail(.NoDirname));
+    std.debug.assert(dirname_slash_ptr[0] == '\\');
+    std.debug.assert(dirname_slash_ptr != basename_slash_ptr);
 
-    const read_status = nt.NtReadFile(metadata_handle, null, null, null, &io, read_ptr, @intCast(read_len), null, null);
+    const read_ptr = dirname_slash_ptr + 1;
+    const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
 
-    if (dbg) debug("BUF:{}\n", .{fmt16(buf_a[0..100])});
+    const read_status = nt.NtReadFile(metadata_handle, null, null, null, &io, read_ptr, @intCast(read_max_len), null, null);
+    const read_len = switch (read_status) {
+        .SUCCESS => io.Information,
+        .END_OF_FILE =>
+        // Supposedly .END_OF_FILE will be hit if you read exactly the amount of data left
+        // "IO_STATUS_BLOCK is filled only if !NT_ERROR(status)"
+        // https://stackoverflow.com/questions/62438021/can-ntreadfile-produce-a-short-read-without-reaching-eof
+        // In the context of this program, I don't think that is possible, but I will handle it
+        read_max_len,
+        else => fail(.CouldNotReadShim),
+    };
 
-    if (read_status != .SUCCESS) {
-        if (dbg) debug("error reading: {s}\n", .{@tagName(read_status)});
-        fail(.CouldNotReadShim);
-    }
+    if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
-    printError("TODO: Rearrange the arguments and Spawn the process", .{});
+    var process_params: w.RTL_USER_PROCESS_PARAMETERS = ProcessParameters;
+    _ = &process_params;
+
+    // printError("TODO: Rearrange the arguments and Spawn the process", .{});
 
     // std.debug.print("{}\n", .{
     //     std.unicode.fmtUtf16le(buf[0 .. dirname_start + size / 2]),
     // });
 
-    // k32.CreateProcessW(
-    //     lpApplicationName,
-    //     lpCommandLine,
-    //     lpProcessAttributes,
-    //     lpThreadAttributes,
-    //     bInheritHandles,
-    //     dwCreationFlags,
-    //     lpEnvironment,
-    //     lpCurrentDirectory,
-    //     lpStartupInfo,
-    //     lpProcessInformation,
-    // );
+    // I attempted to use lower level methods for this, but it really seems
+    // too difficult and not worth the stability risks.
+    //
+    // Resources related to the potential lower level stuff:
+    // - https://stackoverflow.com/questions/69599435/running-programs-using-rtlcreateuserprocess-only-works-occasionally
+    // - https://systemroot.gitee.io/pages/apiexplorer/d0/d2/rtlexec_8c.html
+    //
+    // Documentation for the function I am using:
+    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+    k32.CreateProcessW(
+        lpApplicationName,
+        lpCommandLine,
+        lpProcessAttributes,
+        lpThreadAttributes,
+        bInheritHandles,
+        dwCreationFlags,
+        lpEnvironment,
+        lpCurrentDirectory,
+        lpStartupInfo,
+        lpProcessInformation,
+    );
 
     w.ntdll.RtlExitUserProcess(0);
 }
@@ -372,6 +442,8 @@ fn mainImplementation() noreturn {
 fn mainCRTStartup() callconv(std.os.windows.WINAPI) noreturn {
     @call(.always_inline, mainImplementation, .{});
 }
+
+pub const main = mainImplementation;
 
 comptime {
     if (builtin.output_mode == .Obj)

@@ -27,7 +27,6 @@ let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
-  temp_dir = join(tmpdir(), temp_dir);
   await mkdir(temp_dir, { recursive: true });
 
   for (const file of temp_files) {
@@ -75,7 +74,9 @@ describe("bunshell", () => {
 
   test("failing stmt edgecase", async () => {
     const { stdout } =
-      await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`;
+      await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`.cwd(
+        temp_dir,
+      );
   });
 
   test("invalid js obj", async () => {

@@ -699,6 +699,20 @@ ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame*
 
 #ifdef __cplusplus
 
+ZIG_DECL JSC__JSValue UVStreamSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void UVStreamSink__finalize(void* arg0);
+ZIG_DECL JSC__JSValue UVStreamSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL void UVStreamSink__updateRef(void* arg0, bool arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+
+#ifdef __cplusplus
+
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(JSC__JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);

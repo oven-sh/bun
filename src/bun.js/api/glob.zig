@@ -268,6 +268,7 @@ pub const WalkTask = struct {
 
     fn deinit(this: *WalkTask) void {
         this.walker.deinit(true);
+        this.alloc.destroy(this.walker);
         this.alloc.destroy(this);
     }
 };
@@ -306,7 +307,9 @@ fn makeGlobWalker(
             return null;
         };
 
-        globWalker.* = .{};
+        globWalker.* = .{
+            .allocator = alloc,
+        };
 
         switch (globWalker.initWithCwd(
             arena,
@@ -334,7 +337,9 @@ fn makeGlobWalker(
         return null;
     };
 
-    globWalker.* = .{};
+    globWalker.* = .{
+        .allocator = alloc,
+    };
     switch (globWalker.init(
         arena,
         this.pattern,
@@ -463,6 +468,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
         arena.deinit();
         return .undefined;
     };
+    defer alloc.destroy(globWalker);
     defer globWalker.deinit(true);
 
     switch (globWalker.walk() catch {

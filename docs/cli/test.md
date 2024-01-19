@@ -27,17 +27,37 @@ test("2 + 2", () => {
 });
 ```
 
-The runner recursively searches the working directory for files that match the following patterns:
+The runner recursively searches the working directory for files that match the following glob patterns:
 
-- `*.test.{js|jsx|ts|tsx}`
-- `*_test.{js|jsx|ts|tsx}`
-- `*.spec.{js|jsx|ts|tsx}`
-- `*_spec.{js|jsx|ts|tsx}`
+- `**/*.test.{js,jsx,ts,tsx}`
+- `**/*_test.{js,jsx,ts,tsx}`
+- `**/*.spec.{js,jsx,ts,tsx}`
+- `**/*_spec.{js,jsx,ts,tsx}`
 
-You can filter the set of _test files_ to run by passing additional positional arguments to `bun test`. Any test file with a path that matches one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
+You can change the glob pattern to use with the `--include` flag:
+
+```bash
+$ bun test --include "tests/**/*.ts"
+```
+
+The above example only runs Typescript files inside `tests/` or one of its subdirectories.
+
+{% callout %}
+Note that if you are running `bun test` from a shell, escaping the pattern with double quotes is necessary to prevent the shell from performing glob expansion itself.
+{% /callout %}
+
+This is also configurable through the [`test.include`](/docs/runtime/bunfig#test-include) property in the `bunfig.toml`.
+
+You can also filter the set of _test files_ to run by passing additional positional arguments to `bun test`. Any test file with a path that includes one of the filters will run. Commonly, these filters will be file or directory names.
 
 ```bash
 $ bun test <filter> <filter> ...
+```
+
+For example, this will run all tests with `foo` or `bar` in the filename:
+
+```bash
+$ bun test foo bar
 ```
 
 To filter by _test name_, use the `-t`/`--test-name-pattern` flag.

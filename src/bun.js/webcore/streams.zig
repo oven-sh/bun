@@ -2022,7 +2022,7 @@ pub const ArrayBufferSink = struct {
 };
 
 pub const UVStreamSink = struct {
-    stream: *uv.uv_stream_t,
+    stream: StreamType,
 
     allocator: std.mem.Allocator,
     done: bool = false,
@@ -2030,6 +2030,7 @@ pub const UVStreamSink = struct {
     next: ?Sink = null,
     buffer: bun.ByteList = .{},
     pub const name = "UVStreamSink";
+    const StreamType = if(Environment.isWindows) *uv.uv_stream_t else *anyopaque;
     const AsyncWriteInfo = struct {
         sink: *UVStreamSink,
         input_buffer: uv.uv_buf_t = std.mem.zeroes(uv.uv_buf_t),
@@ -2066,11 +2067,14 @@ pub const UVStreamSink = struct {
 
     fn writeAsync(this: *UVStreamSink, data: []const u8) void {
         if (this.done) return;
+        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
 
         AsyncWriteInfo.init(this, data).run();
     }
 
     fn writeMaybeSync(this: *UVStreamSink, data: []const u8) void {
+        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+
         if (this.done) return;
 
         var to_write = data;
@@ -2110,6 +2114,7 @@ pub const UVStreamSink = struct {
     }
 
     pub fn close(this: *UVStreamSink) void {
+        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
         _ = uv.uv_close(@ptrCast(this.stream), null);
     }
 
@@ -2118,11 +2123,11 @@ pub const UVStreamSink = struct {
             this.buffer.listManaged(this.allocator).deinit();
             this.buffer = bun.ByteList.init("");
         }
-        _ = uv.uv_close(@ptrCast(this.stream), null);
+        this.close();
         this.allocator.destroy(this);
     }
 
-    pub fn init(allocator: std.mem.Allocator, stream: *uv.uv_stream_t, next: ?Sink) !*UVStreamSink {
+    pub fn init(allocator: std.mem.Allocator, stream: StreamType, next: ?Sink) !*UVStreamSink {
         const this = try allocator.create(UVStreamSink);
         this.* = UVStreamSink{
             .stream = stream,
@@ -2179,7 +2184,7 @@ pub const UVStreamSink = struct {
         if (this.next) |*next| {
             return next.end(err);
         }
-        _ = uv.uv_close(@ptrCast(this.stream), null);
+        this.close();
         this.signal.close(err);
         return .{ .result = {} };
     }
@@ -2189,7 +2194,7 @@ pub const UVStreamSink = struct {
             this.buffer = bun.ByteList.init("");
             this.head = 0;
         }
-        _ = uv.uv_close(@ptrCast(this.stream), null);
+        this.close();
         this.allocator.destroy(this);
     }
     pub fn toJS(this: *UVStreamSink, globalThis: *JSGlobalObject) JSValue {
@@ -2200,7 +2205,7 @@ pub const UVStreamSink = struct {
         if (this.done) {
             return .{ .result = JSC.JSValue.jsNumber(0) };
         }
-        _ = uv.uv_close(@ptrCast(this.stream), null);
+        this.close();
         std.debug.assert(this.next == null);
 
         if (this.buffer.cap > 0) {

@@ -1,7 +1,7 @@
 Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
 
 {% callout type="note" %}
-**Alpha-quality software**: Bun Shell is a new API still under development. If you have feature requests or run into bugs, please open an issue.
+**Alpha-quality software**: Bun Shell is an unstable API still under development. If you have feature requests or run into bugs, please open an issue. There may be breaking changes in the future.
 {% /callout %}
 
 Quickstart:
@@ -161,12 +161,14 @@ await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tm
 
 ### Changing the environment variables
 
-You can change the environment variables of a command by passing an object to `.env()`:
+By default, `process.env` is used as the environment variables for all commands.
+
+You can change the environment variables for a single command by calling `.env()`:
 
 ```js
 import { $ } from "bun";
 
-await $`echo $FOO`.env({ FOO: "bar" }); // bar
+await $`echo $FOO`.env({ ...process.env, FOO: "bar" }); // bar
 ```
 
 You can change the default environment variables for all commands by calling `$.env`:
@@ -181,6 +183,20 @@ await $`echo $FOO`; // bar
 
 // the locally-set $FOO
 await $`echo $FOO`.env({ FOO: "baz" }); // baz
+```
+
+You can reset the environment variables to the default by calling `$.env()` with no arguments:
+
+```js
+import { $ } from "bun";
+
+$.env({ FOO: "bar" });
+
+// the globally-set $FOO
+await $`echo $FOO`; // bar
+
+// the locally-set $FOO
+await $`echo $FOO`.env(undefined); // ""
 ```
 
 ### Changing the working directory
@@ -243,7 +259,20 @@ for await (let line of $`echo "Hello World!"`.lines()) {
 }
 ```
 
-There are issues with this API. If the command fails, it may return no content with no easy way to distinguish between a command that returns no content and a command that fails.
+You can also use `.lines()` on a completed command:
+
+```js
+import { $ } from "bun";
+
+const search = "bun";
+const iterator = await $`cat list.txt | grep ${search}`.lines();
+if (iterator.exitCode !== 0) {
+  throw new Error("oh no");
+}
+for await (let line of iterator) {
+  console.log(line);
+}
+```
 
 ### Reading output as a Blob
 
@@ -277,6 +306,32 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 - `mkdir`: create directories
 - `cp`: copy files and directories
 - `cat`: concatenate files
+
+## Utilities
+
+Bun Shell also implements a set of utilities for working with shells.
+
+### `$.braces` (brace expansion)
+
+This function implements simple [brace expansion](https://www.gnu.org/software/bash/manual/html_node/Brace-Expansion.html) for shell commands:
+
+```js
+import { $ } from "bun";
+
+await $.braces(`echo {1,2,3}`);
+// => ["echo 1", "echo 2", "echo 3"]
+```
+
+### `$.raw` (unescaped strings)
+
+This function returns a string that is not escaped by Bun Shell:
+
+```js
+import { $ } from "bun";
+
+await $`echo ${$.raw("Hello World!")}`;
+// => Hello World!
+```
 
 ## Credits
 

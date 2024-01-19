@@ -1542,7 +1542,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
                 break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
                     .err => |err| {
-                        return .{ .err = .{ .sys = err } };
+                        return .{ .err = .{ .sys = err.clone(bun.default_allocator) catch bun.outOfMemory() } };
                     },
                     .result => |pid_| pid_,
                 };

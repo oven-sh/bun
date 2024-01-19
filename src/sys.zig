@@ -1375,6 +1375,12 @@ pub const Error = struct {
         return this.getErrno() == .AGAIN;
     }
 
+    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
+        var copy = this.*;
+        copy.path = try allocator.dupe(u8, copy.path);
+        return copy;
+    }
+
     pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(@intFromEnum(errno))),

@@ -4,7 +4,7 @@ import { ShellPromise } from "bun";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import * as fs from "node:fs";
-import { TestBuilder } from './test_builder'
+import { TestBuilder } from "./test_builder";
 
 export { TestBuilder };
 
@@ -37,4 +37,3 @@ export const sortedShellOutput = (output: string): string[] =>
     .split("\n")
     .filter(s => s.length > 0)
     .sort();
-

@@ -78,7 +78,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
 
     #throwIfRunning() {
-      if (this.#hasRun) throw new Error('Shell is already running')
+      if (this.#hasRun) throw new Error("Shell is already running");
     }
 
     run(): this {
@@ -101,51 +101,95 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   const originalDefaultEnv = defaultEnv;
   var defaultCwd: string | undefined = undefined;
 
-  var BunShell = function BunShell() {
-    const core = new ShellInterpreter(...arguments);
+  const cwdSymbol = Symbol("cwd");
+  const envSymbol = Symbol("env");
 
-    // cwd must be set before env or else it will be injected into env as "PWD=/"
-    if (defaultCwd) core.setCwd(defaultCwd);
+  class ShellPrototype {
+    [cwdSymbol]: string | undefined;
+    [envSymbol]: Record<string, string | undefined> | undefined;
 
-    if (defaultEnv) core.setEnv(defaultEnv);
-
-    return new ShellPromise(core);
-  };
-
-  var BunShellPrototype = {
-    __proto__: null,
-    Promise: ShellPromise,
-    env: function env(newEnv: Record<string, string | undefined>) {
+    env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
-        defaultEnv = originalDefaultEnv;
+        this[envSymbol] = originalDefaultEnv;
       } else if (newEnv) {
-        defaultEnv = Object.assign({}, newEnv);
+        this[envSymbol] = Object.assign({}, newEnv);
       } else {
         throw new TypeError("env must be an object or undefined");
       }
 
       return this;
-    },
-    cwd: function cwd(newCwd: string | undefined) {
+    }
+    cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
         if (newCwd === "" || newCwd === ".") {
           newCwd = undefined;
         }
 
-        defaultCwd = newCwd;
+        this[cwdSymbol] = newCwd;
       } else {
         throw new TypeError("cwd must be a string or undefined");
       }
 
       return this;
-    },
-  };
-
-  if (IS_BUN_DEVELOPMENT) {
-    BunShellPrototype.Interpreter = ShellInterpreter;
+    }
   }
 
-  Object.setPrototypeOf(BunShell, BunShellPrototype);
+  var BunShell = function BunShell() {
+    const core = new ShellInterpreter(...arguments);
 
+    const cwd = BunShell[cwdSymbol];
+    const env = BunShell[envSymbol];
+
+    // cwd must be set before env or else it will be injected into env as "PWD=/"
+    if (cwd) core.setCwd(cwd);
+    if (env) core.setEnv(env);
+
+    return new ShellPromise(core);
+  };
+
+  function Shell() {
+    if (!new.target) {
+      throw new TypeError("Class constructor Shell cannot be invoked without 'new'");
+    }
+
+    var Shell = function Shell() {
+      const core = new ShellInterpreter(...arguments);
+
+      const cwd = Shell[cwdSymbol];
+      const env = Shell[envSymbol];
+
+      // cwd must be set before env or else it will be injected into env as "PWD=/"
+      if (cwd) core.setCwd(cwd);
+      if (env) core.setEnv(env);
+
+      return new ShellPromise(core);
+    };
+    Object.setPrototypeOf(Shell, ShellPrototype.prototype);
+    Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
+
+    return Shell;
+  }
+
+  Shell.prototype = ShellPrototype.prototype;
+  Object.setPrototypeOf(Shell, ShellPrototype);
+  Object.setPrototypeOf(BunShell, ShellPrototype.prototype);
+
+  BunShell[cwdSymbol] = defaultCwd;
+  BunShell[envSymbol] = defaultEnv;
+
+  Object.defineProperties(BunShell, {
+    Shell: {
+      value: Shell,
+      configurable: false,
+      enumerable: true,
+      writable: false,
+    },
+    ShellPromise: {
+      value: ShellPromise,
+      configurable: false,
+      enumerable: true,
+      writable: false,
+    },
+  });
   return BunShell;
 }

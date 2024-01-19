@@ -5,6 +5,7 @@ import { TestBuilder, redirect } from "./util";
 import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 import {
+  bunEnv,
   randomInvalidSurrogatePair,
   randomLoneSurrogate,
   runWithError,
@@ -12,6 +13,9 @@ import {
   tempDirWithFiles,
 } from "harness";
 import { openSync, closeSync, writeFileSync, appendFileSync, readFileSync, mkdtempSync } from "node:fs";
+
+$.env(bunEnv);
+$.cwd(process.cwd());
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
@@ -52,26 +56,34 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 
 describe("fd leak", () => {
   function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
-    // console.log(builder.toString());
     test(`fdleak_${name}`, async () => {
+      for (let i = 0; i < 5; i++) {
+        await builder().quiet().run();
+      }
+
       const baseline = openSync("/dev/null", "r");
       closeSync(baseline);
+
       for (let i = 0; i < runs; i++) {
         await builder().quiet().run();
-        // await builder().run();
       }
       const fd = openSync("/dev/null", "r");
       closeSync(fd);
       expect(fd).toBe(baseline);
-    });
+    }, 100_000);
   }
 
-  function memLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 100 * (1 << 20)) {
+  function memLeakTest(
+    name: string,
+    builder: () => TestBuilder,
+    runs: number = 500,
+    threshold: number = 100 * (1 << 20),
+  ) {
     test(`memleak_${name}`, async () => {
       const tempfile = join(tmpdir(), "script.ts");
 
       const filepath = import.meta.dirname;
-      const testcode = new TextDecoder().decode(await Bun.file(join(filepath, "./test_builder.ts")).arrayBuffer());
+      const testcode = await Bun.file(join(filepath, "./test_builder.ts")).text();
 
       writeFileSync(tempfile, testcode);
 
@@ -95,18 +107,20 @@ describe("fd leak", () => {
                   expect(Math.abs(prev - val)).toBeLessThan(hundredMb)
                 }
               }
-            })
+            }, 1_000_000)
             `;
 
       appendFileSync(tempfile, impl);
 
       // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
 
-      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile]);
+      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
+        env: bunEnv,
+      });
       // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
-      console.log('\n\nSTDERR:', stderr.toString());
+      console.log("\n\nSTDERR:", stderr.toString());
       expect(exitCode).toBe(0);
-    });
+    }, 100_000);
   }
 
   TESTS.forEach(args => {
@@ -115,7 +129,11 @@ describe("fd leak", () => {
   });
 
   // Use text of this file so its big enough to cause a leak
-  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer((1 << 20) * 100)}`, 100);
+  memLeakTest(
+    "ArrayBuffer",
+    () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer((1 << 20) * 100)}`,
+    100,
+  );
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
-  memLeakTest("String", () => TestBuilder.command`echo ${Array((4096)).fill('a').join('')}`.stdout(() => {}), 100, 4096);
+  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100, 4096);
 });

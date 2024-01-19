@@ -5,7 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, mkdir } from "fs/promises";
 import { join, relative } from "path";
 import { TestBuilder, redirect } from "./util";
 import { tmpdir } from "os";
@@ -28,6 +28,8 @@ let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  await mkdir(temp_dir, { recursive: true });
+
   for (const file of temp_files) {
     const writer = Bun.file(join(temp_dir, file)).writer();
     writer.write("foo");
@@ -60,8 +62,7 @@ describe("bunshell", () => {
     test("basic", async () => {
       // Check its buffered
       {
-        const { stdout, stderr } =
-          await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
+        const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
         expect(stdout.toString()).toEqual("hi\n");
         expect(stderr.toString()).toEqual("lol\n");
       }
@@ -81,14 +82,16 @@ describe("bunshell", () => {
       expect(stderr.toString()).toBe("");
     });
 
-    test('cmd subst', async () => {
-      await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run()
-    })
+    test("cmd subst", async () => {
+      await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run();
+    });
   });
 
   test("failing stmt edgecase", async () => {
     const { stdout } =
-      await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`;
+      await $`mkdir foo; touch ./foo/lol ./foo/nice ./foo/lmao; mkdir foo/bar; touch ./foo/bar/great; touch ./foo/bar/wow; ls foo -R`.cwd(
+        temp_dir,
+      );
   });
 
   test("invalid js obj", async () => {

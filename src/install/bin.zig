@@ -338,8 +338,6 @@ pub const Bin = extern struct {
 
                 std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
 
-                std.debug.print("install <{s}> -> <{s}>", .{ target_path[3..], dest_path });
-
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);
                 var destination_wpath: []u16 = bun.strings.convertUTF8toUTF16InBuffer(&filename2_buf, dest_path);
 

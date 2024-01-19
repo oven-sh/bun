@@ -35,16 +35,6 @@ import { $ } from "bun";
 await $`echo "Hello World!"`; // Hello World!
 ```
 
-What if you want to access the output of the command as text? Use `.text()`:
-
-```js
-import { $ } from "bun";
-
-const welcome = await $`echo "Hello World!"`.text();
-
-console.log(welcome); // Hello World!\n
-```
-
 By default, shell commands print to stdout. To quiet the output, call `.quiet()`:
 
 ```js
@@ -53,12 +43,23 @@ import { $ } from "bun";
 await $`echo "Hello World!"`.quiet(); // No output
 ```
 
+What if you want to access the output of the command as text? Use `.text()`:
+
+```js
+import { $ } from "bun";
+
+// .text() automatically calls .quiet() for you
+const welcome = await $`echo "Hello World!"`.text();
+
+console.log(welcome); // Hello World!\n
+```
+
 To get stdout, stderr, and the exit code, use await or .run:
 
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr, exitCode } = await $`echo "Hello World!"`;
+const { stdout, stderr, exitCode } = await $`echo "Hello World!"`.quiet();
 
 console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
 console.log(stderr); // Buffer(0) []
@@ -237,7 +238,7 @@ To read the output of a command line-by-line, use `.lines()`:
 ```js
 import { $ } from "bun";
 
-for await (let line of await $`echo "Hello World!"`.lines()) {
+for await (let line of $`echo "Hello World!"`.lines()) {
   console.log(line); // Hello World!
 }
 ```

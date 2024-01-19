@@ -337,6 +337,27 @@ await $`echo ${$.raw("Hello World!")}`;
 // => Hello World!
 ```
 
+## Standalone usage
+
+You can use Bun Shell to run simple shell script files on your computer.
+
+To do that, run any file with bun that ends with `.bun.sh`:
+
+```sh
+$ echo "echo Hello World!" > script.bun.sh
+$ bun ./script.bun.sh
+> Hello World!
+```
+
+On Windows, Bun Shell is used automatically to run `.sh` files when using Bun:
+
+```sh
+$ echo "echo Hello World!" > script.sh
+# On windows, .bun.sh is not needed, just .sh
+$ bun ./script.sh
+> Hello World!
+```
+
 ## Credits
 
 Large parts of this API were inspired by [zx](https://github.com/google/zx) and [dax](https://github.com/dsherret/dax). Thank you to the authors of those projects.

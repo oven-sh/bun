@@ -4830,10 +4830,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 pub fn queueBlockingOutput(this: *Ls, bo: BlockingOutput) void {
-                    this.queueBlockingOutputImpl(bo, true);
+                    _ = this.queueBlockingOutputImpl(bo, true);
                 }
 
-                pub fn queueBlockingOutputImpl(this: *Ls, bo: BlockingOutput, do_run: bool) void {
+                pub fn queueBlockingOutputImpl(this: *Ls, bo: BlockingOutput, do_run: bool) CoroutineResult {
                     const node = bun.default_allocator.create(std.DoublyLinkedList(BlockingOutput).Node) catch bun.outOfMemory();
                     node.* = .{
                         .data = bo,
@@ -4841,12 +4841,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.state.exec.output_queue.append(node);
 
                     // Start it
-                    if (this.state.exec.output_queue.len == 1) {
-                        _ = do_run;
+                    if (this.state.exec.output_queue.len == 1 and do_run) {
                         // if (do_run and !this.state.exec.started_output_queue) {
                         this.state.exec.started_output_queue = true;
                         this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
+                        return .yield;
                     }
+                    return .cont;
+                }
+
+                fn scheduleBlockingOutput(this: *Ls) CoroutineResult {
+                    if (this.state.exec.output_queue.len > 0) {
+                        this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
+                        return .yield;
+                    }
+                    return .cont;
                 }
 
                 pub fn onBufferedWriterDone(this: *Ls, e: ?Syscall.Error) void {
@@ -4865,6 +4874,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
                     if (first.next) |next_writer| {
                         next_writer.data.writer.writeIfPossible(false);
+                        return;
                     }
 
                     this.next();
@@ -4876,7 +4886,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     const err = task_.err;
                     task_.deinit();
 
-                    const need_to_write_to_stdout_with_io = output.items.len > 0 and this.bltn.stdout.needsIO();
+                    // const need_to_write_to_stdout_with_io = output.items.len > 0 and this.bltn.stdout.needsIO();
+                    var queued: bool = false;
 
                     // Check for error, print it, but still want to print task output
                     if (err) |e| {
@@ -4884,6 +4895,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         this.state.exec.err = e;
 
                         if (this.bltn.stderr.needsIO()) {
+                            queued = true;
                             const blocking_output: BlockingOutput = .{
                                 .writer = BufferedWriter{
                                     .fd = this.bltn.stderr.expectFd(),
@@ -4893,8 +4905,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 },
                                 .arr = std.ArrayList(u8).init(bun.default_allocator),
                             };
-                            this.queueBlockingOutputImpl(blocking_output, !need_to_write_to_stdout_with_io);
-                            if (!need_to_write_to_stdout_with_io) return; // yield execution
+                            _ = this.queueBlockingOutputImpl(blocking_output, false);
+                            // if (!need_to_write_to_stdout_with_io) return; // yield execution
                         } else {
                             if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |theerr| {
                                 global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(theerr));
@@ -4903,6 +4915,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     if (this.bltn.stdout.needsIO()) {
+                        queued = true;
                         const blocking_output: BlockingOutput = .{
                             .writer = BufferedWriter{
                                 .fd = this.bltn.stdout.expectFd(),
@@ -4912,7 +4925,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             },
                             .arr = output,
                         };
-                        this.queueBlockingOutput(blocking_output);
+                        _ = this.queueBlockingOutputImpl(blocking_output, false);
+                        // if (this.state == .done) return;
+                        // return this.next();
+                    }
+
+                    if (queued) {
+                        if (this.scheduleBlockingOutput() == .yield) return;
                         if (this.state == .done) return;
                         return this.next();
                     }
@@ -4970,6 +4989,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     pub fn enqueue(this: *@This(), path: [:0]const u8) void {
+                        print("enqueue: {s}", .{path});
                         const new_path = this.join(
                             bun.default_allocator,
                             &[_][]const u8{
@@ -5084,6 +5104,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     fn doneLogic(this: *@This()) void {
+                        print("Done", .{});
                         if (comptime EventLoopKind == .js) {
                             this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
                         } else {

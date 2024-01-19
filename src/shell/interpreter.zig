@@ -1144,7 +1144,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 globalThis.throwInvalidArguments("resolve must be a function", .{});
                 return .undefined;
             }
-            this.resolve.set(globalThis, value);
+            this.resolve.set(globalThis, value.withAsyncContextIfNeeded(globalThis));
             return .undefined;
         }
 
@@ -1154,7 +1154,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 globalThis.throwInvalidArguments("reject must be a function", .{});
                 return .undefined;
             }
-            this.reject.set(globalThis, value);
+            this.reject.set(globalThis, value.withAsyncContextIfNeeded(globalThis));
             return .undefined;
         }
 

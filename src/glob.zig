@@ -122,6 +122,8 @@ fn dummyFilterFalse(val: []const u8) bool {
 }
 
 pub const SyscallAccessor = struct {
+    const count_fds = true;
+
     const Handle = struct {
         value: bun.FileDescriptor,
 
@@ -148,14 +150,14 @@ pub const SyscallAccessor = struct {
         }
     };
 
-    pub fn open(path: [:0]const u8) Maybe(Handle) {
+    pub fn open(path: [:0]const u8) !Maybe(Handle) {
         return switch (Syscall.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
             .result => |fd| .{ .result = Handle{ .value = fd } },
         };
     }
 
-    pub fn openat(handle: Handle, path: [:0]const u8) Maybe(Handle) {
+    pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
         return switch (Syscall.openat(handle.value, path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
             .result => |fd| .{ .result = Handle{ .value = fd } },
@@ -173,6 +175,9 @@ pub const SyscallAccessor = struct {
 
 pub const DirEntryAccessor = struct {
     const FS = bun.fs.FileSystem;
+
+    const count_fds = false;
+
     const Handle = struct {
         value: ?*FS.DirEntry,
 
@@ -184,11 +189,11 @@ pub const DirEntryAccessor = struct {
 
         pub fn eql(this: Handle, other: Handle) bool {
             // TODO this might not be quite right, we're comparing pointers, not the underlying directory
+            // On the other hand, DirEntries are only ever created once (per generation), so this should be fine?
+            // Realistically, as closing the handle is a no-op, this should be fine either way.
             return this.value == other.value;
         }
     };
-
-    // const IterType = @TypeOf((Handle{ .value = null }).value.?.data.iterator());
 
     const DirIter = struct {
         value: ?FS.DirEntry.EntryMap.Iterator,
@@ -207,20 +212,23 @@ pub const DirEntryAccessor = struct {
         };
 
         pub inline fn next(self: *DirIter) Maybe(?IterResult) {
-            var value = self.value orelse return .{ .result = null };
-            const nextval = value.next() orelse return .{ .result = null };
-            const name = nextval.key_ptr.*;
-            const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
-            const kind2 = switch (kind) {
-                .file => std.fs.File.Kind.file,
-                .dir => std.fs.File.Kind.directory,
-            };
-            return .{
-                .result = .{
-                    .name = IterResult.NameWrapper{ .value = name },
-                    .kind = kind2,
-                },
-            };
+            if (self.value) |*value| {
+                const nextval = value.next() orelse return .{ .result = null };
+                const name = nextval.key_ptr.*;
+                const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
+                const fskind = switch (kind) {
+                    .file => std.fs.File.Kind.file,
+                    .dir => std.fs.File.Kind.directory,
+                };
+                return .{
+                    .result = .{
+                        .name = IterResult.NameWrapper{ .value = name },
+                        .kind = fskind,
+                    },
+                };
+            } else {
+                return .{ .result = null };
+            }
         }
 
         pub inline fn iterate(dir: Handle) DirIter {
@@ -229,31 +237,35 @@ pub const DirEntryAccessor = struct {
         }
     };
 
-    pub fn open(path: [:0]const u8) Maybe(Handle) {
+    pub fn open(path: [:0]const u8) !Maybe(Handle) {
         return openat(Handle.zero, path);
     }
 
-    pub fn openat(handle: Handle, path_: [:0]const u8) Maybe(Handle) {
+    pub fn openat(handle: Handle, path_: [:0]const u8) !Maybe(Handle) {
         var path: []const u8 = path_;
         var buf: bun.PathBuffer = undefined;
-        if (handle.value) |entry| {
-            path = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path_ }, .auto);
+        if (path.len > 0 and path[0] != '/') {
+            if (handle.value) |entry| {
+                path = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+            }
         }
-        // TODO handle errors correctly
-        const res = FS.instance.fs.readDirectory(path, null, 0, true) catch unreachable;
+        // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
+        // The glob implementation specifically checks for this error when dealing with symlinks
+        // return .{ .err = Syscall.Error.fromCode(bun.C.E.NOTDIR, Syscall.Tag.open) };
+        const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
+            return err;
+        };
         switch (res.*) {
             .entries => |entry| {
                 return .{ .result = Handle{ .value = entry } };
             },
             .err => |err| {
-                // actually report the error if it's not a not found error
-                _ = err;
-                return .{ .err = Syscall.Error.fromCode(bun.C.E.NOTDIR, Syscall.Tag.open) };
+                return err.original_err;
             },
         }
     }
 
-    pub fn close(handle: Handle) ?Syscall.Error {
+    pub inline fn close(handle: Handle) ?Syscall.Error {
         // TODO is this a noop?
         _ = handle;
         return null;
@@ -269,6 +281,7 @@ pub fn GlobWalker_(
     comptime Accessor: type,
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
+    const count_fds = Accessor.count_fds and bun.Environment.allow_assert;
 
     return struct {
         const GlobWalker = @This();
@@ -332,19 +345,19 @@ pub fn GlobWalker_(
             /// This is to make sure in debug/tests that we are closing file descriptors
             /// We should only have max 2 open at a time. One for the cwd, and one for the
             /// directory being iterated on.
-            fds_open: if (bun.Environment.allow_assert) usize else u0 = 0,
+            fds_open: if (count_fds) usize else u0 = 0,
 
             pub fn init(this: *Iterator) !Maybe(void) {
                 var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
                 const root_path = this.walker.cwd;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                const cwd_fd = switch (Accessor.open(@ptrCast(path_buf[0 .. root_path.len + 1]))) {
+                const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,
                 };
 
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     this.fds_open += 1;
                 }
 
@@ -376,7 +389,7 @@ pub fn GlobWalker_(
                     }
                 }
 
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     std.debug.assert(this.fds_open == 0);
                 }
             }
@@ -384,17 +397,17 @@ pub fn GlobWalker_(
             pub fn closeCwdFd(this: *Iterator) void {
                 if (this.cwd_fd.isZero()) return;
                 _ = Accessor.close(this.cwd_fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
             pub fn closeDisallowingCwd(this: *Iterator, fd: Accessor.Handle) void {
                 if (fd.eql(this.cwd_fd)) return;
                 _ = Accessor.close(fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
             pub fn bumpOpenFds(this: *Iterator) void {
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
                     std.debug.assert(this.fds_open <= 2);
@@ -445,7 +458,7 @@ pub fn GlobWalker_(
                 const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
-                        if (had_dot_dot) break :fd switch (Accessor.openat(this.cwd_fd, dir_path)) {
+                        if (had_dot_dot) break :fd switch (try Accessor.openat(this.cwd_fd, dir_path)) {
                             .err => |err| return .{
                                 .err = this.walker.handleSysErrWithPath(err, dir_path),
                             },
@@ -459,7 +472,7 @@ pub fn GlobWalker_(
                         break :fd this.cwd_fd;
                     }
 
-                    break :fd switch (Accessor.openat(this.cwd_fd, dir_path)) {
+                    break :fd switch (try Accessor.openat(this.cwd_fd, dir_path)) {
                         .err => |err| return .{
                             .err = this.walker.handleSysErrWithPath(err, dir_path),
                         },
@@ -507,7 +520,7 @@ pub fn GlobWalker_(
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
-                                    const maybe_dir_fd: ?Accessor.Handle = switch (Accessor.openat(this.cwd_fd, symlink_full_path_z)) {
+                                    const maybe_dir_fd: ?Accessor.Handle = switch (try Accessor.openat(this.cwd_fd, symlink_full_path_z)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
                                                 break :brk null;

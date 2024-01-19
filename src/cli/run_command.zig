@@ -1088,10 +1088,6 @@ pub const RunCommand = struct {
         var root_buf: bun.PathBuffer = undefined;
         const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, olddir, &root_buf);
 
-        for (patterns.items) |path| {
-            std.debug.print("pattern: {s}\n", .{path});
-        }
-
         var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
         defer package_json_iter.deinit();
 
@@ -1103,7 +1099,6 @@ pub const RunCommand = struct {
         while (try package_json_iter.next()) |package_json_path| {
             const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
             const path = strings.withoutTrailingSlash(dirpath);
-            std.debug.print("package_json_path: {s}\n", .{package_json_path});
             const matches = matches: {
                 if (filter_instance.has_name_filters) {
                     // TODO load name from package.json
@@ -1133,7 +1128,6 @@ pub const RunCommand = struct {
                 }
             };
 
-            std.debug.print("matches: {}\n", .{matches});
             if (!matches) continue;
             any_match = true;
             Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});

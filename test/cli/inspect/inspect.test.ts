@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { test, expect, afterEach } from "bun:test";
 import { bunExe, bunEnv, randomPort } from "harness";
 import { Subprocess, spawn } from "bun";
 import { WebSocket } from "ws";
@@ -179,6 +179,33 @@ const tests = [
       pathname: "/",
     },
   },
+  {
+    args: ["--inspect=ws://localhost/"],
+    url: {
+      protocol: "ws:",
+      hostname: "localhost",
+      port: anyPort,
+      pathname: "/",
+    },
+  },
+  {
+    args: ["--inspect=ws://localhost:0/"],
+    url: {
+      protocol: "ws:",
+      hostname: "localhost",
+      port: anyPort,
+      pathname: "/",
+    },
+  },
+  {
+    args: ["--inspect=ws://localhost:6499/foo/bar"],
+    url: {
+      protocol: "ws:",
+      hostname: "localhost",
+      port: "6499",
+      pathname: "/foo/bar",
+    },
+  },
 ];
 
 for (const { args, url: expected } of tests) {
@@ -253,6 +280,9 @@ for (const { args, url: expected } of tests) {
     webSocket.close();
   });
 }
+
+// FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
+test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
 
 afterEach(() => {
   inspectee?.kill();

@@ -1,18 +1,10 @@
 import { $ } from "bun";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
-import { join, relative } from "path";
-import { TestBuilder, redirect } from "./util";
+import { describe, expect, test } from "bun:test";
+import { bunEnv } from "harness";
+import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "os";
-import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import {
-  bunEnv,
-  randomInvalidSurrogatePair,
-  randomLoneSurrogate,
-  runWithError,
-  runWithErrorPromise,
-  tempDirWithFiles,
-} from "harness";
-import { openSync, closeSync, writeFileSync, appendFileSync, readFileSync, mkdtempSync } from "node:fs";
+import { join } from "path";
+import { TestBuilder } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());

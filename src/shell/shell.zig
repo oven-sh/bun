@@ -2476,7 +2476,19 @@ pub fn shellCmdFromJS(
                 }
 
                 if (template_value.as(JSC.WebCore.Blob)) |blob| {
-                    _ = blob;
+                    if (blob.store) |store| {
+                        if (store.data == .file) {
+                            if (store.data.file.pathlike == .path) {
+                                const path = store.data.file.pathlike.path.slice();
+                                if (!try appendUTF8Text(path, out_script, true)) {
+                                    globalThis.throw("Shell script string contains invalid UTF-16", .{});
+                                    return false;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
                     const idx = out_jsobjs.items.len;
                     template_value.protect();
                     try out_jsobjs.append(template_value);
@@ -2541,6 +2553,20 @@ pub fn appendJSValueStr(globalThis: *JSC.JSGlobalObject, jsval: JSValue, outbuf:
     defer bunstr.deref();
 
     return try appendBunStr(bunstr, outbuf, allow_escape);
+}
+
+pub fn appendUTF8Text(slice: []const u8, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {
+    if (!bun.simdutf.validate.utf8(slice)) {
+        return false;
+    }
+
+    if (allow_escape and needsEscape(slice)) {
+        try escape(slice, outbuf);
+    } else {
+        try outbuf.appendSlice(slice);
+    }
+
+    return true;
 }
 
 pub fn appendBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {

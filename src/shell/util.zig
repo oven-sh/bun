@@ -122,6 +122,11 @@ pub fn extractStdioBlob(
         }
     }
 
+    if (i == 1 or i == 2) {
+        globalThis.throwInvalidArguments("Blobs are immutable, and cannot be used for stdout/stderr", .{});
+        return false;
+    }
+
     stdio_array[i] = .{ .blob = blob };
     return true;
 }

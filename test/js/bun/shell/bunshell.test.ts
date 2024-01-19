@@ -5,21 +5,12 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, mkdir } from "fs/promises";
-import { join, relative } from "path";
-import { TestBuilder, redirect } from "./util";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
+import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
-import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import {
-  bunEnv,
-  randomInvalidSurrogatePair,
-  randomLoneSurrogate,
-  runWithError,
-  runWithErrorPromise,
-  tempDirWithFiles,
-} from "harness";
-import { ShellPromise } from "bun";
-import hello from "@faasjs/with space/hello";
+import { join } from "path";
+import { TestBuilder } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());

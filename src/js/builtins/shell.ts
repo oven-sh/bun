@@ -13,18 +13,20 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
   }
 
+  function autoStartShell(shell) {
+    return shell.run();
+  }
+
   class ShellPromise extends Promise<ShellOutput> {
     #core: ShellInterpreter;
     #hasRun: boolean = false;
+    #immediate;
     constructor(core: ShellInterpreter) {
       var resolve, reject;
 
       super((res, rej) => {
-        resolve = code =>
-          res(new ShellOutput(new Buffer(core.getBufferedStdout()), new Buffer(core.getBufferedStderr()), code));
-
-        reject = code =>
-          rej(new ShellOutput(new Buffer(core.getBufferedStdout()), new Buffer(core.getBufferedStderr()), code));
+        resolve = code => res(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
+        reject = code => rej(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
       });
 
       this.#core = core;
@@ -32,6 +34,8 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       core.setResolve(resolve);
       core.setReject(reject);
+
+      this.#immediate = setImmediate(autoStartShell, this).unref();
     }
 
     get interpreter() {
@@ -66,15 +70,52 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     #run() {
       if (!this.#hasRun) {
         this.#hasRun = true;
+        clearImmediate(this.#immediate);
+        this.#immediate = undefined;
+
         if (this.#core.isRunning()) return;
         this.#core.run();
       }
     }
 
-    quiet(): this {
+    #quiet(): this {
       this.#throwIfRunning();
       this.#core.setQuiet();
       return this;
+    }
+
+    quiet(): this {
+      return this.#quiet();
+    }
+
+    async text(encoding) {
+      const { stdout } = (await this.#quiet()) as ShellOutput;
+      return stdout.toString(encoding);
+    }
+
+    async json() {
+      const { stdout } = (await this.#quiet()) as ShellOutput;
+      return JSON.parse(stdout.toString());
+    }
+
+    async *lines() {
+      const { stdout } = (await this.#quiet()) as ShellOutput;
+
+      if (process.platform === "win32") {
+        yield* stdout.toString().split(/\r?\n/);
+      } else {
+        yield* stdout.toString().split("\n");
+      }
+    }
+
+    async arrayBuffer() {
+      const { stdout } = (await this.#quiet()) as ShellOutput;
+      return stdout.buffer;
+    }
+
+    async blob() {
+      const { stdout } = (await this.#quiet()) as ShellOutput;
+      return new Blob([stdout]);
     }
 
     #throwIfRunning() {
@@ -164,6 +205,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       return new ShellPromise(core);
     };
+
     Object.setPrototypeOf(Shell, ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
 
@@ -191,5 +233,6 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       writable: false,
     },
   });
+
   return BunShell;
 }

@@ -1085,10 +1085,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         }
 
         fn ioToJSValue(this: *ThisInterpreter, buf: *bun.ByteList) JSValue {
-            var bytelist = buf.*;
+            const bytelist = buf.*;
             buf.* = .{};
-            const arraybuf = JSC.ArrayBuffer.fromBytes(bytelist.slice(), .Uint8Array);
-            const value = arraybuf.toJSUnchecked(this.global, null);
+            const value = JSC.MarkedArrayBuffer.toNodeBuffer(
+                .{
+                    .allocator = bun.default_allocator,
+                    .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
+                },
+                this.global,
+            );
+
             return value;
         }
 
@@ -3273,17 +3279,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                                 if (this.node.redirect.stdin) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stdin_no, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                        .Blob = blob.*,
+                                    }, stdin_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stdout_no, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                        .Blob = blob.*,
+                                    }, stdout_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stderr_no, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                        .Blob = blob.*,
+                                    }, stderr_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
@@ -3312,9 +3324,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 }
                             } else {
                                 const jsval = this.base.interpreter.jsobjs[val.idx];
-                                const slice = jsval.toBunString(global_handle.get().globalThis).toSlice(bun.default_allocator);
-                                defer slice.deinit();
-                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {s}", .{slice.slice()});
+                                global_handle.get().globalThis.throw(
+                                    "Unknown JS value used in shell: {}",
+                                    .{jsval.fmtString(global_handle.get().globalThis)},
+                                );
                                 return;
                             }
                         },
@@ -3392,6 +3405,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         switch (this.exec.bltn.stdout) {
                             .buf => return this.exec.bltn.stdout.buf.items[0..],
                             .arraybuf => return this.exec.bltn.stdout.arraybuf.buf.slice(),
+                            .blob => return this.exec.bltn.stdout.blob.sharedView(),
                             else => return null,
                         }
                     },
@@ -3607,6 +3621,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     bytelist: *bun.ByteList,
                 },
                 arraybuf: ArrayBuf,
+                blob: *bun.JSC.WebCore.Blob,
                 ignore,
 
                 const ArrayBuf = struct {
@@ -3653,6 +3668,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 _ = Syscall.close(this.fd);
                                 this.fd = bun.invalid_fd;
                             }
+                        },
+                        .blob => |blob| {
+                            blob.deinit();
                         },
                         else => {},
                     }
@@ -3895,13 +3913,22 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     cmd.exec.bltn.stderr = builtinio;
                                 }
                             } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
-                                _ = blob;
-                                @panic("FIXME TODO HANDLE BLOB");
+                                const builtinio: Builtin.BuiltinIO = .{ .blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe()) };
+
+                                if (node.redirect.stdin) {
+                                    cmd.exec.bltn.stdin = builtinio;
+                                }
+
+                                if (node.redirect.stdout) {
+                                    cmd.exec.bltn.stdout = builtinio;
+                                }
+
+                                if (node.redirect.stderr) {
+                                    cmd.exec.bltn.stderr = builtinio;
+                                }
                             } else {
                                 const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                                const slice = jsval.toBunString(global_handle.get().globalThis).toSlice(bun.default_allocator);
-                                defer slice.deinit();
-                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {s}", .{slice.slice()});
+                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global_handle.get().globalThis)});
                                 return .yield;
                             }
                         },
@@ -4026,7 +4053,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
                         return Maybe(usize).initResult(write_len);
                     },
-                    .ignore => return Maybe(usize).initResult(buf.len),
+                    .blob, .ignore => return Maybe(usize).initResult(buf.len),
                 }
             }
 

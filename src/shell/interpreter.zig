@@ -967,7 +967,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const cwd = switch (Syscall.getcwd(&pathbuf)) {
                 .result => |cwd| cwd.ptr[0..cwd.len :0],
                 .err => |err| {
-                    return .{ .err = .{ .sys = err } };
+                    return .{ .err = .{ .sys = err.toSystemError() } };
                 },
             };
 
@@ -977,7 +977,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                 .result => |fd| fd,
                 .err => |err| {
-                    return .{ .err = .{ .sys = err } };
+                    return .{ .err = .{ .sys = err.toSystemError() } };
                 },
             };
             var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
@@ -6263,7 +6263,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                     for (filepath_args) |filepath| {
                                                         const path = filepath[0..bun.len(filepath)];
                                                         const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
-                                                        const is_root = std.fs.path.dirname(resolved_path) == null;
+                                                        const is_root = brk: {
+                                                            const normalized = bun.path.normalizeString(resolved_path, false, .auto);
+                                                            const dirname = ResolvePath.dirname(normalized, .auto);
+                                                            const is_root = std.mem.eql(u8, dirname, "");
+                                                            break :brk is_root;
+                                                        };
 
                                                         if (is_root) {
                                                             const error_string = this.bltn.fmtErrorArena(.rm, "\"{s}\" may not be removed\n", .{resolved_path});

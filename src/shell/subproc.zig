@@ -1540,9 +1540,11 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     }
                 }
 
+                log("spawning", .{});
                 break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
                     .err => |err| {
-                        return .{ .err = .{ .sys = err.clone(bun.default_allocator) catch bun.outOfMemory() } };
+                        log("error spawning", .{});
+                        return .{ .err = .{ .sys = err.toSystemError() } };
                     },
                     .result => |pid_| pid_,
                 };
@@ -1592,7 +1594,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                             var status: u32 = 0;
                             // ensure we don't leak the child process on error
                             _ = std.os.linux.wait4(pid, &status, 0, null);
-                            return .{ .err = .{ .sys = error_instance } };
+                            log("Error in getting pidfd", .{});
+                            return .{ .err = .{ .sys = error_instance.toSystemError() } };
                         },
                     }
                 }
@@ -1671,6 +1674,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
 
             if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                log("stdout readall", .{});
                 if (comptime is_sync) {
                     subprocess.stdout.pipe.buffer.readAll();
                 } else if (!spawn_args.lazy) {
@@ -1679,12 +1683,14 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
 
             if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                log("stderr readall", .{});
                 if (comptime is_sync) {
                     subprocess.stderr.pipe.buffer.readAll();
                 } else if (!spawn_args.lazy) {
                     subprocess.stderr.pipe.buffer.readAll();
                 }
             }
+            log("returning", .{});
 
             return .{ .result = subprocess };
         }

@@ -36,22 +36,21 @@ pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitH
 
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
-    sys: Syscall.Error,
+    sys: JSC.SystemError,
     custom: []const u8,
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
     pub fn newSys(e: Syscall.Error) @This() {
         return .{
-            .sys = e,
+            .sys = e.toSystemError(),
         };
     }
 
     pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
-        defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => {
-                const err = this.sys.toJSC(globalThis);
+                const err = this.sys.toErrorInstance(globalThis);
                 globalThis.throwValue(err);
             },
             .custom => {
@@ -73,7 +72,7 @@ pub const ShellErr = union(enum) {
     pub fn throwMini(this: @This()) void {
         switch (this) {
             .sys => {
-                const err = this.sys.toSystemError();
+                const err = this.sys;
                 const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: {s}: {}", .{ err.message, err.path }) catch bun.outOfMemory();
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
                 bun.Global.exit(1);
@@ -96,7 +95,9 @@ pub const ShellErr = union(enum) {
 
     pub fn deinit(this: @This(), allocator: Allocator) void {
         switch (this) {
-            .sys => allocator.free(this.sys.path),
+            .sys => {
+                // this.sys.
+            },
             .custom => allocator.free(this.custom),
             .invalid_arguments => {},
             .todo => allocator.free(this.todo),
@@ -109,7 +110,9 @@ pub fn Result(comptime T: anytype) type {
         result: T,
         err: ShellErr,
 
-        pub const success: @This() = undefined;
+        pub const success: @This() = @This(){
+            .result = std.mem.zeroes(T),
+        };
     };
 }
 

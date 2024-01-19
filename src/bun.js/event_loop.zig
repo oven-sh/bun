@@ -727,7 +727,7 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();
-                    shell_ls_task.deinit();
+                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;

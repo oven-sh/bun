@@ -4870,14 +4870,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.next();
                 }
 
-                pub fn onAsyncTaskDone(this: *Ls, task: *ShellLsTask) void {
+                pub fn onAsyncTaskDone(this: *Ls, task_: *ShellLsTask) void {
                     this.state.exec.tasks_done += 1;
-                    const output = task.takeOutput();
+                    const output = task_.takeOutput();
+                    const err = task_.err;
+                    task_.deinit();
 
                     const need_to_write_to_stdout_with_io = output.items.len > 0 and this.bltn.stdout.needsIO();
 
                     // Check for error, print it, but still want to print task output
-                    if (task.err) |e| {
+                    if (err) |e| {
                         const error_string = this.bltn.taskErrorToString(.ls, e);
                         this.state.exec.err = e;
 

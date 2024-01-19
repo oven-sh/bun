@@ -261,10 +261,8 @@ pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        var fd = bun.STDERR_FD;
-        if (Environment.isWindows) {
-            fd = FDImpl.fromUV(2).encode();
-        }
+        const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
@@ -295,10 +293,8 @@ pub fn stdout(rare: *RareData) *Blob.Store {
     return rare.stdout_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        var fd = bun.STDOUT_FD;
-        if (Environment.isWindows) {
-            fd = FDImpl.fromUV(1).encode();
-        }
+        const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
@@ -327,10 +323,8 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     return rare.stdin_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        var fd = bun.STDOUT_FD;
-        if (Environment.isWindows) {
-            fd = FDImpl.fromUV(0).encode();
-        }
+        const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);

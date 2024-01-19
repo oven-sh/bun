@@ -70,7 +70,7 @@ declare module "bun:jsc" {
    *
    * @param value A serialized value, usually an ArrayBuffer or Buffer, to be converted.
    */
-  function deserialize(value: ArrayBufferLike | TypedArray | Buffer): any;
+  function deserialize(value: ArrayBufferLike | NodeJS.TypedArray | Buffer): any;
 
   /**
    * Set the timezone used by Intl, Date, etc.

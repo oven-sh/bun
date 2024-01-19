@@ -670,7 +670,7 @@ declare module "bun:test" {
      * });
      */
     any(
-      constructor: ((..._: any[]) => any) | { new(..._: any[]): any },
+      constructor: ((...args: any[]) => any) | { new(...args: any[]): any },
     ): AsymmetricMatcher;
     /**
      * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead

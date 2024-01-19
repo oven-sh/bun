@@ -14,13 +14,18 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  import type { Encoding as CryptoEncoding } from "crypto";
+
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
   type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
   type PathLike = Bun.PathLike;
-  import { Encoding as CryptoEncoding } from "crypto";
+
   interface Env {
     NODE_ENV?: string;
+    /**
+     * Can be used to change the default timezone at runtime
+     */
     TZ?: string;
   }
 
@@ -4585,8 +4590,6 @@ declare module "bun" {
     match(str: string): boolean;
   }
 }
-
-type TypedArray = NodeJS.TypedArray;
 
 // extends lib.dom.d.ts
 interface BufferEncodingOption {

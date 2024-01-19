@@ -244,6 +244,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* bunShell = shell.getObject();
 
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
     // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);

@@ -19,6 +19,7 @@ import {
   tempDirWithFiles,
 } from "harness";
 import { ShellPromise } from "bun";
+import hello from "@faasjs/with space/hello";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -41,6 +42,20 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  describe("escape", async () => {
+    function escapeTest(strToEscape: string, expected: string = strToEscape) {
+      test(strToEscape, async () => {
+        const { stdout } = await $`echo ${strToEscape}`;
+        expect(stdout.toString()).toEqual(`${strToEscape}\n`);
+        expect($.escape(strToEscape)).toEqual(expected);
+      });
+    }
+
+    escapeTest("1 2 3");
+    escapeTest(`lol $NICE`, `"lol \\$NICE"`);
+    escapeTest(`"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`, `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`);
+  })
+
   describe("quiet", async () => {
     test("basic", async () => {
       // Check its buffered
@@ -96,7 +111,7 @@ describe("bunshell", () => {
   describe("echo+cmdsubst edgecases", async () => {
     async function doTest(cmd: string, expected: string) {
       test(cmd, async () => {
-        const { stdout } = await $`${cmd}`;
+        const { stdout } = await $`${{ raw: cmd }}`;
         expect(stdout.toString()).toEqual(expected);
       });
     }
@@ -216,7 +231,7 @@ describe("bunshell", () => {
     }
     `;
 
-    await $`${BUN} -e "${code}" 2> ${buffer}`.env(bunEnv);
+    await $`${BUN} -e ${code} 2> ${buffer}`.env(bunEnv);
 
     console.log(buffer);
     expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(
@@ -239,7 +254,7 @@ describe("bunshell", () => {
   describe("brace expansion", () => {
     function doTest(pattern: string, expected: string) {
       test(pattern, async () => {
-        const { stdout } = await $`echo ${pattern} `;
+        const { stdout } = await $`echo ${{ raw: pattern }} `;
         expect(stdout.toString()).toEqual(`${expected}\n`);
       });
     }

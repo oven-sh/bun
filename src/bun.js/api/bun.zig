@@ -45,6 +45,7 @@ pub const BunObject = struct {
     pub const shellParse = Bun.shellParse;
     pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
+    pub const shellEscape = Bun.shellEscape;
     // --- Callbacks ---
 
     // --- Getters ---
@@ -163,6 +164,7 @@ pub const BunObject = struct {
         // @export(BunObject.@"$", .{ .name = callbackName("$") });
         @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
         @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
+        @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         // -- Callbacks --
     }
 };
@@ -523,6 +525,54 @@ pub fn shell(
     // return interpreter.start(globalThis) catch {
     //     return .false;
     // };
+}
+
+pub fn shellEscape(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    if (callframe.argumentsCount() < 0) {
+        globalThis.throw("shell escape expected at least 1 argument", .{});
+        return .undefined;
+    }
+
+    const jsval = callframe.argument(0);
+    const bunstr = jsval.toBunString(globalThis);
+    defer bunstr.deref();
+
+    var outbuf = std.ArrayList(u8).init(bun.default_allocator);
+    defer outbuf.deinit();
+    if (bunstr.isUTF8()) {
+        if (bun.shell.needsEscape(bunstr.byteSlice())) {
+            bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
+                globalThis.throwOutOfMemory();
+                return .undefined;
+            };
+            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+        }
+        return jsval;
+    }
+
+    if (bunstr.isUTF16()) {
+        if (bun.shell.needsEscapeUnicode(bunstr.byteSlice())) {
+            bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf) catch {
+                globalThis.throwOutOfMemory();
+                return .undefined;
+            };
+            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+        }
+        return jsval;
+    }
+
+    if (bun.shell.needsEscape(bunstr.byteSlice())) {
+        bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+    }
+
+    return jsval;
 }
 
 pub fn braces(

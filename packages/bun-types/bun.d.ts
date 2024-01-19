@@ -54,6 +54,7 @@ declare module "bun" {
 
   export type ShellExpression =
     | string
+    | { raw: string }
     | Subprocess
     | SpawnOptions.Readable
     | SpawnOptions.Writable
@@ -102,6 +103,12 @@ declare module "bun" {
      * ```
      */
     braces(pattern: string): string[];
+
+    /**
+     * Escape strings for input into shell commands.
+     * @param input
+     */
+    escape(input: string): string;
   }
 
   export interface ShellOutput {

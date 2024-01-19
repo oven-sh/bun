@@ -2456,7 +2456,7 @@ pub fn shellCmdFromJS(
     const last = string_iter.len -| 1;
     while (string_iter.next()) |js_value| {
         defer i += 1;
-        if (!try appendJSValueStr(globalThis, js_value, out_script)) {
+        if (!try appendJSValueStr(globalThis, js_value, out_script, false)) {
             globalThis.throw("Shell script string contains invalid UTF-16", .{});
             return false;
         }
@@ -2508,11 +2508,23 @@ pub fn shellCmdFromJS(
                 }
 
                 if (template_value.isString()) {
-                    if (!try appendJSValueStr(globalThis, template_value, out_script)) {
+                    if (!try appendJSValueStr(globalThis, template_value, out_script, true)) {
                         globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         return false;
                     }
                     continue;
+                }
+
+                if (template_value.isObject()) {
+                    if (template_value.getTruthy(globalThis, "raw")) |maybe_str| {
+                        const bunstr = maybe_str.toBunString(globalThis);
+                        defer bunstr.deref();
+                        if (!try appendBunStr(bunstr, out_script, false)) {
+                            globalThis.throw("Shell script string contains invalid UTF-16", .{});
+                            return false;
+                        }
+                        continue;
+                    }
                 }
 
                 globalThis.throw("Invalid JS object used in shell: {}", .{template_value.fmtString(globalThis)});
@@ -2524,14 +2536,14 @@ pub fn shellCmdFromJS(
 }
 
 /// This will disallow invalid surrogate pairs
-pub fn appendJSValueStr(
-    globalThis: *JSC.JSGlobalObject,
-    jsval: JSValue,
-    outbuf: *std.ArrayList(u8),
-) !bool {
+pub fn appendJSValueStr(globalThis: *JSC.JSGlobalObject, jsval: JSValue, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {
     const bunstr = jsval.toBunString(globalThis);
     defer bunstr.deref();
 
+    return try appendBunStr(bunstr, outbuf, allow_escape);
+}
+
+pub fn appendBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {
     const str = bunstr.toUTF8WithoutRef(bun.default_allocator);
     defer str.deinit();
 
@@ -2541,7 +2553,113 @@ pub fn appendJSValueStr(
         return false;
     }
 
-    try outbuf.appendSlice(str.slice());
+    if (allow_escape and needsEscape(str.slice())) {
+        try escape(str.slice(), outbuf);
+    } else {
+        try outbuf.appendSlice(str.slice());
+    }
 
     return true;
+}
+
+const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"' };
+const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
+
+/// assumes WTF-8
+pub fn escape(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
+    try outbuf.ensureUnusedCapacity(str.len);
+
+    try outbuf.append('\"');
+
+    loop: for (str) |c| {
+        inline for (BACKSLASHABLE_CHARS) |spc| {
+            if (spc == c) {
+                try outbuf.appendSlice(&.{
+                    '\\',
+                    c,
+                });
+                continue :loop;
+            }
+        }
+        try outbuf.append(c);
+    }
+
+    try outbuf.append('\"');
+}
+
+pub fn escapeUnicode(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
+    try outbuf.ensureUnusedCapacity(str.len);
+
+    var bytes: [8]u8 = undefined;
+    var n = bun.strings.encodeWTF8Rune(bytes[0..4], '"');
+    try outbuf.appendSlice(bytes[0..n]);
+
+    loop: for (str) |c| {
+        inline for (BACKSLASHABLE_CHARS) |spc| {
+            if (spc == c) {
+                n = bun.strings.encodeWTF8Rune(bytes[0..4], '\\');
+                var next: [4]u8 = bytes[n..][0..4].*;
+                n += bun.strings.encodeWTF8Rune(&next, @intCast(c));
+                try outbuf.appendSlice(bytes[0..n]);
+                // try outbuf.appendSlice(&.{
+                //     '\\',
+                //     c,
+                // });
+                continue :loop;
+            }
+        }
+        n = bun.strings.encodeWTF8Rune(bytes[0..4], @intCast(c));
+        try outbuf.appendSlice(bytes[0..n]);
+    }
+
+    n = bun.strings.encodeWTF8Rune(bytes[0..4], '"');
+    try outbuf.appendSlice(bytes[0..n]);
+}
+
+pub fn needsEscapeUnicode(str: []const u8) bool {
+    var cp = CodepointIterator.init(str);
+    var cursor = CodepointIterator.Cursor{};
+    while (cp.next(&cursor)) {
+        inline for (SPECIAL_CHARS) |spc| {
+            if (@as(u21, @intCast(spc)) == cursor.c) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+pub fn needsEscape(str: []const u8) bool {
+    if (str.len < 128) return needsEscapeSlow(str);
+
+    const needles = comptime brk: {
+        var needles: [SPECIAL_CHARS.len]@Vector(16, u8) = undefined;
+        for (SPECIAL_CHARS, 0..) |c, i| {
+            needles[i] = @splat(c);
+        }
+        break :brk needles;
+    };
+
+    var i: usize = 0;
+    while (i + 16 <= str.len) : (i += 16) {
+        const haystack: @Vector(16, u8) = str[i..][0..16].*;
+
+        inline for (needles) |needle| {
+            const result = haystack == needle;
+            if (std.simd.firstTrue(result) != null) return true;
+        }
+    }
+
+    if (i < str.len) return needsEscapeSlow(str[i..]);
+
+    return false;
+}
+
+pub fn needsEscapeSlow(str: []const u8) bool {
+    for (str) |c| {
+        inline for (SPECIAL_CHARS) |spc| {
+            if (spc == c) return true;
+        }
+    }
+    return false;
 }

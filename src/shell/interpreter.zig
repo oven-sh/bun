@@ -3280,17 +3280,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                                 if (this.node.redirect.stdin) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stdin_no, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                        .Blob = blob.*,
+                                    }, stdin_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stdout_no, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                        .Blob = blob.*,
+                                    }, stdout_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{ .Blob = blob.dupe() }, stderr_no, &spawn_args.stdio)) {
+                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                        .Blob = blob.*,
+                                    }, stderr_no, &spawn_args.stdio)) {
                                         return;
                                     }
                                 }

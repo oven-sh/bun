@@ -19,19 +19,21 @@ bin_path: []const u16,
 /// Information found within the target file's shebang
 shebang: ?Shebang,
 
-const Flags = packed struct(u16) {
+pub const Flags = packed struct(u16) {
     is_node_or_bun: bool,
     has_shebang: bool,
 
     unused: u14 = 0,
 };
 
+pub const embedded_executable_data = @embedFile("./bun_shim_impl.exe");
+
 fn wU8(comptime s: []const u8) []const u8 {
     const str = std.unicode.utf8ToUtf16LeStringLiteral(s);
     return @alignCast(std.mem.sliceAsBytes(str));
 }
 
-const Shebang = struct {
+pub const Shebang = struct {
     program: []const u8,
     args: []const u8,
     is_bun: bool,
@@ -306,7 +308,7 @@ pub fn main() !u8 {
 
     try opts.encodeInto(alloc);
     {
-        const file = try std.fs.cwd().createFile("bun_shim.bunx", .{});
+        const file = try std.fs.cwd().createFile("bun_shim_impl.bunx", .{});
         defer file.close();
 
         try file.writeAll(alloc);

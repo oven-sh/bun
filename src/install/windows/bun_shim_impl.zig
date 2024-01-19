@@ -46,7 +46,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Encoding = @import("./BunXShimData.zig");
+const Flags = @import("./BunXShimData.zig").Flags;
 
 const dbg = builtin.mode == .Debug;
 
@@ -110,7 +110,26 @@ const nt = struct {
         Length: w.ULONG, // [in]
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
-    ) Status;
+    ) callconv(w.WINAPI) Status;
+};
+
+/// A copy of all kernel32 declarations this program uses
+const k32 = struct {
+    pub extern "kernel32" fn CreateProcessW(
+        lpApplicationName: ?w.LPWSTR, // [in, optional]
+        lpCommandLine: w.LPWSTR, // [in, out, optional]
+        lpProcessAttributes: ?*w.SECURITY_ATTRIBUTES, // [in, optional]
+        lpThreadAttributes: ?*w.SECURITY_ATTRIBUTES, // [in, optional]
+        bInheritHandles: w.BOOL, // [in]
+        dwCreationFlags: w.DWORD, // [in]
+        lpEnvironment: ?*anyopaque, // [in, optional]
+        lpCurrentDirectory: ?w.LPWSTR, // [in, optional]
+        lpStartupInfo: *w.STARTUPINFOW, // [in]
+        lpProcessInformation: *w.PROCESS_INFORMATION, // [out]
+    ) callconv(w.WINAPI) w.BOOL;
+
+    // https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
+    pub extern "kernel32" fn GetLastError() callconv(w.WINAPI) w.Win32Error;
 };
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
@@ -131,6 +150,7 @@ const FailReason = enum {
     CouldNotReadShim,
     InvalidShimDataSize,
     ShimNotFound,
+    CreateProcessFailed,
 
     pub fn render(reason: FailReason) []const u8 {
         return switch (reason) {
@@ -141,6 +161,7 @@ const FailReason = enum {
             .CouldNotOpenShim => "could not open bin metadata file",
             .CouldNotReadShim => "could not read bin metadata",
             .InvalidShimDataSize => "bin metadata is corrupt (size)",
+            .CreateProcessFailed => "could not create process",
         };
     }
 };
@@ -338,39 +359,39 @@ fn mainImplementation() noreturn {
     }
 
     // get a slice to where the CLI arguments are
-    var args_start = cmd_line_u8 + 2;
+    var args_start_u8 = cmd_line_u8 + 2;
     var args_len_b: usize = 0;
     switch (cmd_line_u16[0] == '"') {
         inline else => |is_quote| {
             const search_str = if (is_quote) '"' else ' ';
             var num_left: usize = cmd_line_b_len;
             while (true) {
-                if (memchr(args_start, search_str, num_left)) |find| {
+                if (memchr(args_start_u8, search_str, num_left)) |find| {
                     if (@intFromPtr(find) % 2 == 0 and find[1] == 0) {
                         if (@intFromPtr(find) - @intFromPtr(cmd_line_u8) == cmd_line_b_len - 2) {
-                            args_start = find + 2;
+                            args_start_u8 = find + 2;
                             args_len_b = 0;
                             break;
                         }
-                        args_start = if (is_quote) find + 4 else find + 2;
+                        args_start_u8 = if (is_quote) find + 4 else find + 2;
                         if (is_quote) {
                             assert(find[2] == ' ' and find[3] == 0);
                         }
-                        while (args_start[0] == ' ' and args_start[1] == 0) args_start += 2;
-                        args_len_b = cmd_line_b_len - (@intFromPtr(args_start) - @intFromPtr(cmd_line_u8));
+                        while (args_start_u8[0] == ' ' and args_start_u8[1] == 0) args_start_u8 += 2;
+                        args_len_b = cmd_line_b_len - (@intFromPtr(args_start_u8) - @intFromPtr(cmd_line_u8));
                         break;
                     }
-                    num_left -= @intFromPtr(find) - @intFromPtr(args_start);
-                    args_start = find + 1;
+                    num_left -= @intFromPtr(find) - @intFromPtr(args_start_u8);
+                    args_start_u8 = find + 1;
                 } else {
-                    args_start += num_left;
+                    args_start_u8 += num_left;
                     break;
                 }
             }
         },
     }
 
-    if (dbg) debug("UserArgs: '{s}'\n", .{args_start[0..args_len_b]});
+    if (dbg) debug("UserArgs: '{s}'\n", .{args_start_u8[0..args_len_b]});
 
     // Read the metadata file into the memory right after the image path.
     //
@@ -405,8 +426,34 @@ fn mainImplementation() noreturn {
 
     if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
-    var process_params: w.RTL_USER_PROCESS_PARAMETERS = ProcessParameters;
-    _ = &process_params;
+    const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr + read_len - @sizeOf(Flags))).*;
+
+    if (dbg) {
+        debug("Flags:\n", .{});
+        inline for (comptime std.meta.fieldNames(Flags)) |name| {
+            debug("    {s}: {}\n", .{ name, @field(flags, name) });
+        }
+    }
+
+    const lpApplicationName: ?w.LPWSTR, const lpCommandLine: w.LPWSTR = switch (flags.has_shebang) {
+        false => args: {
+            // no shebang, which means the application name is going to be the joined file exe
+            // and then the command line is simply going to be our original command line
+            const quote_in_buf = @as(*align(1) u16, @ptrCast(&buf1_u8[image_path_b_len + 2]));
+            std.debug.assert(quote_in_buf.* == '"');
+            quote_in_buf.* = 0;
+            // NOTE: i am writing into the os-provided memory. it does not seem to cause a crash.
+            @as(*align(1) u16, @ptrCast(&args_start_u8[args_len_b])).* = 0;
+            break :args .{
+                @alignCast(@ptrCast(buf1_u8 + 2)),
+                @alignCast(@ptrCast(args_start_u8)),
+            };
+        },
+        true => {
+            printError("TODO", .{});
+            nt.RtlExitUserProcess(20);
+        },
+    };
 
     // printError("TODO: Rearrange the arguments and Spawn the process", .{});
 
@@ -417,26 +464,56 @@ fn mainImplementation() noreturn {
     // I attempted to use lower level methods for this, but it really seems
     // too difficult and not worth the stability risks.
     //
+    // The initial (crazy) idea was something like cloning 'ProcessParameters' and then just changing
+    // the CommandLine and ImagePathName to point to the new data. would that even work??? probably not
+    // I never tested it.
+    //
     // Resources related to the potential lower level stuff:
     // - https://stackoverflow.com/questions/69599435/running-programs-using-rtlcreateuserprocess-only-works-occasionally
     // - https://systemroot.gitee.io/pages/apiexplorer/d0/d2/rtlexec_8c.html
     //
     // Documentation for the function I am using:
     // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
-    k32.CreateProcessW(
+    var process: w.PROCESS_INFORMATION = undefined;
+    var startup_info = w.STARTUPINFOW{
+        .cb = @sizeOf(w.STARTUPINFOW),
+        .lpReserved = null,
+        .lpDesktop = null,
+        .lpTitle = null,
+        .dwX = 0,
+        .dwY = 0,
+        .dwXSize = 0,
+        .dwYSize = 0,
+        .dwXCountChars = 0,
+        .dwYCountChars = 0,
+        .dwFillAttribute = 0,
+        .dwFlags = w.STARTF_USESTDHANDLES,
+        .wShowWindow = 0,
+        .cbReserved2 = 0,
+        .lpReserved2 = null,
+        .hStdInput = ProcessParameters.hStdInput,
+        .hStdOutput = ProcessParameters.hStdOutput,
+        .hStdError = ProcessParameters.hStdError,
+    };
+    const did_process_spawn = k32.CreateProcessW(
         lpApplicationName,
         lpCommandLine,
-        lpProcessAttributes,
-        lpThreadAttributes,
-        bInheritHandles,
-        dwCreationFlags,
-        lpEnvironment,
-        lpCurrentDirectory,
-        lpStartupInfo,
-        lpProcessInformation,
+        null,
+        null,
+        1, // true
+        0,
+        null,
+        null,
+        &startup_info,
+        &process,
     );
+    if (did_process_spawn == 0) {
+        const spawn_err = k32.GetLastError();
+        printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
+        fail(.CreateProcessFailed);
+    }
 
-    w.ntdll.RtlExitUserProcess(0);
+    nt.RtlExitUserProcess(0);
 }
 
 fn mainCRTStartup() callconv(std.os.windows.WINAPI) noreturn {

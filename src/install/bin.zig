@@ -310,22 +310,79 @@ pub const Bin = extern struct {
 
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             const node_modules = this.package_installed_node_modules.asDir();
-            std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
-                // Silently ignore PathAlreadyExists
-                // Most likely, the symlink was already created by another package
-                if (err == error.PathAlreadyExists) {
-                    setPermissions(node_modules.fd, dest_path);
-                    var target_path_trim = target_path;
-                    if (strings.hasPrefix(target_path_trim, "../")) {
-                        target_path_trim = target_path_trim[3..];
+            if (!Environment.isWindows) {
+                std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
+                    // Silently ignore PathAlreadyExists
+                    // Most likely, the symlink was already created by another package
+                    if (err == error.PathAlreadyExists) {
+                        setPermissions(node_modules.fd, dest_path);
+                        var target_path_trim = target_path;
+                        if (strings.hasPrefix(target_path_trim, "../")) {
+                            target_path_trim = target_path_trim[3..];
+                        }
+                        setPermissions(node_modules.fd, target_path_trim);
+                        return;
                     }
-                    setPermissions(node_modules.fd, target_path_trim);
-                    return;
+
+                    this.err = err;
+                };
+                setPermissions(node_modules.fd, dest_path);
+            } else {
+                const WinBinLinkingShim = @import("./windows/BinLinkingShim.zig");
+
+                const StaticBuffers = struct {
+                    var shim_buf: [65536]u8 = undefined;
+                    var filename_buf: bun.WPathBuffer = undefined;
+                };
+
+                var target_wpath = bun.strings.convertUTF8toUTF16InBuffer(StaticBuffers.filename_buf, target_path);
+                const end = target_wpath.len;
+                target_wpath.len += 5;
+                target_wpath[end..].* = ".bunx".*;
+
+                const contents = "TODO";
+
+                const shim = WinBinLinkingShim{
+                    .bin_path = target_wpath,
+                    .shebang = WinBinLinkingShim.Shebang.parse(contents, target_wpath)
+                };
+                const metadata = 
+
+                if (node_modules.createFileW(target_wpath, .{
+                    .exclusive = true,
+                })) |file| {
+                    defer file.close();
+                    file.writer().writeAll(metadata) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                } else |err| {
+                    if (err != error.PathAlreadyExists) {
+                        this.err = err;
+                        return;
+                    }
                 }
 
-                this.err = err;
-            };
-            setPermissions(node_modules.fd, dest_path);
+                target_wpath.len -= 1;
+                target_wpath[end + 1 ..].* = "exe".*;
+
+                if (node_modules.createFileW(target_wpath, .{
+                    .exclusive = true,
+                })) |file| {
+                    defer file.close();
+                    file.writer().writeAll(WinBinLinkingShim.embedded_executable_data) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                } else |err| {
+                    if (err != error.PathAlreadyExists) {
+                        this.err = err;
+                        return;
+                    }
+                }
+
+                // WinBinLinkingShim.embedded_executable_data;
+            }
         }
 
         const dot_bin = ".bin" ++ std.fs.path.sep_str;
@@ -334,9 +391,6 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var from_remain: []u8 = &target_buf;
@@ -407,8 +461,8 @@ pub const Bin = extern struct {
 
             switch (this.bin.tag) {
                 .none => {
-                    if (comptime Environment.isDebug) {
-                        unreachable;
+                    if (Environment.allow_assert) {
+                        @panic("unexpected .null when linking binary");
                     }
                 },
                 .file => {

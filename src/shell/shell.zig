@@ -48,6 +48,7 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
+        defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => {
                 const err = this.sys.toJSC(globalThis);
@@ -93,8 +94,8 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn deinit(this: *@This(), allocator: Allocator) void {
-        switch (this.*) {
+    pub fn deinit(this: @This(), allocator: Allocator) void {
+        switch (this) {
             .sys => allocator.free(this.sys.path),
             .custom => allocator.free(this.custom),
             .invalid_arguments => {},

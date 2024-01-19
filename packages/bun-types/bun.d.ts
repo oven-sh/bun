@@ -108,7 +108,6 @@ declare module "bun" {
      */
     braces(pattern: string): string[];
 
-
     /**
      * Escape strings for input into shell commands.
      * @param input

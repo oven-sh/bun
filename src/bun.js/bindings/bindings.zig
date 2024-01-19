@@ -3360,6 +3360,18 @@ pub const JSValue = enum(JSValueReprInt) {
             return this == .String;
         }
 
+        pub inline fn isStringObject(this: JSType) bool {
+            return this == .StringObject;
+        }
+
+        pub inline fn isDerivedStringObject(this: JSType) bool {
+            return this == .DerivedStringObject;
+        }
+
+        pub inline fn isStringObjectLike(this: JSType) bool {
+            return this == .StringObject or this == .DerivedStringObject;
+        }
+
         pub inline fn isStringLike(this: JSType) bool {
             return switch (this) {
                 .String, .StringObject, .DerivedStringObject => true,
@@ -4181,6 +4193,27 @@ pub const JSValue = enum(JSValueReprInt) {
             return false;
 
         return jsType(this).isStringLike();
+    }
+
+    /// Returns true only for string literals
+    /// - `" string literal"`
+    pub inline fn isStringLiteral(this: JSValue) bool {
+        if (!this.isCell()) {
+            return false;
+        }
+
+        return jsType(this).isString();
+    }
+
+    /// Returns true if
+    /// - `new String("123")`
+    /// - `class DerivedString extends String; new DerivedString("123")`
+    pub inline fn isStringObjectLike(this: JSValue) bool {
+        if (!this.isCell()) {
+            return false;
+        }
+
+        return jsType(this).isStringObjectLike();
     }
 
     pub fn isBigInt(this: JSValue) bool {

@@ -45,8 +45,7 @@ describe("bunshell", () => {
     test("basic", async () => {
       // Check its buffered
       {
-        const { stdout, stderr } =
-          await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
+        const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
         expect(stdout.toString()).toEqual("hi\n");
         expect(stderr.toString()).toEqual("lol\n");
       }
@@ -66,9 +65,9 @@ describe("bunshell", () => {
       expect(stderr.toString()).toBe("");
     });
 
-    test('cmd subst', async () => {
-      await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run()
-    })
+    test("cmd subst", async () => {
+      await TestBuilder.command`echo $(echo hi)`.quiet().stdout("hi\n").run();
+    });
   });
 
   test("failing stmt edgecase", async () => {

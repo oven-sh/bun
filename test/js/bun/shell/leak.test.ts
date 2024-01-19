@@ -66,7 +66,12 @@ describe("fd leak", () => {
     });
   }
 
-  function memLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 100 * (1 << 20)) {
+  function memLeakTest(
+    name: string,
+    builder: () => TestBuilder,
+    runs: number = 500,
+    threshold: number = 100 * (1 << 20),
+  ) {
     test(`memleak_${name}`, async () => {
       const tempfile = join(tmpdir(), "script.ts");
 
@@ -104,7 +109,7 @@ describe("fd leak", () => {
 
       const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile]);
       // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
-      console.log('\n\nSTDERR:', stderr.toString());
+      console.log("\n\nSTDERR:", stderr.toString());
       expect(exitCode).toBe(0);
     });
   }
@@ -115,7 +120,11 @@ describe("fd leak", () => {
   });
 
   // Use text of this file so its big enough to cause a leak
-  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer((1 << 20) * 100)}`, 100);
+  memLeakTest(
+    "ArrayBuffer",
+    () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer((1 << 20) * 100)}`,
+    100,
+  );
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
-  memLeakTest("String", () => TestBuilder.command`echo ${Array((4096)).fill('a').join('')}`.stdout(() => {}), 100, 4096);
+  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100, 4096);
 });

@@ -78,7 +78,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
 
     #throwIfRunning() {
-      if (this.#hasRun) throw new Error('Shell is already running')
+      if (this.#hasRun) throw new Error("Shell is already running");
     }
 
     run(): this {

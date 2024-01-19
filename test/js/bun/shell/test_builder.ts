@@ -103,15 +103,15 @@ export class TestBuilder {
 
   static tmpdir(): string {
     const tmp = os.tmpdir();
-    return fs.mkdtempSync(join(tmp, "test_builder"))
+    return fs.mkdtempSync(join(tmp, "test_builder"));
   }
 
   setTempdir(tempdir: string): this {
     this.tempdir = tempdir;
-      if (this.promise.type === "ok") {
-        this.promise.val.cwd(this.tempdir!);
-      }
-      return this;
+    if (this.promise.type === "ok") {
+      this.promise.val.cwd(this.tempdir!);
+    }
+    return this;
   }
 
   getTempDir(): string {
@@ -145,7 +145,7 @@ export class TestBuilder {
       if (typeof this.expected_stdout === "string") {
         expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
       } else {
-        this.expected_stdout(stdout.toString(), tempdir)
+        this.expected_stdout(stdout.toString(), tempdir);
       }
     }
     if (this.expected_stderr !== undefined)

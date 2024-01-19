@@ -1656,14 +1656,13 @@ pub const Arguments = struct {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
                         defer str.deref();
-                        const utf8 = str.utf8();
-                        if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
-                        if (strings.eqlComptime(utf8, "file")) break :link_type .file;
-                        if (strings.eqlComptime(utf8, "junction")) break :link_type .junction;
+                        if (str.eqlComptime("dir")) break :link_type .dir;
+                        if (str.eqlComptime("file")) break :link_type .file;
+                        if (str.eqlComptime("junction")) break :link_type .junction;
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
-                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{s}\"",
-                                .{utf8},
+                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"",
+                                .{str},
                                 ctx,
                                 exception,
                             );

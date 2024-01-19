@@ -3400,6 +3400,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         switch (this.exec.bltn.stdout) {
                             .buf => return this.exec.bltn.stdout.buf.items[0..],
                             .arraybuf => return this.exec.bltn.stdout.arraybuf.buf.slice(),
+                            .blob => return this.exec.bltn.stdout.blob.sharedView(),
                             else => return null,
                         }
                     },
@@ -3615,6 +3616,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     bytelist: *bun.ByteList,
                 },
                 arraybuf: ArrayBuf,
+                blob: *bun.JSC.WebCore.Blob,
                 ignore,
 
                 const ArrayBuf = struct {
@@ -3661,6 +3663,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 _ = Syscall.close(this.fd);
                                 this.fd = bun.invalid_fd;
                             }
+                        },
+                        .blob => |blob| {
+                            blob.deinit();
                         },
                         else => {},
                     }
@@ -3903,8 +3908,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     cmd.exec.bltn.stderr = builtinio;
                                 }
                             } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
-                                _ = blob;
-                                @panic("FIXME TODO HANDLE BLOB");
+                                const builtinio: Builtin.BuiltinIO = .{ .blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe()) };
+
+                                if (node.redirect.stdin) {
+                                    cmd.exec.bltn.stdin = builtinio;
+                                }
+
+                                if (node.redirect.stdout) {
+                                    cmd.exec.bltn.stdout = builtinio;
+                                }
+
+                                if (node.redirect.stderr) {
+                                    cmd.exec.bltn.stderr = builtinio;
+                                }
                             } else {
                                 const jsval = cmd.base.interpreter.jsobjs[val.idx];
                                 global_handle.get().globalThis.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global_handle.get().globalThis)});
@@ -4032,7 +4048,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
                         return Maybe(usize).initResult(write_len);
                     },
-                    .ignore => return Maybe(usize).initResult(buf.len),
+                    .blob, .ignore => return Maybe(usize).initResult(buf.len),
                 }
             }
 

@@ -97,27 +97,41 @@ Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prot
 Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
-  performance: Object.create(performance, {
-    nodeTiming: {
-      value: createPerformanceNodeTiming(),
-      configurable: true,
-      writable: true,
+  performance: {
+    mark(f) {
+      return performance.mark(...arguments);
     },
-    now: {
-      // this is done to ensure the DOMJIT optimization is used.
-      value: () => performance.now(),
+    measure(f) {
+      return performance.measure(...arguments);
     },
-    eventLoopUtilization: {
-      value: eventLoopUtilization,
-      configurable: true,
-      writable: true,
+    clearMarks(f) {
+      return performance.clearMarks(...arguments);
     },
-    clearResourceTimings: {
-      value: function clearResourceTimings() {},
-      configurable: true,
-      writable: true,
+    clearMeasures(f) {
+      return performance.clearMeasures(...arguments);
     },
-  }),
+    getEntries(f) {
+      return performance.getEntries(...arguments);
+    },
+    getEntriesByName(f) {
+      return performance.getEntriesByName(...arguments);
+    },
+    getEntriesByType(f) {
+      return performance.getEntriesByType(...arguments);
+    },
+    setResourceTimingBufferSize(f) {
+      return performance.setResourceTimingBufferSize(...arguments);
+    },
+    timeOrigin: performance.timeOrigin,
+    toJSON(f) {
+      return performance.toJSON(...arguments);
+    },
+    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
+    nodeTiming: createPerformanceNodeTiming(),
+    now: () => performance.now(),
+    eventLoopUtilization: eventLoopUtilization,
+    clearResourceTimings: function () {},
+  },
   // performance: {
   //   clearMarks: [Function: clearMarks],
   //   clearMeasures: [Function: clearMeasures],

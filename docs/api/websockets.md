@@ -245,6 +245,34 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 
 This gives you better control over backpressure in your server.
 
+### Timeouts and limits
+
+By default, Bun will close a WebSocket connection if it is idle for 120 seconds. This can be configured with the `idleTimeout` parameter.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    idleTimeout: 60, // 60 seconds
+
+    // ...
+  },
+});
+```
+
+Bun will also close a WebSocket connection if it receives a message that is larger than 16 MB. This can be configured with the `maxPayloadLength` parameter.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    maxPayloadLength: 1024 * 1024, // 1 MB
+
+    // ...
+  },
+});
+```
+
 ## Connect to a `Websocket` server
 
 Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
@@ -296,6 +324,14 @@ namespace Bun {
       close?: (ws: ServerWebSocket) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
       drain?: (ws: ServerWebSocket) => void;
+
+      maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB
+      idleTimeout?: number; // default: 120 (seconds)
+      backpressureLimit?: number; // default: 1024 * 1024 = 1 MB
+      closeOnBackpressureLimit?: boolean; // default: false
+      sendPings?: boolean; // default: true
+      publishToSelf?: boolean; // default: false
+
       perMessageDeflate?:
         | boolean
         | {

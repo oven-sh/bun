@@ -48,7 +48,7 @@ const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;
 
-const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
+const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
 const stdin_no = 0;

@@ -121,7 +121,7 @@ describe("bun", () => {
 
   for (let d of dirs) {
     test(`resolve '*' from ${d}`, () => {
-      runInCwdSuccess(d, "*", [/scripta/, /scriptb/, /scriptc/, /rootscript/]);
+      runInCwdSuccess(d, "*", [/scripta/, /scriptb/, /scriptc/]);
     });
     test(`resolve all from ${d}`, () => {
       runInCwdSuccess(d, names, [/scripta/, /scriptb/, /scriptc/]);

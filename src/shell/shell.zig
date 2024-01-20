@@ -2690,16 +2690,14 @@ pub fn escapeUnicode(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
     try outbuf.appendSlice(bytes[0..n]);
 }
 
-pub fn needsEscapeUnicode(str: []const u8) bool {
-    var cp = CodepointIterator.init(str);
-    var cursor = CodepointIterator.Cursor{};
-    while (cp.next(&cursor)) {
-        inline for (SPECIAL_CHARS) |spc| {
-            if (@as(u21, @intCast(spc)) == cursor.c) {
-                return true;
-            }
+pub fn needsEscapeUTF16(str: []const u16) bool {
+    for (str) |char| {
+        switch (char) {
+            '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"', ' ' => return true,
+            else => {},
         }
     }
+
     return false;
 }
 

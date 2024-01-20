@@ -542,19 +542,9 @@ pub fn shellEscape(
 
     var outbuf = std.ArrayList(u8).init(bun.default_allocator);
     defer outbuf.deinit();
-    if (bunstr.isUTF8()) {
-        if (bun.shell.needsEscape(bunstr.byteSlice())) {
-            bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
-                globalThis.throwOutOfMemory();
-                return .undefined;
-            };
-            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
-        }
-        return jsval;
-    }
 
     if (bunstr.isUTF16()) {
-        if (bun.shell.needsEscapeUnicode(bunstr.byteSlice())) {
+        if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
             bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
@@ -564,7 +554,7 @@ pub fn shellEscape(
         return jsval;
     }
 
-    if (bun.shell.needsEscape(bunstr.byteSlice())) {
+    if (bun.shell.needsEscape(bunstr.latin1())) {
         bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
             globalThis.throwOutOfMemory();
             return .undefined;

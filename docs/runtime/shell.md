@@ -325,14 +325,14 @@ await $.braces(`echo {1,2,3}`);
 // => ["echo 1", "echo 2", "echo 3"]
 ```
 
-### `$.raw` (unescaped strings)
+### `$.escape` (unescaped strings)
 
 For security purposes, Bun Shell escapes input by default. If you need to disable that, this function returns a string that is not escaped by Bun Shell:
 
 ```js
 import { $ } from "bun";
 
-await $`echo ${$.raw("Hello World!")}`;
+await $`echo ${$.escape("Hello World!")}`;
 // => Hello World!
 ```
 

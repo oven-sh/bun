@@ -1140,7 +1140,7 @@ const union_unnamed_405 = extern union {
 };
 pub const struct_uv_pipe_s = extern struct {
     data: ?*anyopaque,
-    loop: *uv_loop_t,
+    loop: ?*uv_loop_t,
     type: uv_handle_type,
     close_cb: uv_close_cb,
     handle_queue: struct_uv__queue,

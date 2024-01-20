@@ -1,0 +1,6 @@
+# To include this config, run the following command repo's root:
+# `git config --local include.path ../.gitconfig`
+
+# Use `bun` as the textconv for `bun.lockb` files
+[diff "lockb"]
+textconv = bun

@@ -51,6 +51,8 @@ pub const InitCommand = struct {
     }
 
     const default_gitignore = @embedFile("gitignore-for-init");
+    const default_gitattributes = @embedFile("gitattributes-for-init");
+    const default_gitconfig = @embedFile("gitconfig-for-init");
     const default_tsconfig = @embedFile("tsconfig-for-init.json");
     const README = @embedFile("README-for-init.md");
 
@@ -252,6 +254,8 @@ pub const InitCommand = struct {
 
         const Steps = struct {
             write_gitignore: bool = true,
+            write_gitattributes: bool = true,
+            write_gitconfig: bool = true,
             write_package_json: bool = true,
             write_tsconfig: bool = true,
             write_readme: bool = true,
@@ -261,19 +265,13 @@ pub const InitCommand = struct {
 
         steps.write_gitignore = !exists(".gitignore");
 
+        steps.write_gitattributes = !exists(".gitattributes");
+
+        steps.write_gitconfig = !exists(".gitconfig");
+
         steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
 
-        steps.write_tsconfig = brk: {
-            if (exists("tsconfig.json")) {
-                break :brk false;
-            }
-
-            if (exists("jsconfig.json")) {
-                break :brk false;
-            }
-
-            break :brk true;
-        };
+        steps.write_tsconfig = !exists("tsconfig.json") and !exists("jsconfig.json");
 
         {
             try fields.object.putString(alloc, "name", fields.name);
@@ -374,6 +372,26 @@ pub const InitCommand = struct {
                 defer file.close();
                 file.writeAll(default_gitignore) catch break :brk;
                 Output.prettyln(" + <r><d>.gitignore<r>", .{});
+                Output.flush();
+            }
+        }
+
+        if (steps.write_gitattributes) {
+            brk: {
+                var file = std.fs.cwd().createFileZ(".gitattributes", .{ .truncate = true }) catch break :brk;
+                defer file.close();
+                file.writeAll(default_gitattributes) catch break :brk;
+                Output.prettyln(" + <r><d>.gitattributes<r>", .{});
+                Output.flush();
+            }
+        }
+
+        if (steps.write_gitconfig) {
+            brk: {
+                var file = std.fs.cwd().createFileZ(".gitconfig", .{ .truncate = true }) catch break :brk;
+                defer file.close();
+                file.writeAll(default_gitconfig) catch break :brk;
+                Output.prettyln(" + <r><d>.gitconfig<r>", .{});
                 Output.flush();
             }
         }

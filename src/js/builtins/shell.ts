@@ -55,14 +55,21 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this.#core.stdin;
     }
 
-    cwd(newCwd: string): this {
+    cwd(newCwd?: string): this {
       this.#throwIfRunning();
+      if (typeof newCwd === "undefined" || newCwd === "." || newCwd === "" || newCwd === "./") {
+        newCwd = defaultCwd;
+      }
       this.#core.setCwd(newCwd);
       return this;
     }
 
     env(newEnv: Record<string, string>): this {
       this.#throwIfRunning();
+      if (typeof newEnv === "undefined") {
+        newEnv = defaultEnv;
+      }
+
       this.#core.setEnv(newEnv);
       return this;
     }
@@ -70,8 +77,6 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     #run() {
       if (!this.#hasRun) {
         this.#hasRun = true;
-        // clearImmediate(this.#immediate);
-        // this.#immediate = undefined;
 
         if (this.#core.isRunning()) return;
         this.#core.run();
@@ -162,8 +167,8 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
     cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
-        if (newCwd === "" || newCwd === ".") {
-          newCwd = undefined;
+        if (newCwd === "." || newCwd === "" || newCwd === "./") {
+          newCwd = defaultCwd;
         }
 
         this[cwdSymbol] = newCwd;

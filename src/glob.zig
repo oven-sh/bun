@@ -109,7 +109,6 @@ const CursorState = struct {
     }
 };
 
-
 pub const BunGlobWalker = GlobWalker_(null, SyscallAccessor, false);
 
 fn dummyFilterTrue(val: []const u8) bool {
@@ -283,7 +282,7 @@ pub fn GlobWalker_(
     comptime sentinel: bool,
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
-    
+
     const count_fds = Accessor.count_fds and bun.Environment.allow_assert;
 
     const stdJoin = comptime if (!sentinel) std.fs.path.join else std.fs.path.joinZ;

@@ -10,7 +10,6 @@ Quickstart:
 import { $ } from "bun";
 
 const response = await fetch("https://example.com");
-const buffer = Buffer.alloc(100);
 
 // Use Response as stdin.
 await $`echo < ${response} > wc -c`; // 120

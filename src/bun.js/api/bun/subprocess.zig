@@ -1384,7 +1384,7 @@ pub const Subprocess = struct {
         }
         fn flushBufferedDataIntoReadableStream(this: *BufferedOutput) void {
             if (this.readable_stream_ref.get()) |readable| {
-                std.debug.assert(readable.ptr == .Bytes);
+                if(readable.ptr != .Bytes) return;
 
                 const internal_buffer = this.internal_buffer;
                 const isDone = this.status != .pending;
@@ -2068,10 +2068,10 @@ pub const Subprocess = struct {
                 }
 
                 if (args.get(globalThis, "ipc")) |val| {
-                    if (Environment.isWindows) {
-                        globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
-                        return .zero;
-                    }
+                    // if (Environment.isWindows) {
+                    //     globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
+                    //     return .zero;
+                    // }
 
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
                         // In the future, we should add a way to use a different IPC serialization format, specifically `json`.

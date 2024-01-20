@@ -487,7 +487,7 @@ pub const RunCommand = struct {
                 };
                 Global.exit(0);
             } else {
-                //p arent
+                // parent
                 var cstatus: c_int = 0;
                 switch (std.c.getErrno(std.c.waitpid(pid, &cstatus, 0))) {
                     .SUCCESS => {
@@ -1265,6 +1265,7 @@ pub const RunCommand = struct {
                     };
 
                     const file = file_ catch break :possibly_open_with_bun_js;
+                    defer file.close();
 
                     if (!force_using_bun) {
                         // Due to preload, we don't know if they intend to run
@@ -1320,8 +1321,6 @@ pub const RunCommand = struct {
                         }
                         return ExecResult.failure;
                     };
-
-                    // return ExecResult.ok;
                 }
             }
         }

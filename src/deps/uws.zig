@@ -979,11 +979,13 @@ pub const PosixLoop = extern struct {
 
     // This exists as a method so that we can stick a debugger in here
     pub fn addActive(this: *PosixLoop, value: u32) void {
+        log("add {d} + {d} = {d}", .{ this.active, value, this.active +| value });
         this.active +|= value;
     }
 
     // This exists as a method so that we can stick a debugger in here
     pub fn subActive(this: *PosixLoop, value: u32) void {
+        log("sub {d} - {d} = {d}", .{ this.active, value, this.active -| value });
         this.active -|= value;
     }
 

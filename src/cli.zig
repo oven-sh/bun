@@ -1691,6 +1691,10 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".bun.sh")) {
+                            break :brk options.Loader.bunsh;
+                        }
+
                         if (!ctx.debug.loaded_bunfig) {
                             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
                         }

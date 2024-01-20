@@ -16,9 +16,9 @@ If you see an error like this:
 
 ![image](https://user-images.githubusercontent.com/709451/141210854-89434678-d21b-42f4-b65a-7df3b785f7b9.png)
 
-It usually means the max number of open file descriptors is being explicitly set to a low number. By default, Bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with, e.g., Chokidar, someone on The Internet may have advised you to run `ulimit -n 8096`.
+It usually means the max number of open file descriptors is being explicitly set to a low number. By default, Bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with, e.g., Chokidar, someone on The Internet may have advised you to run `ulimit -n 8192`.
 
-That advice unfortunately **lowers** the hard limit to `8096`. This can be a problem in large repositories or projects with lots of dependencies. Chokidar (and other watchers) don’t seem to call `setrlimit`, which means they’re reliant on the (much lower) soft limit.
+That advice unfortunately **lowers** the hard limit to `8192`. This can be a problem in large repositories or projects with lots of dependencies. Chokidar (and other watchers) don’t seem to call `setrlimit`, which means they’re reliant on the (much lower) soft limit.
 
 To fix this issue:
 

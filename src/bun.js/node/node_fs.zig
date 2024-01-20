@@ -5140,7 +5140,7 @@ pub const NodeFS = struct {
                     total += amt;
                     // There are cases where stat()'s size is wrong or out of date
                     if (total > size and amt != 0) {
-                        buf.ensureUnusedCapacity(8096) catch unreachable;
+                        buf.ensureUnusedCapacity(8192) catch unreachable;
                         buf.expandToCapacity();
                         continue;
                     }
@@ -5161,7 +5161,7 @@ pub const NodeFS = struct {
                         total += amt;
                         // There are cases where stat()'s size is wrong or out of date
                         if (total > size and amt != 0) {
-                            buf.ensureUnusedCapacity(8096) catch unreachable;
+                            buf.ensureUnusedCapacity(8192) catch unreachable;
                             buf.expandToCapacity();
                             continue;
                         }

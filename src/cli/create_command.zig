@@ -1852,7 +1852,7 @@ pub const Example = struct {
 
         const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
         const mutable = try ctx.allocator.create(MutableString);
-        mutable.* = try MutableString.init(ctx.allocator, 8096);
+        mutable.* = try MutableString.init(ctx.allocator, 8192);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;

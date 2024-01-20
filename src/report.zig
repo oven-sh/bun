@@ -303,9 +303,11 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         error_return_trace = @errorReturnTrace();
     }
 
-    if (comptime !@import("root").bun.JSC.is_bindgen) {
-        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-        Bun__crashReportDumpStackTrace(&crash_report_writer);
+    if (!Environment.isWindows) {
+        if (comptime !@import("root").bun.JSC.is_bindgen) {
+            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+            Bun__crashReportDumpStackTrace(&crash_report_writer);
+        }
     }
 
     if (!had_printed_fatal) {

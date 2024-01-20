@@ -24,7 +24,7 @@ pub const WatchItemIndex = u16;
 const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
-const WATCHER_MAX_LIST = 8096;
+const WATCHER_MAX_LIST = 8192;
 
 pub const INotify = struct {
     pub const IN_CLOEXEC = std.os.O.CLOEXEC;

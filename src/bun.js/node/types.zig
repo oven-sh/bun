@@ -79,6 +79,19 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
+        pub inline fn initErr(e: Syscall.Error) Maybe(ReturnType) {
+            return .{ .err = e };
+        }
+
+        pub inline fn asErr(this: *const @This()) ?Syscall.Error {
+            if (this.* == .err) return this.err;
+            return null;
+        }
+
+        pub inline fn initResult(result: ReturnType) Maybe(ReturnType) {
+            return .{ .result = result };
+        }
+
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             return switch (this) {
                 .err => |e| e.toJSC(globalThis),

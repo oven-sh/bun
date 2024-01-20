@@ -151,9 +151,6 @@ pub const Arguments = struct {
     const base_params_ = [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        // clap.parseParam("-w, --workspace <STR>             Perform the command on the specified workspace member package") catch unreachable,
-        clap.parseParam("--filter <STR>...                 Perform the command on all workspace member packages that match the pattern") catch unreachable,
-        // clap.parseParam("--fail-if-no-match                Fail if no packages match the filter") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
@@ -200,6 +197,7 @@ pub const Arguments = struct {
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
+        clap.parseParam("--filter <STR>...                 Run the script or executable in each workspace package matching the filter pattern") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     };
@@ -430,7 +428,9 @@ pub const Arguments = struct {
             cwd = try bun.getcwd(&cwd_buf);
         }
 
-        ctx.filters = args.options("--filter");
+        if (cmd == .RunCommand) {
+            ctx.filters = args.options("--filter");
+        }
 
         if (cmd == .TestCommand) {
             if (args.option("--timeout")) |timeout_ms| {

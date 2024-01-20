@@ -338,7 +338,7 @@ pub const Bin = extern struct {
                         if (strings.hasPrefix(target_path_trim, "../")) {
                             target_path_trim = target_path_trim[3..];
                         }
-setPermissions(node_modules.fd, target_path_trim);
+                        setPermissions(node_modules.fd, target_path_trim);
                         this.err = err;
                     }
                 };

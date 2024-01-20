@@ -336,9 +336,9 @@ await $`echo ${$.raw("Hello World!")}`;
 // => Hello World!
 ```
 
-## Standalone usage
+## .bun.sh file loader
 
-You can use Bun Shell to run simple shell script files on your computer.
+For simple shell scripts, instead of `sh`, you can use Bun Shell to run shell scripts.
 
 To do that, run any file with bun that ends with `.bun.sh`:
 

@@ -370,7 +370,6 @@ pub const RunCommand = struct {
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
     /// This prevents '"node" exited with ...' when it was actually bun.
-    /// As of writing this is only used for 'runBinary'
     fn basenameOrBun(str: []const u8) []const u8 {
         if (strings.eqlComptime(str, bun_node_dir ++ "/node")) {
             return "bun";
@@ -386,46 +385,93 @@ pub const RunCommand = struct {
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
     ) !ExecResult {
-        var argv_ = [_]string{executable};
-        var argv: []const string = &argv_;
+        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
 
-        if (passthrough.len > 0) {
-            var array_list = std.ArrayList(string).init(ctx.allocator);
-            try array_list.append(executable);
-            try array_list.appendSlice(passthrough);
-            argv = try array_list.toOwnedSlice();
+        const argc = passthrough.len + 1;
+        var argv = try alloc.allocSentinel(?[*:0]const u8, argc, null);
+        var name = try alloc.allocSentinel(u8, executable.len, 0);
+        @memcpy(name[0..executable.len], executable);
+        argv[0] = name; //name[0..executable.len :0];
+
+        for (1.., passthrough) |i, p| {
+            var arg = try alloc.allocSentinel(u8, p.len, 0);
+            @memcpy(arg[0..p.len], p);
+            argv[i] = arg;
         }
 
-        var child_process = std.ChildProcess.init(argv, ctx.allocator);
+        const envc = env.map.map.count();
+        var envp = try alloc.allocSentinel(?[*:0]const u8, envc, null);
+        var offset: usize = 0;
+        var iter = env.map.map.iterator();
+        while (iter.next()) |entry| : (offset += 1) {
+            const len = entry.key_ptr.len + 1 + entry.value_ptr.value.len;
+            var envvar = try alloc.allocSentinel(u8, len, 0);
+            @memcpy(envvar[0..entry.key_ptr.len], entry.key_ptr.*);
+            envvar[entry.key_ptr.len] = '=';
+            @memcpy(envvar[entry.key_ptr.len + 1 .. len], entry.value_ptr.value);
+            envp[offset] = envvar;
+        }
 
-        var buf_map = try env.map.cloneToEnvMap(ctx.allocator);
-        child_process.cwd = cwd;
-        child_process.env_map = &buf_map;
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
         const silent = ctx.debug.silent;
 
-        const result = child_process.spawnAndWait() catch |err| {
-            if (err == error.AccessDenied) {
+        var actions = try PosixSpawn.Actions.init();
+        try actions.inherit(bun.posix.STDIN_FD);
+        try actions.inherit(bun.posix.STDOUT_FD);
+        try actions.inherit(bun.posix.STDERR_FD);
+        try actions.chdir(cwd);
+
+        var execpath_buf: bun.PathBuffer = undefined;
+        @memcpy(execpath_buf[0..executable.len], executable);
+        execpath_buf[executable.len] = 0;
+        const execpath = execpath_buf[0..executable.len :0];
+
+        const childpid = switch (PosixSpawn.spawnZ(execpath, actions, null, argv, envp)) {
+            .result => |pid| pid,
+            .err => |err| {
                 if (comptime Environment.isPosix) {
-                    var stat = std.mem.zeroes(std.c.Stat);
-                    const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
-                    if (rc == 0) {
-                        if (std.os.S.ISDIR(stat.mode)) {
-                            if (!silent)
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpStackTrace(trace.*);
+                    const EACCES: u16 = @intCast(@intFromEnum(bun.C.E.ACCES));
+                    if (@as(u16, err.errno) == EACCES) {
+                        var stat = std.mem.zeroes(std.c.Stat);
+                        const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
+                        if (rc == 0) {
+                            if (std.os.S.ISDIR(stat.mode)) {
+                                if (!silent)
+                                    Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
+                                return ExecResult.failure;
                             }
-                            return ExecResult.failure;
                         }
                     }
                 }
-            }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-            return ExecResult.failure;
+                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error: <b>{}<r>", .{ basenameOrBun(executable), err });
+                return ExecResult.failure;
+            },
         };
+
+        const status = switch (PosixSpawn.waitpid(childpid, 0)) {
+            .result => |res| res.status,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error: <b>{}<r>", .{ basenameOrBun(executable), err });
+                return ExecResult.failure;
+            },
+        };
+
+        const os = std.os;
+        const Term = std.ChildProcess.Term;
+        const result =
+            if (os.W.IFEXITED(status))
+            Term{ .Exited = os.W.EXITSTATUS(status) }
+        else if (os.W.IFSIGNALED(status))
+            Term{ .Signal = os.W.TERMSIG(status) }
+        else if (os.W.IFSTOPPED(status))
+            Term{ .Stopped = os.W.STOPSIG(status) }
+        else
+            Term{ .Unknown = status };
+
         switch (result) {
             .Exited => |code| {
                 if (!silent) {
@@ -473,8 +519,6 @@ pub const RunCommand = struct {
                 return ExecResult.failure;
             },
         }
-
-        return true;
     }
 
     pub fn bootMaybeSubprocess(ctx_: Command.Context, entry_path: string, comptime subprocess: bool) !ExecResult {
@@ -1334,6 +1378,12 @@ pub const RunCommand = struct {
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        defer {
+            this_bundler.env.map.put("PATH", ORIGINAL_PATH) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to restore PATH due to error <b>{s}<r>", .{@errorName(err)});
+                Global.crash();
+            };
+        }
 
         if (script_name_to_search.len == 0) {
             // naked "bun run"
@@ -1430,22 +1480,6 @@ pub const RunCommand = struct {
 
         if (path_for_which.len > 0) {
             if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
-                // var file = std.fs.openFileAbsoluteZ(destination, .{ .mode = .read_only }) catch |err| {
-                //     if (!log_errors) return false;
-
-                //     Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
-                //     Output.flush();
-                //     return err;
-                // };
-                // // var outbuf = bun.getFdPath(file.handle, &path_buf2) catch |err| {
-                // //     if (!log_errors) return false;
-                // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
-                // //     Output.flush();
-                // //     return err;
-                // // };
-
-                // // file.close();
-
                 const out = bun.asByteSlice(destination);
                 return try runBinary(
                     ctx,

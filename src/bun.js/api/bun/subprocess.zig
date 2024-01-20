@@ -742,6 +742,8 @@ pub const Subprocess = struct {
             array_buffer: JSC.ArrayBuffer.Strong,
         },
 
+        pub const event_loop_kind = JSC.EventLoopKind.js;
+
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
 
         pub fn onReady(this: *BufferedInput, _: i64) void {
@@ -1821,17 +1823,17 @@ pub const Subprocess = struct {
         }
 
         // TODO: move pipe2 to bun.sys so it can return [2]bun.FileDesriptor
-        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
+        const stdin_pipe = if (stdio[0].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
-        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
+        const stdout_pipe = if (stdio[1].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
-        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
+        const stderr_pipe = if (stdio[2].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
@@ -2528,7 +2530,7 @@ pub const Subprocess = struct {
         fn setUpChildIoPosixSpawn(
             stdio: @This(),
             actions: *PosixSpawn.Actions,
-            pipe_fd: [2]i32,
+            pipe_fd: [2]bun.FileDescriptor,
             std_fileno: bun.FileDescriptor,
         ) !void {
             switch (stdio) {
@@ -2801,6 +2803,8 @@ pub const Subprocess = struct {
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
+    const ShellSubprocess = bun.shell.Subprocess;
+    const ShellSubprocessMini = bun.shell.SubprocessMini;
 
     // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
     // use a thread to wait for the child process to exit.
@@ -2809,10 +2813,100 @@ pub const Subprocess = struct {
         concurrent_queue: Queue = .{},
         lifecycle_script_concurrent_queue: LifecycleScriptTaskQueue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
+        shell: struct {
+            jsc: ShellSubprocessQueue = .{},
+            mini: ShellSubprocessMiniQueue = .{},
+        } = .{},
         lifecycle_script_queue: std.ArrayList(*LifecycleScriptSubprocess) = std.ArrayList(*LifecycleScriptSubprocess).init(bun.default_allocator),
         started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
         eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+
+        pub const ShellSubprocessQueue = NewShellQueue(ShellSubprocess);
+        pub const ShellSubprocessMiniQueue = NewShellQueue(ShellSubprocessMini);
+
+        fn NewShellQueue(comptime T: type) type {
+            return struct {
+                queue: ConcurrentQueue = .{},
+                active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.default_allocator),
+
+                pub const ShellTask = struct {
+                    shell: *T,
+                    next: ?*ShellTask = null,
+
+                    pub usingnamespace bun.New(@This());
+                };
+                pub const ConcurrentQueue = bun.UnboundedQueue(ShellTask, .next);
+
+                pub const ResultTask = struct {
+                    result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                    subprocess: *T,
+
+                    pub usingnamespace bun.New(@This());
+
+                    pub const runFromJSThread = runFromMainThread;
+
+                    pub fn runFromMainThread(self: *@This()) void {
+                        const result = self.result;
+                        var subprocess = self.subprocess;
+                        _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                        self.destroy();
+                        subprocess.onWaitPid(false, result);
+                    }
+
+                    pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
+                        self.runFromMainThread();
+                    }
+                };
+
+                pub fn append(self: *@This(), shell: *T) void {
+                    self.queue.push(
+                        ShellTask.new(.{
+                            .shell = shell,
+                        }),
+                    );
+                }
+
+                pub fn loop(this: *@This()) void {
+                    {
+                        var batch = this.queue.popBatch();
+                        var iter = batch.iterator();
+                        this.active.ensureUnusedCapacity(batch.count) catch unreachable;
+                        while (iter.next()) |task| {
+                            this.active.appendAssumeCapacity(task.shell);
+                            task.destroy();
+                        }
+                    }
+
+                    var queue: []*T = this.active.items;
+                    var i: usize = 0;
+                    while (queue.len > 0 and i < queue.len) {
+                        var process = queue[i];
+
+                        // this case shouldn't really happen
+                        if (process.pid == bun.invalid_fd.int()) {
+                            _ = this.active.orderedRemove(i);
+                            _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                            queue = this.active.items;
+                            continue;
+                        }
+
+                        const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, null);
+                        if (result == .err or (result == .result and result.result.pid == process.pid)) {
+                            _ = this.active.orderedRemove(i);
+                            queue = this.active.items;
+
+                            T.GlobalHandle.init(process.globalThis).enqueueTaskConcurrentWaitPid(ResultTask.new(.{
+                                .result = result,
+                                .subprocess = process,
+                            }));
+                        }
+
+                        i += 1;
+                    }
+                }
+            };
+        }
 
         pub fn setShouldUseWaiterThread() void {
             @atomicStore(bool, &should_use_waiter_thread, true, .Monotonic);
@@ -2826,6 +2920,39 @@ pub const Subprocess = struct {
             subprocess: *Subprocess,
             next: ?*WaitTask = null,
         };
+
+        pub fn appendShell(comptime Type: type, process: *Type) void {
+            const GlobalHandle = Type.GlobalHandle;
+
+            if (process.poll == .wait_thread) {
+                process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
+                _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
+            } else {
+                process.poll = .{
+                    .wait_thread = .{
+                        .poll_ref = .{},
+                        .ref_count = std.atomic.Value(u32).init(1),
+                    },
+                };
+                process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
+            }
+
+            switch (comptime Type) {
+                ShellSubprocess => instance.shell.jsc.append(process),
+                ShellSubprocessMini => instance.shell.mini.append(process),
+                else => @compileError("Unknown ShellSubprocess type"),
+            }
+            // if (comptime is_js) {
+            //     process.updateHasPendingActivity();
+            // }
+
+            init() catch @panic("Failed to start WaiterThread");
+
+            if (comptime Environment.isLinux) {
+                const one = @as([8]u8, @bitCast(@as(usize, 1)));
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
+            }
+        }
 
         pub const LifecycleScriptWaitTask = struct {
             lifecycle_script_subprocess: *bun.install.LifecycleScriptSubprocess,
@@ -3025,6 +3152,8 @@ pub const Subprocess = struct {
             while (true) {
                 this.loopSubprocess();
                 this.loopLifecycleScriptsSubprocess();
+                this.shell.jsc.loop();
+                this.shell.mini.loop();
 
                 if (comptime Environment.isLinux) {
                     var polls = [_]std.os.pollfd{

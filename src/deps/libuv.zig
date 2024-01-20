@@ -522,6 +522,14 @@ pub const Loop = extern struct {
     wq_mutex: uv_mutex_t,
     wq_async: uv_async_t,
 
+    pub fn subActive(this: *Loop, value: u32) void {
+        this.active_handles -= value;
+    }
+
+    pub fn addActive(this: *Loop, value: u32) void {
+        this.active_handles += value;
+    }
+
     pub fn inc(this: *Loop) void {
         this.active_handles += 1;
     }

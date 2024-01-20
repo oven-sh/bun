@@ -105,7 +105,6 @@ const ScanOpts = struct {
             }
 
             // Convert to an absolute path
-
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,

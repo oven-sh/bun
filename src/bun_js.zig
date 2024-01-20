@@ -135,10 +135,33 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
+    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !void {
+        @setCold(true);
+
+        // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
+        var bundle = try bun.Bundler.init(
+            ctx.allocator,
+            ctx.log,
+            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            null,
+        );
+        try bundle.runEnvLoader();
+        const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
+        mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
+        try bun.shell.InterpreterMini.initAndRunFromFile(mini, entry_path);
+        return;
+    }
+
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
         bun.JSC.initialize();
+
+        if (strings.endsWithComptime(entry_path, ".bun.sh")) {
+            try bootBunShell(&ctx, entry_path);
+            Global.exit(0);
+            return;
+        }
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);

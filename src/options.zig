@@ -650,6 +650,7 @@ pub const Loader = enum(u8) {
     base64,
     dataurl,
     text,
+    bunsh,
     sqlite,
     sqlite_embedded,
 
@@ -694,7 +695,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm => true,
+            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -713,6 +714,7 @@ pub const Loader = enum(u8) {
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
         map.set(Loader.text, "input.txt");
+        map.set(Loader.bunsh, "input.bunsh");
         break :brk map;
     };
 
@@ -733,7 +735,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
+            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{}, global, exception);
             return null;
         };
     }
@@ -757,6 +759,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
+        .{ "bunsh", Loader.bunsh },
         .{ "sqlite", Loader.sqlite },
         .{ "sqlite_embedded", Loader.sqlite_embedded },
     });
@@ -780,6 +783,7 @@ pub const Loader = enum(u8) {
         .{ "base64", Api.Loader.base64 },
         .{ "txt", Api.Loader.text },
         .{ "text", Api.Loader.text },
+        .{ "bunsh", Api.Loader.file },
         .{ "sqlite", Api.Loader.sqlite },
     });
 
@@ -806,7 +810,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
-            .file => .file,
+            .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,

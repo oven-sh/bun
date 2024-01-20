@@ -125,6 +125,7 @@ pub const Tag = enum(u8) {
 
     uv_spawn,
     uv_pipe,
+    pipe,
 
     WriteFile,
     NtQueryDirectoryFile,
@@ -691,6 +692,15 @@ pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
     return bun.FDImpl.decode(fd).close();
 }
 
+pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
+    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD or fd == bun.STDIN_FD) {
+        log("close({d}) SKIPPED", .{fd});
+        return null;
+    }
+
+    return closeAllowingStdoutAndStderr(fd);
+}
+
 pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     return bun.FDImpl.decode(fd).closeAllowingStdoutAndStderr();
 }
@@ -1126,8 +1136,12 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
     while (true) {
         if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
+        if (comptime Environment.allow_assert)
+            log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return Maybe(void).success;
     }
 }
@@ -1203,12 +1217,30 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return Maybe(void).todo();
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 1), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, std.os.AT.REMOVEDIR), .rmdir)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(void).success;
     }
+}
+
+pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
+    if (Environment.isWindows) {
+        return Maybe(void).todo();
+    }
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+            return err;
+        }
+        if (comptime Environment.allow_assert)
+            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+        return Maybe(void).success;
+    }
+    unreachable;
 }
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
@@ -1218,8 +1250,12 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
             return err;
         }
+        if (comptime Environment.allow_assert)
+            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return Maybe(void).success;
     }
 }
@@ -1345,6 +1381,12 @@ pub const Error = struct {
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
+    }
+
+    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
+        var copy = this.*;
+        copy.path = try allocator.dupe(u8, copy.path);
+        return copy;
     }
 
     pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
@@ -1691,6 +1733,22 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     }
 }
 
+pub fn pipe() Maybe([2]bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        @panic("TODO: Implement `pipe()` for Windows");
+    }
+
+    var fds: [2]i32 = undefined;
+    const rc = system.pipe(&fds);
+    if (Maybe([2]bun.FileDescriptor).errnoSys(
+        rc,
+        .pipe,
+    )) |err| {
+        return err;
+    }
+    return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
+}
+
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         const target: *windows.HANDLE = undefined;
@@ -1713,6 +1771,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     }
 
     const out = std.c.dup(fd.cast());
+    log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
 

@@ -730,7 +730,7 @@ pub const ZigString = extern struct {
 
     pub const Empty = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 };
 
-    inline fn untagged(ptr: [*]const u8) [*]const u8 {
+    pub inline fn untagged(ptr: [*]const u8) [*]const u8 {
         // this can be null ptr, so long as it's also a 0 length string
         @setRuntimeSafety(false);
         return @as([*]const u8, @ptrFromInt(@as(u53, @truncate(@intFromPtr(ptr)))));

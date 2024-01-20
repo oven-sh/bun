@@ -1061,9 +1061,6 @@ pub const RunCommand = struct {
             return ExecResult{ .code = code };
         }
 
-        // const ok = ExecResult{.ok = void};
-        // const failure = ExecResult.failure;
-
         pub fn notFailure(self: ExecResult) bool {
             return switch (self) {
                 .ok => true,
@@ -1096,23 +1093,6 @@ pub const RunCommand = struct {
                 },
                 .result => {},
             }
-        }
-
-        const root_dir = try Fs.FileSystem.instance.fs.readDirectory(
-            Fs.FileSystem.instance.top_level_dir,
-            null,
-            0,
-            true,
-        );
-        switch (root_dir.*) {
-            .entries => |e| {
-                // _ = e.data.get("package.json");
-                _ = e;
-            },
-            .err => |err| {
-                _ = err;
-                Global.crash();
-            },
         }
 
         var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, olddir);

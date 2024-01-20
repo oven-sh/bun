@@ -36,6 +36,12 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 
+pub const shell = struct {
+    pub usingnamespace @import("./shell/shell.zig");
+};
+
+pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
+
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
 

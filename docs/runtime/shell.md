@@ -269,9 +269,7 @@ import { $ } from "bun";
 
 const search = "bun";
 const iterator = await $`cat list.txt | grep ${search}`.lines();
-if (iterator.exitCode !== 0) {
-  throw new Error("oh no");
-}
+
 for await (let line of iterator) {
   console.log(line);
 }

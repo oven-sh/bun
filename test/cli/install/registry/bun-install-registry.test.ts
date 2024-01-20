@@ -438,7 +438,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(await exited).toBe(0);
 });
 
-test.only("it should re-symlink binaries that become invalid when updating package versions", async () => {
+test("it should re-symlink binaries that become invalid when updating package versions", async () => {
   await writeFile(
     join(packageDir, "package.json"),
     JSON.stringify({

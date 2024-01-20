@@ -955,7 +955,7 @@ pub const Subprocess = struct {
         pub fn readAll(this: *BufferedOutput) void {
             if (this.auto_sizer) |auto_sizer| {
                 while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
-                    var stack_buffer: [8096]u8 = undefined;
+                    var stack_buffer: [8192]u8 = undefined;
                     const stack_buf: []u8 = stack_buffer[0..];
                     var buf_to_use = stack_buf;
                     const available = this.internal_buffer.available();

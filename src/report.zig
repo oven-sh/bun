@@ -519,7 +519,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             if (comptime Environment.isPosix) {
                 const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
 
-                if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
                         \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>

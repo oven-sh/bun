@@ -20,7 +20,7 @@ pub fn main() anyerror!void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    var args_buffer: [8096 * 2]u8 = undefined;
+    var args_buffer: [8192 * 2]u8 = undefined;
     var fixed_buffer = std.heap.FixedBufferAllocator.init(&args_buffer);
     var allocator = fixed_buffer.allocator();
 

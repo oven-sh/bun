@@ -176,7 +176,7 @@ export class Bun {
     return Bun.wasm_source.instance.exports.memory as WebAssembly.Memory;
   }
 
-  private static scratch: Uint8Array = new Uint8Array(8096);
+  private static scratch: Uint8Array = new Uint8Array(8192);
   private static memory_array: Uint8Array;
 
   private static _decoder: TextDecoder;

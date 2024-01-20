@@ -4046,7 +4046,7 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
                     if (sizeOrOffset > 0) {
                         this.buf = auto_sizer.resize(@as(usize, @intCast(sizeOrOffset))) catch return;
                     } else {
-                        this.buf = auto_sizer.resize(8096) catch return;
+                        this.buf = auto_sizer.resize(8192) catch return;
                     }
                 }
             }

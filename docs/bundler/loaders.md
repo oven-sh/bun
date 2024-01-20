@@ -196,6 +196,16 @@ When using a [standalone executable](/docs/bundler/executables), the database is
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
+### `bunshell` loader
+
+**Bun Shell loader**. Default for `.bun.sh` files
+
+This loader is used to parse [Bun Shell](/docs/runtime/shell) scripts. It's only supported when starting bun itself, so it's not available in the bundler or in the runtime.
+
+```sh
+$ bun run ./script.bun.sh
+```
+
 ### `file`
 
 **File loader**. Default for all unrecognized file types.

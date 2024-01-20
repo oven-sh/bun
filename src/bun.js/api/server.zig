@@ -5754,7 +5754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
-            var stack_fallback = std.heap.stackFallback(8096, this.allocator);
+            var stack_fallback = std.heap.stackFallback(8192, this.allocator);
             const allocator = stack_fallback.get();
 
             const buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;

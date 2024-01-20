@@ -991,7 +991,7 @@ pub const Bundler = struct {
                 };
                 const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8096, std.fs.File.Writer));
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, std.fs.File.Writer));
                 const CSSWriter = Css.NewWriter(
                     BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),

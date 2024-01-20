@@ -53,7 +53,7 @@ const welcome = await $`echo "Hello World!"`.text();
 console.log(welcome); // Hello World!\n
 ```
 
-To get stdout, stderr, and the exit code, use await or .run:
+To get stdout, stderr, and the exit code, use await or `.run`:
 
 ```js
 import { $ } from "bun";

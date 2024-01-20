@@ -14,6 +14,7 @@ const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
 const string = bun.string;
+const PackageInstall = @import("./install.zig").PackageInstall;
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -311,9 +312,25 @@ pub const Bin = extern struct {
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             const node_modules = this.package_installed_node_modules.asDir();
             std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
-                // Silently ignore PathAlreadyExists
+                // Silently ignore PathAlreadyExists if the symlink is valid.
                 // Most likely, the symlink was already created by another package
                 if (err == error.PathAlreadyExists) {
+                    if (PackageInstall.isDanglingSymlink(dest_path)) {
+                        // this case is hit if the package was previously and the bin is located in a different directory
+                        node_modules.deleteFileZ(dest_path) catch |err2| {
+                            this.err = err2;
+                            return;
+                        };
+
+                        std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err2| {
+                            this.err = err2;
+                            return;
+                        };
+
+                        setPermissions(node_modules.fd, dest_path);
+                        return;
+                    }
+
                     setPermissions(node_modules.fd, dest_path);
                     var target_path_trim = target_path;
                     if (strings.hasPrefix(target_path_trim, "../")) {

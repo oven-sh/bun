@@ -859,7 +859,7 @@ pub const ExtractData = struct {
     json_len: usize = 0,
 };
 
-const PackageInstall = struct {
+pub const PackageInstall = struct {
     cache_dir: std.fs.Dir,
     destination_dir: std.fs.Dir,
     cache_dir_subpath: stringZ = "",
@@ -1595,7 +1595,7 @@ const PackageInstall = struct {
         this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
-    fn isDanglingSymlink(path: [:0]const u8) bool {
+    pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {

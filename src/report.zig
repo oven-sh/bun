@@ -232,14 +232,19 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         crash_report_writer.flush();
 
-        // It only is a real crash report if it's not coming from Zig
+        // TODO(@paperdave):
+        // Bun__crashReportDumpStackTrace does not work on Windows, even in a debug build
+        // It is fine to skip this because in release we ship with ReleaseSafe
+        // because zig's panic handler will also trigger right after
+        if (!Environment.isWindows) {
+            // It only is a real crash report if it's not coming from Zig
+            if (comptime !@import("root").bun.JSC.is_bindgen) {
+                std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+                Bun__crashReportDumpStackTrace(&crash_report_writer);
+            }
 
-        if (comptime !@import("root").bun.JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-            Bun__crashReportDumpStackTrace(&crash_report_writer);
+            crash_report_writer.flush();
         }
-
-        crash_report_writer.flush();
 
         crash_report_writer.printPath();
     }

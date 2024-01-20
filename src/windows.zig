@@ -2971,7 +2971,11 @@ pub extern "kernel32" fn SetFileInformationByHandle(
 ) BOOL;
 
 pub fn getLastErrno() bun.C.E {
-    return switch (bun.windows.kernel32.GetLastError()) {
+    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
+}
+
+pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
+    return switch (err) {
         .SUCCESS => .SUCCESS,
         .FILE_NOT_FOUND => .NOENT,
         .PATH_NOT_FOUND => .NOENT,
@@ -2983,9 +2987,9 @@ pub fn getLastErrno() bun.C.E {
         .INVALID_PARAMETER => .INVAL,
 
         else => |t| {
-            if (bun.Environment.isDebug) {
-                bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno", .{@tagName(t)});
-            }
+            // if (bun.Environment.isDebug) {
+            bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            // }
             return .UNKNOWN;
         },
     };

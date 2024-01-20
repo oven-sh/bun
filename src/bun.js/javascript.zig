@@ -108,6 +108,8 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
 
 pub const bun_file_import_path = "/node_modules.server.bun";
 
+export var has_bun_garbage_collector_flag_enabled = false;
+
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
@@ -465,7 +467,7 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
-const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
@@ -778,8 +780,10 @@ pub const VirtualMachine = struct {
 
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
+                has_bun_garbage_collector_flag_enabled = true;
             } else if (strings.eqlComptime(gc_level, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
+                has_bun_garbage_collector_flag_enabled = true;
             }
         }
     }

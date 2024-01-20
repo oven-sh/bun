@@ -102,7 +102,6 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
         makeTree(path.join(base, name), contents);
         continue;
       }
-      fs.mkdirSync(path.dirname(path.join(base, name)), { recursive: true });
       fs.writeFileSync(path.join(base, name), contents);
     }
   }
@@ -162,6 +161,50 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };
+}
+
+export function randomLoneSurrogate() {
+  const n = randomRange(0, 2);
+  if (n === 0) return randomLoneHighSurrogate();
+  return randomLoneLowSurrogate();
+}
+
+export function randomInvalidSurrogatePair() {
+  const low = randomLoneLowSurrogate();
+  const high = randomLoneHighSurrogate();
+  return `${low}${high}`;
+}
+
+// Generates a random lone high surrogate (from the range D800-DBFF)
+export function randomLoneHighSurrogate() {
+  return String.fromCharCode(randomRange(0xd800, 0xdbff));
+}
+
+// Generates a random lone high surrogate (from the range DC00-DFFF)
+export function randomLoneLowSurrogate() {
+  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
+}
+
+function randomRange(low: number, high: number): number {
+  return low + Math.floor(Math.random() * (high - low));
+}
+
+export function runWithError(cb: () => unknown): Error | undefined {
+  try {
+    cb();
+  } catch (e) {
+    return e as Error;
+  }
+  return undefined;
+}
+
+export async function runWithErrorPromise(cb: () => unknown): Promise<Error | undefined> {
+  try {
+    await cb();
+  } catch (e) {
+    return e as Error;
+  }
+  return undefined;
 }
 
 export function fakeNodeRun(dir: string, file: string | string[], env?: Record<string, string>) {

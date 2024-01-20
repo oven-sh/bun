@@ -268,9 +268,8 @@ You can also use `.lines()` on a completed command:
 import { $ } from "bun";
 
 const search = "bun";
-const iterator = await $`cat list.txt | grep ${search}`.lines();
 
-for await (let line of iterator) {
+for await (let line of await $`cat list.txt | grep ${search}`.lines()) {
   console.log(line);
 }
 ```

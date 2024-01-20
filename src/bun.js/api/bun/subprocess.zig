@@ -263,7 +263,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
     ) JSValue {
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             if (this.pid_rusage == null) {
                 this.pid_rusage = uv_getrusage(&this.pid);
                 if (this.pid_rusage == null) {
@@ -711,10 +711,12 @@ pub const Subprocess = struct {
                 }
             }
             if (comptime Environment.isWindows) {
-                if (uv.uv_process_kill(&this.pid, sig).errEnum()) |err| {
+                if (std.os.windows.kernel32.TerminateProcess(this.pid.process_handle, @intCast(sig)) == 0) {
+                    const err = @as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())));
                     if (err != .SRCH)
                         return .{ .err = bun.sys.Error.fromCode(err, .kill) };
                 }
+
                 return .{ .result = {} };
             }
 
@@ -834,7 +836,7 @@ pub const Subprocess = struct {
 
         pub fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
             const this = bun.cast(*BufferedPipeInput, req.data);
-            if(this.pipe == null) return;
+            if (this.pipe == null) return;
             if (status.errEnum()) |_| {
                 log("uv_write({d}) fail: {d}", .{ this.remain.len, status.int() });
                 this.deinit();
@@ -3060,11 +3062,9 @@ pub const Subprocess = struct {
                             .data = .{ .stream = @ptrCast(pipe) },
                         };
                     }
-                    _ = isReadable;
                     // we dont have any fd so we create a new pipe
                     return uv.uv_stdio_container_s{
-                        // .flags = @intCast(uv.UV_CREATE_PIPE | if(isReadable) uv.UV_READABLE_PIPE else uv.UV_WRITABLE_PIPE),
-                        .flags = @intCast(uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE),
+                        .flags = @intCast(uv.UV_CREATE_PIPE | if (isReadable) uv.UV_READABLE_PIPE else uv.UV_WRITABLE_PIPE),
                         .data = .{ .stream = @ptrCast(pipe) },
                     };
                 },

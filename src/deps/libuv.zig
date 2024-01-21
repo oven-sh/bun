@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+
 const WORD = c_ushort;
 const LARGE_INTEGER = i64;
 const std = @import("std");
@@ -187,28 +188,31 @@ pub const UV__DT_FIFO = UV_DIRENT_FIFO;
 pub const UV__DT_SOCKET = UV_DIRENT_SOCKET;
 pub const UV__DT_CHAR = UV_DIRENT_CHAR;
 pub const UV__DT_BLOCK = UV_DIRENT_BLOCK;
-pub const UV_FS_O_APPEND = O.APPEND;
-pub const UV_FS_O_CREAT = O.CREAT;
-pub const UV_FS_O_EXCL = O.EXCL;
-pub const UV_FS_O_FILEMAP = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex);
-pub const UV_FS_O_RANDOM = O.RANDOM;
-pub const UV_FS_O_RDONLY = O.RDONLY;
-pub const UV_FS_O_RDWR = O.RDWR;
-pub const UV_FS_O_SEQUENTIAL = O.SEQUENTIAL;
-pub const UV_FS_O_SHORT_LIVED = O.SHORT_LIVED;
-pub const UV_FS_O_TEMPORARY = O.TEMPORARY;
-pub const UV_FS_O_TRUNC = O.TRUNC;
-pub const UV_FS_O_WRONLY = O.WRONLY;
-pub const UV_FS_O_DIRECT = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x02000000, .hex);
-pub const UV_FS_O_DIRECTORY = @as(c_int, 0);
-pub const UV_FS_O_DSYNC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x04000000, .hex);
-pub const UV_FS_O_EXLOCK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000000, .hex);
-pub const UV_FS_O_NOATIME = @as(c_int, 0);
-pub const UV_FS_O_NOCTTY = @as(c_int, 0);
-pub const UV_FS_O_NOFOLLOW = @as(c_int, 0);
-pub const UV_FS_O_NONBLOCK = @as(c_int, 0);
-pub const UV_FS_O_SYMLINK = @as(c_int, 0);
-pub const UV_FS_O_SYNC = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x08000000, .hex);
+
+// These **do not** map to std.os.O!
+pub const UV_FS_O_APPEND = 0x0008;
+pub const UV_FS_O_CREAT = 0x0100;
+pub const UV_FS_O_EXCL = 0x0400;
+pub const UV_FS_O_FILEMAP = 0x20000000;
+pub const UV_FS_O_RANDOM = 0x0010;
+pub const UV_FS_O_RDONLY = 0x0000;
+pub const UV_FS_O_RDWR = 0x0002;
+pub const UV_FS_O_SEQUENTIAL = 0x0020;
+pub const UV_FS_O_SHORT_LIVED = 0x1000;
+pub const UV_FS_O_TEMPORARY = 0x0040;
+pub const UV_FS_O_TRUNC = 0x0200;
+pub const UV_FS_O_WRONLY = 0x0001;
+pub const UV_FS_O_DIRECT = 0x02000000;
+pub const UV_FS_O_DIRECTORY = 0;
+pub const UV_FS_O_DSYNC = 0x04000000;
+pub const UV_FS_O_EXLOCK = 0x10000000;
+pub const UV_FS_O_NOATIME = 0;
+pub const UV_FS_O_NOCTTY = 0;
+pub const UV_FS_O_NOFOLLOW = 0;
+pub const UV_FS_O_NONBLOCK = 0;
+pub const UV_FS_O_SYMLINK = 0;
+pub const UV_FS_O_SYNC = 0x08000000;
+
 pub const UV_PRIORITY_LOW = @as(c_int, 19);
 pub const UV_PRIORITY_BELOW_NORMAL = @as(c_int, 10);
 pub const UV_PRIORITY_NORMAL = @as(c_int, 0);
@@ -548,12 +552,12 @@ pub const Loop = extern struct {
     }
 
     pub fn close(ptr: *Loop) void {
-        uv_loop_close(ptr);
+        _ = uv_loop_close(ptr);
     }
 
-    pub fn new() ?bun.C.E {
-        const ptr = bun.default_allocator.create(Loop);
-        if (init(ptr)) |e| return e;
+    pub fn new() ?*Loop {
+        const ptr = bun.default_allocator.create(Loop) catch return null;
+        if (init(ptr) != null) return null;
         return ptr;
     }
 
@@ -641,7 +645,7 @@ pub const uv_buf_t = extern struct {
 
     pub fn init(input: []const u8) uv_buf_t {
         std.debug.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
-        return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
+        return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
     }
 
     pub fn slice(this: *const @This()) []u8 {
@@ -839,9 +843,10 @@ const union_unnamed_380 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, [*]uv_buf_t) callconv(.C) void;
+pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, *uv_buf_t) callconv(.C) void;
 pub const uv_stream_t = struct_uv_stream_s;
-pub const uv_read_cb = ?*const fn (*uv_stream_t, isize, [*]const uv_buf_t) callconv(.C) void;
+/// *uv.uv_handle_t is actually *uv_stream_t, just changed to avoid dependency loop error on Zig
+pub const uv_read_cb = ?*const fn (*uv_handle_t, isize, *const uv_buf_t) callconv(.C) void;
 const struct_unnamed_382 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -880,7 +885,7 @@ const union_unnamed_386 = extern union {
     io: struct_unnamed_387,
     connect: struct_unnamed_388,
 };
-pub const uv_shutdown_cb = ?*const fn ([*c]uv_shutdown_t, c_int) callconv(.C) void;
+pub const uv_shutdown_cb = ?*const fn (*uv_shutdown_t, c_int) callconv(.C) void;
 pub const struct_uv_shutdown_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1106,7 +1111,7 @@ const union_unnamed_412 = extern union {
     io: struct_unnamed_413,
     connect: struct_unnamed_414,
 };
-pub const uv_write_cb = ?*const fn ([*c]uv_write_t, c_int) callconv(.C) void;
+pub const uv_write_cb = ?*const fn (*uv_write_t, ReturnCode) callconv(.C) void;
 pub const struct_uv_write_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1143,7 +1148,7 @@ const union_unnamed_405 = extern union {
 };
 pub const struct_uv_pipe_s = extern struct {
     data: ?*anyopaque,
-    loop: *uv_loop_t,
+    loop: ?*uv_loop_t,
     type: uv_handle_type,
     close_cb: uv_close_cb,
     handle_queue: struct_uv__queue,
@@ -1850,9 +1855,9 @@ pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connecti
 pub extern fn uv_accept(server: [*c]uv_stream_t, client: [*c]uv_stream_t) c_int;
 pub extern fn uv_read_start([*c]uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) c_int;
 pub extern fn uv_read_stop([*c]uv_stream_t) c_int;
-pub extern fn uv_write(req: [*c]uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) c_int;
-pub extern fn uv_write2(req: [*c]uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t, cb: uv_write_cb) c_int;
-pub extern fn uv_try_write(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint) c_int;
+pub extern fn uv_write(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) ReturnCode;
+pub extern fn uv_write2(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t, cb: uv_write_cb) ReturnCode;
+pub extern fn uv_try_write(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint) ReturnCode;
 pub extern fn uv_try_write2(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t) c_int;
 pub extern fn uv_is_readable(handle: *const uv_stream_t) c_int;
 pub extern fn uv_is_writable(handle: *const uv_stream_t) c_int;
@@ -1917,7 +1922,7 @@ pub extern fn uv_guess_handle(file: uv_file) uv_handle_type;
 pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
 const enum_unnamed_462 = c_uint;
 pub extern fn uv_pipe_init(*uv_loop_t, handle: *uv_pipe_t, ipc: c_int) c_int;
-pub extern fn uv_pipe_open([*c]uv_pipe_t, file: uv_file) c_int;
+pub extern fn uv_pipe_open([*c]uv_pipe_t, file: uv_file) ReturnCode;
 pub extern fn uv_pipe_bind(handle: *uv_pipe_t, name: [*]const u8) c_int;
 pub extern fn uv_pipe_bind2(handle: *uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
 pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: *uv_pipe_t, name: [*]const u8, cb: uv_connect_cb) void;
@@ -2349,26 +2354,23 @@ pub fn translateUVErrorToE(code: anytype) bun.C.E {
     };
 }
 
-pub const ReturnCode = extern struct {
-    value: c_int,
-
+pub const ReturnCode = enum(c_int) {
+    pub inline fn int(this: ReturnCode) c_int {
+        return @intFromEnum(this);
+    }
     pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
-        return if (this.value < 0)
+        return if (this.int() < 0)
             // @intFromEnum(translateUVErrorToE(this.value))
-            @as(u16, @intCast(-this.value))
+            @as(u16, @intCast(-this.int()))
         else
             null;
     }
 
     pub inline fn errEnum(this: ReturnCode) ?bun.C.E {
-        return if (this.value < 0)
-            (translateUVErrorToE(this.value))
+        return if (this.int() < 0)
+            (translateUVErrorToE(this.int()))
         else
             null;
-    }
-
-    comptime {
-        std.debug.assert(@as(c_int, @bitCast(ReturnCode{ .value = 4021 })) == 4021);
     }
 };
 
@@ -2396,3 +2398,37 @@ pub const ReturnCodeI64 = extern struct {
 };
 
 pub const addrinfo = std.os.windows.ws2_32.addrinfo;
+
+fn WriterMixin(comptime Type: type) type {
+    return struct {
+        pub fn write(mixin: *Type, input: []const u8, context: anytype, comptime onWrite: ?*const (fn (*@TypeOf(context), status: ReturnCode) void)) ReturnCode {
+            if (comptime onWrite) |callback| {
+                const Context = @TypeOf(context);
+                var data = bun.new(uv_write_t);
+
+                data.data = context;
+                const Wrapper = struct {
+                    uv_data: uv_write_t,
+                    context: Context,
+                    buf: uv_buf_t,
+
+                    pub fn uvWriteCb(req: *uv_write_t, status: ReturnCode) callconv(.C) void {
+                        const this: *@This() = @fieldParentPtr(@This(), "uv_data", req);
+                        const context_data = this.context;
+                        bun.destroy(this);
+                        callback(context_data, @enumFromInt(status));
+                    }
+                };
+                var wrap = bun.new(Wrapper, Wrapper{
+                    .wrapper = undefined,
+                    .context = context,
+                    .buf = uv_buf_t.init(input),
+                });
+
+                return uv_write(&wrap.uv_data, @ptrCast(mixin), @ptrCast(&wrap.buf), 1, &Wrapper.uvWriteCb);
+            }
+
+            return uv_write(null, mixin, @ptrCast(&uv_buf_t.init(input)), 1, null);
+        }
+    };
+}

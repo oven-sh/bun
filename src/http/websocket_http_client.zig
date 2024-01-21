@@ -236,6 +236,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     pub const onData = handleData;
                     pub const onWritable = handleWritable;
                     pub const onTimeout = handleTimeout;
+                    pub const onLongTimeout = handleTimeout;
                     pub const onConnectError = handleConnectError;
                     pub const onEnd = handleEnd;
                     pub const onHandshake = handleHandshake;
@@ -960,6 +961,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     pub const onData = handleData;
                     pub const onWritable = handleWritable;
                     pub const onTimeout = handleTimeout;
+                    pub const onLongTimeout = handleTimeout;
                     pub const onConnectError = handleConnectError;
                     pub const onEnd = handleEnd;
                     pub const onHandshake = handleHandshake;

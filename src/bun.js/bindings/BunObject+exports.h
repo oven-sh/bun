@@ -66,6 +66,7 @@
     macro(spawnSync) \
     macro(which) \
     macro(write) \
+    macro(stringWidth) \
     macro(shellParse) \
     macro(shellLex) \
     macro(shellEscape) \

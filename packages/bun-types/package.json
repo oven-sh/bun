@@ -25,8 +25,7 @@
   },
   "scripts": {
     "prebuild": "echo $(pwd)",
-    "build": "bun run bundle && bun run fmt",
-    "bundle": "bun scripts/build.ts",
+    "build": "bun scripts/build.ts && bun run fmt",
     "test": "tsc",
     "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
   },

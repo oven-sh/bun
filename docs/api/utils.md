@@ -275,7 +275,7 @@ Bun.stringWidth("\u001b[31mhello\u001b[0m"); // => 5
 Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // => 12
 ```
 
-Compared with the popular `string-width` npm package, `bun`'s implementation is [500x faster](https:)
+Compared with the popular `string-width` npm package, `bun`'s implementation is > [100x faster](https://github.com/oven-sh/bun/blob/8abd1fb088bcf2e78bd5d0d65ba4526872d2ab61/bench/snippets/string-width.mjs#L22)
 
 
 

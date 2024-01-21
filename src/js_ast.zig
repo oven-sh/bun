@@ -5275,15 +5275,16 @@ pub const Expr = struct {
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
-                                if (r.value == 0 or r.value == 1) {
-                                    return .{
-                                        .ok = true,
-                                        .equal = if (r.value == 0)
-                                            l.isBlank() or l.eqlComptime("0")
-                                        else
-                                            l.eqlComptime("1"),
-                                    };
+                                if (r.value == 0 and (l.isBlank() or l.eqlComptime("0"))) {
+                                    return Equality.true;
                                 }
+
+                                if (r.value == 1 and l.eqlComptime("1")) {
+                                    return Equality.true;
+                                }
+
+                                // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
+                                return Equality.unknown;
                             } else {
                                 return Equality.false;
                             }

@@ -3793,6 +3793,10 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     return i;
 }
 
+pub fn indexOfChar16Usize(slice: []const u16, char: u16) ?usize {
+    return std.mem.indexOfScalar(u16, slice, char);
+}
+
 test "indexOfChar" {
     const pairs = .{
         .{
@@ -5659,89 +5663,145 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
     return 1;
 }
 
-pub fn visibleASCIIWidth(input_: anytype) usize {
-    var length: usize = 0;
-    var input = input_;
+pub const visible = struct {
+    fn visibleASCIIWidth(input_: anytype) usize {
+        var length: usize = 0;
+        var input = input_;
 
-    if (comptime Environment.enableSIMD) {
-        // https://zig.godbolt.org/z/hxhjncvq7
+        if (comptime Environment.enableSIMD) {
+            // https://zig.godbolt.org/z/hxhjncvq7
+            const ElementType = std.meta.Child(@TypeOf(input_));
+            const simd = 16 / @sizeOf(ElementType);
+            if (input.len >= simd) {
+                const input_end = input.ptr + input.len - (input.len % simd);
+                while (input.ptr != input_end) {
+                    const chunk: @Vector(simd, ElementType) = input[0..simd].*;
+                    input = input[simd..];
+
+                    const cmp: @Vector(simd, ElementType) = @splat(0x1f);
+                    const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
+                    const match: @Vector(simd, ElementType) = match1;
+
+                    length += @reduce(.Add, match);
+                }
+            }
+
+            // this is a deliberate compiler optimization
+            // it disables auto-vectorizing the "input" for loop.
+            if (!(input.len < simd)) unreachable;
+        }
+
+        for (input) |c| {
+            length += if (c > 0x1f) 1 else 0;
+        }
+
+        return length;
+    }
+
+    fn visibleASCIIWidthExcludeANSIColors(input_: anytype) usize {
+        var length: usize = 0;
+        var input = input_;
+
         const ElementType = std.meta.Child(@TypeOf(input_));
-        const simd = 16 / @sizeOf(ElementType);
-        if (input.len >= simd) {
-            const input_end = input.ptr + input.len - (input.len % simd);
-            while (input.ptr != input_end) {
-                const chunk: @Vector(simd, ElementType) = input[0..simd].*;
-                input = input[simd..];
+        const indexFn = if (comptime ElementType == u8) strings.indexOfCharUsize else strings.indexOfChar16Usize;
 
-                const cmp: @Vector(simd, ElementType) = @splat(0x1f);
-                const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
-                const match: @Vector(simd, ElementType) = match1;
+        while (indexFn(input, '\x1b')) |i| {
+            length += visibleASCIIWidth(input[0..i]);
+            input = input[i..];
 
-                length += @reduce(.Add, match);
+            if (input.len < 3) return length;
+
+            if (input[1] == '[') {
+                const end = indexFn(input[2..], 'm') orelse return length;
+                input = input[end + 3 ..];
+            } else {
+                input = input[1..];
             }
         }
 
-        // this is a deliberate compiler optimization
-        // it disables auto-vectorizing the "input" for loop.
-        if (!(input.len < simd)) unreachable;
+        length += visibleASCIIWidth(input);
+
+        return length;
     }
 
-    for (input) |c| {
-        length += if (c > 0x1f) 1 else 0;
+    fn visibleUTF8WidthFn(input: []const u8, comptime asciiFn: anytype) usize {
+        var bytes = input;
+        var len: usize = 0;
+        while (bun.strings.firstNonASCII(bytes)) |i| {
+            len += asciiFn(bytes[0..i]);
+
+            const byte = bytes[i];
+            const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
+            const cp_bytes: [4]u8 = switch (skip) {
+                inline 1, 2, 3, 4 => |cp_len| .{
+                    byte,
+                    if (comptime cp_len > 1) bytes[1] else 0,
+                    if (comptime cp_len > 2) bytes[2] else 0,
+                    if (comptime cp_len > 3) bytes[3] else 0,
+                },
+                else => unreachable,
+            };
+
+            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            len += visibleCodepointWidthType(u32, cp);
+
+            bytes = bytes[@min(i + skip, bytes.len)..];
+        }
+
+        len += asciiFn(bytes);
+
+        return len;
     }
 
-    return length;
-}
+    fn visibleUTF16WidthFn(input: []const u16, comptime asciiFn: anytype) usize {
+        var bytes = input;
+        var len: usize = 0;
+        while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
+            len += asciiFn(bytes[0..i]);
+            bytes = bytes[i..];
 
-pub fn visibleUTF8Width(input: []const u8) usize {
-    var bytes = input;
-    var len: usize = 0;
-    while (bun.strings.firstNonASCII(bytes)) |i| {
-        len += visibleASCIIWidth(bytes[0..i]);
+            const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
+            len += visibleCodepointWidthType(u32, utf8.code_point);
+            bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
+        }
 
-        const byte = bytes[i];
-        const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
-        const cp_bytes: [4]u8 = switch (skip) {
-            inline 1, 2, 3, 4 => |cp_len| .{
-                byte,
-                if (comptime cp_len > 1) bytes[1] else 0,
-                if (comptime cp_len > 2) bytes[2] else 0,
-                if (comptime cp_len > 3) bytes[3] else 0,
-            },
-            else => unreachable,
+        len += asciiFn(bytes);
+
+        return len;
+    }
+
+    fn visibleLatin1WidthFn(input: []const u8) usize {
+        return visibleASCIIWidth(input);
+    }
+
+    pub const width = struct {
+        pub fn ascii(input: []const u8) usize {
+            return visibleASCIIWidth(input);
+        }
+
+        pub fn utf8(input: []const u8) usize {
+            return visibleUTF8WidthFn(input, visibleASCIIWidth);
+        }
+
+        pub fn utf16(input: []const u16) usize {
+            return visibleUTF16WidthFn(input, visibleASCIIWidth);
+        }
+
+        pub const exclude_ansi_colors = struct {
+            pub fn ascii(input: []const u8) usize {
+                return visibleASCIIWidthExcludeANSIColors(input);
+            }
+
+            pub fn utf8(input: []const u8) usize {
+                return visibleUTF8WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            }
+
+            pub fn utf16(input: []const u16) usize {
+                return visibleUTF16WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            }
         };
-
-        const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
-        len += visibleCodepointWidthType(u32, cp);
-
-        bytes = bytes[@min(i + skip, bytes.len)..];
-    }
-
-    len += visibleASCIIWidth(bytes);
-
-    return len;
-}
-
-pub fn visibleUTF16Width(input: []const u16) usize {
-    var bytes = input;
-    var len: usize = 0;
-    while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
-        len += visibleASCIIWidth(bytes[0..i]);
-        bytes = bytes[i..];
-
-        const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
-        len += visibleCodepointWidthType(u32, utf8.code_point);
-        bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
-    }
-
-    len += visibleASCIIWidth(bytes);
-
-    return len;
-}
-
-pub fn visibleLatin1Width(input: []const u8) usize {
-    return visibleASCIIWidth(input);
-}
+    };
+};
 
 pub const QuoteEscapeFormat = struct {
     data: []const u8,

@@ -41,7 +41,7 @@ pub const BunObject = struct {
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
-    // pub const @"$" = Bun.shell;
+    pub const stringWidth = Bun.stringWidth;
     pub const shellParse = Bun.shellParse;
     pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
@@ -161,7 +161,7 @@ pub const BunObject = struct {
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
-        // @export(BunObject.@"$", .{ .name = callbackName("$") });
+        @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
         @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
         @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
@@ -5107,6 +5107,34 @@ pub const FFIObject = struct {
         return FFIObject.toJS(globalObject);
     }
 };
+
+fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    const arguments = callframe.arguments(2).slice();
+    const value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
+    const options_object = if (arguments.len > 1) arguments[1] else JSC.JSValue.jsUndefined();
+
+    if (!value.isString()) {
+        return JSC.jsNumber(0);
+    }
+
+    const str = value.toBunString(globalObject);
+    defer str.deref();
+
+    var count_ansi_escapes = false;
+
+    if (options_object.isObject()) {
+        if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
+            if (count_ansi_escapes_value.isBoolean())
+                count_ansi_escapes = count_ansi_escapes_value.toBoolean();
+        }
+    }
+
+    if (count_ansi_escapes) {
+        return JSC.jsNumber(str.visibleWidth());
+    }
+
+    return JSC.jsNumber(str.visibleWidthExcludeANSIColors());
+}
 
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise

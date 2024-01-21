@@ -5146,6 +5146,7 @@ pub const Expr = struct {
 
             pub const @"true" = Equality{ .ok = true, .equal = true };
             pub const @"false" = Equality{ .ok = true, .equal = false };
+            pub const unknown = Equality{ .ok = false };
         };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
@@ -5158,7 +5159,6 @@ pub const Expr = struct {
             comptime kind: enum { loose, strict },
         ) Equality {
             // https://dorey.github.io/JavaScript-Equality-Table/
-            var equality = Equality{};
             switch (left) {
                 .e_null, .e_undefined => {
                     const ok = switch (@as(Expr.Tag, right)) {
@@ -5184,14 +5184,16 @@ pub const Expr = struct {
                 .e_boolean => |l| {
                     switch (right) {
                         .e_boolean => {
-                            equality.ok = true;
-                            equality.equal = l.value == right.e_boolean.value;
+                            return .{
+                                .ok = true,
+                                .equal = l.value == right.e_boolean.value,
+                            };
                         },
                         .e_number => |num| {
                             if (comptime kind == .strict) {
                                 // "true === 1" is false
                                 // "false === 0" is false
-                                return .{ .ok = true, .equal = false };
+                                return Equality.false;
                             }
 
                             return .{
@@ -5203,7 +5205,7 @@ pub const Expr = struct {
                             };
                         },
                         .e_null, .e_undefined => {
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         else => {},
                     }
@@ -5231,11 +5233,11 @@ pub const Expr = struct {
 
                             // "1 === true" is false
                             // "0 === false" is false
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         .e_null, .e_undefined => {
                             // "(not null or undefined) == undefined" is false
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         else => {},
                     }
@@ -5249,39 +5251,41 @@ pub const Expr = struct {
                         // 0x0000n == 0n is true
                         return .{ .ok = false };
                     } else {
-                        equality.ok = switch (right) {
-                            .e_null, .e_undefined => true,
-                            else => false,
+                        return .{
+                            .ok = switch (right) {
+                                .e_null, .e_undefined => true,
+                                else => false,
+                            },
+                            .equal = false,
                         };
-                        equality.equal = false;
                     }
                 },
                 .e_string => |l| {
                     switch (right) {
                         .e_string => |r| {
-                            equality.ok = true;
                             r.resolveRopeIfNeeded(allocator);
                             l.resolveRopeIfNeeded(allocator);
-                            equality.equal = r.eql(E.String, l);
+                            return .{
+                                .ok = true,
+                                .equal = r.eql(E.String, l),
+                            };
                         },
                         .e_null, .e_undefined => {
-                            equality.ok = true;
-                            equality.equal = false;
+                            return Equality.false;
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
                                 if (r.value == 0 or r.value == 1) {
-                                    equality.ok = true;
-                                    equality.equal = if (r.value == 0)
-                                        l.isBlank() or l.eqlComptime("0")
-                                    else if (r.value == 1)
-                                        l.eqlComptime("1")
-                                    else
-                                        unreachable;
+                                    return .{
+                                        .ok = true,
+                                        .equal = if (r.value == 0)
+                                            l.isBlank() or l.eqlComptime("0")
+                                        else
+                                            l.eqlComptime("1"),
+                                    };
                                 }
                             } else {
-                                equality.ok = true;
-                                equality.equal = false;
+                                return Equality.false;
                             }
                         },
 
@@ -5291,7 +5295,7 @@ pub const Expr = struct {
                 else => {},
             }
 
-            return equality;
+            return Equality.unknown;
         }
 
         pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {

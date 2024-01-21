@@ -3076,6 +3076,7 @@ pub const VirtualMachine = struct {
             .ipc = undefined,
         };
         const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 
         const ptr = socket.ext(*IPCInstance);

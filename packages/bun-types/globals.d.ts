@@ -58,37 +58,37 @@ declare namespace Bun {
     ? T
     : import("stream/web").WritableStream<T>;
 }
-interface ReadableStream<R = any> extends Bun._ReadableStream<R> {}
+interface ReadableStream<R = any> extends Bun._ReadableStream<R> { }
 declare var ReadableStream: typeof globalThis extends {
   onerror: any;
   ReadableStream: infer T;
 }
   ? T
   : {
-      prototype: ReadableStream;
-      new <R = any>(
-        underlyingSource?: Bun.UnderlyingSource<R>,
-        strategy?: QueuingStrategy<R>,
-      ): ReadableStream<R>;
-      new <R = any>(
-        underlyingSource?: Bun.DirectUnderlyingSource<R>,
-        strategy?: QueuingStrategy<R>,
-      ): ReadableStream<R>;
-    };
+    prototype: ReadableStream;
+    new <R = any>(
+      underlyingSource?: Bun.UnderlyingSource<R>,
+      strategy?: QueuingStrategy<R>,
+    ): ReadableStream<R>;
+    new <R = any>(
+      underlyingSource?: Bun.DirectUnderlyingSource<R>,
+      strategy?: QueuingStrategy<R>,
+    ): ReadableStream<R>;
+  };
 
-interface WritableStream<W = any> extends Bun._WritableStream<W> {}
+interface WritableStream<W = any> extends Bun._WritableStream<W> { }
 declare var WritableStream: typeof globalThis extends {
   onerror: any;
   WritableStream: infer T;
 }
   ? T
   : {
-      prototype: WritableStream;
-      new <W = any>(
-        underlyingSink?: Bun.UnderlyingSink<W>,
-        strategy?: QueuingStrategy<W>,
-      ): WritableStream<W>;
-    };
+    prototype: WritableStream;
+    new <W = any>(
+      underlyingSink?: Bun.UnderlyingSink<W>,
+      strategy?: QueuingStrategy<W>,
+    ): WritableStream<W>;
+  };
 
 declare namespace Bun {
   type Transferable = ArrayBuffer | MessagePort;
@@ -370,10 +370,10 @@ interface ImportMeta {
   readonly main: boolean;
 
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
-  readonly dirname: string;
+  dirname: string;
 
   /** Alias of `import.meta.path`. Exists for Node.js compatibility */
-  readonly filename: string;
+  filename: string;
 }
 
 /**
@@ -385,11 +385,6 @@ interface ImportMeta {
  */
 declare var require: NodeJS.Require;
 
-/** @deprecated Please use `import.meta.path` instead. */
-declare var __filename: string;
-
-/** @deprecated Please use `import.meta.dir` instead. */
-declare var __dirname: string;
 declare namespace Bun {
   interface StructuredSerializeOptions {
     transfer?: Bun.Transferable[];
@@ -420,7 +415,6 @@ declare namespace Bun {
   }
 
   type WorkerType = "classic" | "module";
-  type RequestCredentials = import("undici-types").RequestCredentials;
 
   interface AbstractWorker {
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
@@ -493,14 +487,14 @@ declare namespace Bun {
      * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
      */
     env?:
-      | Record<string, string>
-      | typeof import("node:worker_threads")["SHARE_ENV"]
-      | undefined;
+    | Record<string, string>
+    | typeof import("node:worker_threads")["SHARE_ENV"]
+    | undefined;
 
     /**
      * In Bun, this does nothing.
      */
-    credentials?: Bun.RequestCredentials | undefined;
+    credentials?: import("undici-types").RequestCredentials | undefined;
 
     /**
      * @default true
@@ -578,25 +572,25 @@ declare namespace Bun {
     ? T
     : Bun.Worker;
 }
-interface Worker extends Bun._Worker {}
+interface Worker extends Bun._Worker { }
 declare var Worker: typeof globalThis extends {
   onerror: any;
   Worker: infer T;
 }
   ? T
   : {
-      prototype: Worker;
-      new (
-        scriptURL: string | URL,
-        options?: Bun.WorkerOptions | undefined,
-      ): Worker;
-      /**
-       * This is the cloned value of the `data` property passed to `new Worker()`
-       *
-       * This is Bun's equivalent of `workerData` in Node.js.
-       */
-      data: any;
-    };
+    prototype: Worker;
+    new(
+      scriptURL: string | URL,
+      options?: Bun.WorkerOptions | undefined,
+    ): Worker;
+    /**
+     * This is the cloned value of the `data` property passed to `new Worker()`
+     *
+     * This is Bun's equivalent of `workerData` in Node.js.
+     */
+    data: any;
+  };
 
 declare namespace NodeJS {
   interface Process {
@@ -629,8 +623,6 @@ declare namespace NodeJS {
  * In all methods of this interface, header names are matched by
  * case-insensitive byte sequence.
  */
-
-//// <reference types="undici-types" />
 interface Headers {
   //   /**
   //    * Convert {@link Headers} to a plain JavaScript object.
@@ -696,21 +688,21 @@ interface File extends Blob {
 declare var File: typeof globalThis extends { onerror: any; File: infer T }
   ? T
   : {
-      prototype: File;
+    prototype: File;
 
-      /**
-       * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-       *
-       * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-       * @param `name` - The name of the file
-       * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-       */
-      new (
-        parts: Bun.BlobPart[],
-        name: string,
-        options?: BlobPropertyBag & { lastModified?: Date | number },
-      ): File;
-    };
+    /**
+     * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     *
+     * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param `name` - The name of the file
+     * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     */
+    new(
+      parts: Bun.BlobPart[],
+      name: string,
+      options?: BlobPropertyBag & { lastModified?: Date | number },
+    ): File;
+  };
 
 declare namespace Bun {
   interface ResponseInit {
@@ -807,7 +799,7 @@ declare namespace Bun {
     ? T
     : import("ws").WebSocket;
 }
-interface WebSocket extends Bun._WebSocket {}
+interface WebSocket extends Bun._WebSocket { }
 declare var WebSocket: typeof globalThis extends {
   onerror: any;
   WebSocket: infer T;
@@ -824,7 +816,7 @@ declare namespace Bun {
     : import("crypto").webcrypto.Crypto;
 }
 
-interface Crypto extends Bun._Crypto {}
+interface Crypto extends Bun._Crypto { }
 
 declare var Crypto: typeof globalThis extends {
   onerror: any;
@@ -832,9 +824,9 @@ declare var Crypto: typeof globalThis extends {
 }
   ? T
   : {
-      prototype: Crypto;
-      new (): Crypto;
-    };
+    prototype: Crypto;
+    new(): Crypto;
+  };
 
 declare var crypto: typeof globalThis extends {
   onerror: any;
@@ -888,33 +880,33 @@ declare namespace Bun {
     : import("util").TextDecoder;
 }
 
-interface TextEncoder extends Bun._TextEncoder {}
+interface TextEncoder extends Bun._TextEncoder { }
 declare var TextEncoder: typeof globalThis extends {
   onerror: any;
   TextEncoder: infer T;
 }
   ? T
   : {
-      prototype: TextEncoder;
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): TextEncoder;
-    };
+    prototype: TextEncoder;
+    new(
+      encoding?: Bun.Encoding,
+      options?: { fatal?: boolean; ignoreBOM?: boolean },
+    ): TextEncoder;
+  };
 
-interface TextDecoder extends Bun._TextDecoder {}
+interface TextDecoder extends Bun._TextDecoder { }
 declare var TextDecoder: typeof globalThis extends {
   onerror: any;
   TextDecoder: infer T;
 }
   ? T
   : {
-      prototype: TextDecoder;
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): TextDecoder;
-    };
+    prototype: TextDecoder;
+    new(
+      encoding?: Bun.Encoding,
+      options?: { fatal?: boolean; ignoreBOM?: boolean },
+    ): TextDecoder;
+  };
 
 /**
  * ShadowRealms are a distinct global environment, with its own global object
@@ -999,7 +991,7 @@ interface ShadowRealm {
 
 declare var ShadowRealm: {
   prototype: ShadowRealm;
-  new (): ShadowRealm;
+  new(): ShadowRealm;
 };
 
 declare namespace Bun {
@@ -1010,7 +1002,7 @@ declare namespace Bun {
     : import("perf_hooks").Performance;
 }
 
-interface Performance extends Bun._Performance {}
+interface Performance extends Bun._Performance { }
 declare var performance: typeof globalThis extends {
   onerror: any;
   performance: infer T;
@@ -1104,41 +1096,41 @@ declare namespace Bun {
   type _Event = typeof globalThis extends { onerror: any; Event: any }
     ? {}
     : {
-        /** This is not used in Node.js and is provided purely for completeness. */
-        readonly bubbles: boolean;
-        /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-        cancelBubble: () => void;
-        /** True if the event was created with the cancelable option */
-        readonly cancelable: boolean;
-        /** This is not used in Node.js and is provided purely for completeness. */
-        readonly composed: boolean;
-        /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-        composedPath(): [EventTarget?];
-        /** Alias for event.target. */
-        readonly currentTarget: EventTarget | null;
-        /** Is true if cancelable is true and event.preventDefault() has been called. */
-        readonly defaultPrevented: boolean;
-        /** This is not used in Node.js and is provided purely for completeness. */
-        readonly eventPhase: 0 | 2;
-        /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-        readonly isTrusted: boolean;
-        /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-        preventDefault(): void;
-        /** This is not used in Node.js and is provided purely for completeness. */
-        returnValue: boolean;
-        /** Alias for event.target. */
-        readonly srcElement: EventTarget | null;
-        /** Stops the invocation of event listeners after the current one completes. */
-        stopImmediatePropagation(): void;
-        /** This is not used in Node.js and is provided purely for completeness. */
-        stopPropagation(): void;
-        /** The `EventTarget` dispatching the event */
-        readonly target: EventTarget | null;
-        /** The millisecond timestamp when the Event object was created. */
-        readonly timeStamp: number;
-        /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-        readonly type: string;
-      };
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly bubbles: boolean;
+      /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+      cancelBubble: () => void;
+      /** True if the event was created with the cancelable option */
+      readonly cancelable: boolean;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly composed: boolean;
+      /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+      composedPath(): [EventTarget?];
+      /** Alias for event.target. */
+      readonly currentTarget: EventTarget | null;
+      /** Is true if cancelable is true and event.preventDefault() has been called. */
+      readonly defaultPrevented: boolean;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly eventPhase: 0 | 2;
+      /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+      readonly isTrusted: boolean;
+      /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+      preventDefault(): void;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      returnValue: boolean;
+      /** Alias for event.target. */
+      readonly srcElement: EventTarget | null;
+      /** Stops the invocation of event listeners after the current one completes. */
+      stopImmediatePropagation(): void;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      stopPropagation(): void;
+      /** The `EventTarget` dispatching the event */
+      readonly target: EventTarget | null;
+      /** The millisecond timestamp when the Event object was created. */
+      readonly timeStamp: number;
+      /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+      readonly type: string;
+    };
 
   // See comment above explaining conditional type
   type _EventTarget = typeof globalThis extends {
@@ -1147,29 +1139,29 @@ declare namespace Bun {
   }
     ? {}
     : {
-        /**
-         * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
-         *
-         * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
-         *
-         * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
-         * Specifically, the `capture` option is used as part of the key when registering a `listener`.
-         * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
-         */
-        addEventListener(
-          type: string,
-          listener: EventListener | EventListenerObject,
-          options?: AddEventListenerOptions | boolean,
-        ): void;
-        /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
-        dispatchEvent(event: Event): boolean;
-        /** Removes the event listener in target's event listener list with the same type, callback, and options. */
-        removeEventListener(
-          type: string,
-          listener: EventListener | EventListenerObject,
-          options?: EventListenerOptions | boolean,
-        ): void;
-      };
+      /**
+       * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
+       *
+       * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
+       *
+       * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
+       * Specifically, the `capture` option is used as part of the key when registering a `listener`.
+       * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
+       */
+      addEventListener(
+        type: string,
+        listener: EventListener | EventListenerObject,
+        options?: AddEventListenerOptions | boolean,
+      ): void;
+      /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+      dispatchEvent(event: Event): boolean;
+      /** Removes the event listener in target's event listener list with the same type, callback, and options. */
+      removeEventListener(
+        type: string,
+        listener: EventListener | EventListenerObject,
+        options?: EventListenerOptions | boolean,
+      ): void;
+    };
 
   interface EventInit {
     bubbles?: boolean;
@@ -1214,23 +1206,23 @@ declare namespace Bun {
   }
 }
 
-interface Event extends Bun._Event {}
+interface Event extends Bun._Event { }
 declare var Event: typeof globalThis extends { onerror: any; Event: infer T }
   ? T
   : {
-      prototype: Event;
-      new (type: string, eventInitDict?: Bun.EventInit): Event;
-    };
-interface EventTarget extends Bun._EventTarget {}
+    prototype: Event;
+    new(type: string, eventInitDict?: Bun.EventInit): Event;
+  };
+interface EventTarget extends Bun._EventTarget { }
 declare var EventTarget: typeof globalThis extends {
   onerror: any;
   EventTarget: infer T;
 }
   ? T
   : {
-      prototype: EventTarget;
-      new (): EventTarget;
-    };
+    prototype: EventTarget;
+    new(): EventTarget;
+  };
 declare function addEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,
@@ -1332,7 +1324,7 @@ interface ErrorEvent extends Event {
 
 declare var ErrorEvent: {
   prototype: ErrorEvent;
-  new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
+  new(type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
 };
 
 /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
@@ -1347,22 +1339,22 @@ interface CloseEvent extends Event {
 
 declare var CloseEvent: {
   prototype: CloseEvent;
-  new (type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
+  new(type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
 };
 
-interface MessageEvent<T = any> extends Bun._MessageEvent<T> {}
+interface MessageEvent<T = any> extends Bun._MessageEvent<T> { }
 declare var MessageEvent: typeof globalThis extends {
   onerror: any;
   MessageEvent: infer T;
 }
   ? T
   : {
-      prototype: MessageEvent;
-      new <T>(
-        type: string,
-        eventInitDict?: Bun.MessageEventInit<T>,
-      ): MessageEvent<T>;
-    };
+    prototype: MessageEvent;
+    new <T>(
+      type: string,
+      eventInitDict?: Bun.MessageEventInit<T>,
+    ): MessageEvent<T>;
+  };
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1390,28 +1382,28 @@ declare namespace Bun {
  * The URL interface represents an object providing static methods used for
  * creating object URLs.
  */
-interface URL extends Bun._URL {}
+interface URL extends Bun._URL { }
 declare var URL: typeof globalThis extends {
   onerror: any;
   URL: infer T;
 }
   ? T
   : {
-      prototype: URL;
-      new (url: string | URL, base?: string | URL): URL;
-      /** Not implemented yet */
-      createObjectURL(obj: Blob): string;
-      /** Not implemented yet */
-      revokeObjectURL(url: string): void;
+    prototype: URL;
+    new(url: string | URL, base?: string | URL): URL;
+    /** Not implemented yet */
+    createObjectURL(obj: Blob): string;
+    /** Not implemented yet */
+    revokeObjectURL(url: string): void;
 
-      /**
-       * Check if `url` is a valid URL string
-       *
-       * @param url URL string to parse
-       * @param base URL to resolve against
-       */
-      canParse(url: string, base?: string): boolean;
-    };
+    /**
+     * Check if `url` is a valid URL string
+     *
+     * @param url URL string to parse
+     * @param base URL to resolve against
+     */
+    canParse(url: string, base?: string): boolean;
+  };
 
 declare namespace Bun {
   type _URLSearchParams = typeof globalThis extends {
@@ -1421,24 +1413,24 @@ declare namespace Bun {
     ? T
     : import("url").URLSearchParams;
 }
-interface URLSearchParams extends Bun._URLSearchParams {}
+interface URLSearchParams extends Bun._URLSearchParams { }
 declare var URLSearchParams: typeof globalThis extends {
   onerror: any;
   URLSearchParams: infer T;
 }
   ? T
   : {
-      prototype: URLSearchParams;
-      new (
-        init?:
-          | string
-          | string[][]
-          | Record<string, string>
-          | URLSearchParams
-          | undefined,
-      ): URLSearchParams;
-      toString(): string;
-    };
+    prototype: URLSearchParams;
+    new(
+      init?:
+        | string
+        | string[][]
+        | Record<string, string>
+        | URLSearchParams
+        | undefined,
+    ): URLSearchParams;
+    toString(): string;
+  };
 
 interface EventListener {
   (evt: Event): void;
@@ -1601,7 +1593,7 @@ interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
 
 declare var ByteLengthQueuingStrategy: {
   prototype: ByteLengthQueuingStrategy;
-  new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
+  new(init: QueuingStrategyInit): ByteLengthQueuingStrategy;
 };
 
 interface ReadableStreamDefaultController<R = any> {
@@ -1623,7 +1615,7 @@ interface ReadableStreamDirectController {
 
 declare var ReadableStreamDefaultController: {
   prototype: ReadableStreamDefaultController;
-  new (): ReadableStreamDefaultController;
+  new(): ReadableStreamDefaultController;
 };
 
 interface ReadableStreamDefaultReader<R = any>
@@ -1678,7 +1670,7 @@ interface WritableStreamDefaultController {
 
 declare var WritableStreamDefaultController: {
   prototype: WritableStreamDefaultController;
-  new (): WritableStreamDefaultController;
+  new(): WritableStreamDefaultController;
 };
 
 /** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
@@ -1801,7 +1793,7 @@ interface TransformStreamDefaultController<O = any> {
 
 declare var TransformStreamDefaultController: {
   prototype: TransformStreamDefaultController;
-  new (): TransformStreamDefaultController;
+  new(): TransformStreamDefaultController;
 };
 
 interface StreamPipeOptions {
@@ -1836,7 +1828,7 @@ interface CountQueuingStrategy extends QueuingStrategy {
 
 declare var CountQueuingStrategy: {
   prototype: CountQueuingStrategy;
-  new (init: QueuingStrategyInit): CountQueuingStrategy;
+  new(init: QueuingStrategyInit): CountQueuingStrategy;
 };
 
 interface QueuingStrategySize<T = any> {
@@ -1904,9 +1896,9 @@ declare var DOMException: typeof globalThis extends {
 }
   ? T
   : {
-      prototype: DOMException;
-      new (message?: string, name?: string): DOMException;
-    };
+    prototype: DOMException;
+    new(message?: string, name?: string): DOMException;
+  };
 
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
@@ -1926,9 +1918,9 @@ declare var SubtleCrypto: typeof globalThis extends {
 }
   ? T
   : {
-      prototype: Bun._SubtleCrypto;
-      new (): Bun._SubtleCrypto;
-    };
+    prototype: Bun._SubtleCrypto;
+    new(): Bun._SubtleCrypto;
+  };
 
 /**
  * The CryptoKey dictionary of the Web Crypto API represents a cryptographic key.
@@ -1941,11 +1933,11 @@ declare namespace Bun {
     ? T
     : import("crypto").webcrypto.CryptoKey;
 }
-interface CryptoKey extends Bun._CryptoKey {}
+interface CryptoKey extends Bun._CryptoKey { }
 
 declare var CryptoKey: {
   prototype: CryptoKey;
-  new (): CryptoKey;
+  new(): CryptoKey;
 };
 
 interface Position {
@@ -2010,14 +2002,14 @@ interface ErrorConstructor {
    * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
    */
   prepareStackTrace?:
-    | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
-    | undefined;
+  | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
+  | undefined;
 
   stackTraceLimit: number;
 }
 
 interface ArrayBufferConstructor {
-  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
+  new(byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
 
 interface ArrayBuffer {
@@ -2091,7 +2083,7 @@ declare namespace Bun {
       ? T
       : Global<T>;
 
-    interface CompileError extends Error {}
+    interface CompileError extends Error { }
     type _CompileError = typeof globalThis extends {
       onerror: any;
       WebAssembly: { CompileError: infer T };
@@ -2099,7 +2091,7 @@ declare namespace Bun {
       ? T
       : CompileError;
 
-    interface LinkError extends Error {}
+    interface LinkError extends Error { }
     type _LinkError = typeof globalThis extends {
       onerror: any;
       WebAssembly: { LinkError: infer T };
@@ -2107,7 +2099,7 @@ declare namespace Bun {
       ? T
       : LinkError;
 
-    interface RuntimeError extends Error {}
+    interface RuntimeError extends Error { }
     type _RuntimeError = typeof globalThis extends {
       onerror: any;
       WebAssembly: { RuntimeError: infer T };
@@ -2142,7 +2134,7 @@ declare namespace Bun {
       : Memory;
 
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module) */
-    interface Module {}
+    interface Module { }
     type _Module = typeof globalThis extends {
       onerror: any;
       WebAssembly: { Module: infer T };
@@ -2199,100 +2191,100 @@ declare namespace Bun {
 }
 
 declare namespace WebAssembly {
-  interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap {}
+  interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap { }
   interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-    extends Bun.WebAssembly.GlobalDescriptor<T> {}
-  interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor {}
+    extends Bun.WebAssembly.GlobalDescriptor<T> { }
+  interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor { }
   interface ModuleExportDescriptor
-    extends Bun.WebAssembly.ModuleExportDescriptor {}
+    extends Bun.WebAssembly.ModuleExportDescriptor { }
   interface ModuleImportDescriptor
-    extends Bun.WebAssembly.ModuleImportDescriptor {}
-  interface TableDescriptor extends Bun.WebAssembly.TableDescriptor {}
+    extends Bun.WebAssembly.ModuleImportDescriptor { }
+  interface TableDescriptor extends Bun.WebAssembly.TableDescriptor { }
   interface WebAssemblyInstantiatedSource
-    extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
+    extends Bun.WebAssembly.WebAssemblyInstantiatedSource { }
 
-  interface LinkError extends Bun.WebAssembly._LinkError {}
+  interface LinkError extends Bun.WebAssembly._LinkError { }
   var LinkError: {
     prototype: LinkError;
-    new (message?: string): LinkError;
+    new(message?: string): LinkError;
     (message?: string): LinkError;
   };
 
-  interface CompileError extends Bun.WebAssembly._CompileError {}
+  interface CompileError extends Bun.WebAssembly._CompileError { }
   var CompileError: typeof globalThis extends {
     onerror: any;
     WebAssembly: { CompileError: infer T };
   }
     ? T
     : {
-        prototype: CompileError;
-        new (message?: string): CompileError;
-        (message?: string): CompileError;
-      };
+      prototype: CompileError;
+      new(message?: string): CompileError;
+      (message?: string): CompileError;
+    };
 
-  interface RuntimeError extends Bun.WebAssembly._RuntimeError {}
+  interface RuntimeError extends Bun.WebAssembly._RuntimeError { }
   var RuntimeError: {
     prototype: RuntimeError;
-    new (message?: string): RuntimeError;
+    new(message?: string): RuntimeError;
     (message?: string): RuntimeError;
   };
 
   interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-    extends Bun.WebAssembly._Global<T> {}
+    extends Bun.WebAssembly._Global<T> { }
   var Global: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Global: infer T };
   }
     ? T
     : {
-        prototype: Global;
-        new <T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType>(
-          descriptor: GlobalDescriptor<T>,
-          v?: ValueTypeMap[T],
-        ): Global<T>;
-      };
+      prototype: Global;
+      new <T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType>(
+        descriptor: GlobalDescriptor<T>,
+        v?: ValueTypeMap[T],
+      ): Global<T>;
+    };
 
-  interface Instance extends Bun.WebAssembly._Instance {}
+  interface Instance extends Bun.WebAssembly._Instance { }
   var Instance: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Instance: infer T };
   }
     ? T
     : {
-        prototype: Instance;
-        new (module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
-      };
+      prototype: Instance;
+      new(module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
+    };
 
-  interface Memory extends Bun.WebAssembly._Memory {}
+  interface Memory extends Bun.WebAssembly._Memory { }
   var Memory: {
     prototype: Memory;
-    new (descriptor: MemoryDescriptor): Memory;
+    new(descriptor: MemoryDescriptor): Memory;
   };
 
-  interface Module extends Bun.WebAssembly._Module {}
+  interface Module extends Bun.WebAssembly._Module { }
   var Module: typeof globalThis extends {
     onerror: any;
     WebAssembly: { Module: infer T };
   }
     ? T
     : {
-        prototype: Module;
-        new (bytes: Bun.BufferSource): Module;
-        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
-        customSections(
-          moduleObject: Module,
-          sectionName: string,
-        ): ArrayBuffer[];
-        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
-        exports(moduleObject: Module): ModuleExportDescriptor[];
-        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
-        imports(moduleObject: Module): ModuleImportDescriptor[];
-      };
+      prototype: Module;
+      new(bytes: Bun.BufferSource): Module;
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
+      customSections(
+        moduleObject: Module,
+        sectionName: string,
+      ): ArrayBuffer[];
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
+      exports(moduleObject: Module): ModuleExportDescriptor[];
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
+      imports(moduleObject: Module): ModuleImportDescriptor[];
+    };
 
-  interface Table extends Bun.WebAssembly._Table {}
+  interface Table extends Bun.WebAssembly._Table { }
   var Table: {
     prototype: Table;
-    new (descriptor: TableDescriptor, value?: any): Table;
+    new(descriptor: TableDescriptor, value?: any): Table;
   };
 
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compile) */
@@ -2429,22 +2421,22 @@ interface EventSourceInit {
   withCredentials?: boolean;
 }
 
-interface EventSource extends Bun._EventSource {}
+interface EventSource extends Bun._EventSource { }
 declare var EventSource: typeof globalThis extends {
   onerror: any;
   EventSource: infer T;
 }
   ? T
   : {
-      prototype: EventSource;
-      new (
-        url: string | URL,
-        eventSourceInitDict?: EventSourceInit,
-      ): EventSource;
-      readonly CLOSED: number;
-      readonly CONNECTING: number;
-      readonly OPEN: number;
-    };
+    prototype: EventSource;
+    new(
+      url: string | URL,
+      eventSourceInitDict?: EventSourceInit,
+    ): EventSource;
+    readonly CLOSED: number;
+    readonly CONNECTING: number;
+    readonly OPEN: number;
+  };
 
 interface PromiseConstructor {
   /**
@@ -2519,22 +2511,22 @@ declare namespace Bun {
     : Blob;
 }
 
-interface Blob extends Bun._Blob {}
+interface Blob extends Bun._Blob { }
 declare var Blob: typeof globalThis extends {
   onerror: any;
   Blob: infer T;
 }
   ? T
   : {
-      prototype: Blob;
-      /**
-       * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-       *
-       * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-       * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-       */
-      new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
-    };
+    prototype: Blob;
+    /**
+     * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+     *
+     * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+     */
+    new(parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
+  };
 
 declare namespace Bun {
   type _RequestInit = typeof globalThis extends { onerror: any }
@@ -2550,20 +2542,20 @@ declare namespace Bun {
     ? {}
     : import("undici-types").Response;
 }
-interface ResponseInit extends Bun._ResponseInit {}
-interface RequestInit extends Bun._RequestInit {}
-interface Request extends Bun._Request {}
+interface ResponseInit extends Bun._ResponseInit { }
+interface RequestInit extends Bun._RequestInit { }
+interface Request extends Bun._Request { }
 declare var Request: typeof globalThis extends {
   onerror: any;
   Request: infer T;
 }
   ? T
   : {
-      new (requestInfo: string, requestInit?: RequestInit): Request;
-      new (requestInfo: RequestInit & { url: string }): Request;
-      new (requestInfo: Request, requestInit?: RequestInit): Request;
-      prototype: Request;
-    };
+    new(requestInfo: string, requestInit?: RequestInit): Request;
+    new(requestInfo: RequestInit & { url: string }): Request;
+    new(requestInfo: Request, requestInit?: RequestInit): Request;
+    prototype: Request;
+  };
 
 declare namespace Bun {
   type _File = typeof globalThis extends { onerror: any }
@@ -2575,83 +2567,83 @@ declare namespace Bun {
   type _Body = typeof globalThis extends { onerror: any }
     ? {}
     : {
-        readonly body: ReadableStream | null;
-        readonly bodyUsed: boolean;
-        readonly arrayBuffer: () => Promise<ArrayBuffer>;
-        readonly blob: () => Promise<Blob>;
-        readonly formData: () => Promise<FormData>;
-        readonly json: () => Promise<unknown>;
-        readonly text: () => Promise<string>;
-      };
+      readonly body: ReadableStream | null;
+      readonly bodyUsed: boolean;
+      readonly arrayBuffer: () => Promise<ArrayBuffer>;
+      readonly blob: () => Promise<Blob>;
+      readonly formData: () => Promise<FormData>;
+      readonly json: () => Promise<unknown>;
+      readonly text: () => Promise<string>;
+    };
 }
-interface Body extends Bun._Body {}
-interface Response extends Bun._Response {}
+interface Body extends Bun._Body { }
+interface Response extends Bun._Response { }
 declare var Response: typeof globalThis extends {
   onerror: any;
   Response: infer T;
 }
   ? T
   : {
-      prototype: Response;
-      new (
-        body?: Bun.BodyInit | null | undefined,
-        init?: Bun.ResponseInit | undefined,
-      ): Response;
+    prototype: Response;
+    new(
+      body?: Bun.BodyInit | null | undefined,
+      init?: Bun.ResponseInit | undefined,
+    ): Response;
 
-      /**
-       * Create a new {@link Response} with a JSON body
-       *
-       * @param body - The body of the response
-       * @param options - options to pass to the response
-       *
-       * @example
-       *
-       * ```ts
-       * const response = Response.json({hi: "there"});
-       * console.assert(
-       *   await response.text(),
-       *   `{"hi":"there"}`
-       * );
-       * ```
-       * -------
-       *
-       * This is syntactic sugar for:
-       * ```js
-       *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-       * ```
-       * @link https://github.com/whatwg/fetch/issues/1389
-       */
-      json(body?: any, options?: Bun.ResponseInit | number): Response;
-      /**
-       * Create a new {@link Response} that redirects to url
-       *
-       * @param url - the URL to redirect to
-       * @param status - the HTTP status code to use for the redirect
-       */
-      // tslint:disable-next-line:unified-signatures
-      redirect(url: string, status?: number): Response;
+    /**
+     * Create a new {@link Response} with a JSON body
+     *
+     * @param body - The body of the response
+     * @param options - options to pass to the response
+     *
+     * @example
+     *
+     * ```ts
+     * const response = Response.json({hi: "there"});
+     * console.assert(
+     *   await response.text(),
+     *   `{"hi":"there"}`
+     * );
+     * ```
+     * -------
+     *
+     * This is syntactic sugar for:
+     * ```js
+     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+     * ```
+     * @link https://github.com/whatwg/fetch/issues/1389
+     */
+    json(body?: any, options?: Bun.ResponseInit | number): Response;
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param status - the HTTP status code to use for the redirect
+     */
+    // tslint:disable-next-line:unified-signatures
+    redirect(url: string, status?: number): Response;
 
-      /**
-       * Create a new {@link Response} that redirects to url
-       *
-       * @param url - the URL to redirect to
-       * @param options - options to pass to the response
-       */
-      // tslint:disable-next-line:unified-signatures
-      redirect(url: string, options?: Bun.ResponseInit): Response;
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param options - options to pass to the response
+     */
+    // tslint:disable-next-line:unified-signatures
+    redirect(url: string, options?: Bun.ResponseInit): Response;
 
-      /**
-       * Create a new {@link Response} that has a network error
-       */
-      error(): Response;
-    };
+    /**
+     * Create a new {@link Response} that has a network error
+     */
+    error(): Response;
+  };
 
 declare namespace Bun {
   type _FormData = typeof globalThis extends { onerror: any; FormData: infer T }
     ? T
     : import("undici-types").FormData;
 }
-interface FormData extends Bun._FormData {}
+interface FormData extends Bun._FormData { }
 declare var FormData: typeof globalThis extends {
   onerror: any;
   FormData: infer T;
@@ -2664,7 +2656,7 @@ declare namespace Bun {
     ? T
     : import("undici-types").Headers;
 }
-interface Headers extends Bun._Headers {}
+interface Headers extends Bun._Headers { }
 declare var Headers: typeof globalThis extends {
   onerror: any;
   Headers: infer T;
@@ -2692,37 +2684,37 @@ declare namespace Bun {
     ? T
     : import("worker_threads").BroadcastChannel;
 }
-interface MessagePort extends Bun._MessagePort {}
+interface MessagePort extends Bun._MessagePort { }
 declare var MessagePort: typeof globalThis extends {
   onerror: any;
   MessagePort: infer T;
 }
   ? T
   : {
-      prototype: MessagePort;
-      new (): MessagePort;
-    };
-interface MessageChannel extends Bun._MessageChannel {}
+    prototype: MessagePort;
+    new(): MessagePort;
+  };
+interface MessageChannel extends Bun._MessageChannel { }
 declare var MessageChannel: typeof globalThis extends {
   onerror: any;
   MessageChannel: infer T;
 }
   ? T
   : {
-      prototype: MessageChannel;
-      new (): MessageChannel;
-    };
+    prototype: MessageChannel;
+    new(): MessageChannel;
+  };
 
-interface BroadcastChannel extends Bun._BroadcastChannel {}
+interface BroadcastChannel extends Bun._BroadcastChannel { }
 declare var BroadcastChannel: typeof globalThis extends {
   onerror: any;
   BroadcastChannel: infer T;
 }
   ? T
   : {
-      prototype: BroadcastChannel;
-      new (name: string): BroadcastChannel;
-    };
+    prototype: BroadcastChannel;
+    new(name: string): BroadcastChannel;
+  };
 
 // declare namespace Bun {
 //   type _AbortSignal = typeof globalThis extends {
@@ -2743,9 +2735,9 @@ declare var AbortController: typeof globalThis extends {
 }
   ? T
   : {
-      prototype: AbortController;
-      new (): AbortController;
-    };
+    prototype: AbortController;
+    new(): AbortController;
+  };
 
 declare var AbortSignal: typeof globalThis extends {
   onerror: any;
@@ -2753,14 +2745,14 @@ declare var AbortSignal: typeof globalThis extends {
 }
   ? T
   : {
-      prototype: AbortSignal;
-      new (): AbortSignal;
-      abort(reason?: any): AbortSignal;
-      timeout(milliseconds: number): AbortSignal;
-    };
+    prototype: AbortSignal;
+    new(): AbortSignal;
+    abort(reason?: any): AbortSignal;
+    timeout(milliseconds: number): AbortSignal;
+  };
 
 declare namespace Bun {
-  type ArrayBufferView = TypedArray | DataView;
+  type ArrayBufferView = NodeJS.TypedArray | DataView;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type BlobOrStringOrBuffer =
     | string

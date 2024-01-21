@@ -1333,11 +1333,11 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 }
 
 fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var module = globalObject.allocator().create(JSC.Node.NodeJSFS) catch unreachable;
-    module.* = .{};
-    const vm = globalObject.bunVM();
-    if (vm.standalone_module_graph != null)
-        module.node_fs.vm = vm;
+    var module = JSC.Node.NodeJSFS.new(.{
+        .node_fs = .{
+            .vm = globalObject.bunVM(),
+        },
+    });
 
     return module.toJS(globalObject);
 }

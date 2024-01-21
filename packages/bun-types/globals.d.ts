@@ -13,13 +13,6 @@ type _WritableStream<T> = typeof globalThis extends {
   ? T
   : import("stream/web").WritableStream<T>;
 
-type _WebSocket = typeof globalThis extends {
-  onerror: any;
-  WebSocket: infer T;
-}
-  ? T
-  : import("ws").WebSocket;
-
 type _TextEncoder = typeof globalThis extends {
   onerror: any;
   TextEncoder: infer T;
@@ -208,6 +201,7 @@ import type {
   TextEncoder as NodeTextEncoder,
   TextDecoder as NodeTextDecoder,
 } from "util";
+import type { WebSocket as _WebSocket } from "ws";
 
 declare module "*.txt" {
   var text: string;
@@ -1093,7 +1087,7 @@ declare global {
     WebSocket: infer T;
   }
     ? T
-    : WebSocket;
+    : typeof _WebSocket;
 
   interface Crypto extends _Crypto {}
   var Crypto: typeof globalThis extends {
@@ -2355,7 +2349,6 @@ declare global {
     ? T
     : typeof Blob;
 
-  //@ts-expect-error Redeclare
   var Response: typeof globalThis extends {
     onerror: any;
     Response: infer T;
@@ -2363,7 +2356,6 @@ declare global {
     ? T
     : typeof import("./fetch").Response;
 
-  //@ts-expect-error Redeclare
   var Request: typeof globalThis extends {
     onerror: any;
     Request: infer T;

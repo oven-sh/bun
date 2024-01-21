@@ -76,7 +76,7 @@ Some methods are not optimized yet.
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟢 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Attempts to override or patch the module cache will fail.
+🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Attempts to override or patch the module cache will fail.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 

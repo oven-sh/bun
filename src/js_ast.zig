@@ -5266,7 +5266,7 @@ pub const Expr = struct {
                                 if (r.value == 0 or r.value == 1) {
                                     equality.ok = true;
                                     equality.equal = if (r.value == 0)
-                                        l.eqlComptime("0")
+                                        l.isBlank() or l.eqlComptime("0")
                                     else if (r.value == 1)
                                         l.eqlComptime("1")
                                     else

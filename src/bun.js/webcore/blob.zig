@@ -4474,7 +4474,7 @@ pub const Blob = struct {
                 }
 
                 if (lifetime == .temporary) {
-                    bun.default_allocator.free(@constCast(buf));
+                    bun.default_allocator.free(raw_bytes);
                 }
 
                 return ZigString.toExternalU16(external.ptr, external.len, global);

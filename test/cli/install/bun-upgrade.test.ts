@@ -4,20 +4,24 @@ import { bunExe, bunEnv as env } from "harness";
 import { mkdtemp, realpath, rm, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { cpSync } from "js/node/fs/export-star-from";
 
-let x_dir: string;
+let run_dir: string;
 
 beforeEach(async () => {
-  x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
+  run_dir = await realpath(
+    await mkdtemp(join(tmpdir(), "bun-upgrade.test." + Math.trunc(Math.random() * 9999999).toString(32))),
+  );
+  cpSync(bunExe(), run_dir);
 });
 afterEach(async () => {
-  await rm(x_dir, { force: true, recursive: true });
+  await rm(run_dir, { force: true, recursive: true });
 });
 
 it("two invalid arguments, should display error message and suggest command", async () => {
   const { stderr, exitCode } = spawn({
     cmd: [bunExe(), "upgrade", "bun-types", "--dev"],
-    cwd: x_dir,
+    cwd: run_dir,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -36,7 +40,7 @@ it("two invalid arguments, should display error message and suggest command", as
 it("two invalid arguments flipped, should display error message and suggest command", async () => {
   const { stderr, exitCode } = spawn({
     cmd: [bunExe(), "upgrade", "--dev", "bun-types"],
-    cwd: x_dir,
+    cwd: run_dir,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -55,7 +59,7 @@ it("two invalid arguments flipped, should display error message and suggest comm
 it("one invalid argument, should display error message and suggest command", async () => {
   const { stderr, exitCode } = spawn({
     cmd: [bunExe(), "upgrade", "bun-types"],
-    cwd: x_dir,
+    cwd: run_dir,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -74,7 +78,7 @@ it("one invalid argument, should display error message and suggest command", asy
 it("one valid argument, should succeed", async () => {
   const { stderr, exitCode } = spawn({
     cmd: [bunExe(), "upgrade", "--help"],
-    cwd: x_dir,
+    cwd: run_dir,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -94,7 +98,7 @@ it("one valid argument, should succeed", async () => {
 it("two valid argument, should succeed", async () => {
   const { stderr, exitCode } = spawn({
     cmd: [bunExe(), "upgrade", "--stable", "--profile"],
-    cwd: x_dir,
+    cwd: run_dir,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",

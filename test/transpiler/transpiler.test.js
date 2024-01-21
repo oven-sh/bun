@@ -2958,6 +2958,12 @@ console.log(foo, array);
       expectPrinted("1 != 2", "!0");
       expectPrinted("1 != '1'", '1 != "1"');
 
+      expectPrinted('"" == 0', "!0");
+      expectPrinted("1n == 1n", "!0");
+      expectPrinted("1234n == 1234n", "!0");
+      expectPrinted("0x00n == 0n", "0x00n == 0n");
+      expectPrinted("1n == 2n", "1n == 2n");
+
       expectPrinted("'a' === '\\x61'", "!0");
       expectPrinted("'a' === '\\x62'", "!1");
       expectPrinted("'a' === 'abc'", "!1");

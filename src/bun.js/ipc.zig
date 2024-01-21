@@ -299,6 +299,11 @@ pub fn NewIPCHandler(comptime Context: type) type {
             _: Socket,
         ) void {}
 
+        pub fn onLongTimeout(
+            _: *Context,
+            _: Socket,
+        ) void {}
+
         pub fn onConnectError(
             _: *anyopaque,
             _: Socket,

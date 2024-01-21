@@ -5143,6 +5143,9 @@ pub const Expr = struct {
         pub const Equality = struct {
             equal: bool = false,
             ok: bool = false,
+
+            pub const @"true" = Equality{ .ok = true, .equal = true };
+            pub const @"false" = Equality{ .ok = true, .equal = false };
         };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
@@ -5239,8 +5242,12 @@ pub const Expr = struct {
                 },
                 .e_big_int => |l| {
                     if (right == .e_big_int) {
-                        equality.ok = true;
-                        equality.equal = strings.eql(l.value, l.value);
+                        if (strings.eqlLong(l.value, right.e_big_int.value, true)) {
+                            return Equality.true;
+                        }
+
+                        // 0x0000n == 0n is true
+                        return .{ .ok = false };
                     } else {
                         equality.ok = switch (right) {
                             .e_null, .e_undefined => true,

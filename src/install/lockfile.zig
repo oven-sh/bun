@@ -2613,7 +2613,7 @@ pub const Package = extern struct {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
                     cwd,
                     &[_]string{"binding.gyp"},
-                    .posix,
+                    .auto,
                 );
 
                 break :brk bun.sys.exists(binding_dot_gyp_path);
@@ -3382,7 +3382,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 dependency_version.value.folder.slice(buf),
                             },
-                            .posix,
+                            .auto,
                         ),
                     ),
                 );
@@ -3437,7 +3437,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 workspace,
                             },
-                            .posix,
+                            .auto,
                         ),
                     );
                 });

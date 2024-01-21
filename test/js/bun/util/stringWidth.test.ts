@@ -83,3 +83,11 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     });
   });
 }
+
+for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
+  test.todo("leading non-ansi characters in UTF-16 string seems to fail", () => {
+    expect("\x1b[31mhshh🌎")[matcher]();
+    expect("a\x1b[31mhshh🌎")[matcher]();
+    expect("a\x1b[31mhshh🌎a")[matcher]();
+  });
+}

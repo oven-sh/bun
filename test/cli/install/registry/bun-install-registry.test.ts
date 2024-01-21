@@ -438,6 +438,88 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(await exited).toBe(0);
 });
 
+test("it should re-symlink binaries that become invalid when updating package versions", async () => {
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "bin-change-dir": "1.0.0",
+      },
+      scripts: {
+        postinstall: "bin-change-dir",
+      },
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(stderr).toBeDefined();
+  var err = await new Response(stderr).text();
+  expect(stdout).toBeDefined();
+  var out = await new Response(stdout).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + bin-change-dir@1.0.0",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
+  expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "bin-change-dir": "1.0.1",
+      },
+      scripts: {
+        postinstall: "bin-change-dir",
+      },
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(stdout).toBeDefined();
+  out = await new Response(stdout).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + bin-change-dir@1.0.1",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
+  expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
+});
+
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {
   // first clean install
   await writeFile(

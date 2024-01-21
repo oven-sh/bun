@@ -859,7 +859,7 @@ pub const ExtractData = struct {
     json_len: usize = 0,
 };
 
-const PackageInstall = struct {
+pub const PackageInstall = struct {
     cache_dir: std.fs.Dir,
     destination_dir: std.fs.Dir,
     cache_dir_subpath: stringZ = "",
@@ -1595,7 +1595,7 @@ const PackageInstall = struct {
         this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
-    fn isDanglingSymlink(path: [:0]const u8) bool {
+    pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
@@ -1604,6 +1604,16 @@ const PackageInstall = struct {
                     return false;
                 },
                 else => return true,
+            }
+        } else if (comptime Environment.isWindows) {
+            switch (bun.sys.sys_uv.open(path, 0, 0)) {
+                .err => {
+                    return true;
+                },
+                .result => |fd| {
+                    _ = bun.sys.close(fd);
+                    return false;
+                },
             }
         } else {
             const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
@@ -1652,24 +1662,44 @@ const PackageInstall = struct {
                 .step = .linking,
             },
         };
-        const target = Path.relative(dest_dir_path, to_path);
+
+        const dest = std.fs.path.basename(dest_path);
         if (comptime Environment.isWindows) {
-            return bun.todo(
-                @src(),
-                Result{
-                    .fail = .{
-                        .err = error.NotImplementedYetOnWindows,
-                        .step = .linking,
-                    },
+            var dest_buf2: bun.PathBuffer = undefined;
+            const dest_z = bun.path.joinAbsStringBufZ(
+                dest_dir_path,
+                &dest_buf2,
+                &.{
+                    dest,
                 },
+                .windows,
             );
+
+            to_buf[dest_dir_path.len] = 0;
+            const to_path_z = to_buf[0..dest_dir_path.len :0];
+
+            // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
+            // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
+            switch (bun.sys.sys_uv.symlinkUV(to_path_z, dest_z, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION)) {
+                .err => |err| {
+                    return Result{
+                        .fail = .{
+                            .err = bun.errnoToZigErr(err.errno),
+                            .step = .linking,
+                        },
+                    };
+                },
+                .result => {},
+            }
+        } else {
+            const target = Path.relative(dest_dir_path, to_path);
+            std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
+                .fail = .{
+                    .err = err,
+                    .step = .linking,
+                },
+            };
         }
-        std.os.symlinkat(target, dest_dir.fd, std.fs.path.basename(dest_path)) catch |err| return Result{
-            .fail = .{
-                .err = err,
-                .step = .linking,
-            },
-        };
 
         if (isDanglingSymlink(symlinked_path)) return Result{
             .fail = .{

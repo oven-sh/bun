@@ -10,7 +10,6 @@ Quickstart:
 import { $ } from "bun";
 
 const response = await fetch("https://example.com");
-const buffer = Buffer.alloc(100);
 
 // Use Response as stdin.
 await $`echo < ${response} > wc -c`; // 120
@@ -54,7 +53,7 @@ const welcome = await $`echo "Hello World!"`.text();
 console.log(welcome); // Hello World!\n
 ```
 
-To get stdout, stderr, and the exit code, use await or .run:
+To get stdout, stderr, and the exit code, use await or `.run`:
 
 ```js
 import { $ } from "bun";
@@ -269,11 +268,8 @@ You can also use `.lines()` on a completed command:
 import { $ } from "bun";
 
 const search = "bun";
-const iterator = await $`cat list.txt | grep ${search}`.lines();
-if (iterator.exitCode !== 0) {
-  throw new Error("oh no");
-}
-for await (let line of iterator) {
+
+for await (let line of await $`cat list.txt | grep ${search}`.lines()) {
   console.log(line);
 }
 ```
@@ -326,20 +322,20 @@ await $.braces(`echo {1,2,3}`);
 // => ["echo 1", "echo 2", "echo 3"]
 ```
 
-### `$.raw` (unescaped strings)
+### `$.escape` (unescaped strings)
 
 For security purposes, Bun Shell escapes input by default. If you need to disable that, this function returns a string that is not escaped by Bun Shell:
 
 ```js
 import { $ } from "bun";
 
-await $`echo ${$.raw("Hello World!")}`;
+await $`echo ${$.escape("Hello World!")}`;
 // => Hello World!
 ```
 
-## Standalone usage
+## .bun.sh file loader
 
-You can use Bun Shell to run simple shell script files on your computer.
+For simple shell scripts, instead of `sh`, you can use Bun Shell to run shell scripts.
 
 To do that, run any file with bun that ends with `.bun.sh`:
 
@@ -360,4 +356,4 @@ $ bun ./script.sh
 
 ## Credits
 
-Large parts of this API were inspired by [zx](https://github.com/google/zx) and [dax](https://github.com/dsherret/dax). Thank you to the authors of those projects.
+Large parts of this API were inspired by [zx](https://github.com/google/zx), [dax](https://github.com/dsherret/dax), and [bnx](https://github.com/wobsoriano/bnx). Thank you to the authors of those projects.

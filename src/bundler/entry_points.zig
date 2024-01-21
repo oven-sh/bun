@@ -8,7 +8,7 @@ const Bundler = bun.Bundler;
 const strings = bun.strings;
 
 pub const FallbackEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
+    code_buffer: [8192]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
     built_code: string = "",
@@ -74,7 +74,7 @@ pub const FallbackEntryPoint = struct {
 };
 
 pub const ClientEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
+    code_buffer: [8192]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
 

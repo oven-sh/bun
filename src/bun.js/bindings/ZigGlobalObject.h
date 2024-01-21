@@ -203,6 +203,11 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* UVStreamSinkStructure() { return m_JSUVStreamSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* UVStreamSink() { return m_JSUVStreamSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue UVStreamSinkPrototype() { return m_JSUVStreamSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableUVStreamSinkControllerPrototype() { return m_JSUVStreamSinkControllerPrototype.getInitializedOnMainThread(this); }
+
     JSC::Structure* JSBufferListStructure() { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferListPrototype() { return m_JSBufferListClassStructure.prototypeInitializedOnMainThread(this); }
@@ -268,7 +273,7 @@ public:
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
-    
+
     JSC::JSObject* processObject() { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() { return m_bunObject.getInitializedOnMainThread(this); }
@@ -472,6 +477,7 @@ public:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
+    LazyClassStructure m_JSUVStreamSinkClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
@@ -504,6 +510,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSUVStreamSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;

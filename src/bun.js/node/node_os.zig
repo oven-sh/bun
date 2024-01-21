@@ -112,7 +112,7 @@ pub const Os = struct {
             // TODO: remove all usages of file.reader(). zig's std.io.Reader()
             // is extremely slow and should rarely ever be used in Bun until
             // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
             var reader = buffered_reader.reader();
 
             // Skip the first line (aggregate of all CPUs)
@@ -155,7 +155,7 @@ pub const Os = struct {
             // TODO: remove all usages of file.reader(). zig's std.io.Reader()
             // is extremely slow and should rarely ever be used in Bun until
             // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
             var reader = buffered_reader.reader();
 
             const key_processor = "processor\t: ";

@@ -284,12 +284,12 @@ const TablePrinter = struct {
         );
 
         pub fn write(this: VisibleCharacterCounter, bytes: []const u8) WriteError!usize {
-            this.width.* += strings.visibleUTF8Width(bytes);
+            this.width.* += strings.visible.width.exclude_ansi_colors.utf8(bytes);
             return bytes.len;
         }
 
         pub fn writeAll(this: VisibleCharacterCounter, bytes: []const u8) WriteError!void {
-            this.width.* += strings.visibleUTF8Width(bytes);
+            this.width.* += strings.width.exclude_ansi_colors.utf8(bytes);
         }
     };
 
@@ -320,7 +320,7 @@ const TablePrinter = struct {
     fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) !void {
         // update size of "(index)" column
         const row_key_len: u32 = switch (row_key) {
-            .str => |value| @intCast(value.visibleWidth()),
+            .str => |value| @intCast(value.visibleWidthExcludeANSIColors()),
             .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
         };
         columns.items[0].width = @max(columns.items[0].width, row_key_len);
@@ -400,7 +400,7 @@ const TablePrinter = struct {
         try writer.writeAll("│");
         {
             const len: u32 = switch (row_key) {
-                .str => |value| @truncate(value.visibleWidth()),
+                .str => |value| @truncate(value.visibleWidthExcludeANSIColors()),
                 .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
             };
             const needed = columns.items[0].width -| len;
@@ -544,7 +544,7 @@ const TablePrinter = struct {
         {
             for (columns.items) |*col| {
                 // also update the col width with the length of the column name itself
-                col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidth())));
+                col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidthExcludeANSIColors())));
             }
 
             try writer.writeAll("┌");
@@ -557,7 +557,7 @@ const TablePrinter = struct {
 
             for (columns.items, 0..) |col, i| {
                 if (i > 0) try writer.writeAll("│");
-                const len = col.name.visibleWidth();
+                const len = col.name.visibleWidthExcludeANSIColors();
                 const needed = col.width -| len;
                 try writer.writeByteNTimes(' ', 1);
                 if (comptime enable_ansi_colors) {

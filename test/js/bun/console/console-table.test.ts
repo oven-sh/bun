@@ -159,6 +159,32 @@ test("console.table json fixture", () => {
   console.log(actualOutput);
 });
 
+test("console.table ansi colors", () => {
+  const obj = {
+    [ansify("hello")]: ansify("this is a long string with ansi color codes"),
+    [ansify("world")]: ansify("this is another long string with ansi color"),
+    [ansify("foo")]: ansify("bar"),
+  };
+
+  function ansify(str: string) {
+    return `\u001b[31m${str}\u001b[39m`;
+  }
+
+  const { stdout } = spawnSync({
+    cmd: [bunExe(), `${import.meta.dir}/console-table-run.ts`, `(() => [${JSON.stringify(obj, null, 2)}])`],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+
+  const actualOutput = stdout
+    .toString()
+    // todo: fix bug causing this to be necessary:
+    .replaceAll("`", "'");
+  expect(actualOutput).toMatchSnapshot();
+  console.log(actualOutput);
+});
+
 test.skip("console.table character widths", () => {
   // note: this test cannot be automated because cannot test printed witdhs consistently.
   // so this test is just meant to be run manually

@@ -64,25 +64,25 @@ declare module "bun:sqlite" {
       options?:
         | number
         | {
-          /**
-           * Open the database as read-only (no write operations, no create).
-           *
-           * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
-           */
-          readonly?: boolean;
-          /**
-           * Allow creating a new database
-           *
-           * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
-           */
-          create?: boolean;
-          /**
-           * Open the database as read-write
-           *
-           * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
-           */
-          readwrite?: boolean;
-        },
+            /**
+             * Open the database as read-only (no write operations, no create).
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
+             */
+            readonly?: boolean;
+            /**
+             * Allow creating a new database
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
+             */
+            create?: boolean;
+            /**
+             * Open the database as read-write
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
+             */
+            readwrite?: boolean;
+          },
     );
 
     /**
@@ -95,25 +95,25 @@ declare module "bun:sqlite" {
       options?:
         | number
         | {
-          /**
-           * Open the database as read-only (no write operations, no create).
-           *
-           * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
-           */
-          readonly?: boolean;
-          /**
-           * Allow creating a new database
-           *
-           * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
-           */
-          create?: boolean;
-          /**
-           * Open the database as read-write
-           *
-           * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
-           */
-          readwrite?: boolean;
-        },
+            /**
+             * Open the database as read-only (no write operations, no create).
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
+             */
+            readonly?: boolean;
+            /**
+             * Allow creating a new database
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
+             */
+            create?: boolean;
+            /**
+             * Open the database as read-write
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
+             */
+            readwrite?: boolean;
+          },
     ): Database;
 
     /**
@@ -204,7 +204,7 @@ declare module "bun:sqlite" {
     query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
       sqlQuery: string,
     ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-      Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
@@ -233,7 +233,7 @@ declare module "bun:sqlite" {
       sqlQuery: string,
       params?: ParamsType,
     ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-      Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
 
     /**
      * Is the database in a transaction?
@@ -806,7 +806,10 @@ declare module "bun:sqlite" {
     | number
     | boolean
     | null
-    | Record<string, string | bigint | NodeJS.TypedArray | number | boolean | null>;
+    | Record<
+        string,
+        string | bigint | NodeJS.TypedArray | number | boolean | null
+      >;
 
   export default Database;
 

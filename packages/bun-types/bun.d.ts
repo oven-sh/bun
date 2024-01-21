@@ -162,7 +162,7 @@ declare module "bun" {
   }
 
   interface ShellConstructor {
-    new(): Shell;
+    new (): Shell;
   }
 
   export interface Shell {
@@ -854,7 +854,7 @@ declare module "bun" {
     unref(): void;
   }
 
-  interface FileBlob extends BunFile { }
+  interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -1187,7 +1187,10 @@ declare module "bun" {
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
+    transform(
+      code: Bun.StringOrBuffer,
+      loader?: JavaScriptLoader,
+    ): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
@@ -1270,12 +1273,12 @@ declare module "bun" {
     target?: Target; // default: "browser"
     format?: ModuleFormat; // later: "cjs", "iife"
     naming?:
-    | string
-    | {
-      chunk?: string;
-      entry?: string;
-      asset?: string;
-    }; // | string;
+      | string
+      | {
+          chunk?: string;
+          entry?: string;
+          asset?: string;
+        }; // | string;
     root?: string; // project root
     splitting?: boolean; // default true, enable code splitting
     plugins?: BunPlugin[];
@@ -1287,12 +1290,12 @@ declare module "bun" {
     loader?: { [k in string]: Loader };
     sourcemap?: "none" | "inline" | "external"; // default: "none"
     minify?:
-    | boolean
-    | {
-      whitespace?: boolean;
-      syntax?: boolean;
-      identifiers?: boolean;
-    };
+      | boolean
+      | {
+          whitespace?: boolean;
+          syntax?: boolean;
+          identifiers?: boolean;
+        };
     // treeshaking?: boolean;
 
     // jsx?:
@@ -2010,17 +2013,17 @@ declare module "bun" {
      * Default is `false`.
      */
     perMessageDeflate?:
-    | boolean
-    | {
-      /**
-       * Sets the compression level.
-       */
-      compress?: WebSocketCompressor | boolean;
-      /**
-       * Sets the decompression level.
-       */
-      decompress?: WebSocketCompressor | boolean;
-    };
+      | boolean
+      | {
+          /**
+           * Sets the compression level.
+           */
+          compress?: WebSocketCompressor | boolean;
+          /**
+           * Sets the decompression level.
+           */
+          decompress?: WebSocketCompressor | boolean;
+        };
   }
 
   interface GenericServeOptions {
@@ -2289,13 +2292,13 @@ declare module "bun" {
 
   interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-    TLSOptions {
+      TLSOptions {
     unix?: never;
     tls?: TLSOptions;
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
-    TLSOptions {
+      TLSOptions {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -2361,11 +2364,11 @@ declare module "bun" {
      * replaced when CAs are explicitly specified using this option.
      */
     ca?:
-    | string
-    | Buffer
-    | BunFile
-    | Array<string | Buffer | BunFile>
-    | undefined;
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -2378,11 +2381,11 @@ declare module "bun" {
      *  able to validate the certificate, and the handshake will fail.
      */
     cert?:
-    | string
-    | Buffer
-    | BunFile
-    | Array<string | Buffer | BunFile>
-    | undefined;
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -2394,11 +2397,11 @@ declare module "bun" {
      * object.passphrase if provided, or options.passphrase if it is not.
      */
     key?:
-    | string
-    | Buffer
-    | BunFile
-    | Array<string | Buffer | BunFile>
-    | undefined;
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
@@ -2967,7 +2970,10 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: Bun.BlobOrStringOrBuffer, encoding: DigestEncoding): string;
+    static hash(
+      input: Bun.BlobOrStringOrBuffer,
+      encoding: DigestEncoding,
+    ): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -3255,27 +3261,27 @@ declare module "bun" {
      * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-    | -9
-    | -10
-    | -11
-    | -12
-    | -13
-    | -14
-    | -15
-    | 9
-    | 10
-    | 11
-    | 12
-    | 13
-    | 14
-    | 15
-    | 25
-    | 26
-    | 27
-    | 28
-    | 29
-    | 30
-    | 31;
+      | -9
+      | -10
+      | -11
+      | -12
+      | -13
+      | -14
+      | -15
+      | 9
+      | 10
+      | 11
+      | 12
+      | 13
+      | 14
+      | 15
+      | 25
+      | 26
+      | 27
+      | 28
+      | 29
+      | 30
+      | 31;
     /**
      * Tunes the compression algorithm.
      *
@@ -3788,8 +3794,8 @@ declare module "bun" {
     readonly unix: string;
   }
 
-  interface TCPSocket extends Socket { }
-  interface TLSSocket extends Socket { }
+  interface TCPSocket extends Socket {}
+  interface TLSSocket extends Socket {}
 
   interface BinaryTypeList {
     arraybuffer: ArrayBuffer;
@@ -4105,22 +4111,22 @@ declare module "bun" {
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
       Opts extends OptionsObject<infer In, infer Out, infer Err>
-      ? Subprocess<
-        // "Writable extends In" means "if In === Writable",
-        // aka if true that means the user didn't specify anything
-        Writable extends In ? "ignore" : In,
-        Readable extends Out ? "pipe" : Out,
-        Readable extends Err ? "inherit" : Err
-      >
-      : Subprocess<Writable, Readable, Readable>;
+        ? Subprocess<
+            // "Writable extends In" means "if In === Writable",
+            // aka if true that means the user didn't specify anything
+            Writable extends In ? "ignore" : In,
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "inherit" : Err
+          >
+        : Subprocess<Writable, Readable, Readable>;
 
     type OptionsToSyncSubprocess<Opts extends OptionsObject> =
       Opts extends OptionsObject<any, infer Out, infer Err>
-      ? SyncSubprocess<
-        Readable extends Out ? "pipe" : Out,
-        Readable extends Err ? "pipe" : Err
-      >
-      : SyncSubprocess<Readable, Readable>;
+        ? SyncSubprocess<
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "pipe" : Err
+          >
+        : SyncSubprocess<Readable, Readable>;
 
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 

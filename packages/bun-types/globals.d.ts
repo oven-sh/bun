@@ -1,4 +1,4 @@
-export { }
+export {};
 
 type _ReadableStream<T> = typeof globalThis extends {
   onerror: any;
@@ -47,41 +47,41 @@ type _Worker = typeof globalThis extends { onerror: any; Worker: infer T }
 type _Event = typeof globalThis extends { onerror: any; Event: any }
   ? {}
   : {
-    /** This is not used in Node.js and is provided purely for completeness. */
-    readonly bubbles: boolean;
-    /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-    cancelBubble: () => void;
-    /** True if the event was created with the cancelable option */
-    readonly cancelable: boolean;
-    /** This is not used in Node.js and is provided purely for completeness. */
-    readonly composed: boolean;
-    /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-    composedPath(): [EventTarget?];
-    /** Alias for event.target. */
-    readonly currentTarget: EventTarget | null;
-    /** Is true if cancelable is true and event.preventDefault() has been called. */
-    readonly defaultPrevented: boolean;
-    /** This is not used in Node.js and is provided purely for completeness. */
-    readonly eventPhase: 0 | 2;
-    /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-    readonly isTrusted: boolean;
-    /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-    preventDefault(): void;
-    /** This is not used in Node.js and is provided purely for completeness. */
-    returnValue: boolean;
-    /** Alias for event.target. */
-    readonly srcElement: EventTarget | null;
-    /** Stops the invocation of event listeners after the current one completes. */
-    stopImmediatePropagation(): void;
-    /** This is not used in Node.js and is provided purely for completeness. */
-    stopPropagation(): void;
-    /** The `EventTarget` dispatching the event */
-    readonly target: EventTarget | null;
-    /** The millisecond timestamp when the Event object was created. */
-    readonly timeStamp: number;
-    /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-    readonly type: string;
-  };
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly bubbles: boolean;
+      /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+      cancelBubble: () => void;
+      /** True if the event was created with the cancelable option */
+      readonly cancelable: boolean;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly composed: boolean;
+      /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+      composedPath(): [EventTarget?];
+      /** Alias for event.target. */
+      readonly currentTarget: EventTarget | null;
+      /** Is true if cancelable is true and event.preventDefault() has been called. */
+      readonly defaultPrevented: boolean;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly eventPhase: 0 | 2;
+      /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+      readonly isTrusted: boolean;
+      /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+      preventDefault(): void;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      returnValue: boolean;
+      /** Alias for event.target. */
+      readonly srcElement: EventTarget | null;
+      /** Stops the invocation of event listeners after the current one completes. */
+      stopImmediatePropagation(): void;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      stopPropagation(): void;
+      /** The `EventTarget` dispatching the event */
+      readonly target: EventTarget | null;
+      /** The millisecond timestamp when the Event object was created. */
+      readonly timeStamp: number;
+      /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+      readonly type: string;
+    };
 
 type _EventTarget = typeof globalThis extends {
   onerror: any;
@@ -89,29 +89,29 @@ type _EventTarget = typeof globalThis extends {
 }
   ? {}
   : {
-    /**
-     * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
-     *
-     * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
-     *
-     * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
-     * Specifically, the `capture` option is used as part of the key when registering a `listener`.
-     * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
-     */
-    addEventListener(
-      type: string,
-      listener: EventListener | EventListenerObject,
-      options?: AddEventListenerOptions | boolean,
-    ): void;
-    /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
-    dispatchEvent(event: Event): boolean;
-    /** Removes the event listener in target's event listener list with the same type, callback, and options. */
-    removeEventListener(
-      type: string,
-      listener: EventListener | EventListenerObject,
-      options?: Bun.EventListenerOptions | boolean,
-    ): void;
-  };
+      /**
+       * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
+       *
+       * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
+       *
+       * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
+       * Specifically, the `capture` option is used as part of the key when registering a `listener`.
+       * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
+       */
+      addEventListener(
+        type: string,
+        listener: EventListener | EventListenerObject,
+        options?: AddEventListenerOptions | boolean,
+      ): void;
+      /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+      dispatchEvent(event: Event): boolean;
+      /** Removes the event listener in target's event listener list with the same type, callback, and options. */
+      removeEventListener(
+        type: string,
+        listener: EventListener | EventListenerObject,
+        options?: Bun.EventListenerOptions | boolean,
+      ): void;
+    };
 
 type _Crypto = typeof globalThis extends {
   onerror: any;
@@ -137,21 +137,22 @@ type _CryptoKey = typeof globalThis extends {
 type _Body = typeof globalThis extends { onerror: any }
   ? {}
   : {
-    readonly body: ReadableStream | null;
-    readonly bodyUsed: boolean;
-    readonly arrayBuffer: () => Promise<ArrayBuffer>;
-    readonly blob: () => Promise<Blob>;
-    readonly formData: () => Promise<FormData>;
-    readonly json: () => Promise<unknown>;
-    readonly text: () => Promise<string>;
-  };
+      readonly body: ReadableStream | null;
+      readonly bodyUsed: boolean;
+      readonly arrayBuffer: () => Promise<ArrayBuffer>;
+      readonly blob: () => Promise<Blob>;
+      readonly formData: () => Promise<FormData>;
+      readonly json: () => Promise<unknown>;
+      readonly text: () => Promise<string>;
+    };
 
-type _Global<T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType> = typeof globalThis extends {
-  onerror: any;
-  WebAssembly: { Global: infer T };
-}
-  ? T
-  : Bun.WebAssembly.Global<T>;
+type _Global<T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType> =
+  typeof globalThis extends {
+    onerror: any;
+    WebAssembly: { Global: infer T };
+  }
+    ? T
+    : Bun.WebAssembly.Global<T>;
 
 type _CompileError = typeof globalThis extends {
   onerror: any;
@@ -203,7 +204,10 @@ type _Table = typeof globalThis extends {
   : Bun.WebAssembly.Table;
 
 import type { MessagePort } from "worker_threads";
-import type { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from "util";
+import type {
+  TextEncoder as NodeTextEncoder,
+  TextDecoder as NodeTextDecoder,
+} from "util";
 
 declare module "*.txt" {
   var text: string;
@@ -238,99 +242,104 @@ declare global {
   }
 
   namespace WebAssembly {
-    interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap { }
-    interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-      extends Bun.WebAssembly.GlobalDescriptor<T> { }
-    interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor { }
+    interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap {}
+    interface GlobalDescriptor<
+      T extends keyof ValueTypeMap = keyof ValueTypeMap,
+    > extends Bun.WebAssembly.GlobalDescriptor<T> {}
+    interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor {}
     interface ModuleExportDescriptor
-      extends Bun.WebAssembly.ModuleExportDescriptor { }
+      extends Bun.WebAssembly.ModuleExportDescriptor {}
     interface ModuleImportDescriptor
-      extends Bun.WebAssembly.ModuleImportDescriptor { }
-    interface TableDescriptor extends Bun.WebAssembly.TableDescriptor { }
+      extends Bun.WebAssembly.ModuleImportDescriptor {}
+    interface TableDescriptor extends Bun.WebAssembly.TableDescriptor {}
     interface WebAssemblyInstantiatedSource
-      extends Bun.WebAssembly.WebAssemblyInstantiatedSource { }
+      extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
 
-    interface LinkError extends _LinkError { }
+    interface LinkError extends _LinkError {}
     var LinkError: {
       prototype: LinkError;
-      new(message?: string): LinkError;
+      new (message?: string): LinkError;
       (message?: string): LinkError;
     };
 
-    interface CompileError extends _CompileError { }
+    interface CompileError extends _CompileError {}
     var CompileError: typeof globalThis extends {
       onerror: any;
       WebAssembly: { CompileError: infer T };
     }
       ? T
       : {
-        prototype: CompileError;
-        new(message?: string): CompileError;
-        (message?: string): CompileError;
-      };
+          prototype: CompileError;
+          new (message?: string): CompileError;
+          (message?: string): CompileError;
+        };
 
-    interface RuntimeError extends _RuntimeError { }
+    interface RuntimeError extends _RuntimeError {}
     var RuntimeError: {
       prototype: RuntimeError;
-      new(message?: string): RuntimeError;
+      new (message?: string): RuntimeError;
       (message?: string): RuntimeError;
     };
 
-    interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap> extends _Global<T> { }
+    interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap>
+      extends _Global<T> {}
     var Global: typeof globalThis extends {
       onerror: any;
       WebAssembly: { Global: infer T };
     }
       ? T
       : {
-        prototype: Global;
-        new <T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType>(
-          descriptor: GlobalDescriptor<T>,
-          v?: ValueTypeMap[T],
-        ): Global<T>;
-      };
+          prototype: Global;
+          new <T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType>(
+            descriptor: GlobalDescriptor<T>,
+            v?: ValueTypeMap[T],
+          ): Global<T>;
+        };
 
-    interface Instance extends _Instance { }
+    interface Instance extends _Instance {}
     var Instance: typeof globalThis extends {
       onerror: any;
       WebAssembly: { Instance: infer T };
     }
       ? T
       : {
-        prototype: Instance;
-        new(module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
-      };
+          prototype: Instance;
+          new (
+            module: Module,
+            importObject?: Bun.WebAssembly.Imports,
+          ): Instance;
+        };
 
-    interface Memory extends _Memory { }
+    interface Memory extends _Memory {}
     var Memory: {
       prototype: Memory;
-      new(descriptor: MemoryDescriptor): Memory;
+      new (descriptor: MemoryDescriptor): Memory;
     };
 
-    interface Module extends _Module { }
+    interface Module extends _Module {}
     var Module: typeof globalThis extends {
       onerror: any;
       WebAssembly: { Module: infer T };
     }
       ? T
       : {
-        prototype: Module;
-        new(bytes: Bun.BufferSource): Module;
-        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
-        customSections(
-          moduleObject: Module,
-          sectionName: string,
-        ): ArrayBuffer[];
-        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
-        exports(moduleObject: Module): ModuleExportDescriptor[];
-        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
-        imports(moduleObject: Module): ModuleImportDescriptor[];
-      };
+          prototype: Module;
+          new (bytes: Bun.BufferSource): Module;
+          /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
+          customSections(
+            moduleObject: Module,
+            sectionName: string,
+          ): ArrayBuffer[];
+          /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
+          exports(moduleObject: Module): ModuleExportDescriptor[];
+          /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
+          imports(moduleObject: Module): ModuleImportDescriptor[];
+        };
 
-    interface Table extends _Table { }
+    interface Table extends _Table {}
     var Table: {
       prototype: Table;
-      new(descriptor: TableDescriptor, value?: any): Table;
+      new (descriptor: TableDescriptor, value?: any): Table;
     };
 
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compile) */
@@ -398,11 +407,11 @@ declare global {
         valueOf(): ValueTypeMap[T];
       }
 
-      interface CompileError extends Error { }
+      interface CompileError extends Error {}
 
-      interface LinkError extends Error { }
+      interface LinkError extends Error {}
 
-      interface RuntimeError extends Error { }
+      interface RuntimeError extends Error {}
 
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Instance) */
       interface Instance {
@@ -419,7 +428,7 @@ declare global {
       }
 
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module) */
-      interface Module { }
+      interface Module {}
 
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Table) */
       interface Table {
@@ -468,7 +477,9 @@ declare global {
     type BodyInit = ReadableStream | XMLHttpRequestBodyInit | URLSearchParams;
     type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
     type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
-    type ReadableStreamDefaultReadResult<T> = ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
+    type ReadableStreamDefaultReadResult<T> =
+      | ReadableStreamDefaultReadValueResult<T>
+      | ReadableStreamDefaultReadDoneResult;
     type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
     type Transferable = ArrayBuffer | MessagePort;
     type MessageEventSource = undefined;
@@ -487,14 +498,18 @@ declare global {
     type TimerHandler = (...args: any[]) => void;
     type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
     type DOMHighResTimeStamp = number;
-    type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+    type EventListenerOrEventListenerObject =
+      | EventListener
+      | EventListenerObject;
 
-    type BlobOrStringOrBuffer = string
+    type BlobOrStringOrBuffer =
+      | string
       | NodeJS.TypedArray
       | ArrayBufferLike
       | Blob;
 
-    type Platform = "aix"
+    type Platform =
+      | "aix"
       | "android"
       | "darwin"
       | "freebsd"
@@ -505,7 +520,8 @@ declare global {
       | "win32"
       | "cygwin"
       | "netbsd";
-    type Architecture = "arm"
+    type Architecture =
+      | "arm"
       | "arm64"
       | "ia32"
       | "mips"
@@ -535,12 +551,14 @@ declare global {
       value: unknown,
     ) => void;
 
-    type HeadersInit = Headers
+    type HeadersInit =
+      | Headers
       | Record<string, string>
       | Array<[string, string]>
       | IterableIterator<[string, string]>;
 
-    type ResponseType = "basic"
+    type ResponseType =
+      | "basic"
       | "cors"
       | "default"
       | "error"
@@ -548,7 +566,7 @@ declare global {
       | "opaqueredirect";
 
     interface TextEncoder extends NodeTextEncoder {
-      new(
+      new (
         encoding?: Bun.Encoding,
         options?: { fatal?: boolean; ignoreBOM?: boolean },
       ): TextEncoder;
@@ -572,7 +590,7 @@ declare global {
     }
 
     interface TextDecoder extends NodeTextDecoder {
-      new(
+      new (
         encoding?: Bun.Encoding,
         options?: { fatal?: boolean; ignoreBOM?: boolean },
       ): TextDecoder;
@@ -635,7 +653,6 @@ declare global {
         source?: null,
       ): void;
     }
-
 
     interface ReadableStreamDefaultReadManyResult<T> {
       done: boolean;
@@ -706,7 +723,10 @@ declare global {
     }
 
     interface EventSource extends EventTarget {
-      new(url: string | URL, eventSourceInitDict?: EventSourceInit,): EventSource;
+      new (
+        url: string | URL,
+        eventSourceInitDict?: EventSourceInit,
+      ): EventSource;
 
       onerror: ((this: EventSource, ev: Event) => any) | null;
       onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
@@ -772,7 +792,9 @@ declare global {
     }
 
     interface TransformerFlushCallback<O> {
-      (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+      (
+        controller: TransformStreamDefaultController<O>,
+      ): void | PromiseLike<void>;
     }
 
     interface TransformerStartCallback<O> {
@@ -933,9 +955,9 @@ declare global {
        * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
        */
       env?:
-      | Record<string, string>
-      | typeof import("node:worker_threads")["SHARE_ENV"]
-      | undefined;
+        | Record<string, string>
+        | typeof import("node:worker_threads")["SHARE_ENV"]
+        | undefined;
 
       /**
        * In Bun, this does nothing.
@@ -1013,59 +1035,59 @@ declare global {
     }
   }
 
-  interface ReadableStream<R = any> extends _ReadableStream<R> { }
+  interface ReadableStream<R = any> extends _ReadableStream<R> {}
   var ReadableStream: typeof globalThis extends {
     onerror: any;
     ReadableStream: infer T;
   }
     ? T
     : {
-      prototype: ReadableStream;
-      new <R = any>(
-        underlyingSource?: Bun.UnderlyingSource<R>,
-        strategy?: QueuingStrategy<R>,
-      ): ReadableStream<R>;
-      new <R = any>(
-        underlyingSource?: Bun.DirectUnderlyingSource<R>,
-        strategy?: QueuingStrategy<R>,
-      ): ReadableStream<R>;
-    };
+        prototype: ReadableStream;
+        new <R = any>(
+          underlyingSource?: Bun.UnderlyingSource<R>,
+          strategy?: QueuingStrategy<R>,
+        ): ReadableStream<R>;
+        new <R = any>(
+          underlyingSource?: Bun.DirectUnderlyingSource<R>,
+          strategy?: QueuingStrategy<R>,
+        ): ReadableStream<R>;
+      };
 
-  interface WritableStream<W = any> extends _WritableStream<W> { }
+  interface WritableStream<W = any> extends _WritableStream<W> {}
   var WritableStream: typeof globalThis extends {
     onerror: any;
     WritableStream: infer T;
   }
     ? T
     : {
-      prototype: WritableStream;
-      new <W = any>(
-        underlyingSink?: Bun.UnderlyingSink<W>,
-        strategy?: QueuingStrategy<W>,
-      ): WritableStream<W>;
-    };
+        prototype: WritableStream;
+        new <W = any>(
+          underlyingSink?: Bun.UnderlyingSink<W>,
+          strategy?: QueuingStrategy<W>,
+        ): WritableStream<W>;
+      };
 
-  interface Worker extends _Worker { }
+  interface Worker extends _Worker {}
   var Worker: typeof globalThis extends {
     onerror: any;
     Worker: infer T;
   }
     ? T
     : {
-      prototype: Worker;
-      new(
-        scriptURL: string | URL,
-        options?: Bun.WorkerOptions | undefined,
-      ): Worker;
-      /**
-       * This is the cloned value of the `data` property passed to `new Worker()`
-       *
-       * This is Bun's equivalent of `workerData` in Node.js.
-       */
-      data: any;
-    };
+        prototype: Worker;
+        new (
+          scriptURL: string | URL,
+          options?: Bun.WorkerOptions | undefined,
+        ): Worker;
+        /**
+         * This is the cloned value of the `data` property passed to `new Worker()`
+         *
+         * This is Bun's equivalent of `workerData` in Node.js.
+         */
+        data: any;
+      };
 
-  interface WebSocket extends _WebSocket { }
+  interface WebSocket extends _WebSocket {}
   var WebSocket: typeof globalThis extends {
     onerror: any;
     WebSocket: infer T;
@@ -1073,16 +1095,16 @@ declare global {
     ? T
     : WebSocket;
 
-  interface Crypto extends _Crypto { }
+  interface Crypto extends _Crypto {}
   var Crypto: typeof globalThis extends {
     onerror: any;
     Crypto: infer T;
   }
     ? T
     : {
-      prototype: Crypto;
-      new(): Crypto;
-    };
+        prototype: Crypto;
+        new (): Crypto;
+      };
 
   var crypto: typeof globalThis extends {
     onerror: any;
@@ -1092,15 +1114,15 @@ declare global {
     : Crypto;
 
   /**
- * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All
- * instances of `TextEncoder` only support UTF-8 encoding.
- *
- * ```js
- * const encoder = new TextEncoder();
- * const uint8array = encoder.encode('this is some data');
- * ```
- */
-  interface TextEncoder extends _TextEncoder { }
+   * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All
+   * instances of `TextEncoder` only support UTF-8 encoding.
+   *
+   * ```js
+   * const encoder = new TextEncoder();
+   * const uint8array = encoder.encode('this is some data');
+   * ```
+   */
+  interface TextEncoder extends _TextEncoder {}
   var TextEncoder: typeof globalThis extends {
     onerror: any;
     TextEncoder: infer T;
@@ -1108,15 +1130,15 @@ declare global {
     ? T
     : typeof TextEncoder;
 
-  interface TextDecoder extends _TextDecoder { }
+  interface TextDecoder extends _TextDecoder {}
   var TextDecoder: typeof globalThis extends {
     onerror: any;
     TextDecoder: infer T;
   }
     ? T
-    : typeof TextDecoder
+    : typeof TextDecoder;
 
-  interface Performance extends _Performance { }
+  interface Performance extends _Performance {}
   var performance: typeof globalThis extends {
     onerror: any;
     performance: infer T;
@@ -1124,25 +1146,25 @@ declare global {
     ? T
     : Performance;
 
-  interface Event extends _Event { }
+  interface Event extends _Event {}
   var Event: typeof globalThis extends { onerror: any; Event: infer T }
     ? T
     : {
-      prototype: Event;
-      new(type: string, eventInitDict?: Bun.EventInit): Event;
-    };
-  interface EventTarget extends _EventTarget { }
+        prototype: Event;
+        new (type: string, eventInitDict?: Bun.EventInit): Event;
+      };
+  interface EventTarget extends _EventTarget {}
   var EventTarget: typeof globalThis extends {
     onerror: any;
     EventTarget: infer T;
   }
     ? T
     : {
-      prototype: EventTarget;
-      new(): EventTarget;
-    };
+        prototype: EventTarget;
+        new (): EventTarget;
+      };
 
-  interface Body extends _Body { }
+  interface Body extends _Body {}
 
   interface File extends Blob {
     /**
@@ -1152,7 +1174,7 @@ declare global {
      * @param `name` - The name of the file
      * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
      */
-    new(
+    new (
       parts: Bun.BlobPart[],
       name: string,
       options?: BlobPropertyBag & { lastModified?: Date | number },
@@ -1163,7 +1185,6 @@ declare global {
   var File: typeof globalThis extends { onerror: any; File: infer T }
     ? T
     : typeof File;
-
 
   interface FetchRequestInit extends RequestInit {
     /**
@@ -1189,44 +1210,44 @@ declare global {
   }
 
   /**
- * ShadowRealms are a distinct global environment, with its own global object
- * containing its own intrinsics and built-ins (standard objects that are not
- * bound to global variables, like the initial value of Object.prototype).
- *
- * @example
- *
- * ```js
- * const red = new ShadowRealm();
- *
- * // realms can import modules that will execute within it's own environment.
- * // When the module is resolved, it captured the binding value, or creates a new
- * // wrapped function that is connected to the callable binding.
- * const redAdd = await red.importValue('./inside-code.js', 'add');
- *
- * // redAdd is a wrapped function exotic object that chains it's call to the
- * // respective imported binding.
- * let result = redAdd(2, 3);
- *
- * console.assert(result === 5); // yields true
- *
- * // The evaluate method can provide quick code evaluation within the constructed
- * // shadowRealm without requiring any module loading, while it still requires CSP
- * // relaxing.
- * globalThis.someValue = 1;
- * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
- * console.assert(globalThis.someValue === 1);
- *
- * // The wrapped functions can also wrap other functions the other way around.
- * const setUniqueValue =
- * await red.importValue('./inside-code.js', 'setUniqueValue');
- *
- * // setUniqueValue = (cb) => (cb(globalThis.someValue) * 2);
- *
- * result = setUniqueValue((x) => x ** 3);
- *
- * console.assert(result === 16); // yields true
- * ```
- */
+   * ShadowRealms are a distinct global environment, with its own global object
+   * containing its own intrinsics and built-ins (standard objects that are not
+   * bound to global variables, like the initial value of Object.prototype).
+   *
+   * @example
+   *
+   * ```js
+   * const red = new ShadowRealm();
+   *
+   * // realms can import modules that will execute within it's own environment.
+   * // When the module is resolved, it captured the binding value, or creates a new
+   * // wrapped function that is connected to the callable binding.
+   * const redAdd = await red.importValue('./inside-code.js', 'add');
+   *
+   * // redAdd is a wrapped function exotic object that chains it's call to the
+   * // respective imported binding.
+   * let result = redAdd(2, 3);
+   *
+   * console.assert(result === 5); // yields true
+   *
+   * // The evaluate method can provide quick code evaluation within the constructed
+   * // shadowRealm without requiring any module loading, while it still requires CSP
+   * // relaxing.
+   * globalThis.someValue = 1;
+   * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
+   * console.assert(globalThis.someValue === 1);
+   *
+   * // The wrapped functions can also wrap other functions the other way around.
+   * const setUniqueValue =
+   * await red.importValue('./inside-code.js', 'setUniqueValue');
+   *
+   * // setUniqueValue = (cb) => (cb(globalThis.someValue) * 2);
+   *
+   * result = setUniqueValue((x) => x ** 3);
+   *
+   * console.assert(result === 16); // yields true
+   * ```
+   */
   interface ShadowRealm {
     /**
      * Creates a new [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
@@ -1271,17 +1292,17 @@ declare global {
 
   var ShadowRealm: {
     prototype: ShadowRealm;
-    new(): ShadowRealm;
+    new (): ShadowRealm;
   };
 
   /**
- * Send a HTTP(s) request
- *
- * @param request Request object
- * @param init A structured value that contains settings for the fetch() request.
- *
- * @returns A promise that resolves to {@link Response} object.
- */
+   * Send a HTTP(s) request
+   *
+   * @param request Request object
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   */
 
   // tslint:disable-next-line:unified-signatures
   function fetch(request: Request, init?: RequestInit): Promise<Response>;
@@ -1332,10 +1353,7 @@ declare global {
    * Run a function immediately after main event loop is vacant
    * @param handler function to call
    */
-  function setImmediate(
-    handler: Bun.TimerHandler,
-    ...arguments: any[]
-  ): Timer;
+  function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): Timer;
   /**
    * Run a function every `interval` milliseconds
    * @param handler function to call
@@ -1391,7 +1409,7 @@ declare global {
 
   var ErrorEvent: {
     prototype: ErrorEvent;
-    new(type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
+    new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
   };
 
   /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
@@ -1406,22 +1424,22 @@ declare global {
 
   var CloseEvent: {
     prototype: CloseEvent;
-    new(type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
+    new (type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
   };
 
-  interface MessageEvent<T = any> extends Bun.MessageEvent<T> { }
+  interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
   var MessageEvent: typeof globalThis extends {
     onerror: any;
     MessageEvent: infer T;
   }
     ? T
     : {
-      prototype: MessageEvent;
-      new <T>(
-        type: string,
-        eventInitDict?: Bun.MessageEventInit<T>,
-      ): MessageEvent<T>;
-    };
+        prototype: MessageEvent;
+        new <T>(
+          type: string,
+          eventInitDict?: Bun.MessageEventInit<T>,
+        ): MessageEvent<T>;
+      };
 
   interface CustomEvent<T = any> extends Event {
     /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1437,15 +1455,18 @@ declare global {
 
   var CustomEvent: {
     prototype: CustomEvent;
-    new <T>(type: string, eventInitDict?: Bun.CustomEventInit<T>): CustomEvent<T>;
+    new <T>(
+      type: string,
+      eventInitDict?: Bun.CustomEventInit<T>,
+    ): CustomEvent<T>;
   };
 
   /**
- * The URL interface represents an object providing static methods used for
- * creating object URLs.
- */
+   * The URL interface represents an object providing static methods used for
+   * creating object URLs.
+   */
   interface URL {
-    new(url: string | URL, base?: string | URL): URL;
+    new (url: string | URL, base?: string | URL): URL;
     /** Not implemented yet */
     createObjectURL(obj: Blob): string;
     /** Not implemented yet */
@@ -1467,7 +1488,7 @@ declare global {
     : typeof URL;
 
   interface URLSearchParams {
-    new(
+    new (
       init?:
         | string
         | string[][]
@@ -1641,7 +1662,7 @@ declare global {
 
   var ByteLengthQueuingStrategy: {
     prototype: ByteLengthQueuingStrategy;
-    new(init: QueuingStrategyInit): ByteLengthQueuingStrategy;
+    new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
   };
 
   interface ReadableStreamDefaultController<R = any> {
@@ -1663,10 +1684,11 @@ declare global {
 
   var ReadableStreamDefaultController: {
     prototype: ReadableStreamDefaultController;
-    new(): ReadableStreamDefaultController;
+    new (): ReadableStreamDefaultController;
   };
 
-  interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
+  interface ReadableStreamDefaultReader<R = any>
+    extends ReadableStreamGenericReader {
     read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
     /**
      * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
@@ -1714,7 +1736,7 @@ declare global {
 
   var WritableStreamDefaultController: {
     prototype: WritableStreamDefaultController;
-    new(): WritableStreamDefaultController;
+    new (): WritableStreamDefaultController;
   };
 
   /** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
@@ -1756,7 +1778,7 @@ declare global {
 
   var TransformStreamDefaultController: {
     prototype: TransformStreamDefaultController;
-    new(): TransformStreamDefaultController;
+    new (): TransformStreamDefaultController;
   };
 
   interface StreamPipeOptions {
@@ -1791,7 +1813,7 @@ declare global {
 
   var CountQueuingStrategy: {
     prototype: CountQueuingStrategy;
-    new(init: QueuingStrategyInit): CountQueuingStrategy;
+    new (init: QueuingStrategyInit): CountQueuingStrategy;
   };
 
   interface QueuingStrategySize<T = any> {
@@ -1860,9 +1882,9 @@ declare global {
   }
     ? T
     : {
-      prototype: DOMException;
-      new(message?: string, name?: string): DOMException;
-    };
+        prototype: DOMException;
+        new (message?: string, name?: string): DOMException;
+      };
 
   function alert(message?: string): void;
   function confirm(message?: string): boolean;
@@ -1874,14 +1896,14 @@ declare global {
   }
     ? T
     : {
-      prototype: _SubtleCrypto;
-      new(): _SubtleCrypto;
-    }
+        prototype: _SubtleCrypto;
+        new (): _SubtleCrypto;
+      };
 
-  interface CryptoKey extends _CryptoKey { }
+  interface CryptoKey extends _CryptoKey {}
   var CryptoKey: {
     prototype: CryptoKey;
-    new(): CryptoKey;
+    new (): CryptoKey;
   };
 
   interface Position {
@@ -1946,14 +1968,14 @@ declare global {
      * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
      */
     prepareStackTrace?:
-    | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
-    | undefined;
+      | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
+      | undefined;
 
     stackTraceLimit: number;
   }
 
   interface ArrayBufferConstructor {
-    new(byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
+    new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
   }
 
   interface ArrayBuffer {
@@ -2207,12 +2229,12 @@ declare global {
   }
 
   /**
- * NodeJS-style `require` function
- *
- * Internally, uses `import.meta.require`
- *
- * @param moduleId - The module ID to resolve
- */
+   * NodeJS-style `require` function
+   *
+   * Internally, uses `import.meta.require`
+   *
+   * @param moduleId - The module ID to resolve
+   */
   var require: NodeJS.Require;
 
   /** Same as module.exports */
@@ -2246,7 +2268,7 @@ declare global {
     withCredentials?: boolean;
   }
 
-  interface EventSource extends Bun.EventSource { }
+  interface EventSource extends Bun.EventSource {}
   var EventSource: typeof globalThis extends {
     onerror: any;
     EventSource: infer T;
@@ -2304,7 +2326,7 @@ declare global {
      * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
      * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
      */
-    new(parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
+    new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
     /**
      * Read the data from the blob as a JSON object.
      *
@@ -2335,7 +2357,7 @@ declare global {
     : typeof Blob;
 
   interface Response {
-    new(
+    new (
       body?: Bun.BodyInit | null | undefined,
       init?: Bun.ResponseInit | undefined,
     ): Response;
@@ -2395,9 +2417,9 @@ declare global {
     : typeof Response;
 
   interface Request {
-    new(requestInfo: string, requestInit?: RequestInit): Request;
-    new(requestInfo: RequestInit & { url: string }): Request;
-    new(requestInfo: Request, requestInit?: RequestInit): Request;
+    new (requestInfo: string, requestInit?: RequestInit): Request;
+    new (requestInfo: RequestInit & { url: string }): Request;
+    new (requestInfo: Request, requestInit?: RequestInit): Request;
   }
   var Request: typeof globalThis extends {
     onerror: any;

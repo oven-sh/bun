@@ -17,7 +17,7 @@ declare module "bun:test" {
   /**
    * -- Mocks --
    */
-  export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>
+  export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   export const mock: {
     <T extends (...args: any[]) => any>(Function: T): Mock<T>;
@@ -98,7 +98,8 @@ declare module "bun:test" {
     /**
      * Constructs the type of a mock function, e.g. the return type of `jest.fn()`.
      */
-    type Mock<T extends (...args: any[]) => any = (...args: any[]) => any> = JestMock.Mock<T>;
+    type Mock<T extends (...args: any[]) => any = (...args: any[]) => any> =
+      JestMock.Mock<T>;
     /**
      * Wraps a class, function or object type with Jest mock type definitions.
      */
@@ -122,7 +123,8 @@ declare module "bun:test" {
     /**
      * Constructs the type of a spied class or function.
      */
-    type Spied<T extends JestMock.ClassLike | ((...args: any[]) => any)> = JestMock.Spied<T>;
+    type Spied<T extends JestMock.ClassLike | ((...args: any[]) => any)> =
+      JestMock.Spied<T>;
     /**
      * Constructs the type of a spied class.
      */
@@ -130,7 +132,8 @@ declare module "bun:test" {
     /**
      * Constructs the type of a spied function.
      */
-    type SpiedFunction<T extends (...args: any[]) => any> = JestMock.SpiedFunction<T>;
+    type SpiedFunction<T extends (...args: any[]) => any> =
+      JestMock.SpiedFunction<T>;
     /**
      * Constructs the type of a spied getter.
      */
@@ -625,7 +628,7 @@ declare module "bun:test" {
    *   }
    * }
    */
-  export interface Matchers<T = unknown> extends MatchersBuiltin<T> { }
+  export interface Matchers<T = unknown> extends MatchersBuiltin<T> {}
 
   /**
    * You can extend this interface with declaration merging, in order to add type support for custom asymmetric matchers.
@@ -650,7 +653,7 @@ declare module "bun:test" {
    *   }
    * }
    */
-  export interface AsymmetricMatchers extends AsymmetricMatchersBuiltin { }
+  export interface AsymmetricMatchers extends AsymmetricMatchersBuiltin {}
 
   export interface AsymmetricMatchersBuiltin {
     /**
@@ -670,7 +673,7 @@ declare module "bun:test" {
      * });
      */
     any(
-      constructor: ((...args: any[]) => any) | { new(...args: any[]): any },
+      constructor: ((...args: any[]) => any) | { new (...args: any[]): any },
     ): AsymmetricMatcher;
     /**
      * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead
@@ -1501,8 +1504,8 @@ declare module "bun:test" {
    */
   export type ExpectExtendMatchers<M> = {
     [k in keyof M]: k extends keyof CustomMatchersDetected
-    ? CustomMatcher<unknown, Parameters<CustomMatchersDetected[k]>>
-    : CustomMatcher<unknown, any[]>;
+      ? CustomMatcher<unknown, Parameters<CustomMatchersDetected[k]>>
+      : CustomMatcher<unknown, any[]>;
   };
 
   /** Custom equality tester */
@@ -1587,7 +1590,7 @@ declare namespace JestMock {
    * LICENSE file in the root directory of this source tree.
    */
   export interface ClassLike {
-    new(...args: any): any;
+    new (...args: any): any;
   }
 
   export type ConstructorLikeKeys<T> = keyof {
@@ -1604,7 +1607,8 @@ declare namespace JestMock {
     [K in keyof T as Required<T>[K] extends FunctionLike ? K : never]: T[K];
   };
 
-  export interface Mock<T extends (...args: any[]) => any> extends MockInstance<T> {
+  export interface Mock<T extends (...args: any[]) => any>
+    extends MockInstance<T> {
     (...args: Parameters<T>): ReturnType<T>;
   }
 
@@ -1909,13 +1913,13 @@ declare namespace JestMock {
     K_2 extends Exclude<
       keyof T,
       | keyof {
-        [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
-      }
+          [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
+        }
       | keyof {
-        [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
-        ? K_1
-        : never]: T[K_1];
-      }
+          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
+            ? K_1
+            : never]: T[K_1];
+        }
     >,
     V extends T[K_2],
   >(object: T, propertyKey: K_2, value: V): Replaced<T[K_2]>;
@@ -1926,8 +1930,8 @@ declare namespace JestMock {
   export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
     ? SpiedClass<T>
     : T extends FunctionLike
-      ? SpiedFunction<T>
-      : never;
+    ? SpiedFunction<T>
+    : never;
 
   export type SpiedClass<T extends ClassLike = UnknownClass> = MockInstance<
     (...args: ConstructorParameters<T>) => InstanceType<T>
@@ -1941,7 +1945,7 @@ declare namespace JestMock {
   export type SpiedSetter<T> = MockInstance<(arg: T) => void>;
 
   export interface SpyInstance<T extends FunctionLike = UnknownFunction>
-    extends MockInstance<T> { }
+    extends MockInstance<T> {}
 
   export const spyOn: {
     <
@@ -1949,15 +1953,15 @@ declare namespace JestMock {
       K_2 extends Exclude<
         keyof T,
         | keyof {
-          [K in keyof T as Required<T>[K] extends ClassLike
-          ? K
-          : never]: T[K];
-        }
+            [K in keyof T as Required<T>[K] extends ClassLike
+              ? K
+              : never]: T[K];
+          }
         | keyof {
-          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
-          ? K_1
-          : never]: T[K_1];
-        }
+            [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
+              ? K_1
+              : never]: T[K_1];
+          }
       >,
       V extends Required<T>[K_2],
       A extends "set" | "get",
@@ -1968,21 +1972,21 @@ declare namespace JestMock {
     ): A extends "get"
       ? SpiedGetter<V>
       : A extends "set"
-        ? SpiedSetter<V>
-        : never;
+      ? SpiedSetter<V>
+      : never;
     <
       T_1 extends object,
       K_5 extends
-      | keyof {
-        [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike
-        ? K_3
-        : never]: T_1[K_3];
-      }
-      | keyof {
-        [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike
-        ? K_4
-        : never]: T_1[K_4];
-      },
+        | keyof {
+            [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike
+              ? K_3
+              : never]: T_1[K_3];
+          }
+        | keyof {
+            [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike
+              ? K_4
+              : never]: T_1[K_4];
+          },
       V_1 extends Required<T_1>[K_5],
     >(
       object: T_1,
@@ -1991,7 +1995,7 @@ declare namespace JestMock {
   };
 
   export interface UnknownClass {
-    new(...args: unknown[]): unknown;
+    new (...args: unknown[]): unknown;
   }
 
   export type UnknownFunction = (...args: unknown[]) => unknown;

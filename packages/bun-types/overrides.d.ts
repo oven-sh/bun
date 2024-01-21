@@ -1,4 +1,4 @@
-export { }
+export {};
 
 import type { Env, PathLike, BunFile } from "bun";
 
@@ -7,7 +7,7 @@ declare global {
     interface ProcessVersions extends Dict<string> {
       bun: string;
     }
-    interface ProcessEnv extends Env { }
+    interface ProcessEnv extends Env {}
   }
 }
 
@@ -16,19 +16,20 @@ declare module "fs/promises" {
 }
 
 declare module "tls" {
-  interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
+  interface BunConnectionOptions
+    extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
     ca?:
-    | string
-    | Buffer
-    | NodeJS.TypedArray
-    | BunFile
-    | Array<string | Buffer | BunFile>
-    | undefined;
+      | string
+      | Buffer
+      | NodeJS.TypedArray
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -41,12 +42,12 @@ declare module "tls" {
      *  able to validate the certificate, and the handshake will fail.
      */
     cert?:
-    | string
-    | Buffer
-    | NodeJS.TypedArray
-    | BunFile
-    | Array<string | Buffer | NodeJS.TypedArray | BunFile>
-    | undefined;
+      | string
+      | Buffer
+      | NodeJS.TypedArray
+      | BunFile
+      | Array<string | Buffer | NodeJS.TypedArray | BunFile>
+      | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -58,12 +59,12 @@ declare module "tls" {
      * object.passphrase if provided, or options.passphrase if it is not.
      */
     key?:
-    | string
-    | Buffer
-    | BunFile
-    | NodeJS.TypedArray
-    | Array<string | Buffer | BunFile | NodeJS.TypedArray | KeyObject>
-    | undefined;
+      | string
+      | Buffer
+      | BunFile
+      | NodeJS.TypedArray
+      | Array<string | Buffer | BunFile | NodeJS.TypedArray | KeyObject>
+      | undefined;
   }
 
   function connect(

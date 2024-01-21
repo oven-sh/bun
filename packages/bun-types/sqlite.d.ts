@@ -813,11 +813,8 @@ declare module "bun:sqlite" {
   /**
    * Errors from SQLite have a name `SQLiteError`.
    *
-   * This class does not exist! It is not a class. It is just a type.
-   *
-   * To check if an `Error` is an SQLiteError, use `error.name === "SQLiteError"`
    */
-  export interface SQLiteError extends Error {
+  export class SQLiteError extends Error {
     readonly name: "SQLiteError";
 
     /**

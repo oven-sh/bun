@@ -14,6 +14,7 @@ const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
 const string = bun.string;
+const PackageInstall = @import("./install.zig").PackageInstall;
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -182,7 +183,7 @@ pub const Bin = extern struct {
         done: bool = false,
         dir_iterator: ?std.fs.Dir.Iterator = null,
         package_name: String,
-        package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = bun.fdcast(bun.invalid_fd) },
+        package_installed_node_modules: std.fs.Dir = bun.invalid_fd.asDir(),
         buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
@@ -311,9 +312,25 @@ pub const Bin = extern struct {
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
             const node_modules = this.package_installed_node_modules.asDir();
             std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
-                // Silently ignore PathAlreadyExists
+                // Silently ignore PathAlreadyExists if the symlink is valid.
                 // Most likely, the symlink was already created by another package
                 if (err == error.PathAlreadyExists) {
+                    if (PackageInstall.isDanglingSymlink(dest_path)) {
+                        // this case is hit if the package was previously and the bin is located in a different directory
+                        node_modules.deleteFileZ(dest_path) catch |err2| {
+                            this.err = err2;
+                            return;
+                        };
+
+                        std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err2| {
+                            this.err = err2;
+                            return;
+                        };
+
+                        setPermissions(node_modules.fd, dest_path);
+                        return;
+                    }
+
                     setPermissions(node_modules.fd, dest_path);
                     var target_path_trim = target_path;
                     if (strings.hasPrefix(target_path_trim, "../")) {
@@ -343,7 +360,7 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+                const root_dir = this.package_installed_node_modules.asDir();
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
                     if (realpath_err == error.FileNotFound) {
                         if (comptime Environment.isWindows) {
@@ -497,7 +514,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    const dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+                    const dir = this.package_installed_node_modules.asDir();
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
@@ -649,7 +666,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    const dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
+                    const dir = this.package_installed_node_modules.asDir();
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;

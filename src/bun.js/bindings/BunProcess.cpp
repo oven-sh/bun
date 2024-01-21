@@ -3,6 +3,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "headers-handwritten.h"
 #include "node_api.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
@@ -62,7 +63,7 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "20.8.0"
+#define REPORTED_NODE_VERSION "21.6.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
 #define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
@@ -232,6 +233,8 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
     return true;
 }
 
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -268,6 +271,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    // Support embedded .node files
+    if (filename.startsWith("/$bunfs/"_s)) {
+        BunString bunStr = Bun::toString(filename);
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
+            filename = bunStr.toWTFString(BunString::ZeroCopy);
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 #if OS(WINDOWS)
     CString utf8 = filename.utf8();
@@ -411,12 +422,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
-    if (arg0.isNumber()) {
-        if (!arg0.isInt32()) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
+    if (arg0.isAnyInt()) {
         int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
@@ -831,25 +837,17 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
 
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
     JSValue exitCode = JSValue::decode(value);
-    if (!exitCode.isNumber()) {
-        throwTypeError(lexicalGlobalObject, throwScope, "exitCode must be a number"_s);
+    if (!exitCode.isAnyInt()) {
+        throwTypeError(lexicalGlobalObject, throwScope, "exitCode must be an integer"_s);
         return false;
     }
 
-    if (!exitCode.isInt32()) {
-        throwRangeError(lexicalGlobalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    int exitCodeInt = exitCode.toInt32(lexicalGlobalObject);
+    int exitCodeInt = exitCode.toInt32(lexicalGlobalObject) % 256;
     RETURN_IF_EXCEPTION(throwScope, false);
-    if (exitCodeInt < 0 || exitCodeInt > 255) {
-        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 255"_s);
-        return false;
-    }
 
     void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
     Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
+
     return true;
 }
 
@@ -1877,16 +1875,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
-    if (arg0.isNumber()) {
-        if (!arg0.isInt32()) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
-        int extiCode32 = arg0.toInt32(globalObject) % 256;
+    if (arg0.isAnyInt()) {
+        exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
-        exitCode = static_cast<uint8_t>(extiCode32);
     } else if (!arg0.isUndefinedOrNull()) {
         throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
         return JSC::JSValue::encode(JSC::JSValue {});

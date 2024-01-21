@@ -112,7 +112,7 @@ pub const Os = struct {
             // TODO: remove all usages of file.reader(). zig's std.io.Reader()
             // is extremely slow and should rarely ever be used in Bun until
             // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
             var reader = buffered_reader.reader();
 
             // Skip the first line (aggregate of all CPUs)
@@ -155,7 +155,7 @@ pub const Os = struct {
             // TODO: remove all usages of file.reader(). zig's std.io.Reader()
             // is extremely slow and should rarely ever be used in Bun until
             // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
             var reader = buffered_reader.reader();
 
             const key_processor = "processor\t: ";
@@ -353,8 +353,23 @@ pub const Os = struct {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows) {
-            globalThis.throwTODO("hostname() is not implemented on Windows");
-            return .zero;
+            var name_buffer: [129:0]u16 = undefined;
+            if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
+                const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                defer str.deref();
+                return str.toJS(globalThis);
+            }
+
+            var result: std.os.windows.ws2_32.WSADATA = undefined;
+            if (std.os.windows.ws2_32.WSAStartup(0x202, &result) == 0) {
+                if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
+                    const str = bun.String.createUTF16(bun.sliceTo(&name_buffer, 0));
+                    defer str.deref();
+                    return str.toJS(globalThis);
+                }
+            }
+
+            return JSC.ZigString.init("unknown").withEncoding().toValueGC(globalThis);
         }
 
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;

@@ -412,4 +412,15 @@ describe("Server", () => {
       server.stop(true);
     }
   });
+
+  test("rejected promise handled by error method should not be logged", async () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), path.join("rejected-promise-fixture.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect(stderr).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
 });

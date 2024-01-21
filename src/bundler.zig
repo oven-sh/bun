@@ -145,7 +145,8 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.toBunString(global);
+        const file_path = path_value.toBunString(global);
+        defer file_path.deref();
 
         if (file_path.length() == 0) {
             log.addError(
@@ -178,18 +179,22 @@ pub const PluginRunner = struct {
 
                 const namespace_str = namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("node");
                 }
 
@@ -200,6 +205,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.init("file");
         };
+        defer user_namespace.deref();
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
@@ -275,14 +281,17 @@ pub const PluginRunner = struct {
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("node");
                 }
 
@@ -293,6 +302,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.static("file");
         };
+        defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by JSC
         const combined_string = std.fmt.allocPrint(
@@ -981,7 +991,7 @@ pub const Bundler = struct {
                 };
                 const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8096, std.fs.File.Writer));
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, std.fs.File.Writer));
                 const CSSWriter = Css.NewWriter(
                     BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),
@@ -1033,7 +1043,8 @@ pub const Bundler = struct {
 
                 output_file.value = .{ .move = file_op };
             },
-            .wasm, .file, .napi => {
+
+            .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
                 const hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
@@ -1811,16 +1822,16 @@ pub const Bundler = struct {
         // }
 
         if (bundler.linker.any_needs_runtime) {
-            try bundler.output_files.append(
-                options.OutputFile.initBuf(
-                    runtime.Runtime.sourceContent(false),
-                    bun.default_allocator,
-                    Linker.runtime_source_path,
-                    .js,
-                    null,
-                    null,
-                ),
-            );
+            // try bundler.output_files.append(
+            //     options.OutputFile.initBuf(
+            //         runtime.Runtime.source_code,
+            //         bun.default_allocator,
+            //         Linker.runtime_source_path,
+            //         .js,
+            //         null,
+            //         null,
+            //     ),
+            // );
         }
 
         if (FeatureFlags.tracing and bundler.options.log.level.atLeast(.info)) {

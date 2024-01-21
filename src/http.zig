@@ -115,16 +115,6 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
-pub fn canUseBrotli() bool {
-    if (Environment.isMac) {
-        if (bun.CompressionFramework.isAvailable()) {
-            return true;
-        }
-    }
-
-    return bun.brotli.hasBrotli();
-}
-
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -860,7 +850,7 @@ pub const HTTPThread = struct {
 
 const log = Output.scoped(.fetch, false);
 
-var temp_hostname: [8096]u8 = undefined;
+var temp_hostname: [8192]u8 = undefined;
 
 pub fn checkServerIdentity(
     client: *HTTPClient,
@@ -2193,6 +2183,12 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    if (comptime Environment.allow_assert) {
+        if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
+            @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
+        }
+    }
+
     // Aborted before connecting
     if (this.signals.get(.aborted)) {
         this.fail(error.Aborted);

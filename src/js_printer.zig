@@ -153,12 +153,11 @@ fn ws(comptime str: []const u8) Whitespacer {
         pub const with = str;
 
         pub const without = brk: {
-            var buf = [_]u8{0} ** str.len;
-            var i: usize = 0;
+            var buf = std.mem.zeroes([str.len]u8);
             var buf_i: usize = 0;
-            while (i < str.len) : (i += 1) {
-                if (str[i] != ' ') {
-                    buf[buf_i] = str[i];
+            for (str) |c| {
+                if (c != ' ') {
+                    buf[buf_i] = c;
                     buf_i += 1;
                 }
             }
@@ -4240,6 +4239,12 @@ fn NewPrinter(
                         .k_var => {
                             p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
+                        .k_using => {
+                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
+                        },
+                        .k_await_using => {
+                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
+                        },
                     }
                 },
                 .s_if => |s| {
@@ -4709,6 +4714,11 @@ fn NewPrinter(
                     }
 
                     p.printImportRecordPath(record);
+
+                    if ((record.tag.loader() orelse options.Loader.file).isSQLite()) {
+                        // we do not preserve "embed": "true" since it is not necessary
+                        p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -5004,6 +5014,12 @@ fn NewPrinter(
                         },
                         .k_const => {
                             p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_using => {
+                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_await_using => {
+                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },

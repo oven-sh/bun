@@ -200,9 +200,9 @@ logLevel = "debug"
             });
             console.log(run_dir);
             if (withLogLevel) {
-              expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).toContain("ENOENT loading tsconfig.json extends");
             } else {
-              expect(stderr.toString().trim()).not.toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).not.toContain("ENOENT loading tsconfig.json extends");
             }
 
             expect(stdout.toString()).toBe("hi\n");

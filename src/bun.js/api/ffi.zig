@@ -670,9 +670,7 @@ pub const FFI = struct {
             val.arg_types.clearAndFree(allocator);
 
             if (val.state) |state| {
-                if (comptime !Environment.isWindows) {
-                    TCC.tcc_delete(state);
-                }
+                TCC.tcc_delete(state);
                 val.state = null;
             }
 
@@ -713,15 +711,15 @@ pub const FFI = struct {
         const FFI_HEADER: string = @embedFile("./FFI.h");
         pub inline fn ffiHeader() string {
             if (comptime Environment.isDebug) {
-                const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-                var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
+                const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
+                var buf: bun.PathBuffer = undefined;
+                const user = bun.getUserName(&buf) orelse "";
                 const dir = std.mem.replaceOwned(
                     u8,
                     default_allocator,
                     dirpath,
                     "jarred",
-                    env.get("USER").?,
+                    user,
                 ) catch unreachable;
                 const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
                 const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");
@@ -772,9 +770,6 @@ pub const FFI = struct {
             this: *Function,
             allocator: std.mem.Allocator,
         ) !void {
-            if (comptime Environment.isWindows) {
-                return;
-            }
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
@@ -789,9 +784,7 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    if (comptime !Environment.isWindows) {
-                        TCC.tcc_delete(state);
-                    }
+                    TCC.tcc_delete(state);
                     this.state = null;
                 }
             }
@@ -900,9 +893,6 @@ pub const FFI = struct {
             }
 
             pub fn inject(state: *TCC.TCCState) void {
-                if (comptime Environment.isWindows) {
-                    return;
-                }
                 JSC.markBinding(@src());
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
@@ -943,9 +933,6 @@ pub const FFI = struct {
             js_function: JSValue,
             is_threadsafe: bool,
         ) !void {
-            if (comptime Environment.isWindows) {
-                return;
-            }
             JSC.markBinding(@src());
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
@@ -969,9 +956,7 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    if (comptime !Environment.isWindows) {
-                        TCC.tcc_delete(state);
-                    }
+                    TCC.tcc_delete(state);
                     this.state = null;
                 }
             }
@@ -1256,22 +1241,7 @@ pub const FFI = struct {
 
             // -- Generate the FFI function symbol
             try writer.writeAll("\n \n/* --- The Callback Function */\n");
-            try writer.writeAll("/* --- The Callback Function */\n");
-            try this.return_type.typename(writer);
-            try writer.writeAll(" my_callback_function");
-            try writer.writeAll("(");
             var first = true;
-            for (this.arg_types.items, 0..) |arg, i| {
-                if (!first) {
-                    try writer.writeAll(", ");
-                }
-                first = false;
-                try arg.typename(writer);
-                try writer.print(" arg{d}", .{i});
-            }
-            try writer.writeAll(");\n\n");
-
-            first = true;
             try this.return_type.typename(writer);
 
             try writer.writeAll(" my_callback_function");

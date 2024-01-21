@@ -918,6 +918,7 @@ pub const Blob = struct {
 
                 if (len < 256 * 1024) {
                     const str = data.toBunString(globalThis);
+                    defer str.deref();
 
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -1192,18 +1193,23 @@ pub const Blob = struct {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                // we deliberately don't use O_TRUNC here
-                // it's a perf optimization
-                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                if (!Environment.isWindows)
+                    // we deliberately don't use O_TRUNC here
+                    // it's a perf optimization
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK
+                else
+                    std.os.O.WRONLY | std.os.O.CREAT,
                 write_permissions,
             )) {
                 .result => |result| {
                     break :brk result;
                 },
                 .err => |err| {
-                    if (err.getErrno() == .NOENT) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .NOENT) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
 
                     return JSC.JSPromise.rejectedPromiseValue(
@@ -1212,16 +1218,13 @@ pub const Blob = struct {
                     );
                 },
             }
-            unreachable;
         };
 
-        var truncate = needs_open or bytes.len == 0;
+        // TODO: on windows this is always synchronous
+
+        const truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
         defer {
-            if (truncate) {
-                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
-            }
-
             if (needs_open) {
                 _ = bun.sys.close(fd);
             }
@@ -1239,19 +1242,31 @@ pub const Blob = struct {
                     if (res == 0) break;
                 },
                 .err => |err| {
-                    truncate = false;
-                    if (err.getErrno() == .AGAIN) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.toJSC(globalThis),
+                        );
                     }
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
                 },
+            }
+        }
+
+        if (truncate) {
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+            } else {
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
         }
 
@@ -1278,25 +1293,27 @@ pub const Blob = struct {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
             return null;
         }
-
-        const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-            globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-            return null;
-        };
-
-        blob = get(globalThis, args[0], false, true) catch |err| {
-            if (err == error.InvalidArguments) {
-                globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+        {
+            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
+                globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 return null;
-            }
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            };
+            defer name_value_str.deref();
 
-        if (blob.store) |store_| {
-            store_.data.bytes.stored_name = bun.PathString.init(
-                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-            );
+            blob = get(globalThis, args[0], false, true) catch |err| {
+                if (err == error.InvalidArguments) {
+                    globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                    return null;
+                }
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+
+            if (blob.store) |store_| {
+                store_.data.bytes.stored_name = bun.PathString.init(
+                    (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                );
+            }
         }
 
         if (args.len > 2) {
@@ -3441,6 +3458,7 @@ pub const Blob = struct {
         max_size: SizeType = Blob.max_size,
         // milliseconds since ECMAScript epoch
         last_modified: JSTimeType = init_timestamp,
+        pipe: if (Environment.isWindows) libuv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes(libuv.uv_pipe_t) else 0,
 
         pub fn isSeekable(this: *const FileStore) ?bool {
             if (this.seekable) |seekable| {
@@ -3678,6 +3696,68 @@ pub const Blob = struct {
         if (store.data != .file) {
             globalThis.throwInvalidArguments("Blob is read-only", .{});
             return JSValue.jsUndefined();
+        }
+
+        if (Environment.isWindows and !(store.data.file.is_atty orelse false)) {
+            // on Windows we use uv_pipe_t when not using TTY
+            const pathlike = store.data.file.pathlike;
+            const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
+                var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                switch (bun.sys.open(
+                    pathlike.path.sliceZ(&file_path),
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                    write_permissions,
+                )) {
+                    .result => |result| {
+                        break :brk result;
+                    },
+                    .err => |err| {
+                        globalThis.throwInvalidArguments("Failed to create UVStreamSink: {}", .{err.getErrno()});
+                        return JSValue.jsUndefined();
+                    },
+                }
+                unreachable;
+            };
+
+            var pipe_ptr = &(this.store.?.data.file.pipe);
+            if (store.data.file.pipe.loop == null) {
+                if (libuv.uv_pipe_init(libuv.Loop.get(), pipe_ptr, 0) != 0) {
+                    pipe_ptr.loop = null;
+                    globalThis.throwInvalidArguments("Failed to create UVStreamSink", .{});
+                    return JSValue.jsUndefined();
+                }
+                const file_fd = bun.uvfdcast(fd);
+                if (libuv.uv_pipe_open(pipe_ptr, file_fd).errEnum()) |err| {
+                    pipe_ptr.loop = null;
+                    globalThis.throwInvalidArguments("Failed to create UVStreamSink: uv_pipe_open({d}) {}", .{ file_fd, err });
+                    return JSValue.jsUndefined();
+                }
+            }
+
+            var sink = JSC.WebCore.UVStreamSink.init(globalThis.allocator(), @ptrCast(pipe_ptr), null) catch |err| {
+                globalThis.throwInvalidArguments("Failed to create UVStreamSink: {s}", .{@errorName(err)});
+                return JSValue.jsUndefined();
+            };
+
+            var stream_start: JSC.WebCore.StreamStart = .{
+                .UVStreamSink = {},
+            };
+
+            if (arguments.len > 0 and arguments.ptr[0].isObject()) {
+                stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .UVStreamSink);
+            }
+
+            switch (sink.start(stream_start)) {
+                .err => |err| {
+                    globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                    sink.finalize();
+
+                    return JSC.JSValue.zero;
+                },
+                else => {},
+            }
+
+            return sink.toJS(globalThis);
         }
 
         var sink = JSC.WebCore.FileSink.init(globalThis.allocator(), null) catch |err| {
@@ -4428,12 +4508,22 @@ pub const Blob = struct {
         return this.store != null and this.store.?.data == .file;
     }
 
-    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+        const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
+
+        if (buf.len == 0) {
+            return ZigString.Empty.toValue(global);
+        }
+
+        if (bom == .utf16_le) {
+            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer out.deref();
+            return out.toJS(global);
+        }
+
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-
-        const buf = strings.withoutUTF8BOM(buf_);
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
@@ -4447,17 +4537,13 @@ pub const Blob = struct {
                 }
 
                 if (lifetime == .temporary) {
-                    bun.default_allocator.free(@constCast(buf));
+                    bun.default_allocator.free(raw_bytes);
                 }
 
                 return ZigString.toExternalU16(external.ptr, external.len, global);
             }
 
             if (lifetime != .temporary) this.setIsASCIIFlag(true);
-        }
-
-        if (buf.len == 0) {
-            return ZigString.Empty.toValue(global);
         }
 
         switch (comptime lifetime) {
@@ -4485,10 +4571,10 @@ pub const Blob = struct {
             .temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
-                if (buf.len != buf_.len) {
+                if (buf.len != raw_bytes.len) {
                     var out = bun.String.createLatin1(buf);
                     defer {
-                        bun.default_allocator.free(buf_);
+                        bun.default_allocator.free(raw_bytes);
                         out.deref();
                     }
 
@@ -4524,9 +4610,15 @@ pub const Blob = struct {
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
-        const buf = strings.withoutUTF8BOM(buf_);
+    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+        const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+
+        if (bom == .utf16_le) {
+            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer out.deref();
+            return out.toJSByParseJSON(global);
+        }
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
@@ -5011,7 +5103,7 @@ pub const AnyBlob = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                return str.toJSForParseJSON(global);
+                return str.toJSByParseJSON(global);
             },
         }
     }

@@ -750,7 +750,7 @@ const Task = struct {
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory(),
-                    .{ .fd = bun.fdcast(this.request.git_checkout.repo_dir) },
+                    this.request.git_checkout.repo_dir.asDir(),
                     this.request.git_checkout.name.slice(),
                     this.request.git_checkout.url.slice(),
                     this.request.git_checkout.resolved.slice(),
@@ -859,7 +859,7 @@ pub const ExtractData = struct {
     json_len: usize = 0,
 };
 
-const PackageInstall = struct {
+pub const PackageInstall = struct {
     cache_dir: std.fs.Dir,
     destination_dir: std.fs.Dir,
     cache_dir_subpath: stringZ = "",
@@ -1524,7 +1524,7 @@ const PackageInstall = struct {
                     switch (entry.kind) {
                         // directories are created
                         .directory => {
-                            std.os.mkdirat(bun.fdcast(dest_dir_fd), entry.path, 0o755) catch {};
+                            std.os.mkdirat(dest_dir_fd.cast(), entry.path, 0o755) catch {};
                         },
                         // but each file in the directory is a symlink
                         .file => {
@@ -1595,7 +1595,7 @@ const PackageInstall = struct {
         this.destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
-    fn isDanglingSymlink(path: [:0]const u8) bool {
+    pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
@@ -1604,6 +1604,16 @@ const PackageInstall = struct {
                     return false;
                 },
                 else => return true,
+            }
+        } else if (comptime Environment.isWindows) {
+            switch (bun.sys.sys_uv.open(path, 0, 0)) {
+                .err => {
+                    return true;
+                },
+                .result => |fd| {
+                    _ = bun.sys.close(fd);
+                    return false;
+                },
             }
         } else {
             const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
@@ -1652,24 +1662,44 @@ const PackageInstall = struct {
                 .step = .linking,
             },
         };
-        const target = Path.relative(dest_dir_path, to_path);
+
+        const dest = std.fs.path.basename(dest_path);
         if (comptime Environment.isWindows) {
-            return bun.todo(
-                @src(),
-                Result{
-                    .fail = .{
-                        .err = error.NotImplementedYetOnWindows,
-                        .step = .linking,
-                    },
+            var dest_buf2: bun.PathBuffer = undefined;
+            const dest_z = bun.path.joinAbsStringBufZ(
+                dest_dir_path,
+                &dest_buf2,
+                &.{
+                    dest,
                 },
+                .windows,
             );
+
+            to_buf[dest_dir_path.len] = 0;
+            const to_path_z = to_buf[0..dest_dir_path.len :0];
+
+            // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
+            // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
+            switch (bun.sys.sys_uv.symlinkUV(to_path_z, dest_z, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION)) {
+                .err => |err| {
+                    return Result{
+                        .fail = .{
+                            .err = bun.errnoToZigErr(err.errno),
+                            .step = .linking,
+                        },
+                    };
+                },
+                .result => {},
+            }
+        } else {
+            const target = Path.relative(dest_dir_path, to_path);
+            std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
+                .fail = .{
+                    .err = err,
+                    .step = .linking,
+                },
+            };
         }
-        std.os.symlinkat(target, dest_dir.fd, std.fs.path.basename(dest_path)) catch |err| return Result{
-            .fail = .{
-                .err = err,
-                .step = .linking,
-            },
-        };
 
         if (isDanglingSymlink(symlinked_path)) return Result{
             .fail = .{
@@ -3877,7 +3907,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         this.env,
                         this.log,
-                        .{ .fd = bun.fdcast(repo_fd) },
+                        repo_fd.asDir(),
                         alias,
                         this.lockfile.str(&dep.committish),
                     );
@@ -5217,7 +5247,7 @@ pub const PackageManager = struct {
         log_level: LogLevel = .default,
         global: bool = false,
 
-        global_bin_dir: std.fs.Dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
+        global_bin_dir: std.fs.Dir = bun.invalid_fd.asDir(),
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
@@ -7906,7 +7936,7 @@ pub const PackageManager = struct {
                 const prev_node_modules_folder_path = this.node_modules_folder_path;
                 defer this.node_modules_folder_path = prev_node_modules_folder_path;
                 for (callbacks.items) |cb| {
-                    this.node_modules_folder = .{ .fd = bun.fdcast(cb.node_modules_folder.fd) };
+                    this.node_modules_folder = cb.node_modules_folder.fd.asDir();
                     this.current_tree_id = cb.node_modules_folder.tree_id;
                     this.node_modules_folder_path = cb.node_modules_folder.node_modules_folder_path;
                     this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution);

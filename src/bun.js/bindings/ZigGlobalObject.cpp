@@ -66,6 +66,8 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
+#include "JavaScriptCore/JSScriptFetchParameters.h"
+#include "JavaScriptCore/ScriptFetchParameters.h"
 
 #include "wtf/text/Base64.h"
 // #include "JavaScriptCore/CachedType.h"
@@ -723,7 +725,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         reinterpret_cast<Zig::GlobalObject*>(globalObject),
         &res,
         &specifier,
-        &specifier);
+        &specifier,
+        nullptr);
 
     if (scope.exception() || !result) {
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
@@ -3043,6 +3046,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(prototype);
         });
 
+    m_JSUVStreamSinkControllerPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::UVStreamSink);
+            init.set(prototype);
+        });
+
     m_performanceObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -3206,6 +3215,16 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
             auto* structure = JSHTTPSResponseSink::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSHTTPSResponseSinkConstructor::create(init.vm, init.global, JSHTTPSResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSUVStreamSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::UVStreamSink);
+            auto* structure = JSUVStreamSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSUVStreamSinkConstructor::create(init.vm, init.global, JSUVStreamSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3826,6 +3845,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
+    thisObject->m_JSUVStreamSinkControllerPrototype.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
@@ -4182,7 +4202,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
-    JSValue value1, JSValue value2)
+    JSValue parameters, JSValue script)
 {
     JSC::VM& vm = globalObject->vm();
 
@@ -4197,7 +4217,23 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);
-    auto source = Bun::toString(globalObject, value1);
+    auto sourceString = String("undefined"_s);
+    auto typeAttributeString = String();
+
+    if (parameters && parameters.isCell()) {
+        JSCell* parametersCell = parameters.asCell();
+        if (parametersCell->type() == JSScriptFetchParametersType) {
+            auto* obj = jsCast<JSScriptFetchParameters*>(parametersCell);
+            const auto& params = obj->parameters();
+
+            if (params.type() == ScriptFetchParameters::Type::HostDefined) {
+                typeAttributeString = params.hostDefinedImportType();
+            }
+        }
+    }
+
+    auto source = Bun::toString(sourceString);
+    auto typeAttribute = Bun::toString(typeAttributeString);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -4207,7 +4243,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         reinterpret_cast<Zig::GlobalObject*>(globalObject),
         &res,
         &moduleKeyBun,
-        &source);
+        &source,
+        typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
 
     if (auto* internalPromise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(result)) {
         return internalPromise;

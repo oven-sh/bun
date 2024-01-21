@@ -16,6 +16,7 @@ public:
     DOMClientIsoSubspaces() = default;
 
     /* --- bun --- */
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunClassConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;

@@ -1196,11 +1196,8 @@ pub fn wrapInstanceMethod(
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
-                var i: usize = 0;
-                while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                    const ArgType = FunctionTypeInfo.params[i].type.?;
-
-                    if (ArgType == JSC.C.ExceptionRef) {
+                for (FunctionTypeInfo.params) |param| {
+                    if (param.type.? == JSC.C.ExceptionRef) {
                         break :brk true;
                     }
                 }
@@ -1210,11 +1207,9 @@ pub fn wrapInstanceMethod(
             var exception_value = [_]JSC.C.JSValueRef{null};
             const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
+            inline for (FunctionTypeInfo.params, 0..) |param, i| {
+                const ArgType = param.type.?;
+                switch (ArgType) {
                     *Container => {
                         args[i] = this;
                     },
@@ -1373,11 +1368,9 @@ pub fn wrapStaticMethod(
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
+            inline for (FunctionTypeInfo.params, 0..) |param, i| {
+                const ArgType = param.type.?;
+                switch (param.type.?) {
                     *JSC.JSGlobalObject => {
                         args[i] = globalThis.ptr();
                     },

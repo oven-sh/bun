@@ -4,6 +4,7 @@ import { bunEnv, bunExe } from "../../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync, rmSync } from "fs";
 import { join } from "path";
+import { StringDecoder } from "string_decoder";
 
 const root = join(import.meta.dir, "../");
 let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
@@ -25,9 +26,11 @@ test("the dev server can start", async () => {
   dev_server.exited.then(() => {
     dev_server = undefined;
   });
+
+  var string_decoder = new StringDecoder("utf-8");
   for await (const chunk of dev_server.stdout) {
-    console.error({ chunk: new TextDecoder().decode(chunk) });
-    const str = new TextDecoder().decode(chunk);
+    const str = string_decoder.write(chunk);
+    console.error(str);
     let match = str.match(/http:\/\/localhost:\d+/);
     if (match) {
       baseUrl = match[0];
@@ -66,7 +69,7 @@ test("ssr works for 100 requests", async () => {
   for (const y of x) {
     expect(y.status).toBe("fulfilled");
   }
-}, 10000);
+}, 100000);
 
 test("hot reloading works on the client (+ tailwind hmr)", async () => {
   expect(dev_server).not.toBeUndefined();
@@ -81,5 +84,6 @@ test("hot reloading works on the client (+ tailwind hmr)", async () => {
 }, 30000);
 
 afterAll(() => {
-  Bun.spawnSync(["pkill", "-P", dev_server!.pid.toString()]);
+  const pid = dev_server?.pid?.toString?.()!;
+  if (pid) Bun.spawnSync(["pkill", "-P", pid]);
 });

@@ -72,6 +72,9 @@ pub const MessageType = enum(u32) {
 var stderr_mutex: bun.Lock = bun.Lock.init();
 var stdout_mutex: bun.Lock = bun.Lock.init();
 
+threadlocal var stderr_lock_count: u16 = 0;
+threadlocal var stdout_lock_count: u16 = 0;
+
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
     //console_: ConsoleObject.Type,
@@ -92,15 +95,32 @@ pub fn messageWithTypeAndLevel(
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
     if (level == .Warning or level == .Error or message_type == .Assert) {
-        stderr_mutex.lock();
+        if (stderr_lock_count == 0) {
+            stderr_mutex.lock();
+        }
+
+        stderr_lock_count += 1;
     } else {
-        stdout_mutex.lock();
+        if (stdout_lock_count == 0) {
+            stdout_mutex.lock();
+        }
+
+        stdout_lock_count += 1;
     }
+
     defer {
         if (level == .Warning or level == .Error or message_type == .Assert) {
-            stderr_mutex.unlock();
+            stderr_lock_count -= 1;
+
+            if (stderr_lock_count == 0) {
+                stderr_mutex.unlock();
+            }
         } else {
-            stdout_mutex.unlock();
+            stdout_lock_count -= 1;
+
+            if (stdout_lock_count == 0) {
+                stdout_mutex.unlock();
+            }
         }
     }
 
@@ -455,7 +475,12 @@ const TablePrinter = struct {
 
         var stack_fallback = std.heap.stackFallback(@sizeOf(Column) * 16, this.globalObject.allocator());
         var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
-        defer columns.deinit();
+        defer {
+            for (columns.items) |*col| {
+                col.name.deref();
+            }
+            columns.deinit();
+        }
 
         // create the first column " " which is always present
         columns.appendAssumeCapacity(.{
@@ -1674,10 +1699,11 @@ pub const Formatter = struct {
                 this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
             },
             .String => {
-                var str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
+                const str: bun.String = bun.String.tryFromJS(value, this.globalThis) orelse {
                     writer.failed = true;
                     return;
                 };
+                defer str.deref();
                 this.addForNewLine(str.length());
 
                 if (this.quote_strings and jsType != .RegExpObject) {
@@ -1812,7 +1838,7 @@ pub const Formatter = struct {
                 );
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
-                    writer.print("{}", .{result.toBunString(this.globalThis)});
+                    writer.print("{}", .{result.fmtString(this.globalThis)});
                 } else {
                     this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }

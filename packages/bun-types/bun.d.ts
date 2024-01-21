@@ -4498,25 +4498,28 @@ declare module "bun" {
   >;
 
   /**
-   * 
+   *
    * Count the visible width of a string, as it would be displayed in a terminal.
-   * 
+   *
    * By default, strips ANSI escape codes before measuring the string. This is
-   * because ANSI escape codes are not visible characters. If passed a non-string, 
+   * because ANSI escape codes are not visible characters. If passed a non-string,
    * it will return 0.
-   * 
+   *
    * @param str The string to measure
    * @param options
    */
-  function stringWidth(str: string, options?: { 
-    /**
-     * Whether to include ANSI escape codes in the width calculation
-     * 
-     * Slightly faster if set to `false`, but less accurate if the string contains ANSI escape codes.
-     * @default false
-     */
-    countAnsiEscapeCodes?: boolean 
-  }): number;
+  function stringWidth(
+    str: string,
+    options?: {
+      /**
+       * Whether to include ANSI escape codes in the width calculation
+       *
+       * Slightly faster if set to `false`, but less accurate if the string contains ANSI escape codes.
+       * @default false
+       */
+      countAnsiEscapeCodes?: boolean;
+    },
+  ): number;
 
   class FileSystemRouter {
     /**

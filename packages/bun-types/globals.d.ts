@@ -2239,7 +2239,6 @@ declare global {
 
   /** Same as module.exports */
   var exports: any;
-  var global: typeof globalThis;
 
   interface NodeModule {
     exports: any;
@@ -2356,77 +2355,26 @@ declare global {
     ? T
     : typeof Blob;
 
-  interface Response {
-    new (
-      body?: Bun.BodyInit | null | undefined,
-      init?: Bun.ResponseInit | undefined,
-    ): Response;
-
-    /**
-     * Create a new {@link Response} with a JSON body
-     *
-     * @param body - The body of the response
-     * @param options - options to pass to the response
-     *
-     * @example
-     *
-     * ```ts
-     * const response = Response.json({hi: "there"});
-     * console.assert(
-     *   await response.text(),
-     *   `{"hi":"there"}`
-     * );
-     * ```
-     * -------
-     *
-     * This is syntactic sugar for:
-     * ```js
-     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-     * ```
-     * @link https://github.com/whatwg/fetch/issues/1389
-     */
-    json(body?: any, options?: Bun.ResponseInit | number): Response;
-    /**
-     * Create a new {@link Response} that redirects to url
-     *
-     * @param url - the URL to redirect to
-     * @param status - the HTTP status code to use for the redirect
-     */
-    // tslint:disable-next-line:unified-signatures
-    redirect(url: string, status?: number): Response;
-
-    /**
-     * Create a new {@link Response} that redirects to url
-     *
-     * @param url - the URL to redirect to
-     * @param options - options to pass to the response
-     */
-    // tslint:disable-next-line:unified-signatures
-    redirect(url: string, options?: Bun.ResponseInit): Response;
-
-    /**
-     * Create a new {@link Response} that has a network error
-     */
-    error(): Response;
-  }
+  //@ts-expect-error Redeclare
   var Response: typeof globalThis extends {
     onerror: any;
     Response: infer T;
   }
     ? T
-    : typeof Response;
+    : typeof import("./fetch").Response;
 
-  interface Request {
-    new (requestInfo: string, requestInit?: RequestInit): Request;
-    new (requestInfo: RequestInit & { url: string }): Request;
-    new (requestInfo: Request, requestInit?: RequestInit): Request;
-  }
+  //@ts-expect-error Redeclare
   var Request: typeof globalThis extends {
     onerror: any;
     Request: infer T;
   }
     ? T
-    : typeof Request;
+    : {
+        prototype: Request;
+        new (requestInfo: string, requestInit?: RequestInit): Request;
+        new (requestInfo: RequestInit & { url: string }): Request;
+        new (requestInfo: Request, requestInit?: RequestInit): Request;
+      };
 
   interface Headers {
     /**

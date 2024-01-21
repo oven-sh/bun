@@ -151,7 +151,7 @@ pub const NodeJSFS = struct {
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) callconv(.C) void {
         if (this.node_fs.vm) |vm| {
-            if (vm.node_fs == this) {
+            if (vm.node_fs == &this.node_fs) {
                 return;
             }
         }

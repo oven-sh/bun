@@ -1121,6 +1121,8 @@ fn NewFlags(comptime debug_mode: bool) type {
         response_protected: bool = false,
         aborted: bool = false,
         has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+
+        is_error_promise_pending: bool = false,
     };
 }
 
@@ -1377,7 +1379,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            if (!resp.hasResponded() and !ctx.flags.has_marked_pending) {
+            if (!resp.hasResponded() and !ctx.flags.has_marked_pending and !ctx.flags.is_error_promise_pending) {
                 ctx.renderMissing();
                 return;
             }
@@ -2951,6 +2953,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (result.toError()) |err| {
                         this.finishRunningErrorHandler(err, status);
                         return;
+                    } else if (result.asAnyPromise()) |promise| {
+                        this.processOnErrorPromise(result, promise, value, status);
+                        return;
                     } else if (result.as(Response)) |response| {
                         this.render(response);
                         return;
@@ -2959,6 +2964,75 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.finishRunningErrorHandler(value, status);
+        }
+
+        fn processOnErrorPromise(
+            ctx: *RequestContext,
+            promise_js: JSC.JSValue,
+            promise: JSC.AnyPromise,
+            value: JSC.JSValue,
+            status: u16,
+        ) void {
+            var vm = ctx.server.vm;
+
+            switch (promise.status(vm.global.vm())) {
+                .Pending => {},
+                .Fulfilled => {
+                    const fulfilled_value = promise.result(vm.global.vm());
+
+                    // if you return a Response object or a Promise<Response>
+                    // but you upgraded the connection to a WebSocket
+                    // just ignore the Response object. It doesn't do anything.
+                    // it's better to do that than to throw an error
+                    if (ctx.didUpgradeWebSocket()) {
+                        return;
+                    }
+
+                    var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
+                        ctx.finishRunningErrorHandler(value, status);
+                        return;
+                    };
+
+                    ctx.response_jsvalue = fulfilled_value;
+                    ctx.response_jsvalue.ensureStillAlive();
+                    ctx.flags.response_protected = false;
+                    ctx.response_ptr = response;
+
+                    response.body.value.toBlobIfPossible();
+                    switch (response.body.value) {
+                        .Blob => |*blob| {
+                            if (blob.needsToReadFile()) {
+                                fulfilled_value.protect();
+                                ctx.flags.response_protected = true;
+                            }
+                        },
+                        .Locked => {
+                            fulfilled_value.protect();
+                            ctx.flags.response_protected = true;
+                        },
+                        else => {},
+                    }
+                    ctx.render(response);
+                    return;
+                },
+                .Rejected => {
+                    promise.setHandled(vm.global.vm());
+                    ctx.finishRunningErrorHandler(promise.result(vm.global.vm()), status);
+                    return;
+                },
+            }
+
+            // Promise is not fulfilled yet
+            {
+                ctx.flags.is_error_promise_pending = true;
+                ctx.pending_promises_for_abort += 1;
+                promise_js.then(
+                    ctx.server.globalThis,
+                    ctx,
+                    RequestContext.onResolve,
+                    RequestContext.onReject,
+                );
+            }
         }
 
         pub fn runErrorHandlerWithStatusCode(
@@ -5680,7 +5754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
-            var stack_fallback = std.heap.stackFallback(8096, this.allocator);
+            var stack_fallback = std.heap.stackFallback(8192, this.allocator);
             const allocator = stack_fallback.get();
 
             const buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;

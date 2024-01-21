@@ -77,7 +77,7 @@ pub const CrashReportWriter = struct {
         }
 
         const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
-        var file = std.fs.File{ .handle = bun.fdcast(call) };
+        var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -232,14 +232,19 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         crash_report_writer.flush();
 
-        // It only is a real crash report if it's not coming from Zig
+        // TODO(@paperdave):
+        // Bun__crashReportDumpStackTrace does not work on Windows, even in a debug build
+        // It is fine to skip this because in release we ship with ReleaseSafe
+        // because zig's panic handler will also trigger right after
+        if (!Environment.isWindows) {
+            // It only is a real crash report if it's not coming from Zig
+            if (comptime !@import("root").bun.JSC.is_bindgen) {
+                std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+                Bun__crashReportDumpStackTrace(&crash_report_writer);
+            }
 
-        if (comptime !@import("root").bun.JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-            Bun__crashReportDumpStackTrace(&crash_report_writer);
+            crash_report_writer.flush();
         }
-
-        crash_report_writer.flush();
 
         crash_report_writer.printPath();
     }
@@ -259,13 +264,15 @@ var globalError_ranOnce = false;
 var error_return_trace: ?*std.builtin.StackTrace = null;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
-    if (error_return_trace) |trace| {
-        if (len > 0) {
-            ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
-        } else {
-            ctx.print("{}\n", .{trace});
+    if (!Environment.isWindows) {
+        if (error_return_trace) |trace| {
+            if (len > 0) {
+                ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
+            } else {
+                ctx.print("{}\n", .{trace});
+            }
+            return;
         }
-        return;
     }
 
     if (len > 0) {
@@ -294,13 +301,15 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.isDebug and !Environment.isWindows) {
         error_return_trace = @errorReturnTrace();
     }
 
-    if (comptime !@import("root").bun.JSC.is_bindgen) {
-        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-        Bun__crashReportDumpStackTrace(&crash_report_writer);
+    if (!Environment.isWindows) {
+        if (comptime !@import("root").bun.JSC.is_bindgen) {
+            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+            Bun__crashReportDumpStackTrace(&crash_report_writer);
+        }
     }
 
     if (!had_printed_fatal) {
@@ -314,8 +323,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
-    if (error_return_trace) |trace| {
-        std.debug.dumpStackTrace(trace.*);
+    if (!Environment.isWindows) {
+        if (error_return_trace) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
     }
     Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
@@ -503,18 +514,20 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
             if (comptime Environment.isPosix) {
                 const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
 
-                if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
                         \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
@@ -582,11 +595,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             Output.flush();
 
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
@@ -597,12 +612,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nBun could not find a package.json file.\n",
                 .{},
             );
-
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
@@ -612,11 +628,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
     }
 
     Report.fatal(err, null);
-    if (trace_) |trace| {
-        print_stacktrace: {
-            const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-            Output.disableBuffering();
-            std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+    if (!Environment.isWindows) {
+        if (trace_) |trace| {
+            print_stacktrace: {
+                const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                Output.disableBuffering();
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            }
         }
     }
 

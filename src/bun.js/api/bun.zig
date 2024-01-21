@@ -41,9 +41,15 @@ pub const BunObject = struct {
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
+    pub const stringWidth = Bun.stringWidth;
+    pub const shellParse = Bun.shellParse;
+    pub const shellLex = Bun.shellLex;
+    pub const braces = Bun.braces;
+    pub const shellEscape = Bun.shellEscape;
     // --- Callbacks ---
 
     // --- Getters ---
+    pub const ShellInterpreter = Bun.getShellConstructor;
     pub const CryptoHasher = Crypto.CryptoHasher.getter;
     pub const FFI = Bun.FFIObject.getter;
     pub const FileSystemRouter = Bun.getFileSystemRouter;
@@ -91,6 +97,7 @@ pub const BunObject = struct {
         }
 
         // --- Getters ---
+        @export(BunObject.ShellInterpreter, .{ .name = getterName("ShellInterpreter") });
         @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
         @export(BunObject.FFI, .{ .name = getterName("FFI") });
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
@@ -125,6 +132,7 @@ pub const BunObject = struct {
         @export(BunObject._Os, .{ .name = callbackName("_Os") });
         @export(BunObject._Path, .{ .name = callbackName("_Path") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
+        @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
@@ -153,6 +161,10 @@ pub const BunObject = struct {
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
+        @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
+        @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
+        @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
+        @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         // -- Callbacks --
     }
 };
@@ -240,6 +252,8 @@ const max_addressible_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
+const Braces = @import("../../shell/braces.zig");
+const Shell = @import("../../shell/shell.zig");
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -287,6 +301,372 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
+}
+
+pub fn shellLex(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const string_args = arguments.nextEat() orelse {
+        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    defer {
+        for (jsobjs.items) |jsval| {
+            jsval.unprotect();
+        }
+    }
+
+    var script = std.ArrayList(u8).init(arena.allocator());
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    })) {
+        return .undefined;
+    }
+
+    const lex_result = brk: {
+        if (bun.strings.isAllASCII(script.items[0..])) {
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return JSValue.undefined;
+            };
+            break :brk lexer.get_result();
+        }
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
+        lexer.lex() catch |err| {
+            globalThis.throwError(err, "failed to lex shell");
+            return JSValue.undefined;
+        };
+        break :brk lexer.get_result();
+    };
+
+    if (lex_result.errors.len > 0) {
+        const str = lex_result.combineErrors(arena.allocator());
+        globalThis.throwPretty("{s}", .{str});
+        return .undefined;
+    }
+
+    var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+    for (lex_result.tokens) |tok| {
+        const test_tok = Shell.Test.TestToken.from_real(tok, lex_result.strpool);
+        test_tokens.append(test_tok) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+    }
+
+    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    defer globalThis.bunVM().allocator.free(str);
+    var bun_str = bun.String.fromBytes(str);
+    return bun_str.toJS(globalThis);
+}
+
+pub fn shellParse(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const string_args = arguments.nextEat() orelse {
+        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    defer {
+        for (jsobjs.items) |jsval| {
+            jsval.unprotect();
+        }
+    }
+    var script = std.ArrayList(u8).init(arena.allocator());
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    })) {
+        return .undefined;
+    }
+
+    var out_parser: ?bun.shell.Parser = null;
+    var out_lex_result: ?bun.shell.LexResult = null;
+
+    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], &out_parser, &out_lex_result) catch |err| {
+        if (err == bun.shell.ParseError.Lex) {
+            std.debug.assert(out_lex_result != null);
+            const str = out_lex_result.?.combineErrors(arena.allocator());
+            globalThis.throwPretty("{s}", .{str});
+            return .undefined;
+        }
+
+        if (out_parser) |*p| {
+            const errstr = p.combineErrors();
+            globalThis.throwPretty("{s}", .{errstr});
+            return .undefined;
+        }
+
+        globalThis.throwError(err, "failed to lex/parse shell");
+        return .undefined;
+    };
+
+    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    defer globalThis.bunVM().allocator.free(str);
+    var bun_str = bun.String.fromBytes(str);
+    return bun_str.toJS(globalThis);
+}
+
+const ShellTask = struct {
+    arena: std.heap.Arena,
+    script: std.ArrayList(u8),
+    interpreter: Shell.InterpreterSync,
+
+    pub const AsyncShellTask = JSC.ConcurrentPromiseTask(ShellTask);
+};
+
+pub fn shell(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const Interpreter = @import("../../shell/interpreter.zig").Interpreter;
+
+    // var allocator = globalThis.bunVM().allocator;
+    const allocator = getAllocator(globalThis);
+    var arena = bun.ArenaAllocator.init(allocator);
+
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const string_args = arguments.nextEat() orelse {
+        globalThis.throw("shell: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    var script = std.ArrayList(u8).init(arena.allocator());
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    })) {
+        return .undefined;
+    }
+
+    const lex_result = brk: {
+        if (bun.strings.isAllASCII(script.items[0..])) {
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return JSValue.undefined;
+            };
+            break :brk lexer.get_result();
+        }
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
+        lexer.lex() catch |err| {
+            globalThis.throwError(err, "failed to lex shell");
+            return JSValue.undefined;
+        };
+        break :brk lexer.get_result();
+    };
+
+    var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
+        globalThis.throwError(err, "failed to create shell parser");
+        return JSValue.undefined;
+    };
+
+    const script_ast = parser.parse() catch |err| {
+        globalThis.throwError(err, "failed to parse shell");
+        return JSValue.undefined;
+    };
+
+    const script_heap = arena.allocator().create(Shell.AST.Script) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    script_heap.* = script_ast;
+
+    const interpreter = Interpreter.init(
+        globalThis,
+        allocator,
+        &arena,
+        script_heap,
+        jsobjs.items[0..],
+    ) catch {
+        arena.deinit();
+        return .false;
+    };
+    _ = interpreter; // autofix
+
+    // return interpreter;
+    return .undefined;
+
+    // return interpreter.start(globalThis) catch {
+    //     return .false;
+    // };
+}
+
+pub fn shellEscape(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    if (callframe.argumentsCount() < 0) {
+        globalThis.throw("shell escape expected at least 1 argument", .{});
+        return .undefined;
+    }
+
+    const jsval = callframe.argument(0);
+    const bunstr = jsval.toBunString(globalThis);
+    defer bunstr.deref();
+
+    var outbuf = std.ArrayList(u8).init(bun.default_allocator);
+    defer outbuf.deinit();
+
+    if (bunstr.isUTF16()) {
+        if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
+            bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf) catch {
+                globalThis.throwOutOfMemory();
+                return .undefined;
+            };
+            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+        }
+        return jsval;
+    }
+
+    if (bun.shell.needsEscape(bunstr.latin1())) {
+        bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+    }
+
+    return jsval;
+}
+
+pub fn braces(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(2);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    defer arguments.deinit();
+
+    const brace_str_js = arguments.nextEat() orelse {
+        globalThis.throw("braces: expected at least 1 argument, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+    const brace_str = brace_str_js.toBunString(globalThis);
+    defer brace_str.deref();
+    const brace_slice = brace_str.toUTF8(bun.default_allocator);
+    defer brace_slice.deinit();
+
+    var tokenize: bool = false;
+    var parse: bool = false;
+    if (arguments.nextEat()) |opts_val| {
+        if (opts_val.isObject()) {
+            if (comptime bun.Environment.allow_assert) {
+                if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
+                    tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
+                }
+
+                if (opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
+                    parse = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
+                }
+            }
+        }
+    }
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
+        globalThis.throwError(err, "failed to tokenize braces");
+        return .undefined;
+    };
+
+    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
+        globalThis.throwError(err, "failed to calculate brace expansion amount");
+        return .undefined;
+    };
+
+    if (tokenize) {
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
+    if (parse) {
+        var parser = Braces.Parser.init(lexer_output.tokens.items[0..], arena.allocator());
+        const ast_node = parser.parse() catch |err| {
+            globalThis.throwError(err, "failed to parse braces");
+            return .undefined;
+        };
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
+
+    if (expansion_count == 0) {
+        return bun.String.toJSArray(globalThis, &.{brace_str});
+    }
+
+    var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expansion_count) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+
+    for (0..expansion_count) |i| {
+        expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
+    }
+
+    Braces.expand(
+        arena.allocator(),
+        lexer_output.tokens.items[0..],
+        expanded_strings,
+        lexer_output.contains_nested,
+    ) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+
+    var out_strings = arena.allocator().alloc(bun.String, expansion_count) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    for (0..expansion_count) |i| {
+        out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
+    }
+
+    return bun.String.toJSArray(globalThis, out_strings[0..]);
 }
 
 pub fn which(
@@ -953,11 +1333,11 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 }
 
 fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var module = globalObject.allocator().create(JSC.Node.NodeJSFS) catch unreachable;
-    module.* = .{};
-    const vm = globalObject.bunVM();
-    if (vm.standalone_module_graph != null)
-        module.node_fs.vm = vm;
+    var module = JSC.Node.NodeJSFS.new(.{
+        .node_fs = .{
+            .vm = globalObject.bunVM(),
+        },
+    });
 
     return module.toJS(globalObject);
 }
@@ -3007,6 +3387,13 @@ pub fn getTOMLObject(
     return TOMLObject.create(globalThis);
 }
 
+pub fn getShellConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.Shell.eval.Interpreter.getConstructor(globalThis);
+}
+
 pub fn getGlobConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
@@ -4720,6 +5107,34 @@ pub const FFIObject = struct {
         return FFIObject.toJS(globalObject);
     }
 };
+
+fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    const arguments = callframe.arguments(2).slice();
+    const value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
+    const options_object = if (arguments.len > 1) arguments[1] else JSC.JSValue.jsUndefined();
+
+    if (!value.isString()) {
+        return JSC.jsNumber(0);
+    }
+
+    const str = value.toBunString(globalObject);
+    defer str.deref();
+
+    var count_ansi_escapes = false;
+
+    if (options_object.isObject()) {
+        if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
+            if (count_ansi_escapes_value.isBoolean())
+                count_ansi_escapes = count_ansi_escapes_value.toBoolean();
+        }
+    }
+
+    if (count_ansi_escapes) {
+        return JSC.jsNumber(str.visibleWidth());
+    }
+
+    return JSC.jsNumber(str.visibleWidthExcludeANSIColors());
+}
 
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise

@@ -19,27 +19,28 @@ const uws = bun.uws;
 const windows = bun.windows;
 const uv = windows.libuv;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const Body = JSC.WebCore.Body;
 
 const PosixSpawn = bun.posix.spawn;
 
 const win_rusage = struct {
     utime: struct {
-        tv_sec: u0 = 0,
-        tv_usec: u0 = 0,
+        tv_sec: i64 = 0,
+        tv_usec: i64 = 0,
     },
     stime: struct {
-        tv_sec: u0 = 0,
-        tv_usec: u0 = 0,
+        tv_sec: i64 = 0,
+        tv_usec: i64 = 0,
     },
-    maxrss: u0 = 0,
+    maxrss: u64 = 0,
     ixrss: u0 = 0,
     idrss: u0 = 0,
     isrss: u0 = 0,
     minflt: u0 = 0,
     majflt: u0 = 0,
     nswap: u0 = 0,
-    inblock: u0 = 0,
-    oublock: u0 = 0,
+    inblock: u64 = 0,
+    oublock: u64 = 0,
     msgsnd: u0 = 0,
     msgrcv: u0 = 0,
     nsignals: u0 = 0,
@@ -47,6 +48,48 @@ const win_rusage = struct {
     nivcsw: u0 = 0,
 };
 
+const IO_COUNTERS = extern struct {
+    ReadOperationCount: u64 = 0,
+    WriteOperationCount: u64 = 0,
+    OtherOperationCount: u64 = 0,
+    ReadTransferCount: u64 = 0,
+    WriteTransferCount: u64 = 0,
+    OtherTransferCount: u64 = 0,
+};
+
+extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
+
+fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
+    var usage_info: Rusage = .{ .utime = .{}, .stime = .{} };
+    const process_pid: *anyopaque = process.process_handle;
+    const WinTime = std.os.windows.FILETIME;
+    var starttime: WinTime = undefined;
+    var exittime: WinTime = undefined;
+    var kerneltime: WinTime = undefined;
+    var usertime: WinTime = undefined;
+    // We at least get process times
+    if (std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
+        var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
+        if (temp > 0) {
+            usage_info.stime.tv_sec = @intCast(temp / 10000000);
+            usage_info.stime.tv_usec = @intCast(temp % 1000000);
+        }
+        temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
+        if (temp > 0) {
+            usage_info.utime.tv_sec = @intCast(temp / 10000000);
+            usage_info.utime.tv_usec = @intCast(temp % 1000000);
+        }
+    }
+    var counters: IO_COUNTERS = .{};
+    _ = GetProcessIoCounters(process_pid, &counters);
+    usage_info.inblock = counters.ReadOperationCount;
+    usage_info.oublock = counters.WriteOperationCount;
+
+    const memory = std.os.windows.GetProcessMemoryInfo(process_pid) catch return usage_info;
+    usage_info.maxrss = memory.PeakWorkingSetSize / 1024;
+
+    return usage_info;
+}
 const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
 
 pub const ResourceUsage = struct {
@@ -149,6 +192,7 @@ pub const Subprocess = struct {
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
+    pipes: if (Environment.isWindows) [3]uv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes([3]uv.uv_pipe_t) else 0,
 
     stdin: Writable,
     stdout: Readable,
@@ -219,12 +263,17 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
     ) JSValue {
-        if (comptime Environment.isWindows) {
-            //TODO: implement on windows
-            return JSValue.jsUndefined();
-        }
-        if (this.pid_rusage == null) {
-            return JSValue.jsUndefined();
+        if (Environment.isWindows) {
+            if (this.pid_rusage == null) {
+                this.pid_rusage = uv_getrusage(&this.pid);
+                if (this.pid_rusage == null) {
+                    return JSValue.jsUndefined();
+                }
+            }
+        } else {
+            if (this.pid_rusage == null) {
+                return JSValue.jsUndefined();
+            }
         }
         const pid_rusage = this.pid_rusage.?;
         const resource_usage = ResourceUsage{
@@ -359,7 +408,11 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe == .buffer) {
-                        if (this.pipe.buffer.fifo.poll_ref) |poll| {
+                        if (Environment.isWindows) {
+                            uv.uv_ref(@ptrCast(&this.pipe.buffer.stream));
+                            return;
+                        }
+                        if (this.pipe.buffer.stream.poll_ref) |poll| {
                             poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                         }
                     }
@@ -372,7 +425,11 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe == .buffer) {
-                        if (this.pipe.buffer.fifo.poll_ref) |poll| {
+                        if (Environment.isWindows) {
+                            uv.uv_unref(@ptrCast(&this.pipe.buffer.stream));
+                            return;
+                        }
+                        if (this.pipe.buffer.stream.poll_ref) |poll| {
                             poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                         }
                     }
@@ -411,6 +468,10 @@ pub const Subprocess = struct {
 
                 if (this.* != .stream) {
                     const stream = this.buffer.toReadableStream(globalThis, exited);
+                    // we do not detach on windows
+                    if (Environment.isWindows) {
+                        return stream.toJS();
+                    }
                     this.* = .{ .stream = stream };
                 }
 
@@ -424,6 +485,27 @@ pub const Subprocess = struct {
             }
         };
 
+        pub fn initWithPipe(stdio: Stdio, pipe: *uv.uv_pipe_t, allocator: std.mem.Allocator, max_size: u32) Readable {
+            return switch (stdio) {
+                .inherit => Readable{ .inherit = {} },
+                .ignore => Readable{ .ignore = {} },
+                .pipe => brk: {
+                    break :brk .{
+                        .pipe = .{
+                            .buffer = BufferedOutput.initWithPipeAndAllocator(allocator, pipe, max_size),
+                        },
+                    };
+                },
+                .path => Readable{ .ignore = {} },
+                .blob, .fd => @panic("use init() instead"),
+                .memfd => Readable{ .memfd = stdio.memfd },
+                .array_buffer => Readable{
+                    .pipe = .{
+                        .buffer = BufferedOutput.initWithPipeAndSlice(pipe, stdio.array_buffer.slice()),
+                    },
+                },
+            };
+        }
         pub fn init(stdio: Stdio, fd: bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
@@ -517,8 +599,10 @@ pub const Subprocess = struct {
                     return JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
                 },
                 .pipe => {
-                    this.pipe.buffer.fifo.close_on_empty_read = true;
-                    this.pipe.buffer.readAll();
+                    if (!Environment.isWindows) {
+                        this.pipe.buffer.stream.close_on_empty_read = true;
+                        this.pipe.buffer.readAll();
+                    }
 
                     const bytes = this.pipe.buffer.internal_buffer.slice();
                     this.pipe.buffer.internal_buffer = .{};
@@ -627,10 +711,12 @@ pub const Subprocess = struct {
                 }
             }
             if (comptime Environment.isWindows) {
-                if (uv.uv_process_kill(&this.pid, sig).errEnum()) |err| {
+                if (std.os.windows.kernel32.TerminateProcess(this.pid.process_handle, @intCast(sig)) == 0) {
+                    const err = @as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())));
                     if (err != .SRCH)
                         return .{ .err = bun.sys.Error.fromCode(err, .kill) };
                 }
+
                 return .{ .result = {} };
             }
 
@@ -731,6 +817,113 @@ pub const Subprocess = struct {
         return array;
     }
 
+    pub const BufferedPipeInput = struct {
+        remain: []const u8 = "",
+        input_buffer: uv.uv_buf_t = std.mem.zeroes(uv.uv_buf_t),
+        write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+        pipe: ?*uv.uv_pipe_t,
+        poll_ref: ?*Async.FilePoll = null,
+        written: usize = 0,
+
+        source: union(enum) {
+            blob: JSC.WebCore.AnyBlob,
+            array_buffer: JSC.ArrayBuffer.Strong,
+        },
+
+        pub fn writeIfPossible(this: *BufferedPipeInput, comptime is_sync: bool) void {
+            this.writeAllowBlocking(is_sync);
+        }
+
+        pub fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
+            const this = bun.cast(*BufferedPipeInput, req.data);
+            if (this.pipe == null) return;
+            if (status.errEnum()) |_| {
+                log("uv_write({d}) fail: {d}", .{ this.remain.len, status.int() });
+                this.deinit();
+                return;
+            }
+
+            this.written += this.remain.len;
+            this.remain = "";
+            // we are done!
+            this.close();
+        }
+
+        pub fn writeAllowBlocking(this: *BufferedPipeInput, allow_blocking: bool) void {
+            const pipe = this.pipe orelse return;
+
+            var to_write = this.remain;
+
+            this.input_buffer = uv.uv_buf_t.init(to_write);
+            if (allow_blocking) {
+                while (true) {
+                    if (to_write.len == 0) {
+                        // we are done!
+                        this.close();
+                        return;
+                    }
+                    const status = uv.uv_try_write(@ptrCast(pipe), @ptrCast(&this.input_buffer), 1);
+                    if (status.errEnum()) |err| {
+                        if (err == bun.C.E.AGAIN) {
+                            //EAGAIN
+                            this.write_req.data = this;
+                            const write_err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
+                            if (write_err < 0) {
+                                log("uv_write({d}) fail: {d}", .{ this.remain.len, write_err });
+                                this.deinit();
+                            }
+                            return;
+                        }
+                        // fail
+                        log("uv_try_write({d}) fail: {d}", .{ to_write.len, status.int() });
+                        this.deinit();
+                        return;
+                    }
+                    const bytes_written: usize = @intCast(status.int());
+                    this.written += bytes_written;
+                    this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                    to_write = to_write[bytes_written..];
+                }
+            } else {
+                this.write_req.data = this;
+                const err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
+                if (err < 0) {
+                    log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
+                    this.deinit();
+                }
+            }
+        }
+
+        pub fn write(this: *BufferedPipeInput) void {
+            this.writeAllowBlocking(false);
+        }
+
+        fn close(this: *BufferedPipeInput) void {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            if (this.pipe) |pipe| {
+                _ = uv.uv_close(@ptrCast(pipe), null);
+                this.pipe = null;
+            }
+        }
+
+        pub fn deinit(this: *BufferedPipeInput) void {
+            this.close();
+
+            switch (this.source) {
+                .blob => |*blob| {
+                    blob.detach();
+                },
+                .array_buffer => |*array_buffer| {
+                    array_buffer.deinit();
+                },
+            }
+        }
+    };
+
     pub const BufferedInput = struct {
         remain: []const u8 = "",
         fd: bun.FileDescriptor = bun.invalid_fd,
@@ -741,6 +934,8 @@ pub const Subprocess = struct {
             blob: JSC.WebCore.AnyBlob,
             array_buffer: JSC.ArrayBuffer.Strong,
         },
+
+        pub const event_loop_kind = JSC.EventLoopKind.js;
 
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
 
@@ -873,12 +1068,15 @@ pub const Subprocess = struct {
 
     pub const BufferedOutput = struct {
         internal_buffer: bun.ByteList = .{},
-        fifo: JSC.WebCore.FIFO = undefined,
+        stream: FIFOType = undefined,
         auto_sizer: ?JSC.WebCore.AutoSizer = null,
+        /// stream strong ref if any is available
+        readable_stream_ref: if (Environment.isWindows) JSC.WebCore.ReadableStream.Strong else u0 = if (Environment.isWindows) .{} else 0,
+        globalThis: if (Environment.isWindows) ?*JSC.JSGlobalObject else u0 = if (Environment.isWindows) null else 0,
         status: Status = .{
             .pending = {},
         },
-
+        const FIFOType = if (Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
         pub const Status = union(enum) {
             pending: void,
             done: void,
@@ -886,26 +1084,54 @@ pub const Subprocess = struct {
         };
 
         pub fn init(fd: bun.FileDescriptor) BufferedOutput {
+            if (Environment.isWindows) {
+                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipe");
+            }
             return BufferedOutput{
                 .internal_buffer = .{},
-                .fifo = JSC.WebCore.FIFO{
+                .stream = JSC.WebCore.FIFO{
                     .fd = fd,
                 },
             };
         }
 
+        pub fn initWithPipe(pipe: *uv.uv_pipe_t) BufferedOutput {
+            if (!Environment.isWindows) {
+                @compileError("uv.uv_pipe_t can only be used on Windows");
+            }
+            return BufferedOutput{ .internal_buffer = .{}, .stream = pipe };
+        }
+
         pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
+            if (Environment.isWindows) {
+                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipeAndSlice");
+            }
             return BufferedOutput{
                 // fixed capacity
                 .internal_buffer = bun.ByteList.initWithBuffer(slice),
                 .auto_sizer = null,
-                .fifo = JSC.WebCore.FIFO{
+                .stream = JSC.WebCore.FIFO{
                     .fd = fd,
                 },
             };
         }
 
+        pub fn initWithPipeAndSlice(pipe: *uv.uv_pipe_t, slice: []u8) BufferedOutput {
+            if (!Environment.isWindows) {
+                @compileError("uv.uv_pipe_t can only be used on Window");
+            }
+            return BufferedOutput{
+                // fixed capacity
+                .internal_buffer = bun.ByteList.initWithBuffer(slice),
+                .auto_sizer = null,
+                .stream = pipe,
+            };
+        }
+
         pub fn initWithAllocator(allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) BufferedOutput {
+            if (Environment.isWindows) {
+                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipeAndAllocator");
+            }
             var this = init(fd);
             this.auto_sizer = .{
                 .max = max_size,
@@ -915,7 +1141,23 @@ pub const Subprocess = struct {
             return this;
         }
 
+        pub fn initWithPipeAndAllocator(allocator: std.mem.Allocator, pipe: *uv.uv_pipe_t, max_size: u32) BufferedOutput {
+            if (!Environment.isWindows) {
+                @compileError("uv.uv_pipe_t can only be used on Window");
+            }
+            var this = initWithPipe(pipe);
+            this.auto_sizer = .{
+                .max = max_size,
+                .allocator = allocator,
+                .buffer = &this.internal_buffer,
+            };
+            return this;
+        }
+
         pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
+            if (Environment.isWindows) {
+                @compileError("uv.uv_pipe_t can only be used on Window");
+            }
             switch (result) {
                 .pending => {
                     this.watch();
@@ -927,13 +1169,13 @@ pub const Subprocess = struct {
                     } else {
                         this.status = .{ .err = bun.sys.Error.fromCode(.CANCELED, .read) };
                     }
-                    this.fifo.close();
+                    this.stream.close();
 
                     return;
                 },
                 .done => {
                     this.status = .{ .done = {} };
-                    this.fifo.close();
+                    this.stream.close();
                     return;
                 },
                 else => {
@@ -942,18 +1184,84 @@ pub const Subprocess = struct {
                     if (slice.len > 0)
                         std.debug.assert(this.internal_buffer.contains(slice));
 
-                    if (result.isDone() or (slice.len == 0 and this.fifo.poll_ref != null and this.fifo.poll_ref.?.isHUP())) {
+                    if (result.isDone() or (slice.len == 0 and this.stream.poll_ref != null and this.stream.poll_ref.?.isHUP())) {
                         this.status = .{ .done = {} };
-                        this.fifo.close();
+                        this.stream.close();
                     }
                 },
             }
         }
 
+        fn uvStreamReadCallback(handle: *uv.uv_handle_t, nread: isize, buffer: *const uv.uv_buf_t) callconv(.C) void {
+            const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
+            if (nread <= 0) {
+                switch (nread) {
+                    0 => {
+                        // EAGAIN or EWOULDBLOCK
+                        return;
+                    },
+                    uv.UV_EOF => {
+                        this.status = .{ .done = {} };
+                        _ = uv.uv_read_stop(@ptrCast(handle));
+                        this.flushBufferedDataIntoReadableStream();
+                    },
+                    else => {
+                        const rt = uv.ReturnCodeI64{
+                            .value = @intCast(nread),
+                        };
+                        const err = rt.errEnum() orelse bun.C.E.CANCELED;
+                        this.status = .{ .err = bun.sys.Error.fromCode(err, .read) };
+                        _ = uv.uv_read_stop(@ptrCast(handle));
+                        this.signalStreamError();
+                    },
+                }
+
+                // when nread < 0 buffer maybe not point to a valid address
+                return;
+            }
+
+            this.internal_buffer.len += @as(u32, @truncate(buffer.len));
+            this.flushBufferedDataIntoReadableStream();
+        }
+
+        fn uvStreamAllocCallback(handle: *uv.uv_handle_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
+            const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
+            var size: usize = 0;
+            var available = this.internal_buffer.available();
+            if (this.auto_sizer) |auto_sizer| {
+                size = auto_sizer.max - this.internal_buffer.len;
+                if (size > suggested_size) {
+                    size = suggested_size;
+                }
+
+                if (available.len < size and this.internal_buffer.len < auto_sizer.max) {
+                    this.internal_buffer.ensureUnusedCapacity(auto_sizer.allocator, size) catch bun.outOfMemory();
+                    available = this.internal_buffer.available();
+                }
+            } else {
+                size = available.len;
+                if (size > suggested_size) {
+                    size = suggested_size;
+                }
+            }
+            buffer.* = .{ .base = @ptrCast(available.ptr), .len = @intCast(size) };
+            if (size == 0) {
+                _ = uv.uv_read_stop(@ptrCast(@alignCast(handle)));
+                this.status = .{ .done = {} };
+            }
+        }
+
         pub fn readAll(this: *BufferedOutput) void {
+            if (Environment.isWindows) {
+                if (this.status == .pending) {
+                    this.stream.data = this;
+                    _ = uv.uv_read_start(@ptrCast(this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
+                }
+                return;
+            }
             if (this.auto_sizer) |auto_sizer| {
                 while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
-                    var stack_buffer: [8096]u8 = undefined;
+                    var stack_buffer: [8192]u8 = undefined;
                     const stack_buf: []u8 = stack_buffer[0..];
                     var buf_to_use = stack_buf;
                     const available = this.internal_buffer.available();
@@ -961,7 +1269,7 @@ pub const Subprocess = struct {
                         buf_to_use = available;
                     }
 
-                    const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+                    const result = this.stream.read(buf_to_use, this.stream.to_read);
 
                     switch (result) {
                         .pending => {
@@ -970,13 +1278,13 @@ pub const Subprocess = struct {
                         },
                         .err => |err| {
                             this.status = .{ .err = err };
-                            this.fifo.close();
+                            this.stream.close();
 
                             return;
                         },
                         .done => {
                             this.status = .{ .done = {} };
-                            this.fifo.close();
+                            this.stream.close();
                             return;
                         },
                         .read => |slice| {
@@ -997,7 +1305,7 @@ pub const Subprocess = struct {
                 while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
                     const buf_to_use = this.internal_buffer.available();
 
-                    const result = this.fifo.read(buf_to_use, this.fifo.to_read);
+                    const result = this.stream.read(buf_to_use, this.stream.to_read);
 
                     switch (result) {
                         .pending => {
@@ -1006,13 +1314,13 @@ pub const Subprocess = struct {
                         },
                         .err => |err| {
                             this.status = .{ .err = err };
-                            this.fifo.close();
+                            this.stream.close();
 
                             return;
                         },
                         .done => {
                             this.status = .{ .done = {} };
-                            this.fifo.close();
+                            this.stream.close();
                             return;
                         },
                         .read => |slice| {
@@ -1029,10 +1337,13 @@ pub const Subprocess = struct {
         }
 
         fn watch(this: *BufferedOutput) void {
-            std.debug.assert(this.fifo.fd != bun.invalid_fd);
-
-            this.fifo.pending.set(BufferedOutput, this, onRead);
-            if (!this.fifo.isWatching()) this.fifo.watch(this.fifo.fd);
+            if (Environment.isWindows) {
+                this.readAll();
+            } else {
+                std.debug.assert(this.stream.fd != bun.invalid_fd);
+                this.stream.pending.set(BufferedOutput, this, onRead);
+                if (!this.stream.isWatching()) this.stream.watch(this.stream.fd);
+            }
             return;
         }
 
@@ -1042,10 +1353,86 @@ pub const Subprocess = struct {
             return blob;
         }
 
-        pub fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
+        pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
+            const this = bun.cast(*BufferedOutput, ctx);
+            this.readAll();
+            const internal_buffer = this.internal_buffer;
+            this.internal_buffer = bun.ByteList.init("");
+
+            return .{
+                .owned = .{
+                    .list = internal_buffer.listManaged(bun.default_allocator),
+                    .size_hint = internal_buffer.len,
+                },
+            };
+        }
+
+        fn signalStreamError(this: *BufferedOutput) void {
+            if (this.status == .err) {
+                // if we are streaming update with error
+                if (this.readable_stream_ref.get()) |readable| {
+                    if (readable.ptr == .Bytes) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .err = .{ .Error = this.status.err },
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                }
+                // after error we dont need the ref anymore
+                this.readable_stream_ref.deinit();
+            }
+        }
+        fn flushBufferedDataIntoReadableStream(this: *BufferedOutput) void {
+            if (this.readable_stream_ref.get()) |readable| {
+                if(readable.ptr != .Bytes) return;
+
+                const internal_buffer = this.internal_buffer;
+                const isDone = this.status != .pending;
+
+                if (internal_buffer.len > 0 or isDone) {
+                    readable.ptr.Bytes.size_hint += internal_buffer.len;
+                    if (isDone) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = internal_buffer,
+                            },
+                            bun.default_allocator,
+                        );
+                        // no need to keep the ref anymore
+                        this.readable_stream_ref.deinit();
+                    } else {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = internal_buffer,
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                    this.internal_buffer.len = 0;
+                }
+            }
+        }
+
+        fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+            const this = bun.cast(*BufferedOutput, ctx);
+            if (this.globalThis) |globalThis| {
+                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis) catch .{};
+            }
+        }
+
+        fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
+            if (Environment.isWindows) {
+                if (this.readable_stream_ref.get()) |readable| {
+                    return readable;
+                }
+            }
+
             if (exited) {
                 // exited + received EOF => no more read()
-                if (this.fifo.isClosed()) {
+                const isClosed = if (Environment.isWindows) this.status != .pending else this.stream.isClosed();
+                if (isClosed) {
                     // also no data at all
                     if (this.internal_buffer.len == 0) {
                         if (this.internal_buffer.cap > 0) {
@@ -1071,6 +1458,20 @@ pub const Subprocess = struct {
                 }
             }
 
+            if (Environment.isWindows) {
+                this.globalThis = globalThis;
+                var body = Body.Value{
+                    .Locked = .{
+                        .size_hint = 0,
+                        .task = this,
+                        .global = globalThis,
+                        .onStartStreaming = BufferedOutput.onStartStreamingRequestBodyCallback,
+                        .onReadableStreamAvailable = BufferedOutput.onReadableStreamAvailable,
+                    },
+                };
+                return JSC.WebCore.ReadableStream.fromJS(body.toReadableStream(globalThis), globalThis).?;
+            }
+
             {
                 const internal_buffer = this.internal_buffer;
                 this.internal_buffer = bun.ByteList.init("");
@@ -1081,13 +1482,13 @@ pub const Subprocess = struct {
                 const result = JSC.WebCore.ReadableStream.fromJS(
                     JSC.WebCore.ReadableStream.fromFIFO(
                         globalThis,
-                        &this.fifo,
+                        &this.stream,
                         internal_buffer,
                     ),
                     globalThis,
                 ).?;
-                this.fifo.fd = bun.invalid_fd;
-                this.fifo.poll_ref = null;
+                this.stream.fd = bun.invalid_fd;
+                this.stream.poll_ref = null;
                 return result;
             }
         }
@@ -1096,7 +1497,13 @@ pub const Subprocess = struct {
             switch (this.status) {
                 .done => {},
                 .pending => {
-                    this.fifo.close();
+                    if (Environment.isWindows) {
+                        _ = uv.uv_read_stop(@ptrCast(&this.stream));
+                        _ = uv.uv_close(@ptrCast(&this.stream), null);
+                        this.readable_stream_ref.deinit();
+                    } else {
+                        this.stream.close();
+                    }
                     this.status = .{ .done = {} };
                 },
                 .err => {},
@@ -1109,14 +1516,16 @@ pub const Subprocess = struct {
         }
     };
 
+    const SinkType = if (Environment.isWindows) *JSC.WebCore.UVStreamSink else *JSC.WebCore.FileSink;
+    const BufferedInputType = if (Environment.isWindows) BufferedPipeInput else BufferedInput;
     const Writable = union(enum) {
-        pipe: *JSC.WebCore.FileSink,
+        pipe: SinkType,
         pipe_to_readable_stream: struct {
-            pipe: *JSC.WebCore.FileSink,
+            pipe: SinkType,
             readable_stream: JSC.WebCore.ReadableStream,
         },
         fd: bun.FileDescriptor,
-        buffered_input: BufferedInput,
+        buffered_input: BufferedInputType,
         memfd: bun.FileDescriptor,
         inherit: void,
         ignore: void,
@@ -1124,7 +1533,9 @@ pub const Subprocess = struct {
         pub fn ref(this: *Writable) void {
             switch (this.*) {
                 .pipe => {
-                    if (this.pipe.poll_ref) |poll| {
+                    if (Environment.isWindows) {
+                        _ = uv.uv_ref(@ptrCast(this.pipe.stream));
+                    } else if (this.pipe.poll_ref) |poll| {
                         poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
@@ -1135,7 +1546,9 @@ pub const Subprocess = struct {
         pub fn unref(this: *Writable) void {
             switch (this.*) {
                 .pipe => {
-                    if (this.pipe.poll_ref) |poll| {
+                    if (Environment.isWindows) {
+                        _ = uv.uv_unref(@ptrCast(this.pipe.stream));
+                    } else if (this.pipe.poll_ref) |poll| {
                         poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
@@ -1153,6 +1566,56 @@ pub const Subprocess = struct {
         pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
         pub fn onStart(_: *Writable) void {}
 
+        pub fn initWithPipe(stdio: Stdio, pipe: *uv.uv_pipe_t, globalThis: *JSC.JSGlobalObject) !Writable {
+            switch (stdio) {
+                .pipe => |maybe_readable| {
+                    const sink = try globalThis.bunVM().allocator.create(JSC.WebCore.UVStreamSink);
+                    sink.* = .{
+                        .buffer = bun.ByteList{},
+                        .stream = @ptrCast(pipe),
+                        .allocator = globalThis.bunVM().allocator,
+                        .done = false,
+                        .signal = .{},
+                        .next = null,
+                    };
+                    if (maybe_readable) |readable| {
+                        return Writable{
+                            .pipe_to_readable_stream = .{
+                                .pipe = sink,
+                                .readable_stream = readable,
+                            },
+                        };
+                    }
+
+                    return Writable{ .pipe = sink };
+                },
+                .array_buffer, .blob => {
+                    var buffered_input: BufferedPipeInput = .{ .pipe = pipe, .source = undefined };
+                    switch (stdio) {
+                        .array_buffer => |array_buffer| {
+                            buffered_input.source = .{ .array_buffer = array_buffer };
+                        },
+                        .blob => |blob| {
+                            buffered_input.source = .{ .blob = blob };
+                        },
+                        else => unreachable,
+                    }
+                    return Writable{ .buffered_input = buffered_input };
+                },
+                .memfd => {
+                    return Writable{ .memfd = stdio.memfd };
+                },
+                .fd => |fd| {
+                    return Writable{ .fd = fd };
+                },
+                .inherit => {
+                    return Writable{ .inherit = {} };
+                },
+                .path, .ignore => {
+                    return Writable{ .ignore = {} };
+                },
+            }
+        }
         pub fn init(stdio: Stdio, fd: bun.FileDescriptor, globalThis: *JSC.JSGlobalObject) !Writable {
             switch (stdio) {
                 .pipe => |maybe_readable| {
@@ -1648,14 +2111,25 @@ pub const Subprocess = struct {
             };
             const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
 
-            const stdin_pipe = if (stdio[0].isPiped()) stdio[0].makeUVPipe(globalThis) orelse return .zero else undefined;
-            const stdout_pipe = if (stdio[1].isPiped()) stdio[1].makeUVPipe(globalThis) orelse return .zero else undefined;
-            const stderr_pipe = if (stdio[2].isPiped()) stdio[2].makeUVPipe(globalThis) orelse return .zero else undefined;
+            const alloc = globalThis.allocator();
+            var subprocess = alloc.create(Subprocess) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
 
             var uv_stdio = [3]uv.uv_stdio_container_s{
-                stdio[0].setUpChildIoUvSpawn(0, stdin_pipe[0]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdin"),
-                stdio[1].setUpChildIoUvSpawn(1, stdout_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdout"),
-                stdio[2].setUpChildIoUvSpawn(2, stderr_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stderr"),
+                stdio[0].setUpChildIoUvSpawn(0, &subprocess.pipes[0], true, bun.invalid_fd) catch |err| {
+                    alloc.destroy(subprocess);
+                    return globalThis.handleError(err, "in setting up uv_process stdin");
+                },
+                stdio[1].setUpChildIoUvSpawn(1, &subprocess.pipes[1], false, bun.invalid_fd) catch |err| {
+                    alloc.destroy(subprocess);
+                    return globalThis.handleError(err, "in setting up uv_process stdout");
+                },
+                stdio[2].setUpChildIoUvSpawn(2, &subprocess.pipes[2], false, bun.invalid_fd) catch |err| {
+                    alloc.destroy(subprocess);
+                    return globalThis.handleError(err, "in setting up uv_process stderr");
+                },
             };
 
             var cwd_resolver = bun.path.PosixToWinNormalizer{};
@@ -1663,7 +2137,10 @@ pub const Subprocess = struct {
             const options = uv.uv_process_options_t{
                 .exit_cb = uvExitCallback,
                 .args = @ptrCast(argv.items[0 .. argv.items.len - 1 :null]),
-                .cwd = cwd_resolver.resolveCWDZ(cwd) catch |err| return globalThis.handleError(err, "in uv_spawn"),
+                .cwd = cwd_resolver.resolveCWDZ(cwd) catch |err| {
+                    alloc.destroy(subprocess);
+                    return globalThis.handleError(err, "in uv_spawn");
+                },
                 .env = env,
                 .file = argv.items[0].?,
                 .gid = 0,
@@ -1671,11 +2148,6 @@ pub const Subprocess = struct {
                 .stdio = &uv_stdio,
                 .stdio_count = uv_stdio.len,
                 .flags = if (windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
-            };
-            const alloc = globalThis.allocator();
-            var subprocess = allocator.create(Subprocess) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
             };
 
             if (uv.uv_spawn(jsc_vm.uvLoop(), &subprocess.pid, &options).errEnum()) |errno| {
@@ -1686,16 +2158,17 @@ pub const Subprocess = struct {
 
             // When run synchronously, subprocess isn't garbage collected
             subprocess.* = Subprocess{
+                .pipes = subprocess.pipes,
                 .globalThis = globalThis,
                 .pid = subprocess.pid,
                 .pidfd = 0,
-                .stdin = Writable.init(stdio[0], bun.toFD(stdin_pipe[1]), globalThis) catch {
+                .stdin = Writable.initWithPipe(stdio[0], &subprocess.pipes[0], globalThis) catch {
                     globalThis.throwOutOfMemory();
                     return .zero;
                 },
                 // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = Readable.init(stdio[1], bun.toFD(stdout_pipe[0]), jsc_vm.allocator, default_max_buffer_size),
-                .stderr = Readable.init(stdio[2], bun.toFD(stderr_pipe[0]), jsc_vm.allocator, default_max_buffer_size),
+                .stdout = Readable.initWithPipe(stdio[1], &subprocess.pipes[1], jsc_vm.allocator, default_max_buffer_size),
+                .stderr = Readable.initWithPipe(stdio[2], &subprocess.pipes[2], jsc_vm.allocator, default_max_buffer_size),
                 .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
 
                 .ipc_mode = ipc_mode,
@@ -1739,6 +2212,8 @@ pub const Subprocess = struct {
             // sync
 
             while (!subprocess.hasExited()) {
+                uv.Loop.get().tickWithTimeout(0);
+
                 if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
                     subprocess.stderr.pipe.buffer.readAll();
                 }
@@ -1821,17 +2296,17 @@ pub const Subprocess = struct {
         }
 
         // TODO: move pipe2 to bun.sys so it can return [2]bun.FileDesriptor
-        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
+        const stdin_pipe = if (stdio[0].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
-        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
+        const stdout_pipe = if (stdio[1].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
-        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
+        const stderr_pipe = if (stdio[2].isPiped()) bun.sys.pipe().unwrap() catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
@@ -1923,6 +2398,7 @@ pub const Subprocess = struct {
                 });
                 return .zero;
             };
+            socket.setTimeout(0);
             pipes_to_close.append(bun.default_allocator, bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
             actions.dup2(bun.toFD(fds[1]), bun.toFD(3)) catch |err| return globalThis.handleError(err, "in posix_spawn");
             actions.close(bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
@@ -2208,6 +2684,9 @@ pub const Subprocess = struct {
     }
 
     pub fn wait(this: *Subprocess, sync: bool) void {
+        if (Environment.isWindows) {
+            @panic("TODO: Windows");
+        }
         return this.waitWithJSValue(sync, this.this_jsvalue);
     }
 
@@ -2241,7 +2720,7 @@ pub const Subprocess = struct {
 
     pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: Rusage) void {
         if (Environment.isWindows) {
-            @panic("windows doesnt support subprocess yet. haha");
+            @panic("TODO: Windows");
         }
         defer if (sync) this.updateHasPendingActivity();
 
@@ -2317,8 +2796,9 @@ pub const Subprocess = struct {
     fn uvExitCallback(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
         const subprocess: *Subprocess = @alignCast(@ptrCast(process.data.?));
         subprocess.globalThis.assertOnJSThread();
-        subprocess.exit_code = @intCast(exit_status);
+        subprocess.exit_code = @as(u8, @truncate(@as(u64, @intCast(exit_status))));
         subprocess.signal_code = if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
+        subprocess.pid_rusage = uv_getrusage(process);
         subprocess.onExit(subprocess.globalThis, subprocess.this_jsvalue);
     }
 
@@ -2399,7 +2879,7 @@ pub const Subprocess = struct {
                     }
                 };
 
-                var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+                var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
 
                 holder.* = .{
                     .process = this,
@@ -2528,7 +3008,7 @@ pub const Subprocess = struct {
         fn setUpChildIoPosixSpawn(
             stdio: @This(),
             actions: *PosixSpawn.Actions,
-            pipe_fd: [2]i32,
+            pipe_fd: [2]bun.FileDescriptor,
             std_fileno: bun.FileDescriptor,
         ) !void {
             switch (stdio) {
@@ -2566,16 +3046,34 @@ pub const Subprocess = struct {
         fn setUpChildIoUvSpawn(
             stdio: @This(),
             std_fileno: i32,
-            pipe_fd: i32,
+            pipe: *uv.uv_pipe_t,
+            isReadable: bool,
+            fd: bun.FileDescriptor,
         ) !uv.uv_stdio_container_s {
             return switch (stdio) {
-                .array_buffer, .blob, .pipe => uv.uv_stdio_container_s{
-                    .flags = uv.UV_INHERIT_FD,
-                    .data = .{ .fd = pipe_fd },
+                .array_buffer, .blob, .pipe => {
+                    if (uv.uv_pipe_init(uv.Loop.get(), pipe, 0) != 0) {
+                        return error.FailedToCreatePipe;
+                    }
+                    if (fd != bun.invalid_fd) {
+                        // we receive a FD so we open this into our pipe
+                        if (uv.uv_pipe_open(pipe, bun.uvfdcast(fd)).errEnum()) |_| {
+                            return error.FailedToCreatePipe;
+                        }
+                        return uv.uv_stdio_container_s{
+                            .flags = @intCast(uv.UV_INHERIT_STREAM),
+                            .data = .{ .stream = @ptrCast(pipe) },
+                        };
+                    }
+                    // we dont have any fd so we create a new pipe
+                    return uv.uv_stdio_container_s{
+                        .flags = @intCast(uv.UV_CREATE_PIPE | if (isReadable) uv.UV_READABLE_PIPE else uv.UV_WRITABLE_PIPE),
+                        .data = .{ .stream = @ptrCast(pipe) },
+                    };
                 },
-                .fd => |fd| uv.uv_stdio_container_s{
+                .fd => |_fd| uv.uv_stdio_container_s{
                     .flags = uv.UV_INHERIT_FD,
-                    .data = .{ .fd = bun.uvfdcast(fd) },
+                    .data = .{ .fd = bun.uvfdcast(_fd) },
                 },
                 .path => |pathlike| {
                     _ = pathlike;
@@ -2591,16 +3089,6 @@ pub const Subprocess = struct {
                 },
                 .memfd => unreachable,
             };
-        }
-
-        pub fn makeUVPipe(stdio: @This(), global: *JSGlobalObject) ?[2]uv.uv_file {
-            std.debug.assert(stdio.isPiped());
-            var pipe: [2]uv.uv_file = undefined;
-            if (uv.uv_pipe(&pipe, 0, 0).errEnum()) |errno| {
-                global.throwValue(bun.sys.Error.fromCode(errno, .uv_pipe).toJSC(global));
-                return null;
-            }
-            return pipe;
         }
     };
 
@@ -2801,6 +3289,8 @@ pub const Subprocess = struct {
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
+    const ShellSubprocess = bun.shell.Subprocess;
+    const ShellSubprocessMini = bun.shell.SubprocessMini;
 
     // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
     // use a thread to wait for the child process to exit.
@@ -2809,10 +3299,100 @@ pub const Subprocess = struct {
         concurrent_queue: Queue = .{},
         lifecycle_script_concurrent_queue: LifecycleScriptTaskQueue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
+        shell: struct {
+            jsc: ShellSubprocessQueue = .{},
+            mini: ShellSubprocessMiniQueue = .{},
+        } = .{},
         lifecycle_script_queue: std.ArrayList(*LifecycleScriptSubprocess) = std.ArrayList(*LifecycleScriptSubprocess).init(bun.default_allocator),
         started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
         eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+
+        pub const ShellSubprocessQueue = NewShellQueue(ShellSubprocess);
+        pub const ShellSubprocessMiniQueue = NewShellQueue(ShellSubprocessMini);
+
+        fn NewShellQueue(comptime T: type) type {
+            return struct {
+                queue: ConcurrentQueue = .{},
+                active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.default_allocator),
+
+                pub const ShellTask = struct {
+                    shell: *T,
+                    next: ?*ShellTask = null,
+
+                    pub usingnamespace bun.New(@This());
+                };
+                pub const ConcurrentQueue = bun.UnboundedQueue(ShellTask, .next);
+
+                pub const ResultTask = struct {
+                    result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                    subprocess: *T,
+
+                    pub usingnamespace bun.New(@This());
+
+                    pub const runFromJSThread = runFromMainThread;
+
+                    pub fn runFromMainThread(self: *@This()) void {
+                        const result = self.result;
+                        var subprocess = self.subprocess;
+                        _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                        self.destroy();
+                        subprocess.onWaitPid(false, result);
+                    }
+
+                    pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
+                        self.runFromMainThread();
+                    }
+                };
+
+                pub fn append(self: *@This(), shell: *T) void {
+                    self.queue.push(
+                        ShellTask.new(.{
+                            .shell = shell,
+                        }),
+                    );
+                }
+
+                pub fn loop(this: *@This()) void {
+                    {
+                        var batch = this.queue.popBatch();
+                        var iter = batch.iterator();
+                        this.active.ensureUnusedCapacity(batch.count) catch unreachable;
+                        while (iter.next()) |task| {
+                            this.active.appendAssumeCapacity(task.shell);
+                            task.destroy();
+                        }
+                    }
+
+                    var queue: []*T = this.active.items;
+                    var i: usize = 0;
+                    while (queue.len > 0 and i < queue.len) {
+                        var process = queue[i];
+
+                        // this case shouldn't really happen
+                        if (process.pid == bun.invalid_fd.int()) {
+                            _ = this.active.orderedRemove(i);
+                            _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                            queue = this.active.items;
+                            continue;
+                        }
+
+                        const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, null);
+                        if (result == .err or (result == .result and result.result.pid == process.pid)) {
+                            _ = this.active.orderedRemove(i);
+                            queue = this.active.items;
+
+                            T.GlobalHandle.init(process.globalThis).enqueueTaskConcurrentWaitPid(ResultTask.new(.{
+                                .result = result,
+                                .subprocess = process,
+                            }));
+                        }
+
+                        i += 1;
+                    }
+                }
+            };
+        }
 
         pub fn setShouldUseWaiterThread() void {
             @atomicStore(bool, &should_use_waiter_thread, true, .Monotonic);
@@ -2826,6 +3406,39 @@ pub const Subprocess = struct {
             subprocess: *Subprocess,
             next: ?*WaitTask = null,
         };
+
+        pub fn appendShell(comptime Type: type, process: *Type) void {
+            const GlobalHandle = Type.GlobalHandle;
+
+            if (process.poll == .wait_thread) {
+                process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
+                _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
+            } else {
+                process.poll = .{
+                    .wait_thread = .{
+                        .poll_ref = .{},
+                        .ref_count = std.atomic.Value(u32).init(1),
+                    },
+                };
+                process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
+            }
+
+            switch (comptime Type) {
+                ShellSubprocess => instance.shell.jsc.append(process),
+                ShellSubprocessMini => instance.shell.mini.append(process),
+                else => @compileError("Unknown ShellSubprocess type"),
+            }
+            // if (comptime is_js) {
+            //     process.updateHasPendingActivity();
+            // }
+
+            init() catch @panic("Failed to start WaiterThread");
+
+            if (comptime Environment.isLinux) {
+                const one = @as([8]u8, @bitCast(@as(usize, 1)));
+                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
+            }
+        }
 
         pub const LifecycleScriptWaitTask = struct {
             lifecycle_script_subprocess: *bun.install.LifecycleScriptSubprocess,
@@ -3025,6 +3638,8 @@ pub const Subprocess = struct {
             while (true) {
                 this.loopSubprocess();
                 this.loopLifecycleScriptsSubprocess();
+                this.shell.jsc.loop();
+                this.shell.mini.loop();
 
                 if (comptime Environment.isLinux) {
                     var polls = [_]std.os.pollfd{

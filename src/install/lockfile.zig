@@ -1625,7 +1625,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    const file = tmpfile.file();
+    const file = tmpfile.fd.asFile();
     {
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
         defer bytes.deinit();
@@ -2581,7 +2581,7 @@ pub const Package = extern struct {
                         std.os.O.RDONLY,
                         0,
                     ).unwrap();
-                    const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
+                    const json_file = json_file_fd.asFile();
                     defer json_file.close();
                     const json_stat_size = try json_file.getEndPos();
                     const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
@@ -2613,7 +2613,7 @@ pub const Package = extern struct {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
                     cwd,
                     &[_]string{"binding.gyp"},
-                    .posix,
+                    .auto,
                 );
 
                 break :brk bun.sys.exists(binding_dot_gyp_path);
@@ -3382,7 +3382,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 dependency_version.value.folder.slice(buf),
                             },
-                            .posix,
+                            .auto,
                         ),
                     ),
                 );
@@ -3437,7 +3437,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 workspace,
                             },
-                            .posix,
+                            .auto,
                         ),
                     );
                 });
@@ -3846,9 +3846,7 @@ pub const Package = extern struct {
                     const workspace_entry = processWorkspaceName(
                         allocator,
                         workspace_allocator,
-                        std.fs.Dir{
-                            .fd = bun.fdcast(dir_fd),
-                        },
+                        dir_fd.asDir(),
                         "",
                         filepath_buf,
                         workspace_name_buf,

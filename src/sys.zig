@@ -11,7 +11,6 @@ const JSC = @import("root").bun.JSC;
 const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
@@ -126,9 +125,11 @@ pub const Tag = enum(u8) {
 
     uv_spawn,
     uv_pipe,
+    pipe,
 
     WriteFile,
     NtQueryDirectoryFile,
+    NtSetInformationFile,
     GetFinalPathNameByHandle,
     CloseHandle,
     SetFilePointerEx,
@@ -402,7 +403,12 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else bun.fdcast(dirFd),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+            null
+        else if (dirFd == bun.invalid_fd)
+            std.fs.cwd().fd
+        else
+            dirFd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
@@ -464,8 +470,9 @@ pub noinline fn openDirAtWindowsA(
     var wbuf: bun.WPathBuffer = undefined;
     return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
-pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatWindows(dir: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
+    const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;
 
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
     if (flags & O.RDWR != 0) {
@@ -478,11 +485,39 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         access_mask |= w.GENERIC_READ;
     }
 
-    const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;
+    const creation: w.ULONG = blk: {
+        if (flags & O.CREAT != 0) {
+            if (flags & O.EXCL != 0) {
+                break :blk w.FILE_CREATE;
+            }
+            break :blk if (overwrite) w.FILE_OVERWRITE_IF else w.FILE_OPEN_IF;
+        }
+        break :blk if (overwrite) w.FILE_OVERWRITE else w.FILE_OPEN;
+    };
 
+    const blocking_flag: windows.ULONG = if (!nonblock) windows.FILE_SYNCHRONOUS_IO_NONALERT else 0;
+    const file_or_dir_flag: windows.ULONG = switch (flags & O.DIRECTORY != 0) {
+        // .file_only => windows.FILE_NON_DIRECTORY_FILE,
+        true => windows.FILE_DIRECTORY_FILE,
+        false => 0,
+    };
+    const follow_symlinks = flags & O.NOFOLLOW == 0;
+
+    const options: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
+
+    return ntCreateFile(dir, path, access_mask, creation, options);
+}
+
+pub fn ntCreateFile(
+    dir: bun.FileDescriptor,
+    path_maybe_leading_dot: []const u16,
+    access_mask: w.ULONG,
+    disposition: w.ULONG,
+    options: w.ULONG,
+) Maybe(bun.FileDescriptor) {
     var result: windows.HANDLE = undefined;
 
-    const path = if (bun.strings.hasPrefixComptimeUTF16(path_, ".\\")) path_[2..] else path_;
+    const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
@@ -499,34 +534,16 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
         .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
         .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
             null
-        else if (dirfd == bun.invalid_fd)
+        else if (dir == bun.invalid_fd)
             std.fs.cwd().fd
         else
-            bun.fdcast(dirfd),
+            dir.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
         .SecurityQualityOfService = null,
     };
     var io: windows.IO_STATUS_BLOCK = undefined;
-    const blocking_flag: windows.ULONG = if (!nonblock) windows.FILE_SYNCHRONOUS_IO_NONALERT else 0;
-    const file_or_dir_flag: windows.ULONG = switch (flags & O.DIRECTORY != 0) {
-        // .file_only => windows.FILE_NON_DIRECTORY_FILE,
-        true => windows.FILE_DIRECTORY_FILE,
-        false => 0,
-    };
-    const follow_symlinks = flags & O.NOFOLLOW == 0;
-    const creation: w.ULONG = blk: {
-        if (flags & O.CREAT != 0) {
-            if (flags & O.EXCL != 0) {
-                break :blk w.FILE_CREATE;
-            }
-            break :blk if (overwrite) w.FILE_OVERWRITE_IF else w.FILE_OPEN_IF;
-        }
-        break :blk if (overwrite) w.FILE_OVERWRITE else w.FILE_OPEN;
-    };
-
-    const wflags: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
 
     while (true) {
         const rc = windows.ntdll.NtCreateFile(
@@ -537,19 +554,19 @@ pub fn openatWindows(dirfd: bun.FileDescriptor, path_: []const u16, flags: bun.M
             null,
             w.FILE_ATTRIBUTE_NORMAL,
             w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
-            creation,
-            wflags,
+            disposition,
+            options,
             null,
             0,
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dirfd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
             .SUCCESS => {
-                if (flags & O.APPEND != 0) {
+                if (access_mask & w.FILE_APPEND_DATA != 0) {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     const FILE_END = 2;
                     if (windows.kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
@@ -675,6 +692,15 @@ pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
     return bun.FDImpl.decode(fd).close();
 }
 
+pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
+    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD or fd == bun.STDIN_FD) {
+        log("close({d}) SKIPPED", .{fd});
+        return null;
+    }
+
+    return closeAllowingStdoutAndStderr(fd);
+}
+
 pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     return bun.FDImpl.decode(fd).closeAllowingStdoutAndStderr();
 }
@@ -718,7 +744,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             var bytes_written: u32 = undefined;
             std.debug.assert(bytes.len > 0);
             const rc = std.os.windows.kernel32.WriteFile(
-                bun.fdcast(fd),
+                fd.cast(),
                 bytes.ptr,
                 adjusted_len,
                 &bytes_written,
@@ -926,7 +952,6 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
         }
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
-    unreachable;
 }
 
 const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
@@ -953,8 +978,6 @@ pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usiz
             }
         } else Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
-
-    unreachable;
 }
 
 pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
@@ -1023,7 +1046,6 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
-    unreachable;
 }
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
@@ -1045,7 +1067,6 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
-    unreachable;
 }
 
 pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
@@ -1058,7 +1079,6 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
         }
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
-    unreachable;
 }
 
 pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usize) {
@@ -1071,12 +1091,11 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
         }
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
-    unreachable;
 }
 
-pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
+pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {
+        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
             return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
         }
 
@@ -1100,21 +1119,31 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     if (Environment.isWindows) {
-        return Maybe(void).todo();
+        var w_buf_from: bun.WPathBuffer = undefined;
+        var w_buf_to: bun.WPathBuffer = undefined;
+        return bun.C.renameAtW(
+            from_dir,
+            bun.strings.toWPath(&w_buf_from, from),
+            to_dir,
+            bun.strings.toWPath(&w_buf_to, to),
+            false,
+        );
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
+        if (comptime Environment.allow_assert)
+            log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
@@ -1125,7 +1154,6 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
@@ -1136,7 +1164,6 @@ pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
@@ -1149,7 +1176,6 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
@@ -1162,7 +1188,6 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) 
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u32) Maybe(void) {
@@ -1175,7 +1200,6 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
@@ -1186,7 +1210,6 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
         }
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
@@ -1194,10 +1217,27 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         return Maybe(void).todo();
     }
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 1), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, std.os.AT.REMOVEDIR), .rmdir)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
+        return Maybe(void).success;
+    }
+}
+
+pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
+    if (Environment.isWindows) {
+        return Maybe(void).todo();
+    }
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+            return err;
+        }
+        if (comptime Environment.allow_assert)
+            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return Maybe(void).success;
     }
     unreachable;
@@ -1210,11 +1250,14 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
+            if (comptime Environment.allow_assert)
+                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
             return err;
         }
+        if (comptime Environment.allow_assert)
+            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return Maybe(void).success;
     }
-    unreachable;
 }
 
 pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
@@ -1338,6 +1381,12 @@ pub const Error = struct {
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
+    }
+
+    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
+        var copy = this.*;
+        copy.path = try allocator.dupe(u8, copy.path);
+        return copy;
     }
 
     pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
@@ -1672,7 +1721,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         const offset_low: u64 = @as(u32, @intCast(offset & 0xFFFFFFFF));
         var plarge_integer: i64 = @bitCast(offset_high);
         const rc = kernel32.SetFilePointerEx(
-            bun.fdcast(fd),
+            fd.cast(),
             @as(windows.LARGE_INTEGER, @bitCast(offset_low)),
             &plarge_integer,
             windows.FILE_BEGIN,
@@ -1684,13 +1733,29 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     }
 }
 
+pub fn pipe() Maybe([2]bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        @panic("TODO: Implement `pipe()` for Windows");
+    }
+
+    var fds: [2]i32 = undefined;
+    const rc = system.pipe(&fds);
+    if (Maybe([2]bun.FileDescriptor).errnoSys(
+        rc,
+        .pipe,
+    )) |err| {
+        return err;
+    }
+    return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
+}
+
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         const target: *windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,
-            bun.fdcast(fd),
+            fd.cast(),
             process,
             target,
             0,
@@ -1706,6 +1771,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     }
 
     const out = std.c.dup(fd.cast());
+    log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
 

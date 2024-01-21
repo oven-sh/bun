@@ -309,6 +309,9 @@ export default {
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
+    page("runtime/shell", "$ Shell", {
+      description: `Bun's cross-platform shell-scripting API makes shell scripting with JavaScript fun`,
+    }), // "`Bun.$`"),
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),

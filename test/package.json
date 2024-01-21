@@ -41,6 +41,7 @@
     "sinon": "6.0.0",
     "socket.io": "4.7.1",
     "socket.io-client": "4.7.1",
+    "string-width": "7.0.0",
     "supertest": "6.3.3",
     "svelte": "3.55.1",
     "typescript": "5.0.2",

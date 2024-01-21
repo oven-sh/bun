@@ -793,7 +793,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.DIR_NOT_EMPTY => SystemErrno.ENOTEMPTY,
                 Win32Error.WSAENOTSOCK => SystemErrno.ENOTSOCK,
                 Win32Error.NOT_SUPPORTED => SystemErrno.ENOTSUP,
-                Win32Error.BROKEN_PIPE => SystemErrno.EOF,
+                Win32Error.BROKEN_PIPE => SystemErrno.EPIPE,
                 Win32Error.ACCESS_DENIED => SystemErrno.EPERM,
                 Win32Error.PRIVILEGE_NOT_HELD => SystemErrno.EPERM,
                 Win32Error.BAD_PIPE => SystemErrno.EPIPE,
@@ -1257,4 +1257,71 @@ pub fn getErrno(_: anytype) E {
     }
 
     return .SUCCESS;
+}
+
+const Maybe = bun.JSC.Maybe;
+
+const w = std.os.windows;
+
+/// Derived from std.os.windows.renameAtW
+/// Allows more errors
+pub fn renameAtW(
+    old_dir_fd: bun.FileDescriptor,
+    old_path_w: []const u16,
+    new_dir_fd: bun.FileDescriptor,
+    new_path_w: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    const src_fd = switch (bun.sys.ntCreateFile(
+        old_dir_fd,
+        old_path_w,
+        // access_mask
+        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+        // create disposition
+        w.FILE_OPEN,
+        // create options
+        w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+    )) {
+        .err => |err| return Maybe(void){ .err = err },
+        .result => |fd| fd,
+    };
+    defer _ = bun.sys.close(src_fd);
+
+    var rc: w.NTSTATUS = undefined;
+    // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
+    // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
+    // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
+    // supported in order to avoid either (1) using a redundant call that we can know in advance will return
+    // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
+    // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
+    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
+    var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+    const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_path_w.len * 2;
+    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.C.E.NAMETOOLONG, .NtSetInformationFile);
+
+    const rename_info = @as(*w.FILE_RENAME_INFORMATION_EX, @ptrCast(&rename_info_buf));
+    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+    var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
+    rename_info.* = .{
+        .Flags = flags,
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(new_path_w)) null else new_dir_fd.cast(),
+        .FileNameLength = @intCast(new_path_w.len * 2), // already checked error.NameTooLong
+        .FileName = undefined,
+    };
+    @memcpy(@as([*]u16, &rename_info.FileName)[0..new_path_w.len], new_path_w);
+    rc = w.ntdll.NtSetInformationFile(
+        src_fd.cast(),
+        &io_status_block,
+        rename_info,
+        @intCast(struct_len), // already checked for error.NameTooLong
+        .FileRenameInformationEx,
+    );
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
 }

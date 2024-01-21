@@ -235,7 +235,7 @@ pub const RuntimeTranspilerCache = struct {
                 }
                 std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
-                bun.C.preallocate_file(bun.fdcast(tmpfile.fd), 0, @intCast(end_position)) catch {};
+                bun.C.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {
                     const written = try bun.sys.pwritev(tmpfile.fd, vecs, position).unwrap();
                     if (written <= 0) {
@@ -479,7 +479,7 @@ pub const RuntimeTranspilerCache = struct {
             _ = bun.sys.unlink(cache_file_path.sliceAssumeZ());
         }
 
-        const file = std.fs.File{ .handle = bun.fdcast(cache_fd) };
+        const file = cache_fd.asFile();
         const metadata_bytes = try file.preadAll(&metadata_bytes_buf, 0);
         var metadata_stream = std.io.fixedBufferStream(metadata_bytes_buf[0..metadata_bytes]);
 

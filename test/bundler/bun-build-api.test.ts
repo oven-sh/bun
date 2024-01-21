@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.build", () => {
   test("passing undefined doesnt segfault", () => {
@@ -167,36 +167,53 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // test("BuildArtifact properties splitting", async () => {
-  //   Bun.gc(true);
-  //   const x = await Bun.build({
-  //     entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-  //     splitting: true,
-  //   });
-  //   expect(x.outputs).toHaveLength(2);
-  //   const [indexBlob, chunkBlob] = x.outputs;
+  test("BuildArtifact properties splitting", async () => {
+    Bun.gc(true);
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+      splitting: true,
+    });
 
-  //   expect(indexBlob).toBeTruthy();
-  //   expect(indexBlob.type).toBe("text/javascript;charset=utf-8");
-  //   expect(indexBlob.size).toBeGreaterThan(1);
-  //   expect(indexBlob.path).toBe("/index.js");
-  //   expect(indexBlob.hash).toBeTruthy();
-  //   expect(indexBlob.hash).toMatchSnapshot("hash index.js");
-  //   expect(indexBlob.kind).toBe("entry-point");
-  //   expect(indexBlob.loader).toBe("jsx");
-  //   expect(indexBlob.sourcemap).toBe(null);
+    const expected: Pick<import("bun").BuildArtifact, "type" | "path" | "kind" | "loader" | "sourcemap">[] = [
+      {
+        type: "text/javascript;charset=utf-8",
+        path: "./index.js",
+        kind: "entry-point",
+        loader: "jsx",
+        sourcemap: null,
+      },
+      {
+        type: "text/javascript;charset=utf-8",
+        path: "./fn.js",
+        kind: "chunk",
+        loader: "jsx",
+        sourcemap: null,
+      },
+      {
+        type: "text/javascript;charset=utf-8",
+        path: "./chunk-[hash].js",
+        kind: "chunk",
+        loader: "js",
+        sourcemap: null,
+      },
+    ];
+    expect(x.outputs).toHaveLength(expected.length);
 
-  //   expect(chunkBlob).toBeTruthy();
-  //   expect(chunkBlob.type).toBe("text/javascript;charset=utf-8");
-  //   expect(chunkBlob.size).toBeGreaterThan(1);
-  //   expect(chunkBlob.path).toBe(`/foo-${chunkBlob.hash}.js`);
-  //   expect(chunkBlob.hash).toBeTruthy();
-  //   expect(chunkBlob.hash).toMatchSnapshot("hash foo.js");
-  //   expect(chunkBlob.kind).toBe("chunk");
-  //   expect(chunkBlob.loader).toBe("jsx");
-  //   expect(chunkBlob.sourcemap).toBe(null);
-  //   Bun.gc(true);
-  // });
+    x.outputs.forEach((blob, i) => {
+      const e = expected[i];
+      expect(blob).toBeTruthy();
+      expect(blob.type).toBe(e.type);
+      expect(blob.size).toBePositive();
+      expect(blob.hash).toBeTruthy();
+      expect(blob.path).toBe(e.path.replace("[hash]", blob.hash as string));
+      expect(blob.hash).toMatchSnapshot(`hash ${blob.path}`);
+      expect(blob.kind).toBe(e.kind);
+      expect(blob.loader).toBe(e.loader);
+      expect(blob.sourcemap).toBe(e.sourcemap);
+    });
+
+    Bun.gc(true);
+  });
 
   test("new Response(BuildArtifact) sets content type", async () => {
     const x = await Bun.build({

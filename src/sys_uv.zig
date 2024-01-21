@@ -92,7 +92,7 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
 
     log("uv chown({s}, {d}, {d}) = {d}", .{ file_path, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .chown, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -106,7 +106,7 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
 
     log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fchown, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -130,7 +130,7 @@ pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
 
     log("uv rmdir({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .rmdir, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -142,7 +142,7 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
 
     log("uv unlink({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .unlink, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -155,14 +155,14 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe(usize) {
 
     if (rc.errno()) |errno| {
         log("uv readlink({s}) = {d}, [err]", .{ file_path, rc.int() });
-        return .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } };
+        return .{ .err = .{ .errno = errno, .syscall = .readlink, .from_libuv = true } };
     } else {
         // Seems like `rc` does not contain the errno?
         std.debug.assert(rc.int() == 0);
         const slice = bun.span(req.ptrAs([*:0]u8));
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
-            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .mkdir, .from_libuv = true } };
+            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink, .from_libuv = true } };
         }
         log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.int(), slice });
         @memcpy(buf[0..slice.len], slice);
@@ -177,7 +177,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv rename({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .rename, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -185,12 +185,11 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    // TODO: i think the flags here are what let us do directory junctions
     const rc = uv.uv_fs_link(uv.Loop.get(), &req, from.ptr, to.ptr, null);
 
     log("uv link({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .link, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -198,12 +197,11 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    // TODO: i think the flags here are what let us do directory junctions
     const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, from.ptr, to.ptr, flags, null);
 
     log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .symlink, .from_libuv = true } }
     else
         .{ .result = {} };
 }

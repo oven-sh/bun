@@ -403,7 +403,12 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else dirFd.cast(),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+            null
+        else if (dirFd == bun.invalid_fd)
+            std.fs.cwd().fd
+        else
+            dirFd.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,

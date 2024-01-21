@@ -1590,7 +1590,6 @@ pub const Arguments = struct {
             LinkTypeEnum;
 
         const LinkTypeEnum = enum {
-            auto,
             file,
             dir,
             junction,
@@ -1656,22 +1655,28 @@ pub const Arguments = struct {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
                         defer str.deref();
-                        const utf8 = str.utf8();
-                        if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
-                        if (strings.eqlComptime(utf8, "file")) break :link_type .file;
-                        if (strings.eqlComptime(utf8, "junction")) break :link_type .junction;
+                        if (str.eqlComptime("dir")) break :link_type .dir;
+                        if (str.eqlComptime("file")) break :link_type .file;
+                        if (str.eqlComptime("junction")) break :link_type .junction;
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
-                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{s}\"",
-                                .{utf8},
+                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"",
+                                .{str},
                                 ctx,
                                 exception,
                             );
                         }
                         return null;
                     }
+
+                    // not a string. fallthrough to auto detect.
                 }
-                break :link_type .auto;
+
+                var buf: bun.PathBuffer = undefined;
+                const stat = bun.sys.stat(old_path.sliceZ(&buf));
+
+                // if there's an error node defaults to file.
+                break :link_type if (stat == .result and bun.C.S.ISDIR(@intCast(stat.result.mode))) .dir else .file;
             };
 
             return Symlink{
@@ -5640,8 +5645,6 @@ pub const NodeFS = struct {
                 args.old_path.sliceZ(&this.sync_error_buf),
                 args.new_path.sliceZ(&to_buf),
                 switch (args.link_type) {
-                    // TODO: auto mode
-                    .auto => 0,
                     .file => 0,
                     .dir => uv.UV_FS_SYMLINK_DIR,
                     .junction => uv.UV_FS_SYMLINK_JUNCTION,

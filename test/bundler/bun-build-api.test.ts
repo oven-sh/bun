@@ -15,30 +15,16 @@ describe("Bun.build", () => {
   });
 
   test("invalid options throws", async () => {
-    expect(() => Bun.build({} as any)).toThrow();
-    expect(() =>
-      Bun.build({
-        entrypoints: [],
-      } as any),
-    ).toThrow();
-    expect(() =>
-      Bun.build({
-        entrypoints: ["hello"],
-        format: "invalid",
-      } as any),
-    ).toThrow();
-    expect(() =>
-      Bun.build({
-        entrypoints: ["hello"],
-        target: "invalid",
-      } as any),
-    ).toThrow();
-    expect(() =>
-      Bun.build({
-        entrypoints: ["hello"],
-        sourcemap: "invalid",
-      } as any),
-    ).toThrow();
+    // @ts-expect-error
+    expect(() => Bun.build({})).toThrow();
+    // @ts-expect-error
+    expect(() => Bun.build({ entrypoints: [] })).toThrow();
+    // @ts-expect-error
+    expect(() => Bun.build({ entrypoints: ["hello"], format: "invalid" })).toThrow();
+    // @ts-expect-error
+    expect(() => Bun.build({ entrypoints: ["hello"], target: "invalid" })).toThrow();
+    // @ts-expect-error
+    expect(() => Bun.build({ entrypoints: ["hello"], sourcemap: "invalid" })).toThrow();
   });
 
   test("returns errors properly", async () => {

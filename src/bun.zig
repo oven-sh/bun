@@ -2450,3 +2450,20 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
 }
+
+extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
+
+pub fn getUserName(output_buffer: []u8) ?[]const u8 {
+    if (Environment.isWindows) {
+        var size: u32 = @intCast(output_buffer.len);
+        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
+            return null;
+        }
+        return output_buffer[0..size];
+    }
+    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
+    const user = env.get("USER") orelse return null;
+    const size = @min(output_buffer.len, user.len);
+    copy(u8, output_buffer[0..size], user[0..size]);
+    return output_buffer[0..size];
+}

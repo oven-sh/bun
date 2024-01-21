@@ -44,6 +44,7 @@ const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 const assert = std.debug.assert;
 const Syscall = bun.sys;
+const uv = bun.windows.libuv;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -436,6 +437,7 @@ pub const StreamStart = union(Tag) {
     },
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
+    UVStreamSink: void,
     ready: void,
 
     pub const Tag = enum {
@@ -446,6 +448,7 @@ pub const StreamStart = union(Tag) {
         FileSink,
         HTTPSResponseSink,
         HTTPResponseSink,
+        UVStreamSink,
         ready,
     };
 
@@ -585,7 +588,7 @@ pub const StreamStart = union(Tag) {
                     },
                 };
             },
-            .HTTPSResponseSink, .HTTPResponseSink => {
+            .UVStreamSink, .HTTPSResponseSink, .HTTPResponseSink => {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
@@ -2036,6 +2039,209 @@ pub const ArrayBufferSink = struct {
     }
 
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
+};
+
+pub const UVStreamSink = struct {
+    stream: StreamType,
+
+    allocator: std.mem.Allocator,
+    done: bool = false,
+    signal: Signal = .{},
+    next: ?Sink = null,
+    buffer: bun.ByteList = .{},
+    pub const name = "UVStreamSink";
+    const StreamType = if(Environment.isWindows) *uv.uv_stream_t else *anyopaque;
+    const AsyncWriteInfo = struct {
+        sink: *UVStreamSink,
+        input_buffer: uv.uv_buf_t = std.mem.zeroes(uv.uv_buf_t),
+        req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+
+        pub fn init(parent: *UVStreamSink, data: []const u8) *AsyncWriteInfo {
+            var info = bun.new(AsyncWriteInfo, .{ .sink = parent });
+            info.req.data = info;
+            info.input_buffer = uv.uv_buf_t.init(bun.default_allocator.dupe(u8, data) catch bun.outOfMemory());
+            return info;
+        }
+
+        fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
+            const this = bun.cast(*AsyncWriteInfo, req.data);
+            defer this.deinit();
+            if (status.errEnum()) |err| {
+                _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
+                return;
+            }
+        }
+
+        pub fn run(this: *AsyncWriteInfo) void {
+            if (uv.uv_write(&this.req, @ptrCast(this.sink.stream), @ptrCast(&this.input_buffer), 1, AsyncWriteInfo.uvWriteCallback).errEnum()) |err| {
+                _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
+                this.deinit();
+            }
+        }
+
+        pub fn deinit(this: *AsyncWriteInfo) void {
+            bun.default_allocator.free(this.input_buffer.slice());
+            bun.default_allocator.destroy(this);
+        }
+    };
+
+    fn writeAsync(this: *UVStreamSink, data: []const u8) void {
+        if (this.done) return;
+        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+
+        AsyncWriteInfo.init(this, data).run();
+    }
+
+    fn writeMaybeSync(this: *UVStreamSink, data: []const u8) void {
+        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+
+        if (this.done) return;
+
+        var to_write = data;
+        while (to_write.len > 0) {
+            var input_buffer = uv.uv_buf_t.init(to_write);
+            const status = uv.uv_try_write(@ptrCast(this.stream), @ptrCast(&input_buffer), 1);
+            if (status.errEnum()) |err| {
+                if (err == bun.C.E.AGAIN) {
+                    this.writeAsync(to_write);
+                    return;
+                }
+                _ = this.end(bun.sys.Error.fromCode(err, .write));
+                return;
+            }
+            const bytes_written: usize = @intCast(status.int());
+            to_write = to_write[bytes_written..];
+        }
+    }
+
+    pub fn connect(this: *UVStreamSink, signal: Signal) void {
+        std.debug.assert(this.reader == null);
+        this.signal = signal;
+    }
+
+    pub fn start(this: *UVStreamSink, _: StreamStart) JSC.Node.Maybe(void) {
+        this.done = false;
+        this.signal.start();
+        return .{ .result = {} };
+    }
+
+    pub fn flush(_: *UVStreamSink) JSC.Node.Maybe(void) {
+        return .{ .result = {} };
+    }
+
+    pub fn flushFromJS(_: *UVStreamSink, _: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
+        return .{ .result = JSValue.jsNumber(0) };
+    }
+
+    pub fn close(this: *UVStreamSink) void {
+        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+        _ = uv.uv_close(@ptrCast(this.stream), null);
+    }
+
+    pub fn finalize(this: *UVStreamSink) void {
+        if (this.buffer.cap > 0) {
+            this.buffer.listManaged(this.allocator).deinit();
+            this.buffer = bun.ByteList.init("");
+        }
+        this.close();
+        this.allocator.destroy(this);
+    }
+
+    pub fn init(allocator: std.mem.Allocator, stream: StreamType, next: ?Sink) !*UVStreamSink {
+        const this = try allocator.create(UVStreamSink);
+        this.* = UVStreamSink{
+            .stream = stream,
+            .allocator = allocator,
+            .next = next,
+        };
+        return this;
+    }
+
+    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeBytes(data);
+        }
+        const bytes = data.slice();
+        this.writeMaybeSync(bytes);
+        this.signal.ready(null, null);
+        return .{ .owned = @truncate(bytes.len) };
+    }
+
+    pub const writeBytes = write;
+    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeLatin1(data);
+        }
+        const bytes = data.slice();
+        if (strings.isAllASCII(bytes)) {
+            this.writeMaybeSync(bytes);
+            this.signal.ready(null, null);
+            return .{ .owned = @truncate(bytes.len) };
+        }
+        this.buffer.len = 0;
+        const len = this.buffer.writeLatin1(this.allocator, bytes) catch {
+            return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
+        };
+        this.writeMaybeSync(this.buffer.slice());
+        this.signal.ready(null, null);
+        return .{ .owned = len };
+    }
+
+    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeUTF16(data);
+        }
+        this.buffer.len = 0;
+        const len = this.buffer.writeUTF16(this.allocator, @as([*]const u16, @ptrCast(@alignCast(data.slice().ptr)))[0..std.mem.bytesAsSlice(u16, data.slice()).len]) catch {
+            return .{ .err = Syscall.Error.oom };
+        };
+        this.writeMaybeSync(this.buffer.slice());
+        this.signal.ready(null, null);
+        return .{ .owned = len };
+    }
+
+    pub fn end(this: *UVStreamSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.next) |*next| {
+            return next.end(err);
+        }
+        this.close();
+        this.signal.close(err);
+        return .{ .result = {} };
+    }
+    pub fn destroy(this: *UVStreamSink) void {
+        if (this.buffer.cap > 0) {
+            this.buffer.listManaged(this.allocator).deinit();
+            this.buffer = bun.ByteList.init("");
+            this.head = 0;
+        }
+        this.close();
+        this.allocator.destroy(this);
+    }
+    pub fn toJS(this: *UVStreamSink, globalThis: *JSGlobalObject) JSValue {
+        return JSSink.createObject(globalThis, this);
+    }
+
+    pub fn endFromJS(this: *UVStreamSink, _: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        if (this.done) {
+            return .{ .result = JSC.JSValue.jsNumber(0) };
+        }
+        this.close();
+        std.debug.assert(this.next == null);
+
+        if (this.buffer.cap > 0) {
+            this.buffer.listManaged(this.allocator).deinit();
+            this.buffer = bun.ByteList.init("");
+        }
+        this.done = true;
+        this.signal.close(null);
+        return .{ .result = JSC.JSValue.jsNumber(0) };
+    }
+
+    pub fn sink(this: *UVStreamSink) Sink {
+        return Sink.init(this);
+    }
+
+    pub const JSSink = NewJSSink(@This(), "UVStreamSink");
 };
 
 const AutoFlusher = struct {

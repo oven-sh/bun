@@ -8,6 +8,8 @@ const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
+const FDImpl = bun.FDImpl;
+const Environment = bun.Environment;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const Async = bun.Async;
@@ -259,7 +261,9 @@ pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDERR_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
             },
@@ -272,7 +276,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDERR_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stderr_descriptor_type == .terminal,
                     .mode = mode,
@@ -289,7 +293,9 @@ pub fn stdout(rare: *RareData) *Blob.Store {
     return rare.stdout_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDOUT_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
             },
@@ -301,7 +307,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDOUT_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stdout_descriptor_type == .terminal,
                     .mode = mode,
@@ -317,7 +323,9 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     return rare.stdin_store orelse brk: {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDIN_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
             },
@@ -329,7 +337,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDIN_FD,
+                        .fd = fd,
                     },
                     .is_atty = std.os.isatty(bun.STDIN_FD.cast()),
                     .mode = mode,

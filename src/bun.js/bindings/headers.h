@@ -697,6 +697,27 @@ ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame*
 
 #endif
 
+CPP_DECL JSC__JSValue UVStreamSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue UVStreamSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL void UVStreamSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* UVStreamSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void UVStreamSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void UVStreamSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue UVStreamSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void UVStreamSink__finalize(void* arg0);
+ZIG_DECL JSC__JSValue UVStreamSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL void UVStreamSink__updateRef(void* arg0, bool arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);

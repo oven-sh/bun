@@ -64,7 +64,7 @@ pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../api/schema.zig").Api.StringPointer;
 pub const struct_VirtualMachine = bindings.VirtualMachine;
 pub const ArrayBufferSink = @import("../webcore/streams.zig").ArrayBufferSink;
-
+pub const UVStreamSink = @import("../webcore/streams.zig").UVStreamSink;
 pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
 pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
 pub const WebSocketClient = bindings.WebSocketClient;

@@ -5377,7 +5377,7 @@ pub const NodeFS = struct {
                 } };
 
             // Seems like `rc` does not contain the errno?
-            std.debug.assert(rc.value == 0);
+            std.debug.assert(rc.errEnum() == null);
             const buf = bun.span(req.ptrAs([*:0]u8));
 
             return .{

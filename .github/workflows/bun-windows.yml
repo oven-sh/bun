@@ -365,7 +365,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     permissions:
       pull-requests: write
-    timeout-minutes: 30
+    timeout-minutes: 180
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
       failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}

@@ -2958,7 +2958,7 @@ console.log(foo, array);
       expectPrinted("1 != 2", "!0");
       expectPrinted("1 != '1'", '1 != "1"');
 
-      expectPrinted("\"\" == 0", "!0");
+      expectPrinted('"" == 0', "!0");
       expectPrinted("1n == 1n", "!0");
       expectPrinted("1234n == 1234n", "!0");
       expectPrinted("0x00n == 0n", "0x00n == 0n");

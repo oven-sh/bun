@@ -1,6 +1,7 @@
 const BoringSSL = @import("root").bun.BoringSSL;
 const std = @import("std");
-pub const bun = @import("./bun.zig");
+
+pub const bun = if (@import("build_options").project.len == 0) @import("./bun.zig") else @import("root").bun;
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {

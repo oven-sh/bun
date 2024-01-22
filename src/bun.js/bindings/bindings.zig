@@ -6054,22 +6054,22 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
 }
 
 // DOMCall Fields
-pub const __DOMCall_ptr = @import("../api/bun.zig").FFIObject.dom_call;
-pub const __DOMCall__reader_u8 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u8;
-pub const __DOMCall__reader_u16 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u16;
-pub const __DOMCall__reader_u32 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u32;
-pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.ptr;
-pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i8;
-pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i16;
-pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i32;
-pub const __DOMCall__reader_f32 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.f32;
-pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.f64;
-pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i64;
-pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u64;
-pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.intptr;
+pub const __DOMCall_ptr = JSC.API.Bun.FFIObject.dom_call;
+pub const __DOMCall__reader_u8 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u8;
+pub const __DOMCall__reader_u16 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u16;
+pub const __DOMCall__reader_u32 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u32;
+pub const __DOMCall__reader_ptr = JSC.API.Bun.FFIObject.Reader.DOMCalls.ptr;
+pub const __DOMCall__reader_i8 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i8;
+pub const __DOMCall__reader_i16 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i16;
+pub const __DOMCall__reader_i32 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i32;
+pub const __DOMCall__reader_f32 = JSC.API.Bun.FFIObject.Reader.DOMCalls.f32;
+pub const __DOMCall__reader_f64 = JSC.API.Bun.FFIObject.Reader.DOMCalls.f64;
+pub const __DOMCall__reader_i64 = JSC.API.Bun.FFIObject.Reader.DOMCalls.i64;
+pub const __DOMCall__reader_u64 = JSC.API.Bun.FFIObject.Reader.DOMCalls.u64;
+pub const __DOMCall__reader_intptr = JSC.API.Bun.FFIObject.Reader.DOMCalls.intptr;
 pub const DOMCalls = &.{
-    .{ .ptr = @import("../api/bun.zig").FFIObject.dom_call },
-    @import("../api/bun.zig").FFIObject.Reader.DOMCalls,
+    .{ .ptr = JSC.API.Bun.FFIObject.dom_call },
+    JSC.API.Bun.FFIObject.Reader.DOMCalls,
 };
 
 extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;

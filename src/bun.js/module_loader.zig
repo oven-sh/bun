@@ -1986,7 +1986,7 @@ pub const ModuleLoader = struct {
                 if (!jsc_vm.origin.isEmpty()) {
                     writer.writeAll("export default `") catch unreachable;
                     // TODO: escape backtick char, though we might already do that
-                    @import("./api/bun.zig").getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                    JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
                     writer.writeAll("`;\n") catch unreachable;
                 } else {
                     writer.writeAll("export default ") catch unreachable;

@@ -35,6 +35,10 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 $ proto install bun
 ```
 
+```bash#Mise
+$ mise install bun
+```
+
 {% /codetabs %}
 
 ### Windows

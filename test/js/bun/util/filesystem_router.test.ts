@@ -50,7 +50,7 @@ it("should find files", () => {
 
     // https://github.com/oven-sh/bun/issues/8276
     // https://github.com/oven-sh/bun/issues/8278
-    ...(Array.from({length: 65}, (_, i) => `files/a${i}.tsx`))
+    ...Array.from({ length: 65 }, (_, i) => `files/a${i}.tsx`),
   ]);
 
   const router = new FileSystemRouter({
@@ -78,7 +78,7 @@ it("should find files", () => {
 
     // https://github.com/oven-sh/bun/issues/8276
     // https://github.com/oven-sh/bun/issues/8278
-    ...Object.fromEntries((Array.from({length: 65}, (_, i) => [`/files/a${i}`, `${dir}/files/a${i}.tsx`])))
+    ...Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`/files/a${i}`, `${dir}/files/a${i}.tsx`])),
   };
 
   for (const route in fixture) {

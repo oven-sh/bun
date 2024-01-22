@@ -940,11 +940,21 @@ pub const String = extern struct {
 
     pub fn visibleWidth(this: *const String) usize {
         if (this.isUTF8()) {
-            return bun.strings.visibleUTF8Width(this.utf8());
+            return bun.strings.visible.width.utf8(this.utf8());
         } else if (this.isUTF16()) {
-            return bun.strings.visibleUTF16Width(this.utf16());
+            return bun.strings.visible.width.utf16(this.utf16());
         } else {
-            return bun.strings.visibleLatin1Width(this.latin1());
+            return bun.strings.visible.width.ascii(this.latin1());
+        }
+    }
+
+    pub fn visibleWidthExcludeANSIColors(this: *const String) usize {
+        if (this.isUTF8()) {
+            return bun.strings.visible.width.exclude_ansi_colors.utf8(this.utf8());
+        } else if (this.isUTF16()) {
+            return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16());
+        } else {
+            return bun.strings.visible.width.exclude_ansi_colors.ascii(this.latin1());
         }
     }
 

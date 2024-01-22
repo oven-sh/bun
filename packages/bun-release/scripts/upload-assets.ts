@@ -88,5 +88,3 @@ try {
   warn("Failed to cleanup:", cwd, "\n");
 }
 log("Done");
-
-process.exit(0); // FIXME

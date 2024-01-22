@@ -25,7 +25,6 @@ if (action === "publish") {
 } else if (action) {
   throw new Error(`Unknown action: ${action}`);
 }
-process.exit(0); // HACK
 
 async function build(tag?: string): Promise<void> {
   const release = await getRelease(tag);

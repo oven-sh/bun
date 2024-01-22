@@ -1,8 +1,8 @@
 {
   "private": true,
   "name": "bun-debug-adapter-protocol",
-  "version": "0.0.1",
   "dependencies": {
-    "source-map-js": "^1.0.2"
+    "bun-inspector-protocol": "workspace:*",
+    "source-map-js": "1.0.2"
   }
 }

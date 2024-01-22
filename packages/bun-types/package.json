@@ -28,12 +28,10 @@
   "devDependencies": {
     "@definitelytyped/dtslint": "^0.0.199",
     "@definitelytyped/eslint-plugin": "^0.0.197",
-    "prettier": "^2.4.1",
     "typescript": "^5.0.2"
   },
   "scripts": {
     "build": "bun scripts/build.ts",
-    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'",
     "test": "tsc"
   }
 }

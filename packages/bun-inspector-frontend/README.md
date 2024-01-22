@@ -1,4 +1,4 @@
-# bun-devtools-frontend
+# bun-inspector-frontend
 
 This is the WebKit Web Inspector bundled as standalone assets.
 

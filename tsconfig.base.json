@@ -6,12 +6,10 @@
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
-
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-
     "skipLibCheck": true,
     "strict": true,
     "noFallthroughCasesInSwitch": true,
@@ -20,10 +18,7 @@
     "downlevelIteration": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-
-    "typeRoots": ["./types"]
   },
 }

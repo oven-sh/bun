@@ -1,19 +1,30 @@
 {
-  "name": "bun",
-  "dependencies": {
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
-    "peechy": "0.4.34",
-    "prettier": "3.2.2",
-    "react": "next",
-    "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
-  },
   "private": true,
+  "name": "bun",
+  "workspaces": [
+    "packages/bun-types",
+    "packages/bun-debug-adapter-protocol",
+    "packages/bun-inspector-protocol",
+    "packages/bun-inspector-frontend",
+    "packages/bun-vscode",
+    "packages/bun-wasm",
+    "packages/bun-release",
+    "packages/bun-lambda",
+    "packages/bun-error"
+  ],
+  "dependencies": {
+    "esbuild": "0.19.11",
+    "eslint": "8.56.0",
+    "eslint-config-prettier": "9.1.0",
+    "mitata": "0.1.6",
+    "peechy": "0.4.34",
+    "prettier": "3.2.4",
+    "typescript": "5.3.3"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "6.19.1",
+    "@typescript-eslint/parser": "6.19.1"
+  },
   "scripts": {
     "setup": "./scripts/setup.sh",
     "build": "if [ ! -e build ]; then bun setup; fi && ninja -C build",
@@ -29,11 +40,5 @@
     "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun",
     "update-known-failures": "node packages/bun-internal-test/src/update-known-windows-failures.mjs"
   },
-  "devDependencies": {
-    "@types/react": "^18.0.25",
-    "@typescript-eslint/eslint-plugin": "^5.31.0",
-    "@typescript-eslint/parser": "^5.31.0"
-  },
-  "version": "0.0.0",
   "prettier": "./.prettierrc.cjs"
 }

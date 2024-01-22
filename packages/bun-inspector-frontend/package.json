@@ -1,8 +1,6 @@
 {
-  "name": "web-inspector-bun",
-  "module": "index.ts",
   "private": true,
-  "type": "module",
+  "name": "bun-inspector-frontend",
   "scripts": {
     "build": "bun scripts/build.ts",
     "start": "bun scripts/serve.ts"

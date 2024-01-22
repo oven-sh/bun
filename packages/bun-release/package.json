@@ -1,14 +1,16 @@
 {
   "private": true,
   "name": "bun-release",
+  "peerDependencies": {
+    "esbuild": "*"
+  },
   "dependencies": {
-    "aws4fetch": "^1.0.17",
-    "esbuild": "^0.17.3",
-    "jszip": "^3.10.1",
-    "octokit": "^2.0.14"
+    "aws4fetch": "1.0.17",
+    "jszip": "3.10.1",
+    "octokit": "3.1.2"
   },
   "devDependencies": {
-    "@octokit/types": "^8.1.1"
+    "@octokit/types": "12.4.0"
   },
   "scripts": {
     "get-version": "bun scripts/get-version.ts",

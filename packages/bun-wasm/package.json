@@ -5,8 +5,8 @@
     "build": "cd ../.. && make wasm",
     "dev": "cd ../.. && make dev-wasm"
   },
-  "devDependencies": {
-    "peechy": "0.4.32"
+  "peerDependencies": {
+    "peechy": "*"
   },
   "files": [
     "bun.wasm",

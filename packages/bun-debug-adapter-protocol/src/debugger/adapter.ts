@@ -1,7 +1,7 @@
 import type { DAP } from "../protocol";
-import type { JSC } from "../../../bun-inspector-protocol";
-import type { InspectorEventMap } from "../../../bun-inspector-protocol";
-import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol";
+import type { JSC } from "bun-inspector-protocol";
+import type { InspectorEventMap } from "bun-inspector-protocol";
+import { WebSocketInspector, remoteObjectToString } from "bun-inspector-protocol";
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { Location } from "./sourcemap";

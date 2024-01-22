@@ -123,7 +123,7 @@ Create mock functions with the `mock` function. Mocks are automatically reset be
 import { test, expect, mock } from "bun:test";
 const random = mock(() => Math.random());
 
-test("random", async () => {
+test("random", () => {
   const val = random();
   expect(val).toBeGreaterThan(0);
   expect(random).toHaveBeenCalled();
@@ -151,7 +151,7 @@ Snapshots are supported by `bun test`.
 // example usage of toMatchSnapshot
 import { test, expect } from "bun:test";
 
-test("snapshot", async () => {
+test("snapshot", () => {
   expect({ a: 1 }).toMatchSnapshot();
 });
 ```

@@ -653,6 +653,8 @@ var isNextIncomingMessageHTTPS = false;
 
 var typeSymbol = Symbol("type");
 var reqSymbol = Symbol("req");
+var statusSymbol = Symbol("status");
+var statusMessageSymbol = Symbol("statusMessage");
 var bodyStreamSymbol = Symbol("bodyStream");
 var noBodySymbol = Symbol("noBody");
 var abortedSymbol = Symbol("aborted");
@@ -771,13 +773,19 @@ Object.defineProperty(IncomingMessage.prototype, "connection", {
 
 Object.defineProperty(IncomingMessage.prototype, "statusCode", {
   get() {
-    return this[reqSymbol].status;
+    return this[statusSymbol] ?? this[reqSymbol].status;
+  },
+  set(value) {
+    this[statusSymbol] = value;
   },
 });
 
 Object.defineProperty(IncomingMessage.prototype, "statusMessage", {
   get() {
-    return STATUS_CODES[this[reqSymbol].status];
+    return this[statusMessageSymbol] ?? STATUS_CODES[this[reqSymbol].status];
+  },
+  set(value) {
+    this[statusMessageSymbol] = value;
   },
 });
 

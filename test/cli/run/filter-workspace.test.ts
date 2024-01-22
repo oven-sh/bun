@@ -7,6 +7,7 @@ import { join } from "path";
 let cwd_root = tempDirWithFiles("testworkspace", {
   "packages": {
     "pkga": {
+      "index.js": "console.log('pkga');",
       "package.json": JSON.stringify({
         "name": "pkga",
         "scripts": {
@@ -15,6 +16,7 @@ let cwd_root = tempDirWithFiles("testworkspace", {
       }),
     },
     "pkgb": {
+      "index.js": "console.log('pkgb');",
       "package.json": JSON.stringify({
         "name": "pkgb",
         "scripts": {
@@ -23,6 +25,7 @@ let cwd_root = tempDirWithFiles("testworkspace", {
       }),
     },
     "dirname": {
+      "index.js": "console.log('pkgc');",
       "package.json": JSON.stringify({
         "name": "pkgc",
         "scripts": {
@@ -50,6 +53,7 @@ function runInCwdSuccess(
   pattern: string | string[],
   target_pattern: RegExp | RegExp[],
   antipattern?: RegExp | RegExp[],
+  command: string[] = ["present"],
 ) {
   let cmd = [bunExe(), "run"];
   if (pattern instanceof Array) {
@@ -59,7 +63,9 @@ function runInCwdSuccess(
   } else {
     cmd.push("--filter", pattern);
   }
-  cmd.push("present");
+  for (let c of command) {
+    cmd.push(c);
+  }
   const { exitCode, stdout, stderr } = spawnSync({
     cwd: cwd,
     cmd: cmd,
@@ -136,6 +142,14 @@ describe("bun", () => {
   });
   test("resolve 'pkga' and 'pkgb' but not 'pkgc' with targeted glob", () => {
     runInCwdSuccess(cwd_root, "./packages/pkg*", [/scripta/, /scriptb/], /scriptc/);
+  });
+
+  test("resolve and run all js scripts", () => {
+    runInCwdSuccess(cwd_root, "*", [/pkga/, /pkgb/, /pkgc/], [], ["index.js"]);
+  });
+
+  test("run binaries in package directories", () => {
+    runInCwdSuccess(cwd_root, "*", [/pkga/, /pkgb/, /dirname/], [], ["pwd"]);
   });
 
   test("should error with missing script", () => {

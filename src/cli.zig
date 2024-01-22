@@ -1180,27 +1180,7 @@ pub const Command = struct {
             RootCommandMatcher.case("init") => .InitCommand,
             RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
-            RootCommandMatcher.case("upgrade") => brk: {
-                if (args_iter.buf.len > 2) {
-                    for (args_iter.buf[2..]) |arg| {
-                        const span = std.mem.span(arg);
-                        if (!strings.contains(span, "--")) {
-                            Output.prettyError(
-                                \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
-                                \\<blue>note<r><d>:<r> Use `bun update
-                            , .{});
-                            for (args_iter.buf[2..]) |arg_err| {
-                                const span_err = std.mem.span(arg_err);
-                                Output.prettyError(" {s}", .{span_err});
-                            }
-                            Output.prettyErrorln("` instead.", .{});
-                            Global.exit(1);
-                        }
-                    }
-                }
-
-                break :brk .UpgradeCommand;
-            },
+            RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
             RootCommandMatcher.case("link") => .LinkCommand,

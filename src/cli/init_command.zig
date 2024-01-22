@@ -25,6 +25,14 @@ const JSPrinter = bun.js_printer;
 fn exists(path: anytype) bool {
     return bun.sys.exists(path);
 }
+
+fn openFileForAppendZ(cwd: std.fs.Dir, sub_path: [*:0]const u8, flags: std.fs.File.OpenFlags) !std.fs.File {
+    var file = try cwd.openFileZ(sub_path, flags);
+    const stat = try file.stat();
+    try file.seekTo(stat.size);
+    return file;
+}
+
 pub const InitCommand = struct {
     fn prompt(
         alloc: std.mem.Allocator,
@@ -265,10 +273,6 @@ pub const InitCommand = struct {
 
         steps.write_gitignore = !exists(".gitignore");
 
-        steps.write_gitattributes = !exists(".gitattributes");
-
-        steps.write_gitconfig = !exists(".gitconfig");
-
         steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
 
         steps.write_tsconfig = !exists("tsconfig.json") and !exists("jsconfig.json");
@@ -378,20 +382,34 @@ pub const InitCommand = struct {
 
         if (steps.write_gitattributes) {
             brk: {
-                var file = std.fs.cwd().createFileZ(".gitattributes", .{ .truncate = true }) catch break :brk;
-                defer file.close();
+                const cwd = std.fs.cwd();
+                const filename = ".gitattributes";
+                var file = if (exists(filename))
+                    openFileForAppendZ(cwd, filename, .{ .mode = .read_write }) catch break :brk
+                else
+                    cwd.createFileZ(filename, .{ .truncate = true }) catch break :brk;
+
                 file.writeAll(default_gitattributes) catch break :brk;
-                Output.prettyln(" + <r><d>.gitattributes<r>", .{});
+                Output.prettyln(" + <r><d>{s}<r>", .{filename});
                 Output.flush();
             }
         }
 
         if (steps.write_gitconfig) {
             brk: {
-                var file = std.fs.cwd().createFileZ(".gitconfig", .{ .truncate = true }) catch break :brk;
+                const cwd = std.fs.cwd();
+                if (!exists(".git")) {
+                    cwd.makeDirZ(".git") catch break :brk;
+                }
+                const filename = ".git/config";
+                var file = if (exists(filename))
+                    openFileForAppendZ(cwd, filename, .{ .mode = .read_write }) catch break :brk
+                else
+                    cwd.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
+
                 file.writeAll(default_gitconfig) catch break :brk;
-                Output.prettyln(" + <r><d>.gitconfig<r>", .{});
+                Output.prettyln(" + <r><d>{s}<r>", .{filename});
                 Output.flush();
             }
         }

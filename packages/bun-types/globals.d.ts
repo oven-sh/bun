@@ -170,11 +170,6 @@ declare global {
       revision: string;
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
-
-      /**
-       * @deprecated This is deprecated; use the "node:assert" module instead.
-       */
-      assert(value: unknown, message?: string | Error): asserts value;
     }
   }
 
@@ -350,16 +345,6 @@ declare global {
       /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
       readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
       readonly source: Bun.MessageEventSource | null;
-      /** @deprecated */
-      initMessageEvent(
-        type: string,
-        bubbles?: boolean,
-        cancelable?: boolean,
-        data?: any,
-        origin?: string,
-        lastEventId?: string,
-        source?: null,
-      ): void;
     }
 
     interface ReadableStreamDefaultReadManyResult<T> {
@@ -1152,13 +1137,6 @@ declare global {
   interface CustomEvent<T = any> extends Event {
     /** Returns any custom data event was created with. Typically used for synthetic events. */
     readonly detail: T;
-    /** @deprecated */
-    initCustomEvent(
-      type: string,
-      bubbles?: boolean,
-      cancelable?: boolean,
-      detail?: T,
-    ): void;
   }
 
   var CustomEvent: {
@@ -1553,8 +1531,6 @@ declare global {
 
   /** An abnormal event (called an exception) which occurs as a result of calling a method or accessing a property of a web API. */
   interface DOMException extends Error {
-    /** @deprecated */
-    readonly code: number;
     readonly message: string;
     readonly name: string;
     readonly INDEX_SIZE_ERR: 1;
@@ -1653,16 +1629,6 @@ declare global {
     readonly message: string;
     readonly level: "error" | "warning" | "info" | "debug" | "verbose";
   }
-
-  /**
-   * @deprecated Renamed to `BuildMessage`
-   */
-  var BuildError: typeof BuildMessage;
-
-  /**
-   * @deprecated Renamed to `ResolveMessage`
-   */
-  var ResolveError: typeof ResolveMessage;
 
   // Declare "static" methods in Error
   interface ErrorConstructor {

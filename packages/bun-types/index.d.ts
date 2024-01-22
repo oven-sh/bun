@@ -17,3 +17,4 @@
 /// <reference path="./jsc.d.ts" />
 /// <reference path="./sqlite.d.ts" />
 /// <reference path="./wasm.d.ts" />
+/// <reference path="./deprecated.d.ts" />

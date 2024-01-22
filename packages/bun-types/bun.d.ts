@@ -2314,32 +2314,9 @@ declare module "bun" {
 
   interface TLSOptions {
     /**
-     * File path to a TLS key
-     *
-     * To enable TLS, this option is required.
-     *
-     * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
-     */
-    keyFile?: string;
-    /**
-     * File path to a TLS certificate
-     *
-     * To enable TLS, this option is required.
-     *
-     * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
-     */
-    certFile?: string;
-
-    /**
      * Passphrase for the TLS key
      */
     passphrase?: string;
-    /**
-     *  File path to a .pem file for a custom root CA
-     *
-     * @deprecated since v0.6.3 - Use `ca: Bun.file(path)` instead.
-     */
-    caFile?: string;
 
     /**
      * File path to a .pem file custom Diffie Helman parameters

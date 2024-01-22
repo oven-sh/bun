@@ -82,7 +82,7 @@ test("bun init with piped cli", () => {
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
 }, 30_000);
 
-test("bun init without ab existing .git/config", () => {
+test("bun init without existing .gitattributes & .git/config", () => {
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
 
   const out = Bun.spawnSync({
@@ -102,13 +102,23 @@ test("bun init without ab existing .git/config", () => {
 textconv = bun
 binary = true
 `);
+
+  const gitAttributes = fs.readFileSync(path.join(temp, ".gitattributes"), "utf8");
+  expect(gitAttributes).toEqual(`*.lockb binary diff=lockb
+`);
 }, 30_000);
 
-test("bun init with existing .git/config", () => {
+test("bun init with existing .gitattributes & .git/config", () => {
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
 
+  const gitConfigContent = `[user]
+name = Test User
+`;
+  const gitAttributesContent = "* text=auto\n";
+
   fs.mkdirSync(path.join(temp, ".git"));
-  fs.writeFileSync(path.join(temp, ".git", "config"), "[user]\nname = Test User\n");
+  fs.writeFileSync(path.join(temp, ".git", "config"), gitConfigContent);
+  fs.writeFileSync(path.join(temp, ".gitattributes"), gitAttributesContent);
 
   const out = Bun.spawnSync({
     cmd: [bunExe(), "init", "-y"],
@@ -122,11 +132,13 @@ test("bun init with existing .git/config", () => {
   expect(out.exitCode).toBe(0);
 
   const gitConfig = fs.readFileSync(path.join(temp, ".git", "config"), "utf8");
-  expect(gitConfig).toEqual(`[user]
-name = Test User
-# Use \`bun\` as the textconv for \`bun.lockb\` files
+  expect(gitConfig).toEqual(`${gitConfigContent}# Use \`bun\` as the textconv for \`bun.lockb\` files
 [diff "lockb"]
 textconv = bun
 binary = true
+`);
+
+  const gitAttributes = fs.readFileSync(path.join(temp, ".gitattributes"), "utf8");
+  expect(gitAttributes).toEqual(`${gitAttributesContent}*.lockb binary diff=lockb
 `);
 }, 30_000);

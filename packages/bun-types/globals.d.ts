@@ -460,7 +460,7 @@ declare namespace Bun {
     /**
      * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
      */
-    env?: Record<string, string> | typeof import("node:worker_threads")["SHARE_ENV"] | undefined;
+    env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
 
     /**
      * In Bun, this does nothing.

@@ -572,9 +572,9 @@ declare module "bun:ffi" {
       ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
         : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-        [unknown] extends [Fns[K]["args"]]
-        ? []
-        : never
+          [unknown] extends [Fns[K]["args"]]
+          ? []
+          : never
     ) => // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
     [unknown] extends [Fns[K]["returns"]] ? undefined : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
   };

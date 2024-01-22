@@ -1,3 +1,4 @@
+const bun = @import("root").bun;
 const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
@@ -138,13 +139,24 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 }
 
 pub const NodeJSFS = struct {
-    node_fs: JSC.Node.NodeFS = undefined,
+    node_fs: JSC.Node.NodeFS = .{},
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
+    pub usingnamespace bun.New(@This());
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
         globalObject.throw("Not a constructor", .{});
         return null;
+    }
+
+    pub fn finalize(this: *JSC.Node.NodeJSFS) callconv(.C) void {
+        if (this.node_fs.vm) |vm| {
+            if (vm.node_fs == &this.node_fs) {
+                return;
+            }
+        }
+
+        this.destroy();
     }
 
     pub const access = call(.access);

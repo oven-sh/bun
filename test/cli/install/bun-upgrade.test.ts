@@ -13,7 +13,7 @@ beforeEach(async () => {
   run_dir = await realpath(
     await mkdtemp(join(tmpdir(), "bun-upgrade.test." + Math.trunc(Math.random() * 9999999).toString(32))),
   );
-  copyFileSync(bunExe(), `${run_dir}/${exe_name}`);
+  copyFileSync(bunExe(), join(run_dir, exe_name));
 });
 afterEach(async () => {
   await rm(run_dir, { force: true, recursive: true });
@@ -21,7 +21,7 @@ afterEach(async () => {
 
 it("two invalid arguments, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [`${run_dir}/${exe_name}`, "upgrade", "bun-types", "--dev"],
+    cmd: [join(run_dir, exe_name), "upgrade", "bun-types", "--dev"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -40,7 +40,7 @@ it("two invalid arguments, should display error message and suggest command", as
 
 it("two invalid arguments flipped, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [`${run_dir}/${exe_name}`, "upgrade", "--dev", "bun-types"],
+    cmd: [join(run_dir, exe_name), "upgrade", "--dev", "bun-types"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -59,7 +59,7 @@ it("two invalid arguments flipped, should display error message and suggest comm
 
 it("one invalid argument, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [`${run_dir}/${exe_name}`, "upgrade", "bun-types"],
+    cmd: [join(run_dir, exe_name), "upgrade", "bun-types"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -78,7 +78,7 @@ it("one invalid argument, should display error message and suggest command", asy
 
 it("one valid argument, should succeed", async () => {
   const { stderr } = spawn({
-    cmd: [`${run_dir}/${exe_name}`, "upgrade", "--help"],
+    cmd: [join(run_dir, exe_name), "upgrade", "--help"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -98,7 +98,7 @@ it("one valid argument, should succeed", async () => {
 
 it("two valid argument, should succeed", async () => {
   const { stderr } = spawn({
-    cmd: [`${run_dir}/${exe_name}`, "upgrade", "--stable", "--profile"],
+    cmd: [join(run_dir, exe_name), "upgrade", "--stable", "--profile"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",

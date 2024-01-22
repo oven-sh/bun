@@ -1516,7 +1516,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         size_t name_len = nameView.length();
         LChar* data = nullptr;
 
-        auto value =  String::createUninitialized(header.second.length(), data);
+        auto value = String::createUninitialized(header.second.length(), data);
         memcpy(data, header.second.data(), header.second.length());
 
         HTTPHeaderName name;
@@ -1718,7 +1718,7 @@ JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2))
 {
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
     ArgFn3(arg2, object, globalObject);
 
@@ -2446,7 +2446,7 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     JSC::JSObject* object = nullptr;
     {
         JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
         if (!clone) {
             for (size_t i = 0; i < initialCapacity; ++i) {

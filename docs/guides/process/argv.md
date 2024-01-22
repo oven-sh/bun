@@ -19,4 +19,39 @@ $ bun run cli.tsx --flag1 --flag2 value
 
 ---
 
-To parse `argv` into a more useful format, consider using [minimist](https://github.com/minimistjs/minimist) or [commander](https://github.com/tj/commander.js).
+To parse `argv` into a more useful format, `util.parseArgs` would be helpful.
+
+Example:
+
+```ts#cli.ts
+import { parseArgs } from "util";
+
+const { values, positionals } = parseArgs({
+  args: Bun.argv,
+  options: {
+    flag1: {
+      type: 'boolean',
+    },
+    flag2: {
+      type: 'string',
+    },
+  },
+  strict: true,
+  allowPositionals: true,
+});
+
+console.log(values);
+console.log(positionals);
+```
+
+then it outputs
+
+```
+$ bun run cli.tsx --flag1 --flag2 value
+{
+  flag1: true,
+  flag2: "value",
+}
+[ "/path/to/bun", "/path/to/cli.ts" ]
+```
+

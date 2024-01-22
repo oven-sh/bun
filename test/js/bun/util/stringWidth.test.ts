@@ -20,7 +20,7 @@ expect.extend({
   },
 });
 
-test("stringWidth", () => {
+test.skipIf(!stringWidth)("stringWidth", () => {
   expect(undefined).toMatchNPMStringWidth();
   expect("").toMatchNPMStringWidth();
   expect("a").toMatchNPMStringWidth();

@@ -1,26 +1,27 @@
-import { spawn, spawnSync } from "bun";
-import { afterEach, beforeEach, expect, it, describe } from "bun:test";
+import { spawn } from "bun";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, rm, mkdir, stat } from "fs/promises";
+import { mkdtemp, realpath, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { cpSync } from "js/node/fs/export-star-from";
+import { copyFileSync } from "js/node/fs/export-star-from";
 
 let run_dir: string;
+let exe_name: string = "bun-debug";
 
 beforeEach(async () => {
   run_dir = await realpath(
     await mkdtemp(join(tmpdir(), "bun-upgrade.test." + Math.trunc(Math.random() * 9999999).toString(32))),
   );
-  cpSync(bunExe(), run_dir);
+  copyFileSync(bunExe(), `${run_dir}/${exe_name}`);
 });
 afterEach(async () => {
   await rm(run_dir, { force: true, recursive: true });
 });
 
 it("two invalid arguments, should display error message and suggest command", async () => {
-  const { stderr, exitCode } = spawn({
-    cmd: [bunExe(), "upgrade", "bun-types", "--dev"],
+  const { stderr } = spawn({
+    cmd: [`${run_dir}/${exe_name}`, "upgrade", "bun-types", "--dev"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -30,16 +31,16 @@ it("two invalid arguments, should display error message and suggest command", as
 
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain(
-    "error: this command updates bun itself, and does not take package names.",
+    "error: This command updates Bun itself, and does not take package names.",
   );
   expect(err.split(/\r?\n/)).toContain(
-    "Use `bun update bun-types --dev` instead.",
+    "note: Use `bun update bun-types --dev` instead.",
   );
 });
 
 it("two invalid arguments flipped, should display error message and suggest command", async () => {
-  const { stderr, exitCode } = spawn({
-    cmd: [bunExe(), "upgrade", "--dev", "bun-types"],
+  const { stderr } = spawn({
+    cmd: [`${run_dir}/${exe_name}`, "upgrade", "--dev", "bun-types"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -49,16 +50,16 @@ it("two invalid arguments flipped, should display error message and suggest comm
 
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain(
-    "error: this command updates bun itself, and does not take package names.",
+    "error: This command updates Bun itself, and does not take package names.",
   );
   expect(err.split(/\r?\n/)).toContain(
-    "Use `bun update --dev bun-types` instead.",
+    "note: Use `bun update --dev bun-types` instead.",
   );
 });
 
 it("one invalid argument, should display error message and suggest command", async () => {
-  const { stderr, exitCode } = spawn({
-    cmd: [bunExe(), "upgrade", "bun-types"],
+  const { stderr } = spawn({
+    cmd: [`${run_dir}/${exe_name}`, "upgrade", "bun-types"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -68,16 +69,16 @@ it("one invalid argument, should display error message and suggest command", asy
 
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain(
-    "error: this command updates bun itself, and does not take package names.",
+    "error: This command updates Bun itself, and does not take package names.",
   );
   expect(err.split(/\r?\n/)).toContain(
-    "Use `bun update bun-types` instead.",
+    "note: Use `bun update bun-types` instead.",
   );
 });
 
 it("one valid argument, should succeed", async () => {
-  const { stderr, exitCode } = spawn({
-    cmd: [bunExe(), "upgrade", "--help"],
+  const { stderr } = spawn({
+    cmd: [`${run_dir}/${exe_name}`, "upgrade", "--help"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -88,16 +89,16 @@ it("one valid argument, should succeed", async () => {
   const err = await new Response(stderr).text();
   // Should not contain error message
   expect(err.split(/\r?\n/)).not.toContain(
-    "error: this command updates bun itself, and does not take package names.",
+    "error: This command updates bun itself, and does not take package names.",
   );
   expect(err.split(/\r?\n/)).not.toContain(
-    "Use `bun update --help` instead.",
+    "note: Use `bun update --help` instead.",
   );
 });
 
 it("two valid argument, should succeed", async () => {
-  const { stderr, exitCode } = spawn({
-    cmd: [bunExe(), "upgrade", "--stable", "--profile"],
+  const { stderr } = spawn({
+    cmd: [`${run_dir}/${exe_name}`, "upgrade", "--stable", "--profile"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
@@ -108,9 +109,9 @@ it("two valid argument, should succeed", async () => {
   const err = await new Response(stderr).text();
   // Should not contain error message
   expect(err.split(/\r?\n/)).not.toContain(
-    "error: this command updates bun itself, and does not take package names.",
+    "error: This command updates Bun itself, and does not take package names.",
   );
   expect(err.split(/\r?\n/)).not.toContain(
-    "Use `bun update --stable --profile` instead.",
+    "note: Use `bun update --stable --profile` instead.",
   );
 });

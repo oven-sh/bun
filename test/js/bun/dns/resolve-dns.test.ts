@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";

@@ -67,13 +67,12 @@ plugin({
   name: "YAML",
   async setup(build) {
     const { load } = await import("js-yaml");
-    const { readFileSync } = await import("fs");
 
     // when a .yaml file is imported...
-    build.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+    build.onLoad({ filter: /\.(yaml|yml)$/ }, async (args) => {
 
       // read and parse the file
-      const text = readFileSync(args.path, "utf8");
+      const text = await Bun.file(args.path).text();
       const exports = load(text) as Record<string, any>;
 
       // and returns it as a module
@@ -184,13 +183,12 @@ plugin({
   name: "svelte loader",
   async setup(build) {
     const { compile } = await import("svelte/compiler");
-    const { readFileSync } = await import("fs");
 
     // when a .svelte file is imported...
-    build.onLoad({ filter: /\.svelte$/ }, ({ path }) => {
+    build.onLoad({ filter: /\.svelte$/ }, async ({ path }) => {
 
       // read and compile it with the Svelte compiler
-      const file = readFileSync(path, "utf8");
+      const file = await Bun.file(path).text();
       const contents = compile(file, {
         filename: path,
         generate: "ssr",
@@ -239,7 +237,7 @@ plugin({
 
   setup(build) {
     build.module(
-      // The specifier, which can be any string
+      // The specifier, which can be any string - except a built-in, such as "buffer"
       "my-transpiled-virtual-module",
       // The callback to run when the module is imported or required for the first time
       () => {

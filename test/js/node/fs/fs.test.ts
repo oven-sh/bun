@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
@@ -2706,4 +2707,11 @@ it.if(isWindows)("writing to windows hidden file is possible", () => {
   writeFileSync("file.txt", "Hello World");
   const content = readFileSync("file.txt", "utf8");
   expect(content).toBe("Hello World");
+});
+
+it("fs.ReadStream allows functions", () => {
+  // @ts-expect-error
+  expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
+  // @ts-expect-error
+  expect(() => new fs.ReadStream(".", {})).not.toThrow();
 });

@@ -526,9 +526,9 @@ pub const Tree = struct {
     }
 
     // This function does one of three things:
-    // - de-duplicate (skip) the package
-    // - move the package to the top directory
-    // - leave the package at the same (relative) directory
+    // 1 (return hoisted) - de-duplicate (skip) the package
+    // 2 (return id) - move the package to the top directory
+    // 3 (return dependency_loop) - leave the package at the same (relative) directory
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
@@ -543,7 +543,7 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id) {
+            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -556,9 +556,9 @@ pub const Tree = struct {
                     return error.DependencyLoop;
                 }
                 // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop;
+                return dependency_loop; // 3
             }
-            return hoisted;
+            return hoisted; // 1
         }
 
         if (this.parent < error_id) {
@@ -571,10 +571,10 @@ pub const Tree = struct {
                 trees,
                 builder,
             ) catch unreachable;
-            if (!as_defined or id != dependency_loop) return id;
+            if (!as_defined or id != dependency_loop) return id; // 1 or 2
         }
 
-        return this.id;
+        return this.id; // 2
     }
 };
 
@@ -1068,7 +1068,7 @@ pub const Printer = struct {
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
-                    strings.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
+                    bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
             },
@@ -1625,7 +1625,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    const file = tmpfile.file();
+    const file = tmpfile.fd.asFile();
     {
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
         defer bytes.deinit();
@@ -1645,7 +1645,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                 .file = .{
                     .fd = bun.toFD(file.handle),
                 },
-                .dirfd = if (!Environment.isWindows) bun.invalid_fd else @panic("TODO"),
+                .dirfd = bun.invalid_fd,
                 .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.from(bytes.items, bun.default_allocator) } },
             },
             .sync,
@@ -1659,15 +1659,14 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         }
     }
 
-    if (comptime Environment.isWindows) {
-        // TODO: make this executable
-        @panic("TODO on Windows");
-    } else {
-        _ = C.fchmod(
-            tmpfile.fd,
-            // chmod 777
-            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
+    // chmod 777
+    switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
+        .err => |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
+            Global.crash();
+        },
+        .result => {},
     }
 
     tmpfile.promoteToCWD(tmpname, filename) catch |err| {
@@ -2139,6 +2138,13 @@ pub const OverrideMap = struct {
                 continue;
             };
 
+            const version_str = value.data.e_string.slice(lockfile.allocator);
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                // TODO(dylan-conway): apply .patch files to packages
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+                continue;
+            }
+
             if (try parseOverrideValue(
                 "override",
                 lockfile,
@@ -2147,7 +2153,7 @@ pub const OverrideMap = struct {
                 value.loc,
                 log,
                 k,
-                value.data.e_string.slice(lockfile.allocator),
+                version_str,
                 builder,
             )) |version| {
                 this.map.putAssumeCapacity(name_hash, version);
@@ -2202,6 +2208,13 @@ pub const OverrideMap = struct {
                 continue;
             }
 
+            const version_str = value.data.e_string.data;
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                // TODO(dylan-conway): apply .patch files to packages
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
+                continue;
+            }
+
             if (try parseOverrideValue(
                 "resolution",
                 lockfile,
@@ -2210,7 +2223,7 @@ pub const OverrideMap = struct {
                 value.loc,
                 log,
                 k,
-                value.data.e_string.data,
+                version_str,
                 builder,
             )) |version| {
                 const name_hash = String.Builder.stringHash(k);
@@ -2545,19 +2558,17 @@ pub const Package = extern struct {
             log: *logger.Log,
             lockfile: *Lockfile,
             node_modules: std.fs.Dir,
+            node_modules_path: string,
             subpath: [:0]const u8,
-            name: string,
+            folder_name: string,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
-            var node_modules_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const node_modules_path = try bun.getFdPath(bun.toFD(node_modules.fd), &node_modules_path_buf);
-
-            var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf: bun.PathBuffer = undefined;
 
             const cwd = Path.joinAbsStringBufZTrailingSlash(
                 node_modules_path,
-                &path_buf2,
-                &[_]string{subpath},
+                &path_buf,
+                &[_]string{folder_name},
                 .auto,
             );
 
@@ -2570,7 +2581,7 @@ pub const Package = extern struct {
                         std.os.O.RDONLY,
                         0,
                     ).unwrap();
-                    const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
+                    const json_file = json_file_fd.asFile();
                     defer json_file.close();
                     const json_stat_size = try json_file.getEndPos();
                     const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
@@ -2595,14 +2606,14 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(name) and
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                 this.install.isEmpty() and
                 this.postinstall.isEmpty())
             brk: {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
-                    node_modules_path,
-                    &[_]string{ subpath, "binding.gyp" },
-                    .posix,
+                    cwd,
+                    &[_]string{"binding.gyp"},
+                    .auto,
                 );
 
                 break :brk bun.sys.exists(binding_dot_gyp_path);
@@ -2612,22 +2623,12 @@ pub const Package = extern struct {
                 lockfile,
                 tmp.buffers.string_bytes.items,
                 cwd,
-                name,
+                folder_name,
                 resolution.tag,
                 add_node_gyp_rebuild_script,
             );
         }
     };
-
-    pub fn verify(this: *const Package, externs: []const ExternalString) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        this.name.assertDefined();
-        this.resolution.verify();
-        this.meta.man_dir.assertDefined();
-        this.bin.verify(externs);
-    }
 
     pub const DependencyGroup = struct {
         prop: string,
@@ -2744,7 +2745,6 @@ pub const Package = extern struct {
             },
             id,
         );
-        defer new_package.verify(new.buffers.extern_strings.items);
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
@@ -3382,7 +3382,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 dependency_version.value.folder.slice(buf),
                             },
-                            .posix,
+                            .auto,
                         ),
                     ),
                 );
@@ -3437,7 +3437,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 workspace,
                             },
-                            .posix,
+                            .auto,
                         ),
                     );
                 });
@@ -3831,7 +3831,7 @@ pub const Package = extern struct {
                         .auto,
                     );
 
-                    if (entry.cache.fd == 0) {
+                    if (entry.cache.fd == .zero) {
                         entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
@@ -3846,9 +3846,7 @@ pub const Package = extern struct {
                     const workspace_entry = processWorkspaceName(
                         allocator,
                         workspace_allocator,
-                        std.fs.Dir{
-                            .fd = bun.fdcast(dir_fd),
-                        },
+                        dir_fd.asDir(),
                         "",
                         filepath_buf,
                         workspace_name_buf,
@@ -4413,7 +4411,7 @@ pub const Package = extern struct {
                             const sliced = external_version.value.sliced(lockfile.buffers.string_bytes.items);
                             const result = Semver.Version.parse(sliced);
                             if (result.valid and result.wildcard == .none) {
-                                break :brk result.version.fill();
+                                break :brk result.version.min();
                             }
                         }
 

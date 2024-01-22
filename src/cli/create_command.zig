@@ -54,11 +54,14 @@ pub fn initializeStore() void {
     js_ast.Stmt.Data.Store.create(default_allocator);
 }
 
-const skip_dirs = &[_]string{ "node_modules", ".git" };
-const skip_files = &[_]string{
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
+const skip_dirs = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("node_modules"),
+    bun.OSPathLiteral(".git"),
+};
+const skip_files = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("package-lock.json"),
+    bun.OSPathLiteral("yarn.lock"),
+    bun.OSPathLiteral("pnpm-lock.yaml"),
 };
 
 const never_conflict = &[_]string{
@@ -433,12 +436,12 @@ pub const CreateCommand = struct {
                 if (!create_options.skip_package_json) {
                     const plucker = pluckers[0];
 
-                    if (plucker.found and plucker.fd != 0) {
+                    if (plucker.found and plucker.fd != .zero) {
                         node.name = "Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = std.fs.File{ .handle = bun.fdcast(plucker.fd) };
+                        package_json_file = plucker.fd.asFile();
                     }
                 }
             },
@@ -480,35 +483,37 @@ pub const CreateCommand = struct {
                         while (try walker.next()) |entry| {
                             if (entry.kind != .file) continue;
 
-                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                                if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                                    destination_dir_.makePath(entry_dirname) catch {};
+                            const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
+                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                    bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                                break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
                                     node_.end();
 
                                     progress_.refresh();
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                                     Global.exit(1);
                                 };
                             };
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
+                            var infile = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             if (comptime Environment.isPosix) {
                                 // Assumption: you only really care about making sure something that was executable is still executable
                                 const stat = infile.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, stat.mode);
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             } else {
                                 @panic("TODO on Windows");
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
                                 Global.exit(1);
                             };
                         }
@@ -1722,31 +1727,31 @@ pub const Example = struct {
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
             var folders = [3]std.fs.Dir{
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             // subfolders with package.json
             for (folders) |folder| {
-                if (folder.fd != bun.fdcast(bun.invalid_fd)) {
+                if (folder.fd != bun.invalid_fd.cast()) {
                     var iter = folder.iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
@@ -1755,7 +1760,7 @@ pub const Example = struct {
                         switch (entry.kind) {
                             .directory => {
                                 inline for (skip_dirs) |skip_dir| {
-                                    if (strings.eqlComptime(entry.name, skip_dir)) {
+                                    if (strings.eqlComptime(entry.name, comptime bun.pathLiteral(skip_dir))) {
                                         continue :loop;
                                     }
                                 }
@@ -1847,7 +1852,7 @@ pub const Example = struct {
 
         const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
         const mutable = try ctx.allocator.create(MutableString);
-        mutable.* = try MutableString.init(ctx.allocator, 8096);
+        mutable.* = try MutableString.init(ctx.allocator, 8192);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;

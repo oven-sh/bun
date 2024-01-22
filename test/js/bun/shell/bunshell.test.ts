@@ -68,6 +68,31 @@ describe("bunshell", () => {
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
+
+    // shell injection
+    escapeTest("`echo hi`", '"\\`echo hi\\`"');
+    escapeTest("$(echo hi)", '"\\$(echo hi)"');
+    escapeTest("$(echo hi)", '"\\$(echo hi)"');
+    // Test for handling backticks with embedded command
+    escapeTest("`ls -l`", '"\\`ls -l\\`"');
+    // Test for handling nested $(command) syntax
+    escapeTest("$(echo $(whoami))", '"\\$(echo \\$(whoami))"');
+    // Test for handling semicolons in shell injection
+    escapeTest("test; rm -rf /", '"test; rm -rf /"');
+    // Test for handling pipe character in shell commands
+    escapeTest("echo 'hello' | grep 'h'", "\"echo 'hello' | grep 'h'\"");
+    // Test for handling redirection in shell commands
+    escapeTest("echo 'data' > file.txt", "\"echo 'data' > file.txt\"");
+    // Test for handling ampersand for background processes
+    escapeTest("sleep 10 &", '"sleep 10 &"');
+    // Test for handling curly braces in shell commands
+    escapeTest("{ echo 'test'; }", "\"{ echo 'test'; }\"");
+    // Test for handling command substitution with backticks inside $()
+    escapeTest("$(echo `date`)", '"\\$(echo \\`date\\`)"');
+    // Test for handling escaped characters inside command substitution
+    escapeTest("$(echo \\$PATH)", '"\\$(echo \\\\\\$PATH)"');
+    // Test for handling complex shell injection with multiple special characters
+    escapeTest("`rm -rf /`; $(echo 'danger'); echo 'safe';", "\"\\`rm -rf /\\`; \\$(echo 'danger'); echo 'safe';\"");
   });
 
   describe("quiet", async () => {

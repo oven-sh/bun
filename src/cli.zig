@@ -1186,8 +1186,8 @@ pub const Command = struct {
                         const span = std.mem.span(arg);
                         if (!strings.contains(span, "--")) {
                             Output.prettyError(
-                                \\<r><red>error<r><d>:<r> this command updates bun itself, and does not take package names.
-                                \\Use `bun update
+                                \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
+                                \\<blue>note<r><d>:<r> Use `bun update
                             , .{});
                             for (args_iter.buf[2..]) |arg_err| {
                                 const span_err = std.mem.span(arg_err);

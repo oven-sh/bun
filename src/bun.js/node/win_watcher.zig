@@ -326,7 +326,7 @@ pub const PathWatcher = struct {
             return error.FailedToStartFSEvent;
         }
         // we handle this in node_fs_watcher
-        uv_unref(@ptrCast(&this.handle));
+        uv.uv_unref(@ptrCast(&this.handle));
 
         try manager.registerWatcher(this);
         return this;

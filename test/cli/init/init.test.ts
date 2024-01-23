@@ -4,6 +4,8 @@ import os from "os";
 import path from "path";
 import { bunEnv, bunExe } from "harness";
 
+const SRC_CLI_DIR = path.join(__dirname, "..", "..", "..", "src", "cli");
+
 test("bun init works", () => {
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
 
@@ -96,16 +98,13 @@ test("bun init without existing .gitattributes & .git/config", () => {
   expect(out.signal).toBe(undefined);
   expect(out.exitCode).toBe(0);
 
+  const expectedGitConfig = fs.readFileSync(path.join(SRC_CLI_DIR, "gitconfig-for-init"), "utf8");
   const gitConfig = fs.readFileSync(path.join(temp, ".git", "config"), "utf8");
-  expect(gitConfig).toEqual(`# Use \`bun\` as the textconv for \`bun.lockb\` files
-[diff "lockb"]
-textconv = bun
-binary = true
-`);
+  expect(gitConfig).toEqual(expectedGitConfig);
 
+  const expectedGitAttributes = fs.readFileSync(path.join(SRC_CLI_DIR, "gitattributes-for-init"), "utf8");
   const gitAttributes = fs.readFileSync(path.join(temp, ".gitattributes"), "utf8");
-  expect(gitAttributes).toEqual(`*.lockb binary diff=lockb
-`);
+  expect(gitAttributes).toEqual(expectedGitAttributes);
 }, 30_000);
 
 test("bun init with existing .gitattributes & .git/config", () => {
@@ -131,14 +130,11 @@ name = Test User
   expect(out.signal).toBe(undefined);
   expect(out.exitCode).toBe(0);
 
+  const expectedGitConfig = fs.readFileSync(path.join(SRC_CLI_DIR, "gitconfig-for-init"), "utf8");
   const gitConfig = fs.readFileSync(path.join(temp, ".git", "config"), "utf8");
-  expect(gitConfig).toEqual(`${gitConfigContent}# Use \`bun\` as the textconv for \`bun.lockb\` files
-[diff "lockb"]
-textconv = bun
-binary = true
-`);
+  expect(gitConfig).toEqual(`${gitConfigContent}${expectedGitConfig}`);
 
+  const expectedGitAttributes = fs.readFileSync(path.join(SRC_CLI_DIR, "gitattributes-for-init"), "utf8");
   const gitAttributes = fs.readFileSync(path.join(temp, ".gitattributes"), "utf8");
-  expect(gitAttributes).toEqual(`${gitAttributesContent}*.lockb binary diff=lockb
-`);
+  expect(gitAttributes).toEqual(`${gitAttributesContent}${expectedGitAttributes}`);
 }, 30_000);

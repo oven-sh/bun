@@ -1169,7 +1169,7 @@ declare module "bun:test" {
      *
      * @param expected the expected error, error message, or error pattern
      */
-    toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
+    toThrow(expected?: unknown): void;
     /**
      * Asserts that a value matches a regular expression or includes a substring.
      *

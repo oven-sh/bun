@@ -20,7 +20,7 @@ expect.extend({
   },
 });
 
-test("stringWidth", () => {
+test.skipIf(!stringWidth)("stringWidth", () => {
   expect(undefined).toMatchNPMStringWidth();
   expect("").toMatchNPMStringWidth();
   expect("a").toMatchNPMStringWidth();
@@ -40,7 +40,7 @@ test("stringWidth", () => {
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   describe(matcher, () => {
-    test("ansi colors", () => {
+    test.skipIf(!stringWidth)("ansi colors", () => {
       expect("\u001b[31m")[matcher]();
       expect("\u001b[31ma")[matcher]();
       expect("\u001b[31mab")[matcher]();
@@ -81,5 +81,13 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
       expect("😀😀😀😀😀😀😀\u001b[31m😀😀😀😀😀😀😀😀")[matcher]();
       expect("😀😀😀😀😀😀😀😀\u001b[31m😀😀😀😀😀😀😀😀😀")[matcher]();
     });
+  });
+}
+
+for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
+  test.todo("leading non-ansi characters in UTF-16 string seems to fail", () => {
+    expect("\x1b[31mhshh🌎")[matcher]();
+    expect("a\x1b[31mhshh🌎")[matcher]();
+    expect("a\x1b[31mhshh🌎a")[matcher]();
   });
 }

@@ -1,10 +1,9 @@
 // @known-failing-on-windows: 1 failing
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, pathSep } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { platform } from "os";
-import { join, isAbsolute } from "path";
+import { join, isAbsolute, sep } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -378,9 +377,9 @@ it("should handle workspaces", async () => {
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + @org/nominally-scoped@workspace:packages${pathSep}nominally-scoped`,
-    ` + Asterisk@workspace:packages${pathSep}asterisk`,
-    ` + AsteriskTheSecond@workspace:packages${pathSep}second-asterisk`,
+    ` + @org/nominally-scoped@workspace:packages${sep}nominally-scoped`,
+    ` + Asterisk@workspace:packages${sep}asterisk`,
+    ` + AsteriskTheSecond@workspace:packages${sep}second-asterisk`,
     " + Bar@workspace:bar",
     "",
     " 4 packages installed",
@@ -427,9 +426,9 @@ it("should handle workspaces", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + @org/nominally-scoped@workspace:packages${pathSep}nominally-scoped`,
-    ` + Asterisk@workspace:packages${pathSep}asterisk`,
-    ` + AsteriskTheSecond@workspace:packages${pathSep}second-asterisk`,
+    ` + @org/nominally-scoped@workspace:packages${sep}nominally-scoped`,
+    ` + Asterisk@workspace:packages${sep}asterisk`,
+    ` + AsteriskTheSecond@workspace:packages${sep}second-asterisk`,
     " + Bar@workspace:bar",
     "",
     " 4 packages installed",
@@ -493,7 +492,7 @@ it("should handle `workspace:` specifier", async () => {
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + Bar@workspace:path${pathSep}to${pathSep}bar`,
+    ` + Bar@workspace:path${sep}to${sep}bar`,
     "",
     " 1 package installed",
   ]);
@@ -523,7 +522,7 @@ it("should handle `workspace:` specifier", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + Bar@workspace:path${pathSep}to${pathSep}bar`,
+    ` + Bar@workspace:path${sep}to${sep}bar`,
     "",
     " 1 package installed",
   ]);
@@ -626,7 +625,7 @@ it("should handle inter-dependency between workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " + Bar@workspace:bar",
-    ` + Baz@workspace:packages${pathSep}baz`,
+    ` + Baz@workspace:packages${sep}baz`,
     "",
     " 2 packages installed",
   ]);
@@ -685,7 +684,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " + Bar@workspace:bar",
-    ` + Baz@workspace:packages${pathSep}baz`,
+    ` + Baz@workspace:packages${sep}baz`,
     "",
     " 2 packages installed",
   ]);
@@ -744,7 +743,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " + Bar@workspace:bar",
-    ` + Baz@workspace:packages${pathSep}baz`,
+    ` + Baz@workspace:packages${sep}baz`,
     "",
     " 2 packages installed",
   ]);
@@ -801,7 +800,7 @@ it("should ignore peerDependencies within workspaces", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + Baz@workspace:packages${pathSep}baz`,
+    ` + Baz@workspace:packages${sep}baz`,
     "",
     " 1 package installed",
   ]);
@@ -1719,8 +1718,8 @@ it("should handle matching workspaces from dependencies", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + pkg1@workspace:packages${pathSep}pkg1`,
-    ` + pkg2@workspace:packages${pathSep}pkg2`,
+    ` + pkg1@workspace:packages${sep}pkg1`,
+    ` + pkg2@workspace:packages${sep}pkg2`,
     "",
     " 3 packages installed",
   ]);
@@ -6803,11 +6802,11 @@ it("should handle installing packages inside workspaces with difference versions
     const out1 = await new Response(stdout1).text();
     expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` + package1@workspace:packages${pathSep}package1`,
-      ` + package2@workspace:packages${pathSep}package2`,
-      ` + package3@workspace:packages${pathSep}package3`,
-      ` + package4@workspace:packages${pathSep}package4`,
-      ` + package5@workspace:packages${pathSep}package5`,
+      ` + package1@workspace:packages${sep}package1`,
+      ` + package2@workspace:packages${sep}package2`,
+      ` + package3@workspace:packages${sep}package3`,
+      ` + package4@workspace:packages${sep}package4`,
+      ` + package5@workspace:packages${sep}package5`,
       "",
       " 5 packages installed",
     ]);
@@ -6862,11 +6861,11 @@ it("should handle installing packages inside workspaces with difference versions
     const out2 = await new Response(stdout2).text();
     expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` + package1@workspace:packages${pathSep}package1`,
-      ` + package2@workspace:packages${pathSep}package2`,
-      ` + package3@workspace:packages${pathSep}package3`,
-      ` + package4@workspace:packages${pathSep}package4`,
-      ` + package5@workspace:packages${pathSep}package5`,
+      ` + package1@workspace:packages${sep}package1`,
+      ` + package2@workspace:packages${sep}package2`,
+      ` + package3@workspace:packages${sep}package3`,
+      ` + package4@workspace:packages${sep}package4`,
+      ` + package5@workspace:packages${sep}package5`,
       " + bar@0.0.2",
       "",
       " 6 packages installed",
@@ -6917,11 +6916,11 @@ it("should handle installing packages inside workspaces with difference versions
     const out3 = await new Response(stdout3).text();
     expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` + package1@workspace:packages${pathSep}package1`,
-      ` + package2@workspace:packages${pathSep}package2`,
-      ` + package3@workspace:packages${pathSep}package3`,
-      ` + package4@workspace:packages${pathSep}package4`,
-      ` + package5@workspace:packages${pathSep}package5`,
+      ` + package1@workspace:packages${sep}package1`,
+      ` + package2@workspace:packages${sep}package2`,
+      ` + package3@workspace:packages${sep}package3`,
+      ` + package4@workspace:packages${sep}package4`,
+      ` + package5@workspace:packages${sep}package5`,
       " + bar@0.0.2",
       "",
       " 6 packages installed",
@@ -6972,11 +6971,11 @@ it("should handle installing packages inside workspaces with difference versions
     const out4 = await new Response(stdout4).text();
     expect(out4.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` + package1@workspace:packages${pathSep}package1`,
-      ` + package2@workspace:packages${pathSep}package2`,
-      ` + package3@workspace:packages${pathSep}package3`,
-      ` + package4@workspace:packages${pathSep}package4`,
-      ` + package5@workspace:packages${pathSep}package5`,
+      ` + package1@workspace:packages${sep}package1`,
+      ` + package2@workspace:packages${sep}package2`,
+      ` + package3@workspace:packages${sep}package3`,
+      ` + package4@workspace:packages${sep}package4`,
+      ` + package5@workspace:packages${sep}package5`,
       " + bar@0.0.2",
       "",
       " 6 packages installed",
@@ -7028,11 +7027,11 @@ it("should handle installing packages inside workspaces with difference versions
     const out5 = await new Response(stdout5).text();
     expect(out5.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` + package1@workspace:packages${pathSep}package1`,
-      ` + package2@workspace:packages${pathSep}package2`,
-      ` + package3@workspace:packages${pathSep}package3`,
-      ` + package4@workspace:packages${pathSep}package4`,
-      ` + package5@workspace:packages${pathSep}package5`,
+      ` + package1@workspace:packages${sep}package1`,
+      ` + package2@workspace:packages${sep}package2`,
+      ` + package3@workspace:packages${sep}package3`,
+      ` + package4@workspace:packages${sep}package4`,
+      ` + package5@workspace:packages${sep}package5`,
       " + bar@0.0.2",
       "",
       " 6 packages installed",
@@ -7192,7 +7191,7 @@ it("should override @scoped npm dependency by matching workspace", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + @bar/baz@workspace:packages${pathSep}bar-baz`,
+    ` + @bar/baz@workspace:packages${sep}bar-baz`,
     "",
     " 1 package installed",
   ]);
@@ -7419,8 +7418,8 @@ it("should override @scoped child npm dependency by matching workspace", async (
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + @moo/bar@workspace:packages${pathSep}moo-bar`,
-    ` + @moo/baz@workspace:packages${pathSep}moo-baz`,
+    ` + @moo/bar@workspace:packages${sep}moo-bar`,
+    ` + @moo/baz@workspace:packages${sep}moo-baz`,
     "",
     " 2 packages installed",
   ]);
@@ -7482,8 +7481,8 @@ it("should override aliased child npm dependency by matching workspace", async (
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + @moo/bar@workspace:packages${pathSep}bar`,
-    ` + baz@workspace:packages${pathSep}baz`,
+    ` + @moo/bar@workspace:packages${sep}bar`,
+    ` + baz@workspace:packages${sep}baz`,
     "",
     " 2 packages installed",
   ]);
@@ -7604,8 +7603,8 @@ it("should handle `workspace:` with alias & @scope", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + @moo/bar@workspace:packages${pathSep}bar`,
-    ` + @moz/baz@workspace:packages${pathSep}baz`,
+    ` + @moo/bar@workspace:packages${sep}bar`,
+    ` + @moz/baz@workspace:packages${sep}baz`,
     "",
     " 2 packages installed",
   ]);
@@ -7679,8 +7678,8 @@ it("should handle `workspace:*` on both root & child", async () => {
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + baz@workspace:packages${pathSep}baz`,
-    ` + bar@workspace:packages${pathSep}bar`,
+    ` + baz@workspace:packages${sep}baz`,
+    ` + bar@workspace:packages${sep}bar`,
     "",
     " 2 packages installed",
   ]);
@@ -7717,8 +7716,8 @@ it("should handle `workspace:*` on both root & child", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + baz@workspace:packages${pathSep}baz`,
-    ` + bar@workspace:packages${pathSep}bar`,
+    ` + baz@workspace:packages${sep}baz`,
+    ` + bar@workspace:packages${sep}bar`,
     "",
     " 2 packages installed",
   ]);

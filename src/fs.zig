@@ -550,7 +550,7 @@ pub const FileSystem = struct {
                             break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
                         }
 
-                        break :brk "C:/Windows/Temp";
+                        break :brk "C:\\Windows\\Temp";
                     };
                     win_tempdir_cache = value;
                     return value;

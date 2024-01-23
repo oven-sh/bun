@@ -1148,10 +1148,15 @@ pub const Command = struct {
         }
     };
 
-    pub fn isBunX(argv0: []const u8) bool {
-        const suffix = if (Environment.isWindows) ".exe" else "";
+    const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
-        return strings.endsWithComptime(argv0, "bunx" ++ suffix) or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
+    pub fn isBunX(argv0: []const u8) bool {
+        return strings.endsWithComptime(argv0, "bunx" ++ exe_suffix) or
+            (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ exe_suffix));
+    }
+
+    pub fn isNode(argv0: []const u8) bool {
+        return strings.endsWithComptime(argv0, "node" ++ exe_suffix);
     }
 
     pub fn which() Tag {
@@ -1162,7 +1167,7 @@ pub const Command = struct {
         // symlink is argv[0]
         if (isBunX(argv0)) return .BunxCommand;
 
-        if (strings.endsWithComptime(argv0, "node")) {
+        if (isNode(argv0)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;

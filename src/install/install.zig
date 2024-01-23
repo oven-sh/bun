@@ -5226,6 +5226,9 @@ pub const PackageManager = struct {
                     }
 
                     if (comptime @TypeOf(callbacks.onExtract) != void) {
+                        if (ExtractCompletionContext == *PackageInstaller) {
+                            extract_ctx.fixCachedLockfilePackageSlices();
+                        }
                         callbacks.onExtract(
                             extract_ctx,
                             task.request.git_checkout.dependency_id,

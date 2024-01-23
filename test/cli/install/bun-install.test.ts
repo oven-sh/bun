@@ -446,7 +446,7 @@ it("should handle workspaces", async () => {
   expect(await readlink(join(package_dir, "node_modules", "Asterisk"))).toBeWorkspaceLink(
     join("..", "packages", "asterisk"),
   );
-  expect(await readlink(join(package_dir, "node_modules", "AsteriskTheSecond"))).toBWorkspaceLink(
+  expect(await readlink(join(package_dir, "node_modules", "AsteriskTheSecond"))).toBeWorkspaceLink(
     join("..", "packages", "second-asterisk"),
   );
   expect(await readlink(join(package_dir, "node_modules", "@org", "nominally-scoped"))).toBeWorkspaceLink(

@@ -250,5 +250,3 @@ expect.extend({
     };
   },
 });
-
-export const pathSep = platform() === "win32" ? "\\" : "/";

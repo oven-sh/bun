@@ -561,18 +561,25 @@ pub const Blob = struct {
                         },
                         .fd => |fd| {
                             const fd_impl = bun.FDImpl.decode(fd);
-                            if (fd_impl.kind == .uv) {
+                            if (comptime Environment.isWindows) {
+                                if (fd_impl.kind == .uv) {
+                                    try writer.print(
+                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                        .{fd_impl.uv()},
+                                    );
+                                } else {
+                                    if (Environment.allow_assert) {
+                                        comptime std.debug.assert(Environment.isWindows);
+                                        @panic("this shouldn't be reachable.");
+                                    }
+                                    try writer.print(
+                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{any}<r>)<r>", enable_ansi_colors),
+                                        .{fd_impl.system()},
+                                    );
+                                }
+                            } else {
                                 try writer.print(
                                     comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
-                                    .{fd_impl.uv()},
-                                );
-                            } else {
-                                if (Environment.allow_assert) {
-                                    comptime std.debug.assert(Environment.isWindows);
-                                    @panic("this shouldn't be reachable.");
-                                }
-                                try writer.print(
-                                    comptime Output.prettyFmt(" (<r>fd: <yellow>{any}<r>)<r>", enable_ansi_colors),
                                     .{fd_impl.system()},
                                 );
                             }

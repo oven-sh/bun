@@ -1910,6 +1910,8 @@ const Waiter = struct {
 // 2.
 pub const PackageManager = struct {
     cache_directory_: ?std.fs.Dir = null,
+
+    // TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
     cache_directory_path: string = "",
     temp_dir_: ?std.fs.Dir = null,
     temp_dir_name: string = "",

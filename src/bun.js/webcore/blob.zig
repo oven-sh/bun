@@ -2018,7 +2018,12 @@ pub const Blob = struct {
                         this.mkdirp();
                         return;
                     } else {
-                        var err = bun.sys.Error.fromCode(errno, .copyfile);
+                        var err = bun.sys.Error.fromCode(
+                            // #6336
+                            if (errno == .PERM) .NOENT else errno,
+
+                            .copyfile,
+                        );
                         const destination = &this.destination_file_store.data.file;
 
                         // we don't really know which one it is

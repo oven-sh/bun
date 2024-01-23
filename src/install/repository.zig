@@ -119,7 +119,6 @@ pub const Repository = extern struct {
                 .argv = argv,
                 // windows `std.ChildProcess.run` uses `cwd` instead of `cwd_dir`
                 .cwd = cwd,
-
                 .env_map = &buf_map,
             })
         else

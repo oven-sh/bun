@@ -3781,7 +3781,10 @@ pub const Package = extern struct {
                     strings.eqlComptime(dir_prefix, ".") or
                     strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
                 {
-                    dir_prefix = ".";
+                    if (comptime Environment.isWindows)
+                        dir_prefix = Fs.FileSystem.instance.top_level_dir
+                    else
+                        dir_prefix = ".";
                 }
 
                 const entries_option = FileSystem.instance.fs.readDirectory(

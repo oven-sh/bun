@@ -6337,7 +6337,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
   await access(join(package_dir, "bun.lockb"));
   // Perform `bun install` again but with lockfile from before
@@ -6368,7 +6368,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["bar"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -6456,7 +6456,7 @@ it("should handle `workspaces:*` and `workspace:bar` gracefully", async () => {
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -7109,7 +7109,7 @@ it("should override npm dependency by matching workspace", async () => {
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -7250,7 +7250,7 @@ it("should override aliased npm dependency by matching workspace", async () => {
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "baz"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "baz"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(baz_package);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -7306,9 +7306,9 @@ it("should override child npm dependency by matching workspace", async () => {
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
-  expect(await readlink(join(package_dir, "node_modules", "baz"))).toBe(join("..", "baz"));
+  expect(await readlink(join(package_dir, "node_modules", "baz"))).toBeWorkspaceLink(join("..", "baz"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -7364,9 +7364,9 @@ it("should not override child npm dependency by workspace with mismatched versio
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
-  expect(await readlink(join(package_dir, "node_modules", "baz"))).toBe(join("..", "baz"));
+  expect(await readlink(join(package_dir, "node_modules", "baz"))).toBeWorkspaceLink(join("..", "baz"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz", "node_modules"))).toEqual(["bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz", "node_modules", "bar"))).toEqual([
     "package.json",

@@ -6229,6 +6229,7 @@ pub const PackageManager = struct {
                                     if (comptime subcommand == .install) {
                                         found = true;
                                         child_json.close();
+                                        try json_file.seekTo(0);
                                         break :brk json_file;
                                     } else {
                                         break :brk child_json;

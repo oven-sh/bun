@@ -1329,7 +1329,7 @@ pub const struct_uv_fs_event_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_fs_event_t = struct_uv_fs_event_s;
-pub const uv_fs_event_cb = ?*const fn ([*c]uv_fs_event_t, [*]const u8, c_int, c_int) callconv(.C) void;
+pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, c_int) callconv(.C) void;
 pub const struct_uv_fs_event_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1823,9 +1823,9 @@ pub const UV_LEAVE_GROUP: c_int = 0;
 pub const UV_JOIN_GROUP: c_int = 1;
 pub const uv_membership = c_uint;
 pub extern fn uv_translate_sys_error(sys_errno: c_int) c_int;
-pub extern fn uv_strerror(err: c_int) [*]const u8;
+pub extern fn uv_strerror(err: c_int) [*c]const u8;
 pub extern fn uv_strerror_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
-pub extern fn uv_err_name(err: c_int) [*]const u8;
+pub extern fn uv_err_name(err: c_int) [*c]const u8;
 pub extern fn uv_err_name_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
 pub extern fn uv_shutdown(req: [*c]uv_shutdown_t, handle: *uv_stream_t, cb: uv_shutdown_cb) c_int;
 pub extern fn uv_handle_size(@"type": uv_handle_type) usize;

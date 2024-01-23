@@ -370,7 +370,6 @@ pub const WriteFileWindows = struct {
     const log = bun.Output.scoped(.WriteFile, true);
 
     pub fn createWithCtx(
-        allocator: std.mem.Allocator,
         file_blob: Blob,
         bytes_blob: Blob,
         event_loop: *bun.JSC.EventLoop,
@@ -378,7 +377,6 @@ pub const WriteFileWindows = struct {
         onCompleteCallback: OnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) *WriteFile {
-        _ = allocator;
         const write_file = WriteFileWindows.new(.{
             .file_blob = file_blob,
             .bytes_blob = bytes_blob,
@@ -655,6 +653,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn create(
+        event_loop: *JSC.EventLoop,
         file_blob: Blob,
         bytes_blob: Blob,
         comptime Context: type,
@@ -671,6 +670,7 @@ pub const WriteFileWindows = struct {
         return WriteFileWindows.createWithCtx(
             file_blob,
             bytes_blob,
+            event_loop,
             @as(*anyopaque, @ptrCast(context)),
             Handler.run,
             mkdirp_if_not_exists,

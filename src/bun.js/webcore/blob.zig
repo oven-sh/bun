@@ -782,6 +782,7 @@ pub const Blob = struct {
                 promise_value.ensureStillAlive();
                 write_file_promise.promise.strong.set(ctx, promise_value);
                 _ = WriteFileWindows.create(
+                    ctx.bunVM().uvLoop(),
                     destination_blob.*,
                     source_blob.*,
                     *WriteFilePromise,

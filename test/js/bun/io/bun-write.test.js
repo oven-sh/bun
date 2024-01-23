@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
 import path, { join } from "path";
@@ -106,7 +105,6 @@ it("Bun.write file not found returns ENOENT, issue#6336", async () => {
     expect(exception.code).toBe("ENOENT");
     expect(exception.path).toBe(dst.name);
   } finally {
-    console.log(src);
     fs.unlinkSync(src.name);
   }
 });

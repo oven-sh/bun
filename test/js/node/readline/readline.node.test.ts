@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 import readline from "node:readline";
 import { Writable, PassThrough } from "node:stream";

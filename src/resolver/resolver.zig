@@ -3607,7 +3607,6 @@ pub const Resolver = struct {
 
     pub fn loadAsFile(r: *ThisResolver, path: string, extension_order: []const string) ?LoadResult {
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
-        std.debug.print("A:{s}\n", .{path});
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Attempting to load \"{s}\" as a file", .{path});

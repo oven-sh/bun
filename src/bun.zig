@@ -100,7 +100,9 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
+        _ = fmt_;
+        _ = options_;
+        try writer.print("{d}", .{@intFromEnum(fd)});
     }
 };
 

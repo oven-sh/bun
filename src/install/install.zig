@@ -24,7 +24,7 @@ const linker = @import("../linker.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
-const Path = bun.path;
+const Path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
@@ -1675,8 +1675,8 @@ pub const PackageInstall = struct {
                 .windows,
             );
 
-            to_buf[to_path.len] = 0;
-            const to_path_z = to_buf[0..to_path.len :0];
+            to_buf[dest_dir_path.len] = 0;
+            const to_path_z = to_buf[0..dest_dir_path.len :0];
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
@@ -1910,9 +1910,6 @@ const Waiter = struct {
 // 2.
 pub const PackageManager = struct {
     cache_directory_: ?std.fs.Dir = null,
-
-    // TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
-    cache_directory_path: string = "",
     temp_dir_: ?std.fs.Dir = null,
     temp_dir_name: string = "",
     root_dir: *Fs.FileSystem.DirEntry,
@@ -2473,23 +2470,11 @@ pub const PackageManager = struct {
         loop: while (true) {
             if (this.options.enable.cache) {
                 const cache_dir = fetchCacheDirectoryPath(this.env);
-                this.cache_directory_path = this.allocator.dupe(u8, cache_dir.path) catch bun.outOfMemory();
-
                 return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
-                    this.allocator.free(this.cache_directory_path);
                     continue :loop;
                 };
             }
-
-            this.cache_directory_path = this.allocator.dupe(u8, Path.joinAbsString(
-                Fs.FileSystem.instance.top_level_dir,
-                &.{
-                    "node_modules",
-                    ".cache",
-                },
-                .auto,
-            )) catch bun.outOfMemory();
 
             return std.fs.cwd().makeOpenPath("node_modules/.cache", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
@@ -3925,7 +3910,6 @@ pub const PackageManager = struct {
                         repo_fd.asDir(),
                         alias,
                         this.lockfile.str(&dep.committish),
-                        clone_id,
                     );
                     const checkout_id = Task.Id.forGitCheckout(url, resolved);
 
@@ -6231,7 +6215,6 @@ pub const PackageManager = struct {
                                     if (comptime subcommand == .install) {
                                         found = true;
                                         child_json.close();
-                                        try json_file.seekTo(0);
                                         break :brk json_file;
                                     } else {
                                         break :brk child_json;

@@ -1279,15 +1279,28 @@ pub const RunCommand = struct {
             debug("Attempting to find and load bunx file: '{}'", .{
                 std.unicode.fmtUtf16le(path_to_use),
             });
-            const handle = w.OpenFile(path_to_use, .{
-                .access_mask = w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
-                .share_access = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
-                .creation = w.FILE_OPEN,
-                .io_mode = .blocking,
-            }) catch |err| {
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+            }
+            const handle = (bun.sys.ntCreateFile(
+                bun.invalid_fd, // absolute path is given
+                path_to_use,
+                w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
+                w.FILE_OPEN,
+                0,
+            ).unwrap() catch |err| {
                 debug("Failed to open bunx file: '{}'", .{err});
                 break :try_bunx_file;
-            };
+            }).cast();
+            // const handle = w.OpenFile(path_to_use, .{
+            //     .access_mask = w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
+            //     .share_access = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
+            //     .creation = w.FILE_OPEN,
+            //     .io_mode = .blocking,
+            // }) catch |err| {
+            //     debug("Failed to open bunx file: '{}'", .{err});
+            //     break :try_bunx_file;
+            // };
 
             var i: usize = 0;
             for (ctx.passthrough) |str| {

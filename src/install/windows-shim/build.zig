@@ -39,6 +39,16 @@ pub fn build(b: *std.Build) void {
         .link_libc = false,
     });
 
+    const cli = b.addExecutable(.{
+        .name = "encoder-cli",
+        .root_source_file = .{ .path = "encoder-cli.zig" },
+        .target = target,
+        .optimize = .Debug,
+        .use_llvm = true,
+        .use_lld = true,
+    });
+
     b.installArtifact(exe);
     b.installArtifact(dbg);
+    b.installArtifact(cli);
 }

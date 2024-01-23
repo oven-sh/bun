@@ -1453,7 +1453,10 @@ pub const MiniVM = struct {
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
-        return this.mini.loop.uv_loop;
+        if (comptime Environment.isWindows) {
+            return this.mini.loop.uv_loop;
+        }
+        return this.mini.loop;
     }
 
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {

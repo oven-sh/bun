@@ -748,14 +748,27 @@ pub const Blob = struct {
     ) JSC.JSValue {
         const destination_type = std.meta.activeTag(destination_blob.store.?.data);
 
-        // Writing an empty string to a file is a no-op
         if (source_blob.store == null) {
-            destination_blob.detach();
-            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
+            return switch (destination_type) {
+                .file => {
+                    // when writing empty blob to file, we just create an empty file
+                    var needs_async = false;
+                    return writeStringToFileFast(
+                        ctx,
+                        destination_blob.store.?.data.file.pathlike,
+                        bun.String.init(""),
+                        &needs_async,
+                        true,
+                    );
+                },
+                else => {
+                    destination_blob.detach();
+                    return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
+                },
+            };
         }
 
         const source_type = std.meta.activeTag(source_blob.store.?.data);
-
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.new(WriteFilePromise, .{
                 .globalThis = ctx,

@@ -1387,7 +1387,7 @@ export function dismissError() {
       runtimeErrorController = null;
     }
 
-    while (pending.length > 0) pending.shift().stopped = true;
+    while (pending.length > 0) pending.shift()!.stopped = true;
   }
 }
 

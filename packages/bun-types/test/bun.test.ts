@@ -1,4 +1,4 @@
-import { BunFile, BunPlugin, FileBlob } from "bun";
+import type { BunFile, BunPlugin, FileBlob } from "bun";
 import * as tsd from "./utilities.test";
 {
   const _plugin: BunPlugin = {

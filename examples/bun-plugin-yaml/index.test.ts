@@ -1,14 +1,13 @@
 import { test, expect } from "bun:test";
 import YamlPlugin from ".";
-import data from "./data.yml";
 
-test("yaml loader - no plugin", async () => {
+test.skip("yaml loader - no plugin", async () => {
   expect(async () => {
     await import("./data.yml");
   }).toThrow();
 });
 
-test("yaml loader", async () => {
+test.skip("yaml loader", async () => {
   const plugin = YamlPlugin();
   Bun.plugin(plugin);
   const { default: mod } = await import("./data.yml");

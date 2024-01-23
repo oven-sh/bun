@@ -5,10 +5,8 @@
     "build": "cd ../.. && make wasm",
     "dev": "cd ../.. && make dev-wasm"
   },
-  "devDependencies": {
-    "@types/node": "^20.4.10",
-    "peechy": "0.4.32",
-    "typescript": "latest"
+  "peerDependencies": {
+    "peechy": "*"
   },
   "files": [
     "bun.wasm",

@@ -106,13 +106,8 @@ declare namespace HTMLRewriterTypes {
  */
 declare class HTMLRewriter {
   constructor();
-  on(
-    selector: string,
-    handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers,
-  ): HTMLRewriter;
-  onDocument(
-    handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers,
-  ): HTMLRewriter;
+  on(selector: string, handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers): HTMLRewriter;
+  onDocument(handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers): HTMLRewriter;
   /**
    * @param input - The HTML to transform
    * @returns A new {@link Response} with the transformed HTML

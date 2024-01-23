@@ -4,7 +4,6 @@
 
 `bun-error` is a frontend component for rendering error messages and stack traces from Bun. It's used in:
 
-- `bun dev`
 - `Bun.serve`
 
 It is heavily tied to the implementation details of Bun, and is not intended to be used outside of Bun.

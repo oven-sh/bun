@@ -1,19 +1,16 @@
 {
-  "name": "bun-lambda",
   "private": true,
+  "name": "bun-lambda",
   "devDependencies": {
-    "@oclif/plugin-plugins": "^3.5.0",
-    "bun-types": "^0.7.0",
-    "jszip": "^3.10.1",
-    "oclif": "^3.6.5",
-    "prettier": "^2.8.2"
+    "@oclif/plugin-plugins": "4.1.20",
+    "jszip": "3.10.1",
+    "oclif": "4.3.9"
   },
   "dependencies": {
-    "aws4fetch": "^1.0.17"
+    "aws4fetch": "1.0.17"
   },
   "scripts": {
     "build-layer": "bun scripts/build-layer.ts",
-    "publish-layer": "bun scripts/publish-layer.ts",
-    "format": "prettier --write ."
+    "publish-layer": "bun scripts/publish-layer.ts"
   }
 }

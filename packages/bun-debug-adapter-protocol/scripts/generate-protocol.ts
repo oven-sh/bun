@@ -172,5 +172,5 @@ async function download<T>(url: string | URL): Promise<T> {
   if (!response.ok) {
     throw new Error(`Failed to download ${url}: ${response.statusText}`);
   }
-  return response.json();
+  return response.json() as T;
 }

@@ -1,7 +1,3 @@
-// HACK: https://github.com/oven-sh/bun/issues/2081
-process.stdout.getWindowSize = () => [80, 80];
-process.stderr.getWindowSize = () => [80, 80];
-
 import { createReadStream, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command, Flags } from "@oclif/core";
@@ -87,12 +83,13 @@ export class BuildCommand extends Command {
     this.log("Saving...", output);
     const archiveBuffer = await archive
       .generateAsync({
-        type: 'blob',
+        type: "blob",
         compression: "DEFLATE",
         compressionOptions: {
           level: 9,
         },
-      }).then(blob => blob.arrayBuffer());
+      })
+      .then(blob => blob.arrayBuffer());
     writeFileSync(output, archiveBuffer);
     this.log("Saved");
   }

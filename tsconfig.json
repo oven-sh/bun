@@ -1,12 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    // "skipLibCheck": true,
-    "allowJs": true
-  },
-  "include": [".", "packages/bun-types/index.d.ts"],
+  "include": ["packages/bun-types/index.d.ts"],
   "exclude": [
     "src/test",
     "src/js/out",

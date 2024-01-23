@@ -1,4 +1,4 @@
-import { BunPlugin } from "bun";
+import type { BunPlugin } from "bun";
 import { readFileSync } from "fs";
 import { load } from "js-yaml";
 

@@ -26,13 +26,7 @@ declare module "tls" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?:
-      | string
-      | Buffer
-      | NodeJS.TypedArray
-      | BunFile
-      | Array<string | Buffer | BunFile>
-      | undefined;
+    ca?: string | Buffer | NodeJS.TypedArray | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -70,8 +64,5 @@ declare module "tls" {
       | undefined;
   };
 
-  function connect(
-    options: BunConnectionOptions,
-    secureConnectListener?: () => void,
-  ): TLSSocket;
+  function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
 }

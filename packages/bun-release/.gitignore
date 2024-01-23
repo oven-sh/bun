@@ -1,6 +1,1 @@
-.DS_Store
-.env
-node_modules
-/npm/**/bin
-/npm/**/*.js
-/npm/**/.npmrc
+npm/

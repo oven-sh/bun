@@ -73,7 +73,7 @@ export function rename(path: string, newPath: string): void {
   fs.renameSync(path, newPath);
 }
 
-export function write(dst: string, content: string | ArrayBuffer | ArrayBufferView): void {
+export function write(dst: string, content: string | NodeJS.ArrayBufferView): void {
   debug("write", dst);
   try {
     fs.writeFileSync(dst, content);

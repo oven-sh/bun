@@ -22,7 +22,7 @@ pub const Reader = struct {
             return error.EOF;
         }
 
-        const slice = this.remain[0..read_count];
+        var slice = this.remain[0..read_count];
 
         this.remain = this.remain[read_count..];
 
@@ -30,7 +30,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readAs(this: *Self, comptime T: type) !T {
-        if (!std.meta.hasUniqueRepresentation(T)) {
+        if (!std.meta.trait.hasUniqueRepresentation(T)) {
             @compileError(@typeName(T) ++ " must have unique representation.");
         }
 
@@ -72,8 +72,11 @@ pub const Reader = struct {
                 return std.mem.readIntSliceNative(T, this.read(length * @sizeOf(T)));
             },
             [:0]const u8, []const u8 => {
-                const array = try this.allocator.alloc(T, length);
-                for (array) |*a| a.* = try this.readArray(u8);
+                var i: u32 = 0;
+                var array = try this.allocator.alloc(T, length);
+                while (i < length) : (i += 1) {
+                    array[i] = try this.readArray(u8);
+                }
                 return array;
             },
             else => {
@@ -82,7 +85,7 @@ pub const Reader = struct {
                         switch (Struct.layout) {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
-                                const slice = try this.read(sizeof * length);
+                                var slice = try this.read(sizeof * length);
                                 return std.mem.bytesAsSlice(T, slice);
                             },
                             else => {},
@@ -95,8 +98,12 @@ pub const Reader = struct {
                     else => {},
                 }
 
-                const array = try this.allocator.alloc(T, length);
-                for (array) |*v| v.* = try this.readValue(T);
+                var i: u32 = 0;
+                var array = try this.allocator.alloc(T, length);
+                while (i < length) : (i += 1) {
+                    array[i] = try this.readValue(T);
+                }
+
                 return array;
             },
         }
@@ -112,7 +119,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readInt(this: *Self, comptime T: type) !T {
-        const slice = try this.read(@sizeOf(T));
+        var slice = try this.read(@sizeOf(T));
 
         return std.mem.readIntSliceNative(T, slice);
     }

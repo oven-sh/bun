@@ -7,14 +7,17 @@
     "url": "https://github.com/oven-sh/bun"
   },
   "main": "dist/extension.js",
+  "dependencies": {
+    "bun-debug-adapter-protocol": "workspace:*"
+  },
+  "peerDependencies": {
+    "esbuild": "*"
+  },
   "devDependencies": {
     "@types/vscode": "^1.60.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
-    "@vscode/vsce": "^2.20.1",
-    "bun-types": "^0.7.3",
-    "esbuild": "^0.19.2",
-    "typescript": "^5.0.0"
+    "@vscode/vsce": "^2.20.1"
   },
   "description": "The Visual Studio Code extension for Bun.",
   "displayName": "Bun for Visual Studio Code",
@@ -49,10 +52,6 @@
   "workspaceTrust": {
     "request": "never"
   },
-  "workspaces": [
-    "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol"
-  ],
   "activationEvents": [
     "onStartupFinished"
   ],

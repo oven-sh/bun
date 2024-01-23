@@ -20,10 +20,13 @@
     "modules.d.ts"
   ],
   "devDependencies": {
-    "@types/js-yaml": "^4.0.5",
-    "bun-types": "canary"
+    "@types/bun": "latest",
+    "@types/js-yaml": "^4.0.5"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
   }
 }

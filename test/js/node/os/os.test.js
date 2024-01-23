@@ -26,7 +26,7 @@ it("getPriority", () => {
 });
 
 it("setPriority", () => {
-  if(process.platform === "win32") {
+  if (process.platform === "win32") {
     expect(os.setPriority(0, 10)).toBe(undefined);
     expect(os.getPriority()).toBe(10);
     expect(os.setPriority(0)).toBe(undefined);
@@ -49,7 +49,13 @@ it("homedir", () => {
 
 it("tmpdir", () => {
   if (process.platform === "win32") {
-    expect([process.env.TEMP, `${process.env.SystemRoot || process.env.windir}\\Temp`, `${process.env.LOCALAPPDATA}\\Temp`].includes(os.tmpdir())).toBeTrue();
+    expect(
+      [
+        process.env.TEMP,
+        `${process.env.SystemRoot || process.env.windir}\\Temp`,
+        `${process.env.LOCALAPPDATA}\\Temp`,
+      ].includes(os.tmpdir()),
+    ).toBeTrue();
   } else {
     const originalEnv = process.env.TMPDIR;
     let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
@@ -87,8 +93,8 @@ it("uptime", () => {
 it("version", () => {
   expect(typeof os.version() === "string").toBe(true);
   if (process.platform === "win32") {
-    expect(os.version()).toInclude('Win');
-    console.log(os.version())
+    expect(os.version()).toInclude("Win");
+    console.log(os.version());
   }
 });
 
@@ -171,8 +177,8 @@ it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
 });
 
-it('loadavg', () => {
+it("loadavg", () => {
   const loadavg = os.loadavg();
   expect(loadavg.length).toBe(3);
-  expect(loadavg.every((avg) => typeof avg === 'number')).toBeTrue();
-})
+  expect(loadavg.every(avg => typeof avg === "number")).toBeTrue();
+});

@@ -10,15 +10,15 @@ const VirtualMachine = JSC.VirtualMachine;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 
-var default_manager: ?*WinPathWatcherManager = null;
+var default_manager: ?*PathWatcherManager = null;
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
-pub const WinPathWatcherManager = struct {
+pub const PathWatcherManager = struct {
     const GenericWatcher = @import("../../watcher.zig");
     const options = @import("../../options.zig");
-    pub const Watcher = GenericWatcher.NewWatcher(*WinPathWatcherManager);
-    const log = Output.scoped(.WinPathWatcherManager, false);
+    pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
+    const log = Output.scoped(.PathWatcherManager, false);
     main_watcher: *Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},
@@ -35,10 +35,10 @@ pub const WinPathWatcherManager = struct {
         hash: Watcher.HashType,
     };
 
-    pub usingnamespace bun.New(WinPathWatcherManager);
+    pub usingnamespace bun.New(PathWatcherManager);
 
     fn _fdFromAbsolutePathZ(
-        this: *WinPathWatcherManager,
+        this: *PathWatcherManager,
         path: [:0]const u8,
     ) !PathInfo {
         if (this.file_paths.getEntry(path)) |entry| {
@@ -78,18 +78,18 @@ pub const WinPathWatcherManager = struct {
         return result;
     }
 
-    pub fn init(vm: *JSC.VirtualMachine) !*WinPathWatcherManager {
+    pub fn init(vm: *JSC.VirtualMachine) !*PathWatcherManager {
         var watchers = try bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1);
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
 
-        var this = WinPathWatcherManager.new(.{
+        var this = PathWatcherManager.new(.{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .watchers = watchers,
             .main_watcher = undefined,
             .vm = vm,
             .watcher_count = 0,
         });
-        errdefer bun.default_allocator.destroy(this);
+        errdefer this.destroy();
 
         this.main_watcher = try Watcher.init(
             this,
@@ -103,12 +103,12 @@ pub const WinPathWatcherManager = struct {
         return this;
     }
 
-    fn _addDirectory(this: *WinPathWatcherManager, _: *PathWatcher, path: PathInfo) !void {
+    fn _addDirectory(this: *PathWatcherManager, _: *PathWatcher, path: PathInfo) !void {
         const fd = path.fd;
         try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
     }
 
-    fn registerWatcher(this: *WinPathWatcherManager, watcher: *PathWatcher) !void {
+    fn registerWatcher(this: *PathWatcherManager, watcher: *PathWatcher) !void {
         {
             if (this.watcher_count == this.watchers.len) {
                 this.watcher_count += 1;
@@ -136,7 +136,7 @@ pub const WinPathWatcherManager = struct {
         }
     }
 
-    fn _incrementPathRef(this: *WinPathWatcherManager, file_path: [:0]const u8) void {
+    fn _incrementPathRef(this: *PathWatcherManager, file_path: [:0]const u8) void {
         if (this.file_paths.getEntry(file_path)) |entry| {
             var path = entry.value_ptr;
             if (path.refs > 0) {
@@ -145,7 +145,7 @@ pub const WinPathWatcherManager = struct {
         }
     }
 
-    fn _decrementPathRef(this: *WinPathWatcherManager, file_path: [:0]const u8) void {
+    fn _decrementPathRef(this: *PathWatcherManager, file_path: [:0]const u8) void {
         if (this.file_paths.getEntry(file_path)) |entry| {
             var path = entry.value_ptr;
             if (path.refs > 0) {
@@ -161,7 +161,7 @@ pub const WinPathWatcherManager = struct {
     }
 
     // unregister is always called form main thread
-    fn unregisterWatcher(this: *WinPathWatcherManager, watcher: *PathWatcher) void {
+    fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
         var watchers = this.watchers.slice();
         defer {
             if (this.deinit_on_last_watcher and this.watcher_count == 0) {
@@ -185,7 +185,7 @@ pub const WinPathWatcherManager = struct {
             }
         }
     }
-    fn deinit(this: *WinPathWatcherManager) void {
+    fn deinit(this: *PathWatcherManager) void {
         // enable to create a new manager
         if (default_manager == this) {
             default_manager = null;
@@ -231,18 +231,18 @@ pub const PathWatcher = struct {
     recursive: bool,
     callback: Callback,
     flushCallback: UpdateEndCallback,
-    manager: ?*WinPathWatcherManager,
-    path: WinPathWatcherManager.PathInfo,
+    manager: ?*PathWatcherManager,
+    path: PathWatcherManager.PathInfo,
     last_change_event: ChangeEvent = .{},
     closed: bool = false,
     needs_flush: bool = false,
 
     pub usingnamespace bun.New(PathWatcher);
 
-    const log = Output.scoped(.WinPathWatcher, false);
+    const log = Output.scoped(.PathWatcher, false);
 
     pub const ChangeEvent = struct {
-        hash: WinPathWatcherManager.Watcher.HashType = 0,
+        hash: PathWatcherManager.Watcher.HashType = 0,
         event_type: EventType = .change,
         time_stamp: i64 = 0,
     };
@@ -279,9 +279,10 @@ pub const PathWatcher = struct {
         @memcpy(buf[0..cwd.len], cwd);
         buf[cwd.len] = std.fs.path.sep;
 
+        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
         const file_path = Path.joinAbsStringBuf(
             buf[0 .. cwd.len + 1],
-            &buf,
+            &joined_buf,
             &parts,
             .windows,
         );
@@ -301,7 +302,7 @@ pub const PathWatcher = struct {
         }
     }
 
-    pub fn init(manager: *WinPathWatcherManager, path: WinPathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
+    pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
         var this = PathWatcher.new(.{
             .handle = std.mem.zeroes(uv.uv_fs_event_t),
             .path = path,
@@ -328,7 +329,7 @@ pub const PathWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *PathWatcher, path: string, hash: WinPathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
+    pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
         const time_diff = time_stamp - this.last_change_event.time_stamp;
         // skip consecutive duplicates
         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {
@@ -377,7 +378,7 @@ pub fn watch(
         return try PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx);
     } else {
         if (default_manager == null) {
-            default_manager = try WinPathWatcherManager.init(vm);
+            default_manager = try PathWatcherManager.init(vm);
         }
         const manager = default_manager.?;
         const path_info = try manager._fdFromAbsolutePathZ(path);

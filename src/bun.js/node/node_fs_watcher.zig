@@ -563,9 +563,10 @@ pub const FSWatcher = struct {
         const cwd = try bun.getcwd(&buf);
         buf[cwd.len] = std.fs.path.sep;
 
+        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
         const file_path = Path.joinAbsStringBuf(
             buf[0 .. cwd.len + 1],
-            &buf,
+            &joined_buf,
             &parts,
             .auto,
         );

@@ -40,7 +40,7 @@ test.skipIf(!stringWidth)("stringWidth", () => {
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   describe(matcher, () => {
-    test("ansi colors", () => {
+    test.skipIf(!stringWidth)("ansi colors", () => {
       expect("\u001b[31m")[matcher]();
       expect("\u001b[31ma")[matcher]();
       expect("\u001b[31mab")[matcher]();

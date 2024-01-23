@@ -1486,6 +1486,7 @@ pub const PathName = struct {
             // This path is likely incorrect. I think it may be *possible*
             // but it is almost entirely certainly a bug.
             std.debug.assert(!strings.startsWith(_path, "/:/"));
+            std.debug.assert(!strings.startsWith(_path, "\\:\\"));
         }
 
         var path = _path;

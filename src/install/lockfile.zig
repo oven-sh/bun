@@ -3779,12 +3779,9 @@ pub const Package = extern struct {
                 dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
                 if (dir_prefix.len == 0 or
                     strings.eqlComptime(dir_prefix, ".") or
-                    strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
+                    strings.eqlComptime(dir_prefix, "./"))
                 {
-                    if (comptime Environment.isWindows)
-                        dir_prefix = Fs.FileSystem.instance.top_level_dir
-                    else
-                        dir_prefix = ".";
+                    dir_prefix = ".";
                 }
 
                 const entries_option = FileSystem.instance.fs.readDirectory(

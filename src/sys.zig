@@ -1095,10 +1095,14 @@ pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usi
 
 pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        if (kernel32.SetFileValidData(fd.cast(), size) == 0) {
-            return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
+        // SetFileValidData doesn't seem to work, use this series of syscalls for now
+        // We should really just be passing the O_TRUNC flag to open if we're on windows
+        if (kernel32.SetFilePointerEx(fd.cast(), size, null, kernel32.FILE_BEGIN) == 0) {
+            return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).todo();
         }
-
+        if (kernel32.SetEndOfFile(fd.cast()) == 0) {
+            return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).todo();
+        }
         return Maybe(void).success;
     }
 

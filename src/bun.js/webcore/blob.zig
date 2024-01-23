@@ -1702,7 +1702,7 @@ pub const Blob = struct {
                             this.loop,
                             &this.req,
                             path,
-                            open_flags_,
+                            bun.sys.sys_uv.normalizeOpenFlags(open_flags_),
                             JSC.Node.default_permission,
                             &WrappedCallback.callback,
                         );

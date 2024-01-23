@@ -37,7 +37,23 @@ pub const mkdirOSPath = bun.sys.mkdirOSPath;
 
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
-pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+// convert linux flags to windows flags
+pub fn normalizeOpenFlags(flags: bun.Mode) c_int {
+    if (comptime Environment.isWindows) {
+        var win_flags: c_int = 0;
+        if (flags & std.os.O.RDONLY != 0) win_flags |= 0o0;
+        if (flags & std.os.O.WRONLY != 0) win_flags |= 0o1;
+        if (flags & std.os.O.RDWR != 0) win_flags |= 0o2;
+        if (flags & std.os.O.CREAT != 0) win_flags |= 0o400;
+        if (flags & std.os.O.TRUNC != 0) win_flags |= 0o1000;
+        return win_flags;
+    } else {
+        return flags;
+    }
+}
+
+pub fn open(file_path: [:0]const u8, _flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    const flags = normalizeOpenFlags(_flags);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);

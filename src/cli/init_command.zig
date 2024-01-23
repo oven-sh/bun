@@ -385,7 +385,7 @@ pub const InitCommand = struct {
                 const cwd = std.fs.cwd();
                 const filename = ".gitattributes";
                 var file = if (exists(filename))
-                    openFileForAppendZ(cwd, filename, .{ .mode = .read_write }) catch break :brk
+                    openFileForAppendZ(cwd, filename, .{ .mode = .write_only }) catch break :brk
                 else
                     cwd.createFileZ(filename, .{ .truncate = true }) catch break :brk;
 
@@ -403,7 +403,7 @@ pub const InitCommand = struct {
                 }
                 const filename = ".git/config";
                 var file = if (exists(filename))
-                    openFileForAppendZ(cwd, filename, .{ .mode = .read_write }) catch break :brk
+                    openFileForAppendZ(cwd, filename, .{ .mode = .write_only }) catch break :brk
                 else
                     cwd.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();

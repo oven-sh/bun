@@ -272,7 +272,7 @@ describe("package scripts load from .env.production and .env.development", () =>
       ".env.development": "TEST=dev",
     });
 
-    const { stdout } = bunRunAsScript(dir, "test", {"NODE_ENV": "production"});
+    const { stdout } = bunRunAsScript(dir, "test", { "NODE_ENV": "production" });
     expect(stdout).toBe("prod");
   });
   test("NODE_ENV=development", () => {
@@ -290,7 +290,7 @@ describe("package scripts load from .env.production and .env.development", () =>
       ".env.development": "TEST=dev",
     });
 
-    const { stdout } = bunRunAsScript(dir, "test", {"NODE_ENV": "development"});
+    const { stdout } = bunRunAsScript(dir, "test", { "NODE_ENV": "development" });
     expect(stdout).toBe("dev");
   });
 });

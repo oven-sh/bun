@@ -841,25 +841,23 @@ inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime 
     comptime var b_ptr: usize = 0;
 
     inline while (b.len - b_ptr >= @sizeOf(usize)) {
-        if (@as(usize, @bitCast(a[b_ptr..][0 .. @sizeOf(usize)].*)) != comptime @as(usize, @bitCast(b[b_ptr..][0 .. @sizeOf(usize)].*)))
+        if (@as(usize, @bitCast(a[b_ptr..][0..@sizeOf(usize)].*)) != comptime @as(usize, @bitCast(b[b_ptr..][0..@sizeOf(usize)].*)))
             return false;
         comptime b_ptr += @sizeOf(usize);
         if (comptime b_ptr == b.len) return true;
     }
 
-
     if (comptime @sizeOf(usize) == 8) {
         if (comptime (b.len & 4) != 0) {
-            if (@as(u32, @bitCast(a[b_ptr..][0 .. @sizeOf(u32)].*)) != comptime @as(u32, @bitCast(b[b_ptr..][0 .. @sizeOf(u32)].*)))
+            if (@as(u32, @bitCast(a[b_ptr..][0..@sizeOf(u32)].*)) != comptime @as(u32, @bitCast(b[b_ptr..][0..@sizeOf(u32)].*)))
                 return false;
             comptime b_ptr += @sizeOf(u32);
             if (comptime b_ptr == b.len) return true;
         }
     }
 
-
     if (comptime (b.len & 2) != 0) {
-        if (@as(u16, @bitCast(a[b_ptr..][0 .. @sizeOf(u16)].*)) != comptime @as(u16, @bitCast(b[b_ptr..][0 .. @sizeOf(u16)].*)))
+        if (@as(u16, @bitCast(a[b_ptr..][0..@sizeOf(u16)].*)) != comptime @as(u16, @bitCast(b[b_ptr..][0..@sizeOf(u16)].*)))
             return false;
 
         comptime b_ptr += @sizeOf(u16);
@@ -874,9 +872,9 @@ inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime 
 
 inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
     if (comptime Type != u8) {
-        return eqlComptimeCheckLenU8(std.mem.sliceAsBytes(a),  comptime std.mem.sliceAsBytes(b), comptime check_len);
+        return eqlComptimeCheckLenU8(std.mem.sliceAsBytes(a), comptime std.mem.sliceAsBytes(b), comptime check_len);
     }
-    return eqlComptimeCheckLenU8(a,  comptime b, comptime check_len);
+    return eqlComptimeCheckLenU8(a, comptime b, comptime check_len);
 }
 
 /// Check if two strings are equal with one of the strings being a comptime-known value

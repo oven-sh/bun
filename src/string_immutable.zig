@@ -698,6 +698,10 @@ pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
 
+pub fn withoutLeadingPathSeparator(this: string) []const u8 {
+    return std.mem.trimLeft(u8, this, &.{std.fs.path.sep});
+}
+
 pub fn endsWithAny(self: string, str: string) bool {
     const end = self[self.len - 1];
     for (str) |char| {

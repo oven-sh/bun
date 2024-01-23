@@ -2999,3 +2999,9 @@ pub extern "kernel32" fn GetHostNameW(
     lpBuffer: PWSTR,
     nSize: c_int,
 ) BOOL;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppatha
+pub extern "kernel32" fn GetTempPath2W(
+    nBufferLength: DWORD, // [in]
+    lpBuffer: LPCWSTR, // [out]
+) DWORD;

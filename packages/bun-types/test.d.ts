@@ -13,20 +13,14 @@
  * $ bun test <filename>
  * ```
  */
-
 declare module "bun:test" {
-  type AnyFunction = (...args: any) => any;
   /**
    * -- Mocks --
    */
-  export interface Mock<T extends AnyFunction>
-    extends JestMock.MockInstance<T> {
-    (...args: Parameters<T>): ReturnType<T>;
-  }
-  type _Mock<T extends AnyFunction> = Mock<T>;
+  export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   export const mock: {
-    <T extends AnyFunction>(Function: T): Mock<T>;
+    <T extends (...args: any[]) => any>(Function: T): Mock<T>;
 
     /**
      * Replace the module `id` with the return value of `factory`.
@@ -97,14 +91,15 @@ declare module "bun:test" {
 
   interface Jest {
     restoreAllMocks(): void;
-    fn<T extends AnyFunction>(func?: T): Mock<T>;
+    fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
   }
   export const jest: Jest;
   export namespace jest {
     /**
      * Constructs the type of a mock function, e.g. the return type of `jest.fn()`.
      */
-    type Mock<T extends AnyFunction = AnyFunction> = _Mock<T>;
+    type Mock<T extends (...args: any[]) => any = (...args: any[]) => any> =
+      JestMock.Mock<T>;
     /**
      * Wraps a class, function or object type with Jest mock type definitions.
      */
@@ -116,7 +111,7 @@ declare module "bun:test" {
     /**
      * Wraps a function type with Jest mock type definitions.
      */
-    // type MockedFunction<T extends AnyFunction> = JestMock.MockedFunction<T>;
+    // type MockedFunction<T extends (...args: any[]) => any> = JestMock.MockedFunction<T>;
     /**
      * Wraps an object type with Jest mock type definitions.
      */
@@ -128,7 +123,8 @@ declare module "bun:test" {
     /**
      * Constructs the type of a spied class or function.
      */
-    type Spied<T extends JestMock.ClassLike | AnyFunction> = JestMock.Spied<T>;
+    type Spied<T extends JestMock.ClassLike | ((...args: any[]) => any)> =
+      JestMock.Spied<T>;
     /**
      * Constructs the type of a spied class.
      */
@@ -136,7 +132,8 @@ declare module "bun:test" {
     /**
      * Constructs the type of a spied function.
      */
-    type SpiedFunction<T extends AnyFunction> = JestMock.SpiedFunction<T>;
+    type SpiedFunction<T extends (...args: any[]) => any> =
+      JestMock.SpiedFunction<T>;
     /**
      * Constructs the type of a spied getter.
      */
@@ -150,7 +147,7 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
-  ): Mock<T[K] extends AnyFunction ? T[K] : never>;
+  ): Mock<T[K] extends (...args: any[]) => any ? T[K] : never>;
 
   /**
    * Describes a group of related tests.
@@ -619,7 +616,6 @@ declare module "bun:test" {
    *   interface Matchers<T> extends MyCustomMatchers {}
    *   interface AsymmetricMatchers extends MyCustomMatchers {}
    * }
-   * export {};
    *
    * @example
    * // my_modules.d.ts (alternatively)
@@ -631,7 +627,6 @@ declare module "bun:test" {
    *     toBeWithinRange(floor: number, ceiling: number): any;
    *   }
    * }
-   * export {};
    */
   export interface Matchers<T = unknown> extends MatchersBuiltin<T> {}
 
@@ -646,7 +641,6 @@ declare module "bun:test" {
    *   interface Matchers<T> extends MyCustomMatchers {}
    *   interface AsymmetricMatchers extends MyCustomMatchers {}
    * }
-   * export {};
    *
    * @example
    * // my_modules.d.ts (alternatively)
@@ -658,7 +652,6 @@ declare module "bun:test" {
    *     toBeWithinRange(floor: number, ceiling: number): any;
    *   }
    * }
-   * export {};
    */
   export interface AsymmetricMatchers extends AsymmetricMatchersBuiltin {}
 
@@ -680,7 +673,7 @@ declare module "bun:test" {
      * });
      */
     any(
-      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
+      constructor: ((...args: any[]) => any) | { new (...args: any[]): any },
     ): AsymmetricMatcher;
     /**
      * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead
@@ -1586,8 +1579,7 @@ declare module "bun:test" {
 }
 
 declare module "test" {
-  import BunTestModule = require("bun:test");
-  export = BunTestModule;
+  export type * from "bun:test";
 }
 
 declare namespace JestMock {
@@ -1614,6 +1606,11 @@ declare namespace JestMock {
   export type MethodLikeKeys<T> = keyof {
     [K in keyof T as Required<T>[K] extends FunctionLike ? K : never]: T[K];
   };
+
+  export interface Mock<T extends (...args: any[]) => any>
+    extends MockInstance<T> {
+    (...args: Parameters<T>): ReturnType<T>;
+  }
 
   /**
    * All what the internal typings need is to be sure that we have any-function.
@@ -2002,6 +1999,4 @@ declare namespace JestMock {
   }
 
   export type UnknownFunction = (...args: unknown[]) => unknown;
-
-  export {};
 }

@@ -436,7 +436,7 @@ declare module "bun:sqlite" {
      * ```
      */
     static deserialize(
-      serialized: TypedArray | ArrayBufferLike,
+      serialized: NodeJS.TypedArray | ArrayBufferLike,
       isReadOnly?: boolean,
     ): Database;
   }
@@ -802,11 +802,14 @@ declare module "bun:sqlite" {
   export type SQLQueryBindings =
     | string
     | bigint
-    | TypedArray
+    | NodeJS.TypedArray
     | number
     | boolean
     | null
-    | Record<string, string | bigint | TypedArray | number | boolean | null>;
+    | Record<
+        string,
+        string | bigint | NodeJS.TypedArray | number | boolean | null
+      >;
 
   export default Database;
 

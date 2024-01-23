@@ -1,6 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
+import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { platform } from "os";
 import { join, isAbsolute, sep } from "path";

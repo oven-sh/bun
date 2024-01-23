@@ -550,7 +550,7 @@ pub const FileSystem = struct {
                             break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
                         }
 
-                        break :brk "C:/Windows/Temp";
+                        break :brk "C:\\Windows\\Temp";
                     };
                     win_tempdir_cache = value;
                     return value;
@@ -1482,6 +1482,13 @@ pub const PathName = struct {
     }
 
     pub fn init(_path: string) PathName {
+        if (comptime Environment.isWindows and Environment.isDebug) {
+            // This path is likely incorrect. I think it may be *possible*
+            // but it is almost entirely certainly a bug.
+            std.debug.assert(!strings.startsWith(_path, "/:/"));
+            std.debug.assert(!strings.startsWith(_path, "\\:\\"));
+        }
+
         var path = _path;
         var base = path;
         var ext: []const u8 = undefined;

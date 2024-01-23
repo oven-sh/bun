@@ -79,6 +79,7 @@ const BunBuildOptions = struct {
     fallback_html_version: u64 = 0,
 
     tinycc: bool = true,
+    project: [:0]const u8 = "",
 
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
         if (std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only })) |file| {
@@ -378,6 +379,7 @@ pub fn build_(b: *Build) !void {
             actual_build_options.sizegen = true;
         }
 
+        actual_build_options.project = "bun";
         obj.addOptions("build_options", actual_build_options.step(b));
 
         // Generated Code

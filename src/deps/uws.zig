@@ -2497,6 +2497,14 @@ pub const UVLoop = extern struct {
         return this.internal_loop_data.iteration_nr;
     }
 
+    pub fn addActive(this: *const UVLoop, val: u32) void {
+        this.uv_loop.addActive(val);
+    }
+
+    pub fn subActive(this: *const UVLoop, val: u32) void {
+        this.uv_loop.subActive(val);
+    }
+
     pub fn isActive(this: *const UVLoop) bool {
         return this.uv_loop.isActive();
     }

@@ -20,10 +20,8 @@ const FILE = std.c.FILE;
 const CRITICAL_SECTION = *anyopaque;
 const INPUT_RECORD = *const anyopaque;
 const sockaddr = std.os.sockaddr;
-const sockaddr_in = std.os.sockaddr_in;
-const sockaddr_in6 = std.os.sockaddr_in6;
-const sockaddr_storage = std.os.sockaddr_storage;
-const sockaddr_un = std.os.sockaddr_un;
+const sockaddr_storage = std.os.linux.sockaddr_storage;
+const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
@@ -268,7 +266,7 @@ pub const uv_random_s = struct_uv_random_s;
 pub const uv_env_item_s = struct_uv_env_item_s;
 pub const uv_cpu_times_s = struct_uv_cpu_times_s;
 pub const uv_cpu_info_s = struct_uv_cpu_info_s;
-pub const uv_interface_address_s = struct_uv_interface_address_s;
+pub const uv_interface_address_s = uv_interface_address_s;
 pub const uv_passwd_s = struct_uv_passwd_s;
 pub const uv_group_s = struct_uv_group_s;
 pub const uv_utsname_s = struct_uv_utsname_s;
@@ -1329,7 +1327,7 @@ pub const struct_uv_fs_event_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_fs_event_t = struct_uv_fs_event_s;
-pub const uv_fs_event_cb = ?*const fn ([*c]uv_fs_event_t, [*]const u8, c_int, c_int) callconv(.C) void;
+pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, c_int) callconv(.C) void;
 pub const struct_uv_fs_event_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1666,27 +1664,29 @@ pub const struct_uv_cpu_times_s = extern struct {
     irq: u64,
 };
 pub const struct_uv_cpu_info_s = extern struct {
-    model: [*]u8,
+    model: [*:0]u8,
     speed: c_int,
     cpu_times: struct_uv_cpu_times_s,
 };
 pub const uv_cpu_info_t = struct_uv_cpu_info_s;
-const union_unnamed_460 = extern union {
-    address4: sockaddr_in,
-    address6: sockaddr_in6,
+
+const sockaddr_in = std.os.linux.sockaddr.in;
+const sockaddr_in6 = std.os.linux.sockaddr.in6;
+pub const addr_union = extern union {
+    address4: std.os.linux.sockaddr.in,
+    address6: std.os.linux.sockaddr.in6,
 };
-const union_unnamed_461 = extern union {
-    netmask4: sockaddr_in,
-    netmask6: sockaddr_in6,
+const netmask_union = extern union {
+    netmask4: std.os.linux.sockaddr.in,
+    netmask6: std.os.linux.sockaddr.in6,
 };
-pub const struct_uv_interface_address_s = extern struct {
-    name: [*]u8,
+pub const uv_interface_address_t = extern struct {
+    name: [*:0]u8,
     phys_addr: [6]u8,
     is_internal: c_int,
-    address: union_unnamed_460,
-    netmask: union_unnamed_461,
+    address: addr_union,
+    netmask: netmask_union,
 };
-pub const uv_interface_address_t = struct_uv_interface_address_s;
 pub const struct_uv_passwd_s = extern struct {
     username: [*]u8,
     uid: c_ulong,
@@ -1702,10 +1702,14 @@ pub const struct_uv_group_s = extern struct {
 };
 pub const uv_group_t = struct_uv_group_s;
 pub const struct_uv_utsname_s = extern struct {
-    sysname: [256]u8,
-    release: [256]u8,
-    version: [256]u8,
-    machine: [256]u8,
+    sysname: [255:0]u8,
+    release: [255:0]u8,
+    version: [255:0]u8,
+    machine: [255:0]u8,
+
+    comptime {
+        std.debug.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
+    }
 };
 pub const uv_utsname_t = struct_uv_utsname_s;
 pub const struct_uv_statfs_s = extern struct {
@@ -1823,9 +1827,9 @@ pub const UV_LEAVE_GROUP: c_int = 0;
 pub const UV_JOIN_GROUP: c_int = 1;
 pub const uv_membership = c_uint;
 pub extern fn uv_translate_sys_error(sys_errno: c_int) c_int;
-pub extern fn uv_strerror(err: c_int) [*]const u8;
+pub extern fn uv_strerror(err: c_int) [*c]const u8;
 pub extern fn uv_strerror_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
-pub extern fn uv_err_name(err: c_int) [*]const u8;
+pub extern fn uv_err_name(err: c_int) [*c]const u8;
 pub extern fn uv_err_name_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
 pub extern fn uv_shutdown(req: [*c]uv_shutdown_t, handle: *uv_stream_t, cb: uv_shutdown_cb) c_int;
 pub extern fn uv_handle_size(@"type": uv_handle_type) usize;
@@ -2054,11 +2058,11 @@ pub extern fn uv_os_getppid() uv_pid_t;
 pub extern fn uv_os_getpriority(pid: uv_pid_t, priority: [*c]c_int) c_int;
 pub extern fn uv_os_setpriority(pid: uv_pid_t, priority: c_int) c_int;
 pub extern fn uv_available_parallelism() c_uint;
-pub extern fn uv_cpu_info(cpu_infos: [*c][*c]uv_cpu_info_t, count: [*c]c_int) c_int;
+pub extern fn uv_cpu_info(cpu_infos: *[*]uv_cpu_info_t, count: *c_int) c_int;
 pub extern fn uv_free_cpu_info(cpu_infos: [*c]uv_cpu_info_t, count: c_int) void;
 pub extern fn uv_cpumask_size() c_int;
-pub extern fn uv_interface_addresses(addresses: [*c]?*uv_interface_address_t, count: [*c]c_int) c_int;
-pub extern fn uv_free_interface_addresses(addresses: ?*uv_interface_address_t, count: c_int) void;
+pub extern fn uv_interface_addresses(addresses: *[*]uv_interface_address_t, count: [*c]c_int) c_int;
+pub extern fn uv_free_interface_addresses(addresses: [*]uv_interface_address_t, count: c_int) void;
 pub extern fn uv_os_environ(envitems: [*c][*c]uv_env_item_t, count: [*c]c_int) c_int;
 pub extern fn uv_os_free_environ(envitems: [*c]uv_env_item_t, count: c_int) void;
 pub extern fn uv_os_getenv(name: [*]const u8, buffer: [*]u8, size: [*c]usize) c_int;

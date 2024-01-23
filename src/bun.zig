@@ -1,3 +1,10 @@
+/// The functions in this file are used throughout Bun's codebase
+//
+// Do not import this file directly!
+//   To import it:
+//      @import("root").bun
+//
+// Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
@@ -173,7 +180,7 @@ pub fn len(value: anytype) usize {
         .Array => |info| info.len,
         .Vector => |info| info.len,
         .Pointer => |info| switch (info.size) {
-            .One => switch (@as(@import("builtin").TypeInfo, @typeInfo(info.child))) {
+            .One => switch (@typeInfo(info.child)) {
                 .Array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");
@@ -1072,17 +1079,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
-pub fn getcwd(buf_: []u8) ![]u8 {
-    if (comptime !Environment.isWindows) {
-        return std.os.getcwd(buf_);
-    }
-
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
-    const temp_slice = try std.os.getcwd(&temp);
-    // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
-    // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .auto);
-}
+pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;

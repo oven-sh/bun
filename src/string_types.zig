@@ -17,30 +17,9 @@ pub const PathString = packed struct {
     len: PathInt = 0,
 
     const JSC = @import("root").bun.JSC;
-    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
-        if (!value.jsType().isStringLike()) {
-            JSC.JSError(JSC.getAllocator(global), "Only path strings are supported for now", .{}, global, exception);
-            return PathString{};
-        }
-        var zig_str = JSC.ZigString.init("");
-        value.toZigString(&zig_str, global);
-
-        return PathString.init(zig_str.slice());
-    }
-
-    pub inline fn asRef(this: PathString) JSC.JSValueRef {
-        return this.toValue().asObjectRef();
-    }
 
     pub fn estimatedSize(this: *const PathString) usize {
         return @as(usize, this.len);
-    }
-
-    pub fn toJS(this: PathString, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        var zig_str = JSC.ZigString.init(this.slice());
-        zig_str.detectEncoding();
-
-        return zig_str.toValueAuto(ctx.ptr()).asObjectRef();
     }
 
     pub inline fn slice(this: anytype) string {

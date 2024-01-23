@@ -698,6 +698,10 @@ pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
 
+pub fn withoutLeadingPathSeparator(this: string) []const u8 {
+    return std.mem.trimLeft(u8, this, &.{std.fs.path.sep});
+}
+
 pub fn endsWithAny(self: string, str: string) bool {
     const end = self[self.len - 1];
     for (str) |char| {
@@ -832,46 +836,32 @@ pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
 
-inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {
-        if (comptime b.len == 0) {
-            return a.len == 0;
-        }
-
-        switch (a.len) {
-            b.len => {},
-            else => return false,
-        }
+        if (a.len != b.len) return false;
     }
-
-    const len = comptime b.len;
-    comptime var dword_length = b.len >> if (Environment.isNative) 3 else 2;
-    const slice = b;
-    const divisor = comptime @sizeOf(Type);
 
     comptime var b_ptr: usize = 0;
 
-    inline while (dword_length > 0) : (dword_length -= 1) {
-        if (@as(usize, @bitCast(a[b_ptr..][0 .. @sizeOf(usize) / divisor].*)) != comptime @as(usize, @bitCast((slice[b_ptr..])[0 .. @sizeOf(usize) / divisor].*)))
+    inline while (b.len - b_ptr >= @sizeOf(usize)) {
+        if (@as(usize, @bitCast(a[b_ptr..][0..@sizeOf(usize)].*)) != comptime @as(usize, @bitCast(b[b_ptr..][0..@sizeOf(usize)].*)))
             return false;
         comptime b_ptr += @sizeOf(usize);
         if (comptime b_ptr == b.len) return true;
     }
 
     if (comptime @sizeOf(usize) == 8) {
-        if (comptime (len & 4) != 0) {
-            if (@as(u32, @bitCast(a[b_ptr..][0 .. @sizeOf(u32) / divisor].*)) != comptime @as(u32, @bitCast((slice[b_ptr..])[0 .. @sizeOf(u32) / divisor].*)))
+        if (comptime (b.len & 4) != 0) {
+            if (@as(u32, @bitCast(a[b_ptr..][0..@sizeOf(u32)].*)) != comptime @as(u32, @bitCast(b[b_ptr..][0..@sizeOf(u32)].*)))
                 return false;
-
             comptime b_ptr += @sizeOf(u32);
-
             if (comptime b_ptr == b.len) return true;
         }
     }
 
-    if (comptime (len & 2) != 0) {
-        if (@as(u16, @bitCast(a[b_ptr..][0 .. @sizeOf(u16) / divisor].*)) != comptime @as(u16, @bitCast(slice[b_ptr .. b_ptr + (@sizeOf(u16) / divisor)].*)))
+    if (comptime (b.len & 2) != 0) {
+        if (@as(u16, @bitCast(a[b_ptr..][0..@sizeOf(u16)].*)) != comptime @as(u16, @bitCast(b[b_ptr..][0..@sizeOf(u16)].*)))
             return false;
 
         comptime b_ptr += @sizeOf(u16);
@@ -879,9 +869,16 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
         if (comptime b_ptr == b.len) return true;
     }
 
-    if ((comptime (len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
+    if ((comptime (b.len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
 
     return true;
+}
+
+inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+    if (comptime Type != u8) {
+        return eqlComptimeCheckLenU8(std.mem.sliceAsBytes(a), comptime std.mem.sliceAsBytes(b), comptime check_len);
+    }
+    return eqlComptimeCheckLenU8(a, comptime b, comptime check_len);
 }
 
 /// Check if two strings are equal with one of the strings being a comptime-known value
@@ -1742,11 +1739,26 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     );
     if (result.status == .surrogate) {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-        return toUTF8ListWithTypeBun(list, Type, utf16);
+        return toUTF8ListWithTypeBun(&list, Type, utf16);
     }
 
     list.items.len = result.count;
     return list;
+}
+
+pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !void {
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
+        utf16,
+        list.items.ptr[list.items.len..list.capacity],
+    );
+
+    if (result.status == .surrogate) {
+        // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
+        _ = try toUTF8ListWithTypeBun(list, []const u16, utf16);
+        return;
+    }
+
+    list.items.len = result.count;
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
@@ -1769,16 +1781,27 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length + 16);
         const buf = try convertUTF16ToUTF8(list, Type, utf16);
+
         // Commenting out because `convertUTF16ToUTF8` may convert to WTF-8
         // which uses 3 bytes for invalid surrogates, causing the length to not
         // match from simdutf.
         // if (Environment.allow_assert) {
         //     std.debug.assert(buf.items.len == length);
         // }
+
         return buf;
     }
 
-    return toUTF8ListWithTypeBun(list_, Type, utf16);
+    @compileError("not implemented");
+}
+
+pub fn toUTF8AppendToList(list: *std.ArrayList(u8), utf16: []const u16) !void {
+    if (!bun.FeatureFlags.use_simdutf) {
+        @compileError("not implemented");
+    }
+    const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
+    try list.ensureUnusedCapacity(length + 16);
+    try convertUTF16ToUTF8Append(list, utf16);
 }
 
 pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
@@ -1792,8 +1815,7 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
     return try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
 }
 
-pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
-    var list = list_;
+pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var utf16_remaining = utf16;
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
@@ -1835,7 +1857,7 @@ pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf1
 
     log("UTF16 {d} -> {d} UTF8", .{ utf16.len, list.items.len });
 
-    return list;
+    return list.*;
 }
 
 pub const EncodeIntoResult = struct {
@@ -3793,6 +3815,10 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     return i;
 }
 
+pub fn indexOfChar16Usize(slice: []const u16, char: u16) ?usize {
+    return std.mem.indexOfScalar(u16, slice, char);
+}
+
 test "indexOfChar" {
     const pairs = .{
         .{
@@ -5659,89 +5685,145 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
     return 1;
 }
 
-pub fn visibleASCIIWidth(input_: anytype) usize {
-    var length: usize = 0;
-    var input = input_;
+pub const visible = struct {
+    fn visibleASCIIWidth(input_: anytype) usize {
+        var length: usize = 0;
+        var input = input_;
 
-    if (comptime Environment.enableSIMD) {
-        // https://zig.godbolt.org/z/hxhjncvq7
+        if (comptime Environment.enableSIMD) {
+            // https://zig.godbolt.org/z/hxhjncvq7
+            const ElementType = std.meta.Child(@TypeOf(input_));
+            const simd = 16 / @sizeOf(ElementType);
+            if (input.len >= simd) {
+                const input_end = input.ptr + input.len - (input.len % simd);
+                while (input.ptr != input_end) {
+                    const chunk: @Vector(simd, ElementType) = input[0..simd].*;
+                    input = input[simd..];
+
+                    const cmp: @Vector(simd, ElementType) = @splat(0x1f);
+                    const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
+                    const match: @Vector(simd, ElementType) = match1;
+
+                    length += @reduce(.Add, match);
+                }
+            }
+
+            // this is a deliberate compiler optimization
+            // it disables auto-vectorizing the "input" for loop.
+            if (!(input.len < simd)) unreachable;
+        }
+
+        for (input) |c| {
+            length += if (c > 0x1f) 1 else 0;
+        }
+
+        return length;
+    }
+
+    fn visibleASCIIWidthExcludeANSIColors(input_: anytype) usize {
+        var length: usize = 0;
+        var input = input_;
+
         const ElementType = std.meta.Child(@TypeOf(input_));
-        const simd = 16 / @sizeOf(ElementType);
-        if (input.len >= simd) {
-            const input_end = input.ptr + input.len - (input.len % simd);
-            while (input.ptr != input_end) {
-                const chunk: @Vector(simd, ElementType) = input[0..simd].*;
-                input = input[simd..];
+        const indexFn = if (comptime ElementType == u8) strings.indexOfCharUsize else strings.indexOfChar16Usize;
 
-                const cmp: @Vector(simd, ElementType) = @splat(0x1f);
-                const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
-                const match: @Vector(simd, ElementType) = match1;
+        while (indexFn(input, '\x1b')) |i| {
+            length += visibleASCIIWidth(input[0..i]);
+            input = input[i..];
 
-                length += @reduce(.Add, match);
+            if (input.len < 3) return length;
+
+            if (input[1] == '[') {
+                const end = indexFn(input[2..], 'm') orelse return length;
+                input = input[end + 3 ..];
+            } else {
+                input = input[1..];
             }
         }
 
-        // this is a deliberate compiler optimization
-        // it disables auto-vectorizing the "input" for loop.
-        if (!(input.len < simd)) unreachable;
+        length += visibleASCIIWidth(input);
+
+        return length;
     }
 
-    for (input) |c| {
-        length += if (c > 0x1f) 1 else 0;
+    fn visibleUTF8WidthFn(input: []const u8, comptime asciiFn: anytype) usize {
+        var bytes = input;
+        var len: usize = 0;
+        while (bun.strings.firstNonASCII(bytes)) |i| {
+            len += asciiFn(bytes[0..i]);
+
+            const byte = bytes[i];
+            const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
+            const cp_bytes: [4]u8 = switch (skip) {
+                inline 1, 2, 3, 4 => |cp_len| .{
+                    byte,
+                    if (comptime cp_len > 1) bytes[1] else 0,
+                    if (comptime cp_len > 2) bytes[2] else 0,
+                    if (comptime cp_len > 3) bytes[3] else 0,
+                },
+                else => unreachable,
+            };
+
+            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            len += visibleCodepointWidthType(u32, cp);
+
+            bytes = bytes[@min(i + skip, bytes.len)..];
+        }
+
+        len += asciiFn(bytes);
+
+        return len;
     }
 
-    return length;
-}
+    fn visibleUTF16WidthFn(input: []const u16, comptime asciiFn: anytype) usize {
+        var bytes = input;
+        var len: usize = 0;
+        while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
+            len += asciiFn(bytes[0..i]);
+            bytes = bytes[i..];
 
-pub fn visibleUTF8Width(input: []const u8) usize {
-    var bytes = input;
-    var len: usize = 0;
-    while (bun.strings.firstNonASCII(bytes)) |i| {
-        len += visibleASCIIWidth(bytes[0..i]);
+            const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
+            len += visibleCodepointWidthType(u32, utf8.code_point);
+            bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
+        }
 
-        const byte = bytes[i];
-        const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
-        const cp_bytes: [4]u8 = switch (skip) {
-            inline 1, 2, 3, 4 => |cp_len| .{
-                byte,
-                if (comptime cp_len > 1) bytes[1] else 0,
-                if (comptime cp_len > 2) bytes[2] else 0,
-                if (comptime cp_len > 3) bytes[3] else 0,
-            },
-            else => unreachable,
+        len += asciiFn(bytes);
+
+        return len;
+    }
+
+    fn visibleLatin1WidthFn(input: []const u8) usize {
+        return visibleASCIIWidth(input);
+    }
+
+    pub const width = struct {
+        pub fn ascii(input: []const u8) usize {
+            return visibleASCIIWidth(input);
+        }
+
+        pub fn utf8(input: []const u8) usize {
+            return visibleUTF8WidthFn(input, visibleASCIIWidth);
+        }
+
+        pub fn utf16(input: []const u16) usize {
+            return visibleUTF16WidthFn(input, visibleASCIIWidth);
+        }
+
+        pub const exclude_ansi_colors = struct {
+            pub fn ascii(input: []const u8) usize {
+                return visibleASCIIWidthExcludeANSIColors(input);
+            }
+
+            pub fn utf8(input: []const u8) usize {
+                return visibleUTF8WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            }
+
+            pub fn utf16(input: []const u16) usize {
+                return visibleUTF16WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            }
         };
-
-        const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
-        len += visibleCodepointWidthType(u32, cp);
-
-        bytes = bytes[@min(i + skip, bytes.len)..];
-    }
-
-    len += visibleASCIIWidth(bytes);
-
-    return len;
-}
-
-pub fn visibleUTF16Width(input: []const u16) usize {
-    var bytes = input;
-    var len: usize = 0;
-    while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
-        len += visibleASCIIWidth(bytes[0..i]);
-        bytes = bytes[i..];
-
-        const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
-        len += visibleCodepointWidthType(u32, utf8.code_point);
-        bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
-    }
-
-    len += visibleASCIIWidth(bytes);
-
-    return len;
-}
-
-pub fn visibleLatin1Width(input: []const u8) usize {
-    return visibleASCIIWidth(input);
-}
+    };
+};
 
 pub const QuoteEscapeFormat = struct {
     data: []const u8,

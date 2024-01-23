@@ -5802,11 +5802,6 @@ pub const NodeFS = struct {
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        if (comptime Environment.isWindows) {
-            args.global_this.throwTODO("watch is not supported on Windows yet");
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
-        }
-
         const watcher = args.createFSWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);

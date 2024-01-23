@@ -309,7 +309,7 @@ pub inline fn launcher(comptime is_standalone: bool, bun_ctx: anytype) noreturn 
     memcpyNonZero(
         buf1_u8 + 2 * 4,
         @ptrCast(image_path_b_u16),
-        if (is_standalone) cmd_line_b_len - 6 else bun_ctx.base_path.len * 2,
+        if (is_standalone) image_path_b_len - 2 else bun_ctx.base_path.len * 2,
     );
 
     // backtrack on the image name to find

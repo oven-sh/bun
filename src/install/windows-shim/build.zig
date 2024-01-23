@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
         .name = "bun_shim_debug",
         .root_source_file = .{ .path = "bun_shim_impl.zig" },
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .Debug,
         .use_llvm = true,
         .use_lld = true,
         .unwind_tables = false,

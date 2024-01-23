@@ -832,46 +832,32 @@ pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
 
-inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {
-        if (comptime b.len == 0) {
-            return a.len == 0;
-        }
-
-        switch (a.len) {
-            b.len => {},
-            else => return false,
-        }
+        if (a.len != b.len) return false;
     }
-
-    const len = comptime b.len;
-    comptime var dword_length = b.len >> if (Environment.isNative) 3 else 2;
-    const slice = b;
-    const divisor = comptime @sizeOf(Type);
 
     comptime var b_ptr: usize = 0;
 
-    inline while (dword_length > 0) : (dword_length -= 1) {
-        if (@as(usize, @bitCast(a[b_ptr..][0 .. @sizeOf(usize) / divisor].*)) != comptime @as(usize, @bitCast((slice[b_ptr..])[0 .. @sizeOf(usize) / divisor].*)))
+    inline while (b.len - b_ptr >= @sizeOf(usize)) {
+        if (@as(usize, @bitCast(a[b_ptr..][0..@sizeOf(usize)].*)) != comptime @as(usize, @bitCast(b[b_ptr..][0..@sizeOf(usize)].*)))
             return false;
         comptime b_ptr += @sizeOf(usize);
         if (comptime b_ptr == b.len) return true;
     }
 
     if (comptime @sizeOf(usize) == 8) {
-        if (comptime (len & 4) != 0) {
-            if (@as(u32, @bitCast(a[b_ptr..][0 .. @sizeOf(u32) / divisor].*)) != comptime @as(u32, @bitCast((slice[b_ptr..])[0 .. @sizeOf(u32) / divisor].*)))
+        if (comptime (b.len & 4) != 0) {
+            if (@as(u32, @bitCast(a[b_ptr..][0..@sizeOf(u32)].*)) != comptime @as(u32, @bitCast(b[b_ptr..][0..@sizeOf(u32)].*)))
                 return false;
-
             comptime b_ptr += @sizeOf(u32);
-
             if (comptime b_ptr == b.len) return true;
         }
     }
 
-    if (comptime (len & 2) != 0) {
-        if (@as(u16, @bitCast(a[b_ptr..][0 .. @sizeOf(u16) / divisor].*)) != comptime @as(u16, @bitCast(slice[b_ptr .. b_ptr + (@sizeOf(u16) / divisor)].*)))
+    if (comptime (b.len & 2) != 0) {
+        if (@as(u16, @bitCast(a[b_ptr..][0..@sizeOf(u16)].*)) != comptime @as(u16, @bitCast(b[b_ptr..][0..@sizeOf(u16)].*)))
             return false;
 
         comptime b_ptr += @sizeOf(u16);
@@ -879,9 +865,16 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
         if (comptime b_ptr == b.len) return true;
     }
 
-    if ((comptime (len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
+    if ((comptime (b.len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
 
     return true;
+}
+
+inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+    if (comptime Type != u8) {
+        return eqlComptimeCheckLenU8(std.mem.sliceAsBytes(a), comptime std.mem.sliceAsBytes(b), comptime check_len);
+    }
+    return eqlComptimeCheckLenU8(a, comptime b, comptime check_len);
 }
 
 /// Check if two strings are equal with one of the strings being a comptime-known value

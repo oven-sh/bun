@@ -258,41 +258,39 @@ test(".env process variables no comments", () => {
 
 describe("package scripts load from .env.production and .env.development", () => {
   test("NODE_ENV=production", () => {
+    const pkgjson = {
+      "name": "foo",
+      "version": "2.0",
+      "scripts": {
+        "test": `${bunExe()} run index.ts`,
+      },
+    };
     const dir = tempDirWithFiles("dotenv-package-script-prod", {
       "index.ts": "console.log(process.env.TEST);",
-      "package.json": `
-      {
-        "name": "foo",
-        "version": "2.0",
-        "scripts": {
-          "test": "NODE_ENV=production ${bunExe()} run index.ts",
-        }
-      }
-      `,
+      "package.json": JSON.stringify(pkgjson),
       ".env.production": "TEST=prod",
       ".env.development": "TEST=dev",
     });
 
-    const { stdout } = bunRunAsScript(dir, "test");
+    const { stdout } = bunRunAsScript(dir, "test", { "NODE_ENV": "production" });
     expect(stdout).toBe("prod");
   });
   test("NODE_ENV=development", () => {
+    const pkgjson = {
+      "name": "foo",
+      "version": "2.0",
+      "scripts": {
+        "test": `${bunExe()} run index.ts`,
+      },
+    };
     const dir = tempDirWithFiles("dotenv-package-script-prod", {
       "index.ts": "console.log(process.env.TEST);",
-      "package.json": `
-        {
-          "name": "foo",
-          "version": "2.0",
-          "scripts": {
-            "test": "NODE_ENV=development ${bunExe()} run index.ts",
-          }
-        }
-        `,
+      "package.json": JSON.stringify(pkgjson),
       ".env.production": "TEST=prod",
       ".env.development": "TEST=dev",
     });
 
-    const { stdout } = bunRunAsScript(dir, "test");
+    const { stdout } = bunRunAsScript(dir, "test", { "NODE_ENV": "development" });
     expect(stdout).toBe("dev");
   });
 });

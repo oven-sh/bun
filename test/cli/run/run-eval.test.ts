@@ -40,4 +40,12 @@ describe("bun -e", () => {
     expect(stderr.toString("utf8")).toInclude('"hi" as 2');
     expect(stderr.toString("utf8")).toInclude("Unexpected throw");
   });
+
+  test("positional argv is not mangled", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log(process.argv);", "first", "second", "third"],
+      env: bunEnv,
+    });
+    expect(stdout.toString("utf8")).toInclude(`[ "${bunExe()}", "first", "second", "third" ]`);
+  });
 });

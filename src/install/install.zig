@@ -24,7 +24,7 @@ const linker = @import("../linker.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
-const Path = @import("../resolver/resolve_path.zig");
+const Path = bun.path;
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
@@ -3923,6 +3923,7 @@ pub const PackageManager = struct {
                         repo_fd.asDir(),
                         alias,
                         this.lockfile.str(&dep.committish),
+                        clone_id,
                     );
                     const checkout_id = Task.Id.forGitCheckout(url, resolved);
 

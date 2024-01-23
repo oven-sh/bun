@@ -649,7 +649,7 @@ declare global {
        */
       env?:
         | Record<string, string>
-        | typeof import("node:worker_threads")["SHARE_ENV"]
+        | (typeof import("node:worker_threads"))["SHARE_ENV"]
         | undefined;
 
       /**

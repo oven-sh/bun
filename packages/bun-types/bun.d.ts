@@ -4110,8 +4110,8 @@ declare module "bun" {
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
       ? Buffer
@@ -4122,8 +4122,8 @@ declare module "bun" {
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
   }
 
   interface ResourceUsage {
@@ -4478,6 +4478,31 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;
+
+  // Blocked on https://github.com/oven-sh/bun/issues/8329
+  // /**
+  //  *
+  //  * Count the visible width of a string, as it would be displayed in a terminal.
+  //  *
+  //  * By default, strips ANSI escape codes before measuring the string. This is
+  //  * because ANSI escape codes are not visible characters. If passed a non-string,
+  //  * it will return 0.
+  //  *
+  //  * @param str The string to measure
+  //  * @param options
+  //  */
+  // function stringWidth(
+  //   str: string,
+  //   options?: {
+  //     /**
+  //      * Whether to include ANSI escape codes in the width calculation
+  //      *
+  //      * Slightly faster if set to `false`, but less accurate if the string contains ANSI escape codes.
+  //      * @default false
+  //      */
+  //     countAnsiEscapeCodes?: boolean;
+  //   },
+  // ): number;
 
   class FileSystemRouter {
     /**

@@ -1930,8 +1930,8 @@ declare namespace JestMock {
   export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
     ? SpiedClass<T>
     : T extends FunctionLike
-    ? SpiedFunction<T>
-    : never;
+      ? SpiedFunction<T>
+      : never;
 
   export type SpiedClass<T extends ClassLike = UnknownClass> = MockInstance<
     (...args: ConstructorParameters<T>) => InstanceType<T>
@@ -1972,8 +1972,8 @@ declare namespace JestMock {
     ): A extends "get"
       ? SpiedGetter<V>
       : A extends "set"
-      ? SpiedSetter<V>
-      : never;
+        ? SpiedSetter<V>
+        : never;
     <
       T_1 extends object,
       K_5 extends

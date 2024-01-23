@@ -512,10 +512,11 @@ pub const Arguments = struct {
         opts.extension_order = args.options("--extension-order");
 
         {
-            var list = std.ArrayList(string).init(allocator);
-            errdefer list.deinit();
-            for (args.positionals()) |item| try list.append(item);
-            for (args.remaining()) |item| try list.append(item);
+            const positionals = args.positionals();
+            const remaining = args.remaining();
+            var list = try std.ArrayList(string).initCapacity(allocator, positionals.len + remaining.len);
+            list.appendSliceAssumeCapacity(positionals);
+            list.appendSliceAssumeCapacity(remaining);
             ctx.passthrough = list.items;
         }
 

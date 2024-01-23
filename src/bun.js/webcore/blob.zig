@@ -1863,7 +1863,11 @@ pub const Blob = struct {
                     }
 
                     if (is_allowed_to_close_fd and this.opened_fd.int() > 2 and this.opened_fd != invalid_fd) {
-                        bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
+                        if (comptime Environment.isWindows) {
+                            bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
+                        } else {
+                            _ = bun.sys.close(this.opened_fd);
+                        }
                         this.opened_fd = invalid_fd;
                     }
 
@@ -1977,7 +1981,11 @@ pub const Blob = struct {
 
                 if (rc.errno()) |errno| {
                     this.throw(.{
-                        .errno = errno,
+                        // #6336
+                        .errno = if (errno == @intFromEnum(bun.C.SystemErrno.EPERM))
+                            @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.ENOENT)))
+                        else
+                            errno,
                         .syscall = .copyfile,
                         .path = old_path,
                     });

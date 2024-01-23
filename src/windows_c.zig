@@ -695,7 +695,7 @@ pub const SystemErrno = enum(u16) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
-                    bun.Output.debug("Unknown error code: {}\n", .{code});
+                    bun.Output.debug("Unknown error code: {any}\n", .{code});
 
                 return null;
             }

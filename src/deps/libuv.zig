@@ -227,9 +227,23 @@ pub const O = struct {
     }
 };
 
+const _O_RDONLY = 0x0000;
+const _O_WRONLY = 0x0001;
+const _O_RDWR = 0x0002;
+const _O_APPEND = 0x0008;
+const _O_CREAT = 0x0100;
+const _O_TRUNC = 0x0200;
+const _O_EXCL = 0x0400;
+const _O_TEXT = 0x4000;
+const _O_NOINHERIT = 0x0080;
+const _O_TEMPORARY = 0x0040;
+const _O_SHORT_LIVED = 0x1000;
+const _O_SEQUENTIAL = 0x0020;
+const _O_RANDOM = 0x0010;
+
 // These **do not** map to std.os.O!
 pub const UV_FS_O_APPEND = 0x0008;
-pub const UV_FS_O_CREAT = 0x0100;
+pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
 pub const UV_FS_O_FILEMAP = 0x20000000;
 pub const UV_FS_O_RANDOM = 0x0010;
@@ -238,8 +252,8 @@ pub const UV_FS_O_RDWR = 0x0002;
 pub const UV_FS_O_SEQUENTIAL = 0x0020;
 pub const UV_FS_O_SHORT_LIVED = 0x1000;
 pub const UV_FS_O_TEMPORARY = 0x0040;
-pub const UV_FS_O_TRUNC = 0x0200;
-pub const UV_FS_O_WRONLY = 0x0001;
+pub const UV_FS_O_TRUNC = _O_TRUNC;
+pub const UV_FS_O_WRONLY = _O_WRONLY;
 pub const UV_FS_O_DIRECT = 0x02000000;
 pub const UV_FS_O_DIRECTORY = 0;
 pub const UV_FS_O_DSYNC = 0x04000000;
@@ -2393,13 +2407,93 @@ pub fn translateUVErrorToE(code: anytype) bun.C.E {
 }
 
 pub const ReturnCode = enum(c_int) {
+    pub fn format(this: ReturnCode, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt_;
+        _ = options_;
+
+        if (this.errEnum()) |err| {
+            try writer.writeAll(@tagName(err));
+        } else {
+            try writer.print("{d}", .{this.value});
+        }
+    }
+
     pub inline fn int(this: ReturnCode) c_int {
         return @intFromEnum(this);
     }
     pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.int() < 0)
-            // @intFromEnum(translateUVErrorToE(this.value))
-            @as(u16, @intCast(-this.int()))
+            switch (this.int()) {
+                UV_EPERM => @intFromEnum(bun.C.E.PERM),
+                UV_ENOENT => @intFromEnum(bun.C.E.NOENT),
+                UV_ESRCH => @intFromEnum(bun.C.E.SRCH),
+                UV_EINTR => @intFromEnum(bun.C.E.INTR),
+                UV_EIO => @intFromEnum(bun.C.E.IO),
+                UV_ENXIO => @intFromEnum(bun.C.E.NXIO),
+                UV_E2BIG => @intFromEnum(bun.C.E.@"2BIG"),
+                UV_EBADF => @intFromEnum(bun.C.E.BADF),
+                UV_EAGAIN => @intFromEnum(bun.C.E.AGAIN),
+                UV_ENOMEM => @intFromEnum(bun.C.E.NOMEM),
+                UV_EACCES => @intFromEnum(bun.C.E.ACCES),
+                UV_EFAULT => @intFromEnum(bun.C.E.FAULT),
+                UV_EBUSY => @intFromEnum(bun.C.E.BUSY),
+                UV_EEXIST => @intFromEnum(bun.C.E.EXIST),
+                UV_EXDEV => @intFromEnum(bun.C.E.XDEV),
+                UV_ENODEV => @intFromEnum(bun.C.E.NODEV),
+                UV_ENOTDIR => @intFromEnum(bun.C.E.NOTDIR),
+                UV_EISDIR => @intFromEnum(bun.C.E.ISDIR),
+                UV_EINVAL => @intFromEnum(bun.C.E.INVAL),
+                UV_ENFILE => @intFromEnum(bun.C.E.NFILE),
+                UV_EMFILE => @intFromEnum(bun.C.E.MFILE),
+                UV_ENOTTY => @intFromEnum(bun.C.E.NOTTY),
+                UV_ETXTBSY => @intFromEnum(bun.C.E.TXTBSY),
+                UV_EFBIG => @intFromEnum(bun.C.E.FBIG),
+                UV_ENOSPC => @intFromEnum(bun.C.E.NOSPC),
+                UV_ESPIPE => @intFromEnum(bun.C.E.SPIPE),
+                UV_EROFS => @intFromEnum(bun.C.E.ROFS),
+                UV_EMLINK => @intFromEnum(bun.C.E.MLINK),
+                UV_EPIPE => @intFromEnum(bun.C.E.PIPE),
+                UV_ERANGE => @intFromEnum(bun.C.E.RANGE),
+                UV_ENAMETOOLONG => @intFromEnum(bun.C.E.NAMETOOLONG),
+                UV_ENOSYS => @intFromEnum(bun.C.E.NOSYS),
+                UV_ENOTEMPTY => @intFromEnum(bun.C.E.NOTEMPTY),
+                UV_ELOOP => @intFromEnum(bun.C.E.LOOP),
+                UV_EUNATCH => @intFromEnum(bun.C.E.UNATCH),
+                UV_ENODATA => @intFromEnum(bun.C.E.NODATA),
+                UV_ENONET => @intFromEnum(bun.C.E.NONET),
+                UV_EPROTO => @intFromEnum(bun.C.E.PROTO),
+                UV_EOVERFLOW => @intFromEnum(bun.C.E.OVERFLOW),
+                UV_EILSEQ => @intFromEnum(bun.C.E.ILSEQ),
+                UV_ENOTSOCK => @intFromEnum(bun.C.E.NOTSOCK),
+                UV_EDESTADDRREQ => @intFromEnum(bun.C.E.DESTADDRREQ),
+                UV_EMSGSIZE => @intFromEnum(bun.C.E.MSGSIZE),
+                UV_EPROTOTYPE => @intFromEnum(bun.C.E.PROTOTYPE),
+                UV_ENOPROTOOPT => @intFromEnum(bun.C.E.NOPROTOOPT),
+                UV_EPROTONOSUPPORT => @intFromEnum(bun.C.E.PROTONOSUPPORT),
+                UV_ESOCKTNOSUPPORT => @intFromEnum(bun.C.E.SOCKTNOSUPPORT),
+                UV_ENOTSUP => @intFromEnum(bun.C.E.NOTSUP),
+                UV_EAFNOSUPPORT => @intFromEnum(bun.C.E.AFNOSUPPORT),
+                UV_EADDRINUSE => @intFromEnum(bun.C.E.ADDRINUSE),
+                UV_EADDRNOTAVAIL => @intFromEnum(bun.C.E.ADDRNOTAVAIL),
+                UV_ENETDOWN => @intFromEnum(bun.C.E.NETDOWN),
+                UV_ENETUNREACH => @intFromEnum(bun.C.E.NETUNREACH),
+                UV_ECONNABORTED => @intFromEnum(bun.C.E.CONNABORTED),
+                UV_ECONNRESET => @intFromEnum(bun.C.E.CONNRESET),
+                UV_ENOBUFS => @intFromEnum(bun.C.E.NOBUFS),
+                UV_EISCONN => @intFromEnum(bun.C.E.ISCONN),
+                UV_ENOTCONN => @intFromEnum(bun.C.E.NOTCONN),
+                UV_ESHUTDOWN => @intFromEnum(bun.C.E.SHUTDOWN),
+                UV_ETIMEDOUT => @intFromEnum(bun.C.E.TIMEDOUT),
+                UV_ECONNREFUSED => @intFromEnum(bun.C.E.CONNREFUSED),
+                UV_EHOSTDOWN => @intFromEnum(bun.C.E.HOSTDOWN),
+                UV_EHOSTUNREACH => @intFromEnum(bun.C.E.HOSTUNREACH),
+                UV_EALREADY => @intFromEnum(bun.C.E.ALREADY),
+                UV_EREMOTEIO => @intFromEnum(bun.C.E.REMOTEIO),
+                UV_ECANCELED => @intFromEnum(bun.C.E.CANCELED),
+                UV_ECHARSET => @intFromEnum(bun.C.E.CHARSET),
+                UV_EOF => @intFromEnum(bun.C.E.OF),
+                else => null,
+            }
         else
             null;
     }
@@ -2415,9 +2509,19 @@ pub const ReturnCode = enum(c_int) {
 pub const ReturnCodeI64 = extern struct {
     value: i64,
 
+    pub fn format(this: ReturnCodeI64, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt_;
+        _ = options_;
+
+        if (this.errEnum()) |err| {
+            try writer.writeAll(@tagName(err));
+        } else {
+            try writer.print("{d}", .{this.value});
+        }
+    }
+
     pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.value < 0)
-            // @intFromEnum(translateUVErrorToE(this.value))
             @as(u16, @intCast(-this.value))
         else
             null;

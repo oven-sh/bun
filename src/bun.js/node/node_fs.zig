@@ -131,7 +131,7 @@ pub const Async = struct {
             );
             switch (result) {
                 .err => |err| {
-                    this.completion(this.completion_ctx, err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()));
+                    this.completion(this.completion_ctx, .{ .err = err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()) });
                 },
                 .result => {
                     this.completion(this.completion_ctx, JSC.Maybe(void).success);
@@ -821,6 +821,7 @@ pub const Arguments = struct {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         path: PathOrFileDescriptor,
         len: JSC.WebCore.Blob.SizeType = 0,
+        flags: i32 = 0,
 
         pub fn deinit(this: @This()) void {
             this.path.deinit();
@@ -5696,12 +5697,12 @@ pub const NodeFS = struct {
         );
     }
 
-    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime _: Flavor) Maybe(Return.Truncate) {
+    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, flags: i32, comptime _: Flavor) Maybe(Return.Truncate) {
         if (comptime Environment.isWindows) {
             const file = Syscall.open(
                 path.sliceZ(&this.sync_error_buf),
-                os.O.RDWR,
-                0,
+                os.O.WRONLY | flags,
+                0o644,
             );
             if (file == .err)
                 return .{ .err = file.err.withPath(path.slice()) };
@@ -5722,6 +5723,7 @@ pub const NodeFS = struct {
             .path => this._truncate(
                 args.path.path,
                 args.len,
+                args.flags,
                 flavor,
             ),
         };

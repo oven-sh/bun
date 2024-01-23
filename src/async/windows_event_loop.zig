@@ -420,12 +420,14 @@ pub const Closer = struct {
             Output.debugWarn("libuv close() failed = {}", .{err});
             closer.destroy();
         }
+
+        closer.io_request.data = closer;
     }
 
     fn onClose(req: *uv.fs_t) callconv(.C) void {
         var closer = @fieldParentPtr(Closer, "io_request", req);
         std.debug.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
-        bun.sys.syslog("uv_fs_close() = {d}", .{req.result});
+        bun.sys.syslog("uv_fs_close() = {}", .{req.result});
 
         if (comptime Environment.allow_assert) {
             if (closer.io_request.result.errEnum()) |err| {

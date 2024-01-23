@@ -585,6 +585,7 @@ pub const ReadFileUV = struct {
     pub fn finalize(this: *ReadFileUV) void {
         defer {
             this.store.deref();
+            this.req.deinit();
             bun.destroy(this);
         }
 
@@ -596,8 +597,9 @@ pub const ReadFileUV = struct {
             cb(cb_ctx, ReadFile.ResultType{ .err = err });
             return;
         }
+        const size = this.size;
 
-        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
+        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = size, .is_temporary = true } });
     }
 
     pub fn isAllowedToClose(this: *const ReadFileUV) bool {
@@ -625,6 +627,8 @@ pub const ReadFileUV = struct {
             this.onFinish();
             return;
         }
+
+        this.req.deinit();
 
         if (libuv.uv_fs_fstat(this.loop, &this.req, bun.uvfdcast(opened_fd), &onFileInitialStat).errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
@@ -732,7 +736,7 @@ pub const ReadFileUV = struct {
                 bun.uvfdcast(this.opened_fd),
                 &bufs,
                 bufs.len,
-                @as(i64, @intCast(this.read_off)),
+                @as(i64, @intCast(this.offset + this.read_off)),
                 &onRead,
             );
             if (res.errEnum()) |errno| {

@@ -696,30 +696,6 @@ pub const Blob = struct {
         }
     }
 
-    const CopyFilePromiseHandler = struct {
-        promise: *JSPromise,
-        globalThis: *JSGlobalObject,
-        pub fn run(handler: *@This(), blob_: Store.CopyFile.ResultType) void {
-            var promise = handler.promise;
-            const globalThis = handler.globalThis;
-            bun.destroy(handler);
-            const blob = blob_ catch |err| {
-                var error_string = ZigString.init(
-                    std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{bun.asByteSlice(@errorName(err))}) catch unreachable,
-                );
-                error_string.mark();
-
-                promise.reject(globalThis, error_string.toErrorInstance(globalThis));
-                return;
-            };
-            var _blob = bun.new(Blob, blob);
-            _blob.allocator = bun.default_allocator;
-            promise.resolve(
-                globalThis,
-            );
-        }
-    };
-
     const Retry = enum { @"continue", fail, no };
 
     // we choose not to inline this so that the path buffer is not on the stack unless necessary.
@@ -763,9 +739,30 @@ pub const Blob = struct {
     ) JSC.JSValue {
         const destination_type = std.meta.activeTag(destination_blob.store.?.data);
 
-        // Writing an empty string to a file is a no-op
+        // Writing an empty string to a file truncates it
+        // This matches the behavior we do with the fast path.
+        // This case only really happens on Windows.
         if (source_blob.store == null) {
-            destination_blob.detach();
+            defer destination_blob.detach();
+            if (destination_type == .file) {
+                // TODO: make this async
+                // TODO: mkdirp()
+                var result = ctx.bunVM().nodeFS().truncate(.{
+                    .path = destination_blob.store.?.data.file.pathlike,
+                    .len = 0,
+                    .flags = std.os.O.CREAT,
+                }, .sync);
+                if (result == .err) {
+                    // it might return EPERM when the parent directory doesn't exist
+                    // #6336
+                    if (result.err.getErrno() == .PERM) {
+                        result.err.errno = @intCast(@intFromEnum(bun.C.E.NOENT));
+                    }
+
+                    return JSC.JSPromise.rejectedPromiseValue(ctx, result.toJS(ctx));
+                }
+            }
+
             return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
         }
 
@@ -782,12 +779,12 @@ pub const Blob = struct {
                 promise_value.ensureStillAlive();
                 write_file_promise.promise.strong.set(ctx, promise_value);
                 _ = WriteFileWindows.create(
-                    ctx.bunVM().uvLoop(),
+                    ctx.bunVM().eventLoop(),
                     destination_blob.*,
                     source_blob.*,
                     *WriteFilePromise,
                     write_file_promise,
-                    WriteFilePromise.run,
+                    &WriteFilePromise.run,
                     mkdirp_if_not_exists,
                 );
                 return promise_value;
@@ -812,7 +809,17 @@ pub const Blob = struct {
         }
         // If this is file <> file, we can just copy the file
         else if (destination_type == .file and source_type == .file) {
-            if (comptime Environment.isWindows) @panic("TODO on Windows!");
+            if (comptime Environment.isWindows) {
+                var copier = Store.CopyFileWindows.init(
+                    destination_blob.store.?,
+                    source_blob.store.?,
+                    ctx.bunVM().eventLoop(),
+                    mkdirp_if_not_exists,
+                    destination_blob.size,
+                );
+
+                return copier.promise.value();
+            }
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
                 destination_blob.store.?,
@@ -1856,7 +1863,7 @@ pub const Blob = struct {
                     }
 
                     if (is_allowed_to_close_fd and this.opened_fd.int() > 2 and this.opened_fd != invalid_fd) {
-                        _ = bun.sys.close(this.opened_fd);
+                        bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
                         this.opened_fd = invalid_fd;
                     }
 
@@ -1869,6 +1876,230 @@ pub const Blob = struct {
             source,
             destination,
             both,
+        };
+
+        pub const CopyFileWindows = struct {
+            destination_file_store: *Store,
+            source_file_store: *Store,
+
+            io_request: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
+            promise: JSC.JSPromise.Strong = .{},
+            mkdirp_if_not_exists: bool = false,
+            event_loop: *JSC.EventLoop,
+
+            size: Blob.SizeType = Blob.max_size,
+
+            /// For mkdirp
+            err: ?bun.sys.Error = null,
+
+            pub usingnamespace bun.New(@This());
+
+            pub fn init(
+                destination_file_store: *Store,
+                source_file_store: *Store,
+                event_loop: *JSC.EventLoop,
+                mkdirp_if_not_exists: bool,
+                size_: Blob.SizeType,
+            ) *CopyFileWindows {
+                destination_file_store.ref();
+                source_file_store.ref();
+                const result = CopyFileWindows.new(.{
+                    .destination_file_store = destination_file_store,
+                    .source_file_store = source_file_store,
+                    .promise = JSC.JSPromise.Strong.init(event_loop.global),
+                    .io_request = std.mem.zeroes(libuv.fs_t),
+                    .event_loop = event_loop,
+                    .mkdirp_if_not_exists = mkdirp_if_not_exists,
+                    .size = size_,
+                });
+
+                result.copyfile();
+
+                return result;
+            }
+
+            fn copyfile(this: *CopyFileWindows) void {
+                var pathbuf1: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var pathbuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var destination_file_store = &this.destination_file_store.data.file;
+                var source_file_store = &this.source_file_store.data.file;
+
+                const new_path: [:0]const u8 = brk: {
+                    switch (destination_file_store.pathlike) {
+                        .path => {
+                            break :brk destination_file_store.pathlike.path.sliceZ(&pathbuf1);
+                        },
+                        .fd => |fd| {
+                            const out = bun.getFdPath(fd, &pathbuf1) catch {
+                                this.throw(.{
+                                    .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EINVAL))),
+                                    .fd = fd,
+                                    .syscall = .open,
+                                });
+                                return;
+                            };
+                            pathbuf1[out.len] = 0;
+                            break :brk pathbuf1[0..out.len :0];
+                        },
+                    }
+                };
+                const old_path: [:0]const u8 = brk: {
+                    switch (source_file_store.pathlike) {
+                        .path => {
+                            break :brk source_file_store.pathlike.path.sliceZ(&pathbuf2);
+                        },
+                        .fd => |fd| {
+                            const out = bun.getFdPath(fd, &pathbuf2) catch {
+                                this.throw(.{
+                                    .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EINVAL))),
+                                    .fd = fd,
+                                    .syscall = .open,
+                                });
+                                return;
+                            };
+
+                            pathbuf2[out.len] = 0;
+                            break :brk pathbuf2[0..out.len :0];
+                        },
+                    }
+                };
+                const loop = this.event_loop.virtual_machine.event_loop_handle.?;
+                this.io_request.data = @ptrCast(this);
+
+                const rc = libuv.uv_fs_copyfile(
+                    loop,
+                    &this.io_request,
+                    old_path,
+                    new_path,
+                    0,
+                    &onCopyFile,
+                );
+
+                if (rc.errno()) |errno| {
+                    this.throw(.{
+                        .errno = errno,
+                        .syscall = .copyfile,
+                        .path = old_path,
+                    });
+                    return;
+                }
+                loop.refConcurrently();
+            }
+
+            pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
+                const globalThis = this.promise.strong.globalThis.?;
+                const promise = this.promise.swap();
+                const err_instance = err.toSystemError().toErrorInstance(globalThis);
+                var event_loop = this.event_loop;
+                defer event_loop.drainMicrotasks();
+                this.deinit();
+                promise.reject(globalThis, err_instance);
+            }
+
+            fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
+                var this: *CopyFileWindows = @fieldParentPtr(CopyFileWindows, "io_request", req);
+                std.debug.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+                var event_loop = this.event_loop;
+                event_loop.virtual_machine.event_loop_handle.?.unrefConcurrently();
+                const rc = req.result;
+
+                bun.sys.syslog("uv_fs_copyfile() = {}", .{rc});
+                if (rc.errEnum()) |errno| {
+                    if (this.mkdirp_if_not_exists and errno == .NOENT) {
+                        req.deinit();
+                        this.mkdirp();
+                        return;
+                    } else {
+                        var err = bun.sys.Error.fromCode(errno, .copyfile);
+                        const destination = &this.destination_file_store.data.file;
+
+                        // we don't really know which one it is
+                        if (destination.pathlike == .path) {
+                            err = err.withPath(destination.pathlike.path.slice());
+                        } else if (destination.pathlike == .fd) {
+                            err = err.withFd(destination.pathlike.fd);
+                        }
+
+                        this.throw(err);
+                    }
+                    return;
+                }
+
+                var written = req.statbuf.size;
+
+                if (written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
+                    this.truncate();
+                    written = @intCast(this.size);
+                }
+                const globalThis = this.promise.strong.globalThis.?;
+                const promise = this.promise.swap();
+                defer event_loop.drainMicrotasks();
+
+                this.deinit();
+                promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(written));
+            }
+
+            fn truncate(this: *CopyFileWindows) void {
+                // TODO: optimize this
+                @setCold(true);
+
+                var node_fs: JSC.Node.NodeFS = undefined;
+                _ = node_fs.truncate(
+                    .{
+                        .path = this.destination_file_store.data.file.pathlike,
+                        .len = @intCast(this.size),
+                    },
+                    .sync,
+                );
+            }
+
+            pub fn deinit(this: *CopyFileWindows) void {
+                this.destination_file_store.deref();
+                this.source_file_store.deref();
+                this.promise.strong.deinit();
+                this.io_request.deinit();
+                bun.destroy(this);
+            }
+
+            fn mkdirp(
+                this: *CopyFileWindows,
+            ) void {
+                bun.sys.syslog("mkdirp", .{});
+                this.mkdirp_if_not_exists = false;
+                var destination = &this.destination_file_store.data.file;
+                if (destination.pathlike != .path) {
+                    this.throw(.{
+                        .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EINVAL))),
+                        .syscall = .mkdir,
+                    });
+                    return;
+                }
+
+                JSC.Node.Async.AsyncMkdirp.new(.{
+                    .completion = @ptrCast(&onMkdirpCompleteConcurrent),
+                    .completion_ctx = this,
+                    .path = bun.Dirname.dirname(u8, destination.pathlike.path.slice())
+                    // this shouldn't happen
+                    orelse destination.pathlike.path.slice(),
+                }).schedule();
+            }
+
+            fn onMkdirpComplete(this: *CopyFileWindows) void {
+                if (this.err) |err| {
+                    this.throw(err);
+                    bun.default_allocator.free(err.path);
+                    return;
+                }
+
+                this.copyfile();
+            }
+
+            fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: JSC.Maybe(void)) void {
+                bun.sys.syslog("mkdirp complete", .{});
+                std.debug.assert(this.err == null);
+                this.err = if (err_ == .err) err_.err else null;
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(CopyFileWindows, onMkdirpComplete).init(this)));
+            }
         };
 
         const unsupported_directory_error = SystemError{

@@ -947,6 +947,7 @@ pub const Subprocess = struct {
             }
 
             if (this.pipe) |pipe| {
+                pipe.data = this;
                 _ = uv.uv_close(@ptrCast(pipe), BufferedPipeInput.uvClosedCallback);
             }
         }

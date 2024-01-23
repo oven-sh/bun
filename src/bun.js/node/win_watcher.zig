@@ -47,63 +47,56 @@ pub const WinPathWatcherManager = struct {
         const cloned_path = try bun.default_allocator.dupeZ(u8, path);
         errdefer bun.default_allocator.free(cloned_path);
 
-        if (std.fs.openDirAbsoluteZ(cloned_path, .{
-            .access_sub_paths = true,
-            .iterate = true,
-        })) |iterable_dir| {
-            const result = PathInfo{
-                .fd = bun.toFD(iterable_dir.fd),
-                .is_file = false,
-                .path = cloned_path,
-                .dirname = cloned_path,
-                .hash = Watcher.getHash(cloned_path),
-                .refs = 1,
-            };
-            _ = try this.file_paths.put(cloned_path, result);
-            return result;
-        } else |err| {
-            if (err == error.NotDir) {
-                const file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
+        const dir = bun.openDirAbsolute(cloned_path[0..cloned_path.len]) catch |err| {
+            if (err == error.ENOENT) {
+                const file = try bun.openFileZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
                     .fd = bun.toFD(file.handle),
                     .is_file = true,
                     .path = cloned_path,
                     // if is really a file we need to get the dirname
-                    .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
+                    .dirname = Path.dirname(cloned_path, .windows),
                     .hash = Watcher.getHash(cloned_path),
                     .refs = 1,
                 };
                 _ = try this.file_paths.put(cloned_path, result);
                 return result;
-            } else {
-                return err;
             }
-        }
-
-        unreachable;
+            return err;
+        };
+        const result = PathInfo{
+            .fd = bun.toFD(dir.fd),
+            .is_file = false,
+            .path = cloned_path,
+            .dirname = cloned_path,
+            .hash = Watcher.getHash(cloned_path),
+            .refs = 1,
+        };
+        _ = try this.file_paths.put(cloned_path, result);
+        return result;
     }
 
     pub fn init(vm: *JSC.VirtualMachine) !*WinPathWatcherManager {
-        const this = try bun.default_allocator.create(WinPathWatcherManager);
-        errdefer bun.default_allocator.destroy(this);
-        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
-            bun.default_allocator.destroy(this);
-            return err;
-        };
+        var watchers = try bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1);
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
-        const manager = WinPathWatcherManager{
+
+        var this = bun.new(WinPathWatcherManager, .{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .watchers = watchers,
-            .main_watcher = try Watcher.init(
-                this,
-                vm.bundler.fs,
-                bun.default_allocator,
-            ),
+            .main_watcher = undefined,
             .vm = vm,
             .watcher_count = 0,
-        };
+        });
+        errdefer bun.default_allocator.destroy(this);
 
-        this.* = manager;
+        this.main_watcher = try Watcher.init(
+            this,
+            vm.bundler.fs,
+            bun.default_allocator,
+        );
+
+        errdefer this.main_watcher.deinit(false);
+
         try this.main_watcher.start();
         return this;
     }
@@ -305,9 +298,7 @@ pub const PathWatcher = struct {
     }
 
     pub fn init(manager: *WinPathWatcherManager, path: WinPathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
-        var this = try bun.default_allocator.create(PathWatcher);
-        errdefer this.deinit();
-        this.* = PathWatcher{
+        var this = bun.new(PathWatcher, .{
             .handle = std.mem.zeroes(uv.uv_fs_event_t),
             .path = path,
             .callback = callback,
@@ -315,7 +306,8 @@ pub const PathWatcher = struct {
             .recursive = recursive,
             .flushCallback = updateEndCallback,
             .ctx = ctx,
-        };
+        });
+        errdefer this.deinit();
 
         if (uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle) != 0) {
             return error.FailedToInitializeFSEvent;

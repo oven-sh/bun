@@ -441,7 +441,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             if (Environment.isWindows) {
-                @panic("watchLoop should not be used on Windows");
+                @compileError("watchLoop should not be used on Windows");
             }
 
             this.watchloop_handle = std.Thread.getCurrentId();
@@ -685,7 +685,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
-                @panic("watchLoop should not be used on Windows");
+                @compileError("watchLoop should not be used on Windows");
             }
         }
 

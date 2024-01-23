@@ -1453,7 +1453,7 @@ pub const MiniVM = struct {
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
-        return this.mini.loop;
+        return this.mini.loop.uv_loop;
     }
 
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {
@@ -1508,7 +1508,7 @@ pub fn AbstractVM(inner: anytype) brk: {
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
-    loop: *JSC.PlatformEventLoop,
+    loop: *uws.Loop,
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
     env: ?*bun.DotEnv.Loader = null,
@@ -1569,7 +1569,7 @@ pub const MiniEventLoop = struct {
         return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
-            .loop = if (comptime bun.Environment.isPosix) uws.Loop.get() else bun.Async.Loop.get(),
+            .loop = uws.Loop.get(),
         };
     }
 

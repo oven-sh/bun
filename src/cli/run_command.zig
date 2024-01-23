@@ -1253,13 +1253,12 @@ pub const RunCommand = struct {
 
             // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
             // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways
-            var path_to_try_open: bun.WPathBuffer = undefined;
-            var ptr: []u16 = &path_to_try_open;
+            var ptr: []u16 = &DirectBinLaunch.direct_launch_buffer;
             const root = comptime bun.strings.w("\\??\\");
             @memcpy(ptr[0..root.len], root);
             ptr = ptr[4..];
             const cwd_len = w.kernel32.GetCurrentDirectoryW(
-                path_to_try_open.len - 4,
+                DirectBinLaunch.direct_launch_buffer.len - 4,
                 ptr.ptr,
             );
             if (cwd_len == 0) break :try_bunx_file;
@@ -1273,7 +1272,9 @@ pub const RunCommand = struct {
             @memcpy(ptr[0..ext.len], ext);
             ptr[ext.len] = 0;
 
-            const path_to_use = path_to_try_open[0 .. root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len];
+            const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
+            const path_to_use = DirectBinLaunch.direct_launch_buffer[0..l];
+            var command_line = DirectBinLaunch.direct_launch_buffer[l..];
 
             debug("Attempting to find and load bunx file: '{}'", .{
                 std.unicode.fmtUtf16le(path_to_use),
@@ -1288,7 +1289,6 @@ pub const RunCommand = struct {
                 break :try_bunx_file;
             };
 
-            var command_line: [32768]u16 = undefined;
             var i: usize = 0;
             for (ctx.passthrough) |str| {
                 command_line[i] = ' ';
@@ -1301,7 +1301,7 @@ pub const RunCommand = struct {
                 .base_path = path_to_use[4..],
                 .arguments = command_line[0..i],
                 .force_use_bun = ctx.debug.run_in_bun,
-                .direct_launch_with_bun_js = &directLaunchWithBunJSFromShim,
+                .direct_launch_with_bun_js = &DirectBinLaunch.directLaunchWithBunJSFromShim,
                 .cli_context = &ctx,
             };
 
@@ -1416,18 +1416,22 @@ pub const RunCommand = struct {
     }
 };
 
-fn directLaunchWithBunJSFromShim(wpath: []u16, args: *anyopaque) void {
-    const ctx: *Command.Context = @alignCast(@ptrCast(args));
-    var u8buffer: [32768]u8 = undefined;
-    const utf8 = bun.strings.convertUTF16toUTF8InBuffer(&u8buffer, wpath) catch {
-        return;
-    };
-    Run.boot(ctx.*, utf8) catch |err| {
-        ctx.log.printForLogLevel(Output.errorWriter()) catch {};
-        Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
-        Global.exit(1);
-    };
-}
+pub const DirectBinLaunch = struct {
+    var direct_launch_buffer: bun.WPathBuffer = undefined;
+
+    fn directLaunchWithBunJSFromShim(wpath: []u16, args: *anyopaque) void {
+        const ctx: *Command.Context = @alignCast(@ptrCast(args));
+        const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
+            bun.reinterpretSlice(u8, &direct_launch_buffer),
+            wpath,
+        ) catch return;
+        Run.boot(ctx.*, utf8) catch |err| {
+            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
+            Global.exit(1);
+        };
+    }
+};
 
 test "replacePackageManagerRun" {
     var copy_script = std.ArrayList(u8).init(default_allocator);

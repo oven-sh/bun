@@ -109,6 +109,7 @@ appium-windows-driver
 applicationinsights-native-metrics
 argon2
 autorest
+auth
 aws-crt
 azure-functions-core-tools
 azure-streamanalytics-cicd

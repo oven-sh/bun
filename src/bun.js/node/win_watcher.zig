@@ -287,8 +287,8 @@ pub const PathWatcher = struct {
             .windows,
         );
 
-        buf[file_path.len] = 0;
-        const file_path_z = buf[0..file_path.len :0];
+        joined_buf[file_path.len] = 0;
+        const file_path_z = joined_buf[0..file_path.len :0];
         const path_info = manager._fdFromAbsolutePathZ(file_path_z) catch return;
         defer manager._decrementPathRef(path);
         defer this.flush();

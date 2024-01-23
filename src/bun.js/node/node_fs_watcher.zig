@@ -571,8 +571,8 @@ pub const FSWatcher = struct {
             .auto,
         );
 
-        buf[file_path.len] = 0;
-        const file_path_z = buf[0..file_path.len :0];
+        joined_buf[file_path.len] = 0;
+        const file_path_z = joined_buf[0..file_path.len :0];
 
         const vm = args.global_this.bunVM();
 

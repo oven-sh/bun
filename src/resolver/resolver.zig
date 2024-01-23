@@ -3469,6 +3469,10 @@ pub const Resolver = struct {
                 }
             }
 
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsolute(file.path));
+            }
+
             return MatchResult{
                 .path_pair = .{ .primary = Path.init(file.path) },
                 .diff_case = file.diff_case,

@@ -1664,7 +1664,7 @@ pub const struct_uv_cpu_times_s = extern struct {
     irq: u64,
 };
 pub const struct_uv_cpu_info_s = extern struct {
-    model: [*]u8,
+    model: [*:0]u8,
     speed: c_int,
     cpu_times: struct_uv_cpu_times_s,
 };
@@ -1702,10 +1702,10 @@ pub const struct_uv_group_s = extern struct {
 };
 pub const uv_group_t = struct_uv_group_s;
 pub const struct_uv_utsname_s = extern struct {
-    sysname: [256]u8,
-    release: [256]u8,
-    version: [256]u8,
-    machine: [256]u8,
+    sysname: [256:0]u8,
+    release: [256:0]u8,
+    version: [256:0]u8,
+    machine: [256:0]u8,
 };
 pub const uv_utsname_t = struct_uv_utsname_s;
 pub const struct_uv_statfs_s = extern struct {
@@ -2054,7 +2054,7 @@ pub extern fn uv_os_getppid() uv_pid_t;
 pub extern fn uv_os_getpriority(pid: uv_pid_t, priority: [*c]c_int) c_int;
 pub extern fn uv_os_setpriority(pid: uv_pid_t, priority: c_int) c_int;
 pub extern fn uv_available_parallelism() c_uint;
-pub extern fn uv_cpu_info(cpu_infos: [*c][*c]uv_cpu_info_t, count: [*c]c_int) c_int;
+pub extern fn uv_cpu_info(cpu_infos: *[*]uv_cpu_info_t, count: *c_int) c_int;
 pub extern fn uv_free_cpu_info(cpu_infos: [*c]uv_cpu_info_t, count: c_int) void;
 pub extern fn uv_cpumask_size() c_int;
 pub extern fn uv_interface_addresses(addresses: *[*]uv_interface_address_t, count: [*c]c_int) c_int;

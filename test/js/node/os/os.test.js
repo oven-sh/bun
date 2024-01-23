@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { it, expect } from "bun:test";
 import * as os from "node:os";
 import { realpathSync } from "fs";
@@ -43,8 +42,7 @@ it("homedir", () => {
 
 it("tmpdir", () => {
   if (process.platform === "win32") {
-    expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
-    expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
+    expect([process.env.TEMP, `${process.env.SystemRoot || process.env.windir}\\Temp`, `${process.env.LOCALAPPDATA}\\Temp`].includes(os.tmpdir())).toBeTrue();
   } else {
     const originalEnv = process.env.TMPDIR;
     let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
@@ -149,7 +147,7 @@ it("machine", () => {
 });
 
 it("EOL", () => {
-  if (process.platform === "win32") expect(os.EOL).toBe("\\r\\n");
+  if (process.platform === "win32") expect(os.EOL).toBe("\r\n");
   else expect(os.EOL).toBe("\n");
 });
 
@@ -161,3 +159,9 @@ it("devNull", () => {
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
 });
+
+it('loadavg', () => {
+  const loadavg = os.loadavg();
+  expect(loadavg.length).toBe(3);
+  expect(loadavg.every((avg) => typeof avg === 'number')).toBeTrue();
+})

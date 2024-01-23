@@ -48,7 +48,7 @@ pub const Os = struct {
     }
 
     pub const EOL: []const u8 = if (Environment.isWindows) "\r\n" else "\n";
-    pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
+    pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\\nul" else "/dev/null";
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
@@ -76,28 +76,20 @@ pub const Os = struct {
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        return if (comptime Environment.isLinux)
-            cpusImplLinux(globalThis) catch {
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to get cpu information"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
-                };
+        return switch (Environment.os) {
+            .linux => cpusImplLinux(globalThis),
+            .mac => cpusImplDarwin(globalThis),
+            .windows => cpusImplWindows(globalThis),
+            else => @compileError("unsupported OS"),
+        } catch {
+            const err = JSC.SystemError{
+                .message = bun.String.static("Failed to get cpu information"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+            };
 
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
-            }
-        else if (comptime Environment.isMac)
-            cpusImplDarwin(globalThis) catch {
-                const err = JSC.SystemError{
-                    .message = bun.String.static("Failed to get cpu information"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
-                };
-
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
-            }
-        else
-            JSC.JSValue.createEmptyArray(globalThis, 0);
+            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+            return JSC.JSValue.jsUndefined();
+        };
     }
 
     fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
@@ -276,6 +268,37 @@ pub const Os = struct {
 
             values.putIndex(globalThis, cpu_index, cpu);
         }
+        return values;
+    }
+
+    pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
+        var cpu_infos: [*]libuv.uv_cpu_info_t = undefined;
+        var count: c_int = undefined;
+        const err = libuv.uv_cpu_info(&cpu_infos, &count);
+        if (err != 0) {
+            return error.no_processor_info;
+        }
+        defer libuv.uv_free_cpu_info(cpu_infos, count);
+
+        const values = JSC.JSValue.createEmptyArray(globalThis, 0);
+
+        for (cpu_infos[0..@intCast(count)], 0..@intCast(count)) |cpu_info, i| {
+            const times = CPUTimes{
+                .user = cpu_info.cpu_times.user,
+                .nice = cpu_info.cpu_times.nice,
+                .sys = cpu_info.cpu_times.sys,
+                .idle = cpu_info.cpu_times.idle,
+                .irq = cpu_info.cpu_times.irq,
+            };
+
+            const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
+            cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(bun.span(cpu_info.model)).withEncoding().toValueGC(globalThis));
+            cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(cpu_info.speed));
+            cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
+
+            values.putIndex(globalThis, @intCast(i), cpu);
+        }
+
         return values;
     }
 
@@ -784,8 +807,22 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn uptime(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        JSC.markBinding(@src());
+    pub fn uptime(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        if (Environment.isWindows) {
+            var uptime_value: f64 = undefined;
+            const err = libuv.uv_uptime(&uptime_value);
+            if (err != 0) {
+                const sys_err = JSC.SystemError{
+                    .message = bun.String.static("failed to get system uptime"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .errno = err,
+                    .syscall = bun.String.static("uv_uptime"),
+                };
+                globalThis.vm().throwError(globalThis, sys_err.toErrorInstance(globalThis));
+                return .zero;
+            }
+            return JSC.JSValue.jsNumber(uptime_value);
+        }
 
         return JSC.JSValue.jsNumberFromUint64(C.getSystemUptime());
     }

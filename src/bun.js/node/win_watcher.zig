@@ -35,6 +35,8 @@ pub const WinPathWatcherManager = struct {
         hash: Watcher.HashType,
     };
 
+    pub usingnamespace bun.New(WinPathWatcherManager);
+
     fn _fdFromAbsolutePathZ(
         this: *WinPathWatcherManager,
         path: [:0]const u8,
@@ -80,7 +82,7 @@ pub const WinPathWatcherManager = struct {
         var watchers = try bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1);
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
 
-        var this = bun.new(WinPathWatcherManager, .{
+        var this = WinPathWatcherManager.new(.{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .watchers = watchers,
             .main_watcher = undefined,
@@ -219,7 +221,7 @@ pub const WinPathWatcherManager = struct {
 
         this.watchers.deinitWithAllocator(bun.default_allocator);
 
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 };
 
@@ -234,6 +236,8 @@ pub const PathWatcher = struct {
     last_change_event: ChangeEvent = .{},
     closed: bool = false,
     needs_flush: bool = false,
+
+    pub usingnamespace bun.New(PathWatcher);
 
     const log = Output.scoped(.WinPathWatcher, false);
 
@@ -298,7 +302,7 @@ pub const PathWatcher = struct {
     }
 
     pub fn init(manager: *WinPathWatcherManager, path: WinPathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
-        var this = bun.new(PathWatcher, .{
+        var this = PathWatcher.new(.{
             .handle = std.mem.zeroes(uv.uv_fs_event_t),
             .path = path,
             .callback = callback,
@@ -351,7 +355,7 @@ pub const PathWatcher = struct {
             manager.unregisterWatcher(this);
         }
 
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 };
 

@@ -86,6 +86,10 @@ it("uptime", () => {
 
 it("version", () => {
   expect(typeof os.version() === "string").toBe(true);
+  if (process.platform === "win32") {
+    expect(os.version()).toInclude('Win');
+    console.log(os.version())
+  }
 });
 
 it("userInfo", () => {

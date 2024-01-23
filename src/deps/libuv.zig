@@ -1702,10 +1702,14 @@ pub const struct_uv_group_s = extern struct {
 };
 pub const uv_group_t = struct_uv_group_s;
 pub const struct_uv_utsname_s = extern struct {
-    sysname: [256:0]u8,
-    release: [256:0]u8,
-    version: [256:0]u8,
-    machine: [256:0]u8,
+    sysname: [255:0]u8,
+    release: [255:0]u8,
+    version: [255:0]u8,
+    machine: [255:0]u8,
+
+    comptime {
+        std.debug.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
+    }
 };
 pub const uv_utsname_t = struct_uv_utsname_s;
 pub const struct_uv_statfs_s = extern struct {

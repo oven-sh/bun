@@ -554,6 +554,9 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (Environment.isWindows) {
+                        if (uv.uv_is_closed(@ptrCast(this.pipe.buffer.stream))) {
+                            return false;
+                        }
                         this.pipe.buffer.closeCallback = callback;
                         return true;
                     }
@@ -916,7 +919,7 @@ pub const Subprocess = struct {
         }
 
         fn destroy(this: *BufferedPipeInput) void {
-            this.closeCallback.run();
+            defer this.closeCallback.run();
 
             this.pipe = null;
             switch (this.source) {
@@ -931,7 +934,7 @@ pub const Subprocess = struct {
 
         fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
             const event = bun.cast(*uv.uv_pipe_t, handler);
-            const this = bun.cast(*BufferedPipeInput, event.data);
+            var this = bun.cast(*BufferedPipeInput, event.data);
             if (this.deinit_onclose) {
                 this.destroy();
             }
@@ -952,7 +955,7 @@ pub const Subprocess = struct {
             this.deinit_onclose = true;
             this.close();
 
-            if (this.pipe == null) {
+            if (this.pipe == null or uv.uv_is_closed(@ptrCast(this.pipe.?))) {
                 this.destroy();
             }
         }
@@ -1531,18 +1534,25 @@ pub const Subprocess = struct {
 
         fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
             const event = bun.cast(*uv.uv_pipe_t, handler);
-            const this = bun.cast(*BufferedOutput, event.data);
-            this.closeCallback.run();
+            var this = bun.cast(*BufferedOutput, event.data);
             this.readable_stream_ref.deinit();
+            this.closeCallback.run();
         }
 
         pub fn close(this: *BufferedOutput) void {
+            var needCallbackCall = true;
             switch (this.status) {
                 .done => {},
                 .pending => {
                     if (Environment.isWindows) {
+                        needCallbackCall = false;
                         _ = uv.uv_read_stop(@ptrCast(&this.stream));
-                        _ = uv.uv_close(@ptrCast(&this.stream), BufferedOutput.uvClosedCallback);
+                        if (uv.uv_is_closed(@ptrCast(&this.stream))) {
+                            this.readable_stream_ref.deinit();
+                            this.closeCallback.run();
+                        } else {
+                            _ = uv.uv_close(@ptrCast(&this.stream), BufferedOutput.uvClosedCallback);
+                        }
                     } else {
                         this.stream.close();
                         this.closeCallback.run();
@@ -1555,6 +1565,10 @@ pub const Subprocess = struct {
             if (this.internal_buffer.cap > 0) {
                 this.internal_buffer.listManaged(bun.default_allocator).deinit();
                 this.internal_buffer = .{};
+            }
+
+            if (Environment.isWindows and needCallbackCall) {
+                this.closeCallback.run();
             }
         }
     };
@@ -1747,6 +1761,9 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => |pipe| {
                     if (Environment.isWindows) {
+                        if (pipe.isClosed()) {
+                            return false;
+                        }
                         pipe.closeCallback = callback;
                         return true;
                     }
@@ -1754,6 +1771,9 @@ pub const Subprocess = struct {
                 },
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     if (Environment.isWindows) {
+                        if (pipe_to_readable_stream.pipe.isClosed()) {
+                            return false;
+                        }
                         pipe_to_readable_stream.pipe.closeCallback = callback;
                         return true;
                     }
@@ -1790,6 +1810,7 @@ pub const Subprocess = struct {
     };
 
     fn closeIOCallback(this: *Subprocess) void {
+        log("closeIOCallback", .{});
         this.closed_streams += 1;
         if (this.closed_streams == @TypeOf(this.closed).len) {
             this.exit_promise.deinit();
@@ -1797,7 +1818,7 @@ pub const Subprocess = struct {
             this.stdio_pipes.deinit(bun.default_allocator);
 
             if (this.deinit_onclose) {
-                log("Finalize", .{});
+                log("destroy", .{});
                 bun.default_allocator.destroy(this);
             }
         }
@@ -1831,6 +1852,7 @@ pub const Subprocess = struct {
 
     // This must only be run once per Subprocess
     pub fn finalizeStreams(this: *Subprocess) void {
+        log("finalizeStreams", .{});
         this.closeProcess();
 
         this.closeIO(.stdin);
@@ -1839,9 +1861,10 @@ pub const Subprocess = struct {
     }
 
     pub fn finalize(this: *Subprocess) callconv(.C) void {
+        log("finalize", .{});
         std.debug.assert(!this.hasPendingActivity());
         if (this.closed_streams == @TypeOf(this.closed).len) {
-            log("Finalize", .{});
+            log("destroy", .{});
             bun.default_allocator.destroy(this);
         } else {
             this.deinit_onclose = true;

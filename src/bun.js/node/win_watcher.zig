@@ -361,9 +361,12 @@ pub const PathWatcher = struct {
         if (this.manager) |manager| {
             manager.unregisterWatcher(this);
         }
-
-        _ = uv.uv_fs_event_stop(&this.handle);
-        _ = uv.uv_close(@ptrCast(&this.handle), PathWatcher.uvClosedCallback);
+        if (uv.uv_is_closed(@ptrCast(&this.handle))) {
+            this.destroy();
+        } else {
+            _ = uv.uv_fs_event_stop(&this.handle);
+            _ = uv.uv_close(@ptrCast(&this.handle), PathWatcher.uvClosedCallback);
+        }
     }
 };
 

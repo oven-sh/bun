@@ -2052,7 +2052,7 @@ pub const UVStreamSink = struct {
     closeCallback: CloseCallbackHandler = CloseCallbackHandler.Empty,
     deinit_onclose: bool = false,
     pub const name = "UVStreamSink";
-    const StreamType = if (Environment.isWindows) ?*uv.uv_stream_t else *anyopaque;
+    const StreamType = if (Environment.isWindows) ?*uv.uv_stream_t else ?*anyopaque;
 
     pub const CloseCallbackHandler = struct {
         ctx: ?*anyopaque = null,
@@ -2161,21 +2161,35 @@ pub const UVStreamSink = struct {
 
     fn uvCloseCallback(handler: *anyopaque) callconv(.C) void {
         const event = bun.cast(*uv.uv_pipe_t, handler);
-        const this = bun.cast(*UVStreamSink, event.data);
+        var this = bun.cast(*UVStreamSink, event.data);
+        this.stream = null;
         if (this.deinit_onclose) {
             this._destroy();
         }
+    }
+
+    pub fn isClosed(this: *UVStreamSink) bool {
+        const stream = this.stream orelse return true;
+        return uv.uv_is_closed(@ptrCast(stream));
     }
 
     pub fn close(this: *UVStreamSink) void {
         if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
         const stream = this.stream orelse return;
         stream.data = this;
-        _ = uv.uv_close(@ptrCast(stream), UVStreamSink.uvCloseCallback);
+        if (this.isClosed()) {
+            this.stream = null;
+            if (this.deinit_onclose) {
+                this._destroy();
+            }
+        } else {
+            _ = uv.uv_close(@ptrCast(stream), UVStreamSink.uvCloseCallback);
+        }
     }
 
     fn _destroy(this: *UVStreamSink) void {
-        this.closeCallback.run();
+        const callback = this.closeCallback;
+        defer callback.run();
         this.stream = null;
         if (this.buffer.cap > 0) {
             this.buffer.listManaged(this.allocator).deinit();
@@ -2185,10 +2199,11 @@ pub const UVStreamSink = struct {
     }
 
     pub fn finalize(this: *UVStreamSink) void {
-        this.deinit_onclose = true;
-        this.close();
         if (this.stream == null) {
             this._destroy();
+        } else {
+            this.deinit_onclose = true;
+            this.close();
         }
     }
 

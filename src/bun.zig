@@ -180,7 +180,7 @@ pub fn len(value: anytype) usize {
         .Array => |info| info.len,
         .Vector => |info| info.len,
         .Pointer => |info| switch (info.size) {
-            .One => switch (@as(@import("builtin").TypeInfo, @typeInfo(info.child))) {
+            .One => switch (@typeInfo(info.child)) {
                 .Array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");

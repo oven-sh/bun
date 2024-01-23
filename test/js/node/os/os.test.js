@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { it, expect } from "bun:test";
 import * as os from "node:os";
 import { realpathSync } from "fs";
@@ -27,10 +26,17 @@ it("getPriority", () => {
 });
 
 it("setPriority", () => {
-  expect(os.setPriority(0, 2)).toBe(undefined);
-  expect(os.getPriority()).toBe(2);
-  expect(os.setPriority(5)).toBe(undefined);
-  expect(os.getPriority()).toBe(5);
+  if (process.platform === "win32") {
+    expect(os.setPriority(0, 10)).toBe(undefined);
+    expect(os.getPriority()).toBe(10);
+    expect(os.setPriority(0)).toBe(undefined);
+    expect(os.getPriority()).toBe(0);
+  } else {
+    expect(os.setPriority(0, 2)).toBe(undefined);
+    expect(os.getPriority()).toBe(2);
+    expect(os.setPriority(5)).toBe(undefined);
+    expect(os.getPriority()).toBe(5);
+  }
 });
 
 it("loadavg", () => {
@@ -43,8 +49,13 @@ it("homedir", () => {
 
 it("tmpdir", () => {
   if (process.platform === "win32") {
-    expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
-    expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
+    expect(
+      [
+        process.env.TEMP,
+        `${process.env.SystemRoot || process.env.windir}\\Temp`,
+        `${process.env.LOCALAPPDATA}\\Temp`,
+      ].includes(os.tmpdir()),
+    ).toBeTrue();
   } else {
     const originalEnv = process.env.TMPDIR;
     let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
@@ -81,6 +92,10 @@ it("uptime", () => {
 
 it("version", () => {
   expect(typeof os.version() === "string").toBe(true);
+  if (process.platform === "win32") {
+    expect(os.version()).toInclude("Win");
+    console.log(os.version());
+  }
 });
 
 it("userInfo", () => {
@@ -149,7 +164,7 @@ it("machine", () => {
 });
 
 it("EOL", () => {
-  if (process.platform === "win32") expect(os.EOL).toBe("\\r\\n");
+  if (process.platform === "win32") expect(os.EOL).toBe("\r\n");
   else expect(os.EOL).toBe("\n");
 });
 
@@ -160,4 +175,10 @@ it("devNull", () => {
 
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
+});
+
+it("loadavg", () => {
+  const loadavg = os.loadavg();
+  expect(loadavg.length).toBe(3);
+  expect(loadavg.every(avg => typeof avg === "number")).toBeTrue();
 });

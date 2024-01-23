@@ -111,7 +111,6 @@ pub const Repository = extern struct {
         argv: []const string,
     ) !string {
         var buf_map = try env.map.cloneToEnvMap(allocator);
-        defer buf_map.deinit();
 
         const result = if (comptime Environment.isWindows)
             try std.ChildProcess.run(.{

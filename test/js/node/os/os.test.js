@@ -26,10 +26,17 @@ it("getPriority", () => {
 });
 
 it("setPriority", () => {
-  expect(os.setPriority(0, 2)).toBe(undefined);
-  expect(os.getPriority()).toBe(2);
-  expect(os.setPriority(5)).toBe(undefined);
-  expect(os.getPriority()).toBe(5);
+  if(process.platform === "win32") {
+    expect(os.setPriority(0, 10)).toBe(undefined);
+    expect(os.getPriority()).toBe(10);
+    expect(os.setPriority(0)).toBe(undefined);
+    expect(os.getPriority()).toBe(0);
+  } else {
+    expect(os.setPriority(0, 2)).toBe(undefined);
+    expect(os.getPriority()).toBe(2);
+    expect(os.setPriority(5)).toBe(undefined);
+    expect(os.getPriority()).toBe(5);
+  }
 });
 
 it("loadavg", () => {

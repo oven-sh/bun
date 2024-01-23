@@ -50,7 +50,7 @@ const PathOrBlob = union(enum) {
     blob: Blob,
 
     pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, args.arena.allocator(), exception)) |path| {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, exception)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -118,6 +118,12 @@ pub const Blob = struct {
 
     pub fn hasContentTypeFromUser(this: *const Blob) bool {
         return this.content_type_was_set or (this.store != null and this.store.?.data == .file);
+    }
+
+    pub fn isBunFile(this: *const Blob) bool {
+        const store = this.store orelse return false;
+
+        return store.data == .file;
     }
 
     const FormDataContext = struct {
@@ -299,7 +305,7 @@ pub const Blob = struct {
         comptime Reader: type,
         reader: Reader,
     ) !JSValue {
-        const allocator = globalThis.allocator();
+        const allocator = bun.default_allocator;
 
         const version = try reader.readInt(u8, .little);
         _ = version;
@@ -320,8 +326,7 @@ pub const Blob = struct {
                 const bytes = try readSlice(reader, bytes_len, allocator);
 
                 const blob = Blob.init(bytes, allocator, globalThis);
-                const blob_ = try allocator.create(Blob);
-                blob_.* = blob;
+                const blob_ = bun.new(Blob, blob);
 
                 break :brk blob_;
             },
@@ -330,15 +335,15 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = try reader.readInt(bun.FileDescriptor, .little);
+                        const fd = try bun.FileDescriptor.readFrom(reader, .little);
 
-                        const blob = try allocator.create(Blob);
-                        blob.* = Blob.findOrCreateFileFromPath(
-                            JSC.Node.PathOrFileDescriptor{
-                                .fd = fd,
-                            },
+                        var path_or_fd = JSC.Node.PathOrFileDescriptor{
+                            .fd = fd,
+                        };
+                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                            &path_or_fd,
                             globalThis,
-                        );
+                        ));
 
                         break :brk blob;
                     },
@@ -346,16 +351,15 @@ pub const Blob = struct {
                         const path_len = try reader.readInt(u32, .little);
 
                         const path = try readSlice(reader, path_len, default_allocator);
-
-                        const blob = try allocator.create(Blob);
-                        blob.* = Blob.findOrCreateFileFromPath(
-                            JSC.Node.PathOrFileDescriptor{
-                                .path = .{
-                                    .string = bun.PathString.init(path),
-                                },
+                        var dest = JSC.Node.PathOrFileDescriptor{
+                            .path = .{
+                                .string = bun.PathString.init(path),
                             },
+                        };
+                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                            &dest,
                             globalThis,
-                        );
+                        ));
 
                         break :brk blob;
                     },
@@ -364,9 +368,7 @@ pub const Blob = struct {
                 return .zero;
             },
             .empty => brk: {
-                const blob = try allocator.create(Blob);
-                blob.* = Blob.initEmpty(globalThis);
-                break :brk blob;
+                break :brk bun.new(Blob, Blob.initEmpty(globalThis));
             },
         };
         blob.allocator = allocator;
@@ -500,8 +502,7 @@ pub const Blob = struct {
 
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
         var this = bun.cast(*Blob, ptr);
-        var new = bun.default_allocator.create(Blob) catch unreachable;
-        new.* = this.dupeWithContentType(true);
+        var new = bun.new(Blob, this.dupeWithContentType(true));
         new.allocator = bun.default_allocator;
         return new;
     }
@@ -619,7 +620,7 @@ pub const Blob = struct {
         pub fn run(handler: *@This(), blob_: Store.CopyFile.ResultType) void {
             var promise = handler.promise;
             const globalThis = handler.globalThis;
-            bun.default_allocator.destroy(handler);
+            bun.destroy(handler);
             const blob = blob_ catch |err| {
                 var error_string = ZigString.init(
                     std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{bun.asByteSlice(@errorName(err))}) catch unreachable,
@@ -629,8 +630,7 @@ pub const Blob = struct {
                 promise.reject(globalThis, error_string.toErrorInstance(globalThis));
                 return;
             };
-            var _blob = bun.default_allocator.create(Blob) catch unreachable;
-            _blob.* = blob;
+            var _blob = bun.new(Blob, blob);
             _blob.allocator = bun.default_allocator;
             promise.resolve(
                 globalThis,
@@ -692,14 +692,14 @@ pub const Blob = struct {
                     file_blob.detach();
                     _ = value.use();
                     this.promise.strong.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     promise.reject(globalThis, err);
                 },
                 .Used => {
                     file_blob.detach();
                     _ = value.use();
                     this.promise.strong.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
                 },
                 .WTFStringImpl,
@@ -730,7 +730,7 @@ pub const Blob = struct {
 
                     file_blob.detach();
                     this.promise.strong.deinit();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                 },
                 .Locked => {
                     value.Locked.onReceiveValue = thenWrap;
@@ -757,10 +757,9 @@ pub const Blob = struct {
         const source_type = std.meta.activeTag(source_blob.store.?.data);
 
         if (destination_type == .file and source_type == .bytes) {
-            var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
-            write_file_promise.* = .{
-                .globalThis = ctx.ptr(),
-            };
+            var write_file_promise = bun.new(WriteFilePromise, .{
+                .globalThis = ctx,
+            });
 
             const file_copier = Store.WriteFile.create(
                 bun.default_allocator,
@@ -801,8 +800,8 @@ pub const Blob = struct {
             // eventually, this could be like Buffer.concat
             var clone = source_blob.dupe();
             clone.allocator = bun.default_allocator;
-            var cloned = bun.default_allocator.create(Blob) catch unreachable;
-            cloned.* = clone;
+            const cloned = bun.new(Blob, clone);
+            cloned.allocator = bun.default_allocator;
             return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx));
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
@@ -838,6 +837,11 @@ pub const Blob = struct {
             }
             return .zero;
         };
+        defer {
+            if (path_or_blob == .path) {
+                path_or_blob.path.deinit();
+            }
+        }
 
         var data = args.nextEat() orelse {
             globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
@@ -910,12 +914,11 @@ pub const Blob = struct {
             bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
         {
             if (data.isString()) {
-                defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
-
                 const len = data.getLength(globalThis);
 
                 if (len < 256 * 1024) {
                     const str = data.toBunString(globalThis);
+                    defer str.deref();
 
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -947,8 +950,6 @@ pub const Blob = struct {
                     }
                 }
             } else if (data.asArrayBuffer(globalThis)) |buffer_view| {
-                defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
-
                 if (buffer_view.byte_len < 256 * 1024) {
                     const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                         path_or_blob.path
@@ -985,10 +986,9 @@ pub const Blob = struct {
         }
 
         // if path_or_blob is a path, convert it into a file blob
-        var destination_blob: Blob = if (path_or_blob == .path)
-            Blob.findOrCreateFileFromPath(path_or_blob.path, globalThis)
-        else
-            path_or_blob.blob.dupe();
+        var destination_blob: Blob = if (path_or_blob == .path) brk: {
+            break :brk Blob.findOrCreateFileFromPath(&path_or_blob.path, globalThis);
+        } else path_or_blob.blob.dupe();
 
         if (destination_blob.store == null) {
             globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
@@ -1016,13 +1016,12 @@ pub const Blob = struct {
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     .Locked => {
-                        var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        task.* = WriteFileWaitFromLockedValueTask{
+                        var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                             .globalThis = globalThis,
                             .file_blob = destination_blob,
                             .promise = JSC.JSPromise.Strong.init(globalThis),
                             .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
-                        };
+                        });
 
                         response.body.value.Locked.task = task;
                         response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
@@ -1050,13 +1049,12 @@ pub const Blob = struct {
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     .Locked => {
-                        var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        task.* = WriteFileWaitFromLockedValueTask{
+                        var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                             .globalThis = globalThis,
                             .file_blob = destination_blob,
                             .promise = JSC.JSPromise.Strong.init(globalThis),
                             .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
-                        };
+                        });
 
                         request.body.value.Locked.task = task;
                         request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
@@ -1195,18 +1193,23 @@ pub const Blob = struct {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                // we deliberately don't use O_TRUNC here
-                // it's a perf optimization
-                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                if (!Environment.isWindows)
+                    // we deliberately don't use O_TRUNC here
+                    // it's a perf optimization
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK
+                else
+                    std.os.O.WRONLY | std.os.O.CREAT,
                 write_permissions,
             )) {
                 .result => |result| {
                     break :brk result;
                 },
                 .err => |err| {
-                    if (err.getErrno() == .NOENT) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .NOENT) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
 
                     return JSC.JSPromise.rejectedPromiseValue(
@@ -1215,16 +1218,13 @@ pub const Blob = struct {
                     );
                 },
             }
-            unreachable;
         };
 
-        var truncate = needs_open or bytes.len == 0;
+        // TODO: on windows this is always synchronous
+
+        const truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
         defer {
-            if (truncate) {
-                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
-            }
-
             if (needs_open) {
                 _ = bun.sys.close(fd);
             }
@@ -1242,19 +1242,31 @@ pub const Blob = struct {
                     if (res == 0) break;
                 },
                 .err => |err| {
-                    truncate = false;
-                    if (err.getErrno() == .AGAIN) {
-                        needs_async.* = true;
-                        return .zero;
+                    if (!Environment.isWindows) {
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.toJSC(globalThis),
+                        );
                     }
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,
                         err.withPath(pathlike.path.slice()).toJSC(globalThis),
                     );
                 },
+            }
+        }
+
+        if (truncate) {
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+            } else {
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
         }
 
@@ -1275,31 +1287,33 @@ pub const Blob = struct {
         var allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(3);
-        const args = arguments.ptr[0..arguments.len];
+        const args = arguments.slice();
 
         if (args.len < 2) {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
             return null;
         }
-
-        const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-            globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
-            return null;
-        };
-
-        blob = get(globalThis, args[0], false, true) catch |err| {
-            if (err == error.InvalidArguments) {
-                globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+        {
+            const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
+                globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 return null;
-            }
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            };
+            defer name_value_str.deref();
 
-        if (blob.store) |store_| {
-            store_.data.bytes.stored_name = bun.PathString.init(
-                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-            );
+            blob = get(globalThis, args[0], false, true) catch |err| {
+                if (err == error.InvalidArguments) {
+                    globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                    return null;
+                }
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+
+            if (blob.store) |store_| {
+                store_.data.bytes.stored_name = bun.PathString.init(
+                    (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                );
+            }
         }
 
         if (args.len > 2) {
@@ -1342,8 +1356,7 @@ pub const Blob = struct {
             blob.content_type_was_set = false;
         }
 
-        var blob_ = allocator.create(Blob) catch unreachable;
-        blob_.* = blob;
+        var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         blob_.is_jsdom_file = true;
         return blob_;
@@ -1395,7 +1408,7 @@ pub const Blob = struct {
         var exception_ = [1]JSC.JSValueRef{null};
         const exception = &exception_;
 
-        const path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, args.arena.allocator(), exception) orelse {
+        var path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator, exception) orelse {
             if (exception_[0] == null) {
                 globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
             } else {
@@ -1404,8 +1417,9 @@ pub const Blob = struct {
 
             return .undefined;
         };
+        defer path.deinitAndUnprotect();
 
-        var blob = Blob.findOrCreateFileFromPath(path, globalObject);
+        var blob = Blob.findOrCreateFileFromPath(&path, globalObject);
 
         if (arguments.len >= 2) {
             const opts = arguments[1];
@@ -1438,34 +1452,37 @@ pub const Blob = struct {
             }
         }
 
-        var ptr = bun.default_allocator.create(Blob) catch unreachable;
-        ptr.* = blob;
+        var ptr = bun.new(Blob, blob);
         ptr.allocator = bun.default_allocator;
         return ptr.toJS(globalObject);
     }
 
-    pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
-        const allocator = vm.allocator;
+        const allocator = bun.default_allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
-            switch (path_) {
+            switch (path_.*) {
                 .path => {
                     const slice = path_.path.slice();
 
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
+                            defer {
+                                if (path_.path != .string) {
+                                    path_.deinit();
+                                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                                }
+                            }
+
                             return file.blob(globalThis).dupe();
                         }
                     }
 
-                    const cloned = (allocator.dupeZ(u8, slice) catch unreachable)[0..slice.len];
-
-                    break :brk .{
-                        .path = .{
-                            .string = bun.PathString.init(cloned),
-                        },
-                    };
+                    path_.toThreadSafe();
+                    const copy = path_.*;
+                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    break :brk copy;
                 },
                 .fd => {
                     switch (bun.FDTag.get(path_.fd)) {
@@ -1483,7 +1500,7 @@ pub const Blob = struct {
                         ),
                         else => {},
                     }
-                    break :brk path_;
+                    break :brk path_.*;
                 },
             }
         };
@@ -1525,8 +1542,7 @@ pub const Blob = struct {
         }
 
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeType, allocator: std.mem.Allocator) !*Store {
-            const store = try allocator.create(Blob.Store);
-            store.* = .{
+            const store = bun.newWithAlloc(allocator, Blob.Store, .{
                 .data = .{
                     .file = FileStore.init(
                         pathlike,
@@ -1548,17 +1564,18 @@ pub const Blob = struct {
                 },
                 .allocator = allocator,
                 .ref_count = 1,
-            };
+            });
             return store;
         }
 
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) !*Store {
-            const store = try allocator.create(Blob.Store);
-            store.* = .{
-                .data = .{ .bytes = ByteStore.init(bytes, allocator) },
+            const store = bun.newWithAlloc(allocator, Store, .{
+                .data = .{
+                    .bytes = ByteStore.init(bytes, allocator),
+                },
                 .allocator = allocator,
                 .ref_count = 1,
-            };
+            });
             return store;
         }
 
@@ -1586,12 +1603,16 @@ pub const Blob = struct {
                 },
                 .file => |file| {
                     if (file.pathlike == .path) {
-                        allocator.free(@constCast(file.pathlike.path.slice()));
+                        if (file.pathlike.path == .string) {
+                            allocator.free(@constCast(file.pathlike.path.slice()));
+                        } else {
+                            file.pathlike.path.deinit();
+                        }
                     }
                 },
             }
 
-            allocator.destroy(this);
+            bun.destroyWithAlloc(allocator, this);
         }
 
         const SerializeTag = enum(u8) {
@@ -1608,7 +1629,7 @@ pub const Blob = struct {
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try writer.writeInt(bun.FileDescriptor, fd, .little);
+                            try fd.writeTo(writer, .little);
                         },
                         .path => |path| {
                             const path_slice = path.slice();
@@ -1670,7 +1691,6 @@ pub const Blob = struct {
                                     } else {
                                         self.opened_fd = bun.toFD(@as(i32, @intCast(req.result.value)));
                                         std.debug.assert(bun.uvfdcast(self.opened_fd) == req.result.value);
-                                        std.debug.print("wtf {}????\n", .{bun.FDImpl.decode(self.opened_fd)});
                                     }
                                 }
                                 Callback(self, self.opened_fd);
@@ -1799,7 +1819,7 @@ pub const Blob = struct {
                         }
                     }
 
-                    if (is_allowed_to_close_fd and this.opened_fd > 2 and this.opened_fd != invalid_fd) {
+                    if (is_allowed_to_close_fd and this.opened_fd.int() > 2 and this.opened_fd != invalid_fd) {
                         _ = bun.sys.close(this.opened_fd);
                         this.opened_fd = invalid_fd;
                     }
@@ -1859,7 +1879,7 @@ pub const Blob = struct {
             }
 
             pub fn createWithCtx(
-                allocator: std.mem.Allocator,
+                _: std.mem.Allocator,
                 store: *Store,
                 onReadFileContext: *anyopaque,
                 onCompleteCallback: OnReadFileCallback,
@@ -1869,15 +1889,14 @@ pub const Blob = struct {
                 if (Environment.isWindows)
                     @compileError("dont call this function on windows");
 
-                const read_file = try allocator.create(ReadFile);
-                read_file.* = ReadFile{
+                const read_file = bun.new(ReadFile, ReadFile{
                     .file_store = store.data.file,
                     .offset = off,
                     .max_length = max_len,
                     .store = store,
                     .onCompleteCtx = onReadFileContext,
                     .onCompleteCallback = onCompleteCallback,
-                };
+                });
                 store.ref();
                 return read_file;
             }
@@ -2025,11 +2044,11 @@ pub const Blob = struct {
 
                 if (this.store == null and this.system_error != null) {
                     const system_error = this.system_error.?;
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     cb(cb_ctx, ResultType{ .err = system_error });
                     return;
                 } else if (this.store == null) {
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     if (Environment.isDebug) @panic("assertion failure - store should not be null");
                     cb(cb_ctx, ResultType{
                         .err = SystemError{
@@ -2045,13 +2064,16 @@ pub const Blob = struct {
                 const buf = this.buffer.items;
 
                 defer store.deref();
-                defer bun.default_allocator.destroy(this);
-                if (this.system_error) |err| {
+                const total_size = this.size;
+                const system_error = this.system_error;
+                bun.destroy(this);
+
+                if (system_error) |err| {
                     cb(cb_ctx, ResultType{ .err = err });
                     return;
                 }
 
-                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
+                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = total_size, .is_temporary = true } });
             }
 
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
@@ -2325,23 +2347,24 @@ pub const Blob = struct {
 
             req: libuv.fs_t = libuv.fs_t.uninitialized,
 
-            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *Handler) void {
+            pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
                 var this = bun.new(ReadFileUV, .{
                     .loop = loop,
                     .file_store = store.data.file,
                     .store = store,
                     .offset = off,
                     .max_length = max_len,
-                    .on_complete_data = @ptrCast(handler),
+                    .on_complete_data = handler,
                     .on_complete_fn = @ptrCast(&Handler.run),
                 });
+                store.ref();
                 this.getFd(onFileOpen);
             }
 
             pub fn finalize(this: *ReadFileUV) void {
                 defer {
                     this.store.deref();
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                 }
 
                 const cb = this.on_complete_fn;
@@ -2525,7 +2548,6 @@ pub const Blob = struct {
                 }
 
                 this.read_off += @intCast(req.result.value);
-                std.debug.print("uh this.read_off = {d}\n", .{this.read_off});
 
                 this.queueRead();
             }
@@ -2610,18 +2632,18 @@ pub const Blob = struct {
                 onCompleteCallback: OnWriteFileCallback,
                 mkdirp_if_not_exists: bool,
             ) !*WriteFile {
-                const read_file = try allocator.create(WriteFile);
-                read_file.* = WriteFile{
+                _ = allocator;
+                const write_file = bun.new(WriteFile, WriteFile{
                     .file_blob = file_blob,
                     .bytes_blob = bytes_blob,
                     .onCompleteCtx = onWriteFileContext,
                     .onCompleteCallback = onCompleteCallback,
                     .task = .{ .callback = &doWriteLoopTask },
                     .mkdirp_if_not_exists = mkdirp_if_not_exists,
-                };
+                });
                 file_blob.store.?.ref();
                 bytes_blob.store.?.ref();
-                return read_file;
+                return write_file;
             }
 
             pub fn create(
@@ -2706,7 +2728,7 @@ pub const Blob = struct {
                 this.file_blob.store.?.deref();
 
                 if (this.system_error) |err| {
-                    bun.default_allocator.destroy(this);
+                    bun.destroy(this);
                     cb(cb_ctx, .{
                         .err = err,
                     });
@@ -2714,7 +2736,7 @@ pub const Blob = struct {
                 }
 
                 const wrote = this.total_written;
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
                 cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
@@ -2805,7 +2827,7 @@ pub const Blob = struct {
                     // seemed to have zero performance impact in
                     // microbenchmarks.
                     if (!this.could_block and this.bytes_blob.sharedView().len > 1024) {
-                        bun.C.preallocate_file(fd, 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
+                        bun.C.preallocate_file(fd.cast(), 0, @intCast(this.bytes_blob.sharedView().len)) catch {}; // we don't care if it fails.
                     }
                 }
 
@@ -2921,8 +2943,7 @@ pub const Blob = struct {
                 globalThis: *JSC.JSGlobalObject,
                 mkdirp_if_not_exists: bool,
             ) !*CopyFilePromiseTask {
-                const read_file = try allocator.create(CopyFile);
-                read_file.* = CopyFile{
+                const read_file = bun.new(CopyFile, CopyFile{
                     .store = store,
                     .source_store = source_store,
                     .offset = off,
@@ -2931,7 +2952,7 @@ pub const Blob = struct {
                     .destination_file_store = store.data.file,
                     .source_file_store = source_store.data.file,
                     .mkdirp_if_not_exists = mkdirp_if_not_exists,
-                };
+                });
                 store.ref();
                 source_store.ref();
                 return try CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
@@ -2948,7 +2969,7 @@ pub const Blob = struct {
                 }
                 this.store.?.deref();
 
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
             }
 
             pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
@@ -3019,11 +3040,12 @@ pub const Blob = struct {
             const open_source_flags = O.CLOEXEC | O.RDONLY;
 
             pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
+                var path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
                 // open source file first
                 // if it fails, we don't want the extra destination file hanging out
                 if (which == .both or which == .source) {
                     this.source_fd = switch (bun.sys.open(
-                        this.source_file_store.pathlike.path.sliceZAssume(),
+                        this.source_file_store.pathlike.path.sliceZ(&path_buf1),
                         open_source_flags,
                         0,
                     )) {
@@ -3037,7 +3059,7 @@ pub const Blob = struct {
 
                 if (which == .both or which == .destination) {
                     while (true) {
-                        const dest = this.destination_file_store.pathlike.path.sliceZAssume();
+                        const dest = this.destination_file_store.pathlike.path.sliceZ(&path_buf1);
                         this.destination_fd = switch (bun.sys.open(
                             dest,
                             open_destination_flags,
@@ -3050,7 +3072,7 @@ pub const Blob = struct {
                                     .fail => {
                                         if (which == .both) {
                                             _ = bun.sys.close(this.source_fd);
-                                            this.source_fd = 0;
+                                            this.source_fd = .zero;
                                         }
                                         return bun.errnoToZigErr(errno.errno);
                                     },
@@ -3059,7 +3081,7 @@ pub const Blob = struct {
 
                                 if (which == .both) {
                                     _ = bun.sys.close(this.source_fd);
-                                    this.source_fd = 0;
+                                    this.source_fd = .zero;
                                 }
 
                                 this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
@@ -3117,7 +3139,7 @@ pub const Blob = struct {
                             return bun.errnoToZigErr(err.errno);
                         },
                         .result => {
-                            _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                            _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                             return;
                         },
                     }
@@ -3125,9 +3147,9 @@ pub const Blob = struct {
 
                 while (true) {
                     const written = switch (comptime use) {
-                        .copy_file_range => linux.copy_file_range(src_fd, null, dest_fd, null, remain, 0),
-                        .sendfile => linux.sendfile(dest_fd, src_fd, null, remain),
-                        .splice => bun.C.splice(src_fd, null, dest_fd, null, remain, 0),
+                        .copy_file_range => linux.copy_file_range(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
+                        .sendfile => linux.sendfile(dest_fd.cast(), src_fd.cast(), null, remain),
+                        .splice => bun.C.splice(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
                     };
 
                     switch (linux.getErrno(written)) {
@@ -3140,7 +3162,7 @@ pub const Blob = struct {
                                     return bun.errnoToZigErr(err.errno);
                                 },
                                 .result => {
-                                    _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                    _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                                     return;
                                 },
                             }
@@ -3153,9 +3175,9 @@ pub const Blob = struct {
                                     // make() can set STDOUT / STDERR to O_APPEND
                                     // this messes up sendfile()
                                     has_unset_append = true;
-                                    const flags = linux.fcntl(dest_fd, linux.F.GETFL, 0);
+                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, 0);
                                     if ((flags & O.APPEND) != 0) {
-                                        _ = linux.fcntl(dest_fd, linux.F.SETFL, flags ^ O.APPEND);
+                                        _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ O.APPEND);
                                         continue;
                                     }
                                 }
@@ -3172,7 +3194,7 @@ pub const Blob = struct {
                                         return bun.errnoToZigErr(err.errno);
                                     },
                                     .result => {
-                                        _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                        _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
                                         return;
                                     },
                                 }
@@ -3268,10 +3290,11 @@ pub const Blob = struct {
                     if (comptime Environment.isMac) {
                         if (this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
                             do_clonefile: {
+                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
                                 // stat the output file, make sure it:
                                 // 1. Exists
-                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZAssume())) {
+                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZ(&path_buf))) {
                                     .result => |result| {
                                         stat_ = result;
 
@@ -3294,7 +3317,7 @@ pub const Blob = struct {
                                     if (this.max_length != Blob.max_size and this.max_length < @as(SizeType, @intCast(stat_.?.size))) {
                                         // If this fails...well, there's not much we can do about it.
                                         _ = bun.C.truncate(
-                                            this.destination_file_store.pathlike.path.sliceZAssume(),
+                                            this.destination_file_store.pathlike.path.sliceZ(&path_buf),
                                             @as(std.os.off_t, @intCast(this.max_length)),
                                         );
                                         this.read_len = @as(SizeType, @intCast(this.max_length));
@@ -3362,7 +3385,7 @@ pub const Blob = struct {
                         this.max_length > bun.C.preallocate_length and
                         this.max_length != Blob.max_size)
                     {
-                        bun.C.preallocate_file(this.destination_fd, 0, this.max_length) catch {};
+                        bun.C.preallocate_file(this.destination_fd.cast(), 0, this.max_length) catch {};
                     }
                 }
 
@@ -3415,7 +3438,7 @@ pub const Blob = struct {
                         return;
                     };
                     if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
-                        _ = darwin.ftruncate(this.destination_fd, @as(std.os.off_t, @intCast(this.max_length)));
+                        _ = darwin.ftruncate(this.destination_fd.cast(), @as(std.os.off_t, @intCast(this.max_length)));
                     }
 
                     this.doClose();
@@ -3435,6 +3458,7 @@ pub const Blob = struct {
         max_size: SizeType = Blob.max_size,
         // milliseconds since ECMAScript epoch
         last_modified: JSTimeType = init_timestamp,
+        pipe: if (Environment.isWindows) libuv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes(libuv.uv_pipe_t) else 0,
 
         pub fn isSeekable(this: *const FileStore) ?bool {
             if (this.seekable) |seekable| {
@@ -3477,6 +3501,10 @@ pub const Blob = struct {
 
         pub fn slice(this: ByteStore) []u8 {
             return this.ptr[0..this.len];
+        }
+
+        pub fn allocatedSlice(this: ByteStore) []u8 {
+            return this.ptr[0..this.cap];
         }
 
         pub fn deinit(this: *ByteStore) void {
@@ -3670,6 +3698,68 @@ pub const Blob = struct {
             return JSValue.jsUndefined();
         }
 
+        if (Environment.isWindows and !(store.data.file.is_atty orelse false)) {
+            // on Windows we use uv_pipe_t when not using TTY
+            const pathlike = store.data.file.pathlike;
+            const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
+                var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                switch (bun.sys.open(
+                    pathlike.path.sliceZ(&file_path),
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                    write_permissions,
+                )) {
+                    .result => |result| {
+                        break :brk result;
+                    },
+                    .err => |err| {
+                        globalThis.throwInvalidArguments("Failed to create UVStreamSink: {}", .{err.getErrno()});
+                        return JSValue.jsUndefined();
+                    },
+                }
+                unreachable;
+            };
+
+            var pipe_ptr = &(this.store.?.data.file.pipe);
+            if (store.data.file.pipe.loop == null) {
+                if (libuv.uv_pipe_init(libuv.Loop.get(), pipe_ptr, 0) != 0) {
+                    pipe_ptr.loop = null;
+                    globalThis.throwInvalidArguments("Failed to create UVStreamSink", .{});
+                    return JSValue.jsUndefined();
+                }
+                const file_fd = bun.uvfdcast(fd);
+                if (libuv.uv_pipe_open(pipe_ptr, file_fd).errEnum()) |err| {
+                    pipe_ptr.loop = null;
+                    globalThis.throwInvalidArguments("Failed to create UVStreamSink: uv_pipe_open({d}) {}", .{ file_fd, err });
+                    return JSValue.jsUndefined();
+                }
+            }
+
+            var sink = JSC.WebCore.UVStreamSink.init(globalThis.allocator(), @ptrCast(pipe_ptr), null) catch |err| {
+                globalThis.throwInvalidArguments("Failed to create UVStreamSink: {s}", .{@errorName(err)});
+                return JSValue.jsUndefined();
+            };
+
+            var stream_start: JSC.WebCore.StreamStart = .{
+                .UVStreamSink = {},
+            };
+
+            if (arguments.len > 0 and arguments.ptr[0].isObject()) {
+                stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .UVStreamSink);
+            }
+
+            switch (sink.start(stream_start)) {
+                .err => |err| {
+                    globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                    sink.finalize();
+
+                    return JSC.JSValue.zero;
+                },
+                else => {},
+            }
+
+            return sink.toJS(globalThis);
+        }
+
         var sink = JSC.WebCore.FileSink.init(globalThis.allocator(), null) catch |err| {
             globalThis.throwInvalidArguments("Failed to create FileSink: {s}", .{@errorName(err)});
             return JSValue.jsUndefined();
@@ -3724,16 +3814,13 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var allocator = globalThis.allocator();
+        var allocator = bun.default_allocator;
         var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];
 
         if (this.size == 0) {
             const empty = Blob.initEmpty(globalThis);
-            var ptr = allocator.create(Blob) catch {
-                return JSC.JSValue.jsUndefined();
-            };
-            ptr.* = empty;
+            var ptr = bun.new(Blob, empty);
             ptr.allocator = allocator;
             return ptr.toJS(globalThis);
         }
@@ -3825,8 +3912,7 @@ pub const Blob = struct {
         blob.content_type_allocated = content_type_was_allocated;
         blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
 
-        var blob_ = allocator.create(Blob) catch unreachable;
-        blob_.* = blob;
+        var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_.toJS(globalThis);
     }
@@ -4033,10 +4119,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Blob {
-        var allocator = globalThis.allocator();
+        var allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(2);
-        const args = arguments.ptr[0..arguments.len];
+        const args = arguments.slice();
 
         switch (args.len) {
             0 => {
@@ -4091,8 +4177,7 @@ pub const Blob = struct {
             },
         }
 
-        var blob_ = allocator.create(Blob) catch unreachable;
-        blob_.* = blob;
+        var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_;
     }
@@ -4131,15 +4216,14 @@ pub const Blob = struct {
         };
     }
 
-    pub fn create(
-        bytes_: []const u8,
+    pub fn createWithBytesAndAllocator(
+        bytes: []u8,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
         was_string: bool,
     ) Blob {
-        const bytes = allocator.dupe(u8, bytes_) catch @panic("Out of memory");
         return Blob{
-            .size = @as(SizeType, @truncate(bytes_.len)),
+            .size = @as(SizeType, @truncate(bytes.len)),
             .store = if (bytes.len > 0)
                 Blob.Store.init(bytes, allocator) catch unreachable
             else
@@ -4148,6 +4232,50 @@ pub const Blob = struct {
             .content_type = if (was_string) MimeType.text.value else "",
             .globalThis = globalThis,
         };
+    }
+
+    pub fn tryCreate(
+        bytes_: []const u8,
+        allocator_: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+        was_string: bool,
+    ) !Blob {
+        if (comptime Environment.isLinux) {
+            if (bun.linux.memfd_allocator.shouldUse(bytes_)) {
+                switch (bun.linux.memfd_allocator.create(bytes_)) {
+                    .err => {},
+                    .result => |result| {
+                        const store = bun.new(
+                            Store,
+                            Store{
+                                .data = .{
+                                    .bytes = result,
+                                },
+                                .allocator = bun.default_allocator,
+                                .ref_count = 1,
+                            },
+                        );
+                        var blob = initWithStore(store, globalThis);
+                        if (was_string and blob.content_type.len == 0) {
+                            blob.content_type = MimeType.text.value;
+                        }
+
+                        return blob;
+                    },
+                }
+            }
+        }
+
+        return createWithBytesAndAllocator(try allocator_.dupe(u8, bytes_), allocator_, globalThis, was_string);
+    }
+
+    pub fn create(
+        bytes_: []const u8,
+        allocator_: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+        was_string: bool,
+    ) Blob {
+        return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
     }
 
     pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
@@ -4224,7 +4352,7 @@ pub const Blob = struct {
 
         if (this.allocator) |alloc| {
             this.allocator = null;
-            alloc.destroy(this);
+            bun.destroyWithAlloc(alloc, this);
         }
     }
 
@@ -4261,7 +4389,7 @@ pub const Blob = struct {
                 var blob = handler.context;
                 blob.allocator = null;
                 const globalThis = handler.globalThis;
-                bun.default_allocator.destroy(handler);
+                bun.destroy(handler);
                 switch (maybe_bytes) {
                     .result => |result| {
                         const bytes = result.buf;
@@ -4290,7 +4418,7 @@ pub const Blob = struct {
         pub fn run(handler: *@This(), count: Blob.Store.WriteFile.ResultType) void {
             var promise = handler.promise.swap();
             const globalThis = handler.globalThis;
-            bun.default_allocator.destroy(handler);
+            bun.destroy(handler);
             const value = promise.asValue(globalThis);
             value.ensureStillAlive();
             switch (count) {
@@ -4314,7 +4442,8 @@ pub const Blob = struct {
 
     pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
         if (Environment.isWindows) {
-            @panic("todo");
+            const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
+            return Store.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
         }
         const file_read = Store.ReadFile.createWithCtx(
             bun.default_allocator,
@@ -4379,12 +4508,22 @@ pub const Blob = struct {
         return this.store != null and this.store.?.data == .file;
     }
 
-    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+        const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
+
+        if (buf.len == 0) {
+            return ZigString.Empty.toValue(global);
+        }
+
+        if (bom == .utf16_le) {
+            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer out.deref();
+            return out.toJS(global);
+        }
+
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
-
-        const buf = strings.withoutUTF8BOM(buf_);
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
@@ -4398,17 +4537,13 @@ pub const Blob = struct {
                 }
 
                 if (lifetime == .temporary) {
-                    bun.default_allocator.free(@constCast(buf));
+                    bun.default_allocator.free(raw_bytes);
                 }
 
                 return ZigString.toExternalU16(external.ptr, external.len, global);
             }
 
             if (lifetime != .temporary) this.setIsASCIIFlag(true);
-        }
-
-        if (buf.len == 0) {
-            return ZigString.Empty.toValue(global);
         }
 
         switch (comptime lifetime) {
@@ -4436,10 +4571,10 @@ pub const Blob = struct {
             .temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
-                if (buf.len != buf_.len) {
+                if (buf.len != raw_bytes.len) {
                     var out = bun.String.createLatin1(buf);
                     defer {
-                        bun.default_allocator.free(buf_);
+                        bun.default_allocator.free(raw_bytes);
                         out.deref();
                     }
 
@@ -4475,9 +4610,15 @@ pub const Blob = struct {
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, buf_: []const u8, comptime lifetime: Lifetime) JSValue {
-        const buf = strings.withoutUTF8BOM(buf_);
+    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+        const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+
+        if (bom == .utf16_le) {
+            var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer out.deref();
+            return out.toJSByParseJSON(global);
+        }
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
@@ -4513,6 +4654,36 @@ pub const Blob = struct {
     pub fn toArrayBufferWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
         switch (comptime lifetime) {
             .clone => {
+                if (comptime Environment.isLinux) {
+                    // If we can use a copy-on-write clone of the buffer, do so.
+                    if (this.store) |store| {
+                        if (store.data == .bytes) {
+                            const allocated_slice = store.data.bytes.allocatedSlice();
+                            if (bun.isSliceInBuffer(buf, allocated_slice)) {
+                                if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
+                                    allocator.ref();
+                                    defer allocator.deref();
+
+                                    const byteOffset = @as(usize, @intFromPtr(buf.ptr)) -| @as(usize, @intFromPtr(allocated_slice.ptr));
+                                    const byteLength = buf.len;
+
+                                    const result = JSC.ArrayBuffer.toArrayBufferFromSharedMemfd(
+                                        allocator.fd.cast(),
+                                        global,
+                                        byteOffset,
+                                        byteLength,
+                                        allocated_slice.len,
+                                    );
+                                    bloblog("toArrayBuffer COW clone({d}, {d}) = {d}", .{ byteOffset, byteLength, @intFromBool(result != .zero) });
+
+                                    if (result != .zero) {
+                                        return result;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 return JSC.ArrayBuffer.create(global, buf, .ArrayBuffer);
             },
             .share => {
@@ -4674,9 +4845,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.BigUint64Array,
                 JSC.JSValue.JSType.DataView,
                 => {
-                    const buf = try bun.default_allocator.dupe(u8, top_value.asArrayBuffer(global).?.byteSlice());
-
-                    return Blob.init(buf, bun.default_allocator, global);
+                    return try Blob.tryCreate(top_value.asArrayBuffer(global).?.byteSlice(), bun.default_allocator, global, false);
                 },
 
                 .DOMWrapper => {
@@ -4934,7 +5103,7 @@ pub const AnyBlob = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                return str.toJSForParseJSON(global);
+                return str.toJSByParseJSON(global);
             },
         }
     }

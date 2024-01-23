@@ -16,6 +16,7 @@
 declare module "bun" {
   type ArrayBufferView = Bun.ArrayBufferView;
   type StringOrBuffer = Bun.StringOrBuffer;
+  type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
   type PathLike = Bun.PathLike;
   import { Encoding as CryptoEncoding } from "crypto";
   interface Env {
@@ -48,6 +49,181 @@ declare module "bun" {
     command: string,
     options?: { PATH?: string; cwd?: string },
   ): string | null;
+
+  export type ShellFunction = (input: Uint8Array) => Uint8Array;
+
+  export type ShellExpression =
+    | string
+    | { raw: string }
+    | Subprocess
+    | SpawnOptions.Readable
+    | SpawnOptions.Writable
+    | ReadableStream;
+
+  class ShellPromise extends Promise<ShellOutput> {
+    get stdin(): WritableStream;
+    /**
+     * Change the current working directory of the shell.
+     * @param newCwd - The new working directory
+     */
+    cwd(newCwd: string): this;
+    /**
+     * Set environment variables for the shell.
+     * @param newEnv - The new environment variables
+     *
+     * @example
+     * ```ts
+     * await $`echo $FOO`.env({ ...process.env, FOO: "LOL!" })
+     * expect(stdout.toString()).toBe("LOL!");
+     * ```
+     */
+    env(newEnv: Record<string, string> | undefined): this;
+    /**
+     * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
+     *
+     * This configures the shell to only buffer the output.
+     */
+    quiet(): this;
+
+    /**
+     * Read from stdout as a string, line by line
+     *
+     * Automatically calls {@link quiet} to disable echoing to stdout.
+     */
+    lines(): AsyncIterable<string>;
+
+    /**
+     * Read from stdout as a string
+     *
+     * Automatically calls {@link quiet} to disable echoing to stdout.
+     * @param encoding - The encoding to use when decoding the output
+     * @returns A promise that resolves with stdout as a string
+     * @example
+     *
+     * ## Read as UTF-8 string
+     *
+     * ```ts
+     * const output = await $`echo hello`.text();
+     * console.log(output); // "hello\n"
+     * ```
+     *
+     * ## Read as base64 string
+     *
+     * ```ts
+     * const output = await $`echo ${atob("hello")}`.text("base64");
+     * console.log(output); // "hello\n"
+     * ```
+     *
+     */
+    text(encoding?: BufferEncoding): Promise<string>;
+
+    /**
+     * Read from stdout as a JSON object
+     *
+     * Automatically calls {@link quiet}
+     *
+     * @returns A promise that resolves with stdout as a JSON object
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo '{"hello": 123}'`.json();
+     * console.log(output); // { hello: 123 }
+     * ```
+     *
+     */
+    json(): Promise<any>;
+
+    /**
+     * Read from stdout as an ArrayBuffer
+     *
+     * Automatically calls {@link quiet}
+     * @returns A promise that resolves with stdout as an ArrayBuffer
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`.arrayBuffer();
+     * console.log(output); // ArrayBuffer { byteLength: 6 }
+     * ```
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Read from stdout as a Blob
+     *
+     * Automatically calls {@link quiet}
+     * @returns A promise that resolves with stdout as a Blob
+     * @example
+     * ```ts
+     * const output = await $`echo hello`.blob();
+     * console.log(output); // Blob { size: 6, type: "" }
+     * ```
+     */
+    blob(): Promise<Blob>;
+  }
+
+  interface ShellConstructor {
+    new (): Shell;
+  }
+
+  export interface Shell {
+    (
+      strings: TemplateStringsArray,
+      ...expressions: ShellExpression[]
+    ): ShellPromise;
+
+    /**
+     * Perform bash-like brace expansion on the given pattern.
+     * @param pattern - Brace pattern to expand
+     *
+     * @example
+     * ```js
+     * const result = braces('index.{js,jsx,ts,tsx}');
+     * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
+     * ```
+     */
+    braces(pattern: string): string[];
+
+    /**
+     * Escape strings for input into shell commands.
+     * @param input
+     */
+    escape(input: string): string;
+
+    /**
+     *
+     * Change the default environment variables for shells created by this instance.
+     *
+     * @param newEnv Default environment variables to use for shells created by this instance.
+     * @default process.env
+     *
+     * ## Example
+     *
+     * ```js
+     * import {$} from 'bun';
+     * $.env({ BUN: "bun" });
+     * await $`echo $BUN`;
+     * // "bun"
+     * ```
+     */
+    env(newEnv?: Record<string, string | undefined>): this;
+
+    /**
+     *
+     * @param newCwd Default working directory to use for shells created by this instance.
+     */
+    cwd(newCwd?: string): this;
+
+    readonly ShellPromise: typeof ShellPromise;
+    readonly Shell: ShellConstructor;
+  }
+
+  export interface ShellOutput {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
+  }
+
+  export const $: Shell;
 
   interface TOML {
     /**
@@ -2757,7 +2933,7 @@ declare module "bun" {
      *
      * @param data
      */
-    update(data: StringOrBuffer): T;
+    update(data: BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
@@ -2781,7 +2957,7 @@ declare module "bun" {
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
     static hash(
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2792,7 +2968,7 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
+    static hash(input: BlobOrStringOrBuffer, encoding: DigestEncoding): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -2834,7 +3010,10 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
+    update(
+      input: BlobOrStringOrBuffer,
+      inputEncoding?: CryptoEncoding,
+    ): CryptoHasher;
 
     /**
      * Perform a deep copy of the hasher
@@ -2864,7 +3043,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2877,7 +3056,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
+      input: BlobOrStringOrBuffer,
       encoding: DigestEncoding,
     ): string;
 
@@ -3949,8 +4128,8 @@ declare module "bun" {
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
       ? Buffer
@@ -3961,8 +4140,85 @@ declare module "bun" {
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-      ? number
-      : undefined;
+        ? number
+        : undefined;
+  }
+
+  interface ResourceUsage {
+    /**
+     * The number of voluntary and involuntary context switches that the process made.
+     */
+    contextSwitches: {
+      /**
+       * Voluntary context switches (context switches that the process initiated).
+       */
+      voluntary: number;
+      /**
+       * Involuntary context switches (context switches initiated by the system scheduler).
+       */
+      involuntary: number;
+    };
+
+    /**
+     * The amount of CPU time used by the process, in nanoseconds.
+     */
+    cpuTime: {
+      /**
+       * User CPU time used by the process, in nanoseconds.
+       */
+      user: number;
+      /**
+       * System CPU time used by the process, in nanoseconds.
+       */
+      system: number;
+      /**
+       * Total CPU time used by the process, in nanoseconds.
+       */
+      total: number;
+    };
+    /**
+     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     */
+    maxRSS: number;
+
+    /**
+     * IPC messages sent and received by the process.
+     */
+    messages: {
+      /**
+       * The number of IPC messages sent.
+       */
+      sent: number;
+      /**
+       * The number of IPC messages received.
+       */
+      received: number;
+    };
+    /**
+     * The number of IO operations done by the process.
+     */
+    ops: {
+      /**
+       * The number of input operations via the file system.
+       */
+      in: number;
+      /**
+       * The number of output operations via the file system.
+       */
+      out: number;
+    };
+    /**
+     * The amount of shared memory that the process used.
+     */
+    shmSize: number;
+    /**
+     * The number of signals delivered to the process.
+     */
+    signalCount: number;
+    /**
+     *  The number of times the process was swapped out of main memory.
+     */
+    swapCount: number;
   }
 
   /**
@@ -4064,6 +4320,15 @@ declare module "bun" {
      * was created with the `ipc` option.
      */
     disconnect(): void;
+
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     *
+     * Only available after the process has exited
+     *
+     * If the process hasn't exited yet, this will return `undefined`
+     */
+    resourceUsage(): ResourceUsage | undefined;
   }
 
   /**
@@ -4081,6 +4346,10 @@ declare module "bun" {
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;
     success: boolean;
+    /**
+     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     */
+    resourceUsage: ResourceUsage;
   }
 
   /**
@@ -4227,6 +4496,31 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;
+
+  // Blocked on https://github.com/oven-sh/bun/issues/8329
+  // /**
+  //  *
+  //  * Count the visible width of a string, as it would be displayed in a terminal.
+  //  *
+  //  * By default, strips ANSI escape codes before measuring the string. This is
+  //  * because ANSI escape codes are not visible characters. If passed a non-string,
+  //  * it will return 0.
+  //  *
+  //  * @param str The string to measure
+  //  * @param options
+  //  */
+  // function stringWidth(
+  //   str: string,
+  //   options?: {
+  //     /**
+  //      * Whether to include ANSI escape codes in the width calculation
+  //      *
+  //      * Slightly faster if set to `false`, but less accurate if the string contains ANSI escape codes.
+  //      * @default false
+  //      */
+  //     countAnsiEscapeCodes?: boolean;
+  //   },
+  // ): number;
 
   class FileSystemRouter {
     /**
@@ -4437,7 +4731,9 @@ declare module "bun" {
     constructor(pattern: string);
 
     /**
-     * Scan for files that match this glob pattern. Returns an async iterator.
+     * Scan a root directory recursively for files that match this glob pattern. Returns an async iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js
@@ -4458,7 +4754,9 @@ declare module "bun" {
     ): AsyncIterableIterator<string>;
 
     /**
-     * Scan for files that match this glob pattern. Returns an iterator.
+     * Synchronously scan a root directory recursively for files that match this glob pattern. Returns an iterator.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
      *
      * @example
      * ```js

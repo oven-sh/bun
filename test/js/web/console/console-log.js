@@ -124,6 +124,7 @@ console.log(hole([1, 2, 3], 1));
 console.log(hole([1, 2, 3], 0, 1));
 console.log(hole([1, 2, 3], 0, 1, 2));
 console.log(hole([1, 2, 3], 2));
+console.log(hole([1, 2, 3], 0));
 
 {
   const overriddenArray = [1, 2, 3, 4];
@@ -170,3 +171,5 @@ console.log(hole([1, 2, 3], 2));
 
 // TODO: handle DerivedArray
 // It appears to not be set and I don't know why.
+
+console.log({ "": "" });

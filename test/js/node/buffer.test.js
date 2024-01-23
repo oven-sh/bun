@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { Buffer, SlowBuffer, isAscii, isUtf8 } from "buffer";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { gc } from "harness";
@@ -1359,6 +1360,32 @@ it("Buffer.concat", () => {
   expect(Buffer.concat([array1, array2, array3], 128 * 4).join("")).toBe(
     array1.join("") + array2.join("") + array3.join("") + Buffer.alloc(128).join(""),
   );
+});
+
+it("Buffer.concat huge", () => {
+  // largest page size of any supported platform.
+  const PAGE = 64 * 1024;
+
+  var array1 = Buffer.allocUnsafe(PAGE);
+  array1.fill("a");
+  var array2 = Buffer.allocUnsafe(PAGE);
+  array2.fill("b");
+  var array3 = Buffer.allocUnsafe(PAGE);
+  array3.fill("c");
+
+  const complete = array1.toString("hex") + array2.toString("hex") + array3.toString("hex");
+  const out = Buffer.concat([array1, array2, array3]);
+  expect(out.toString("hex")).toBe(complete);
+
+  const out2 = Buffer.concat([array1, array2, array3], PAGE);
+  expect(out2.toString("hex")).toBe(array1.toString("hex"));
+
+  const out3 = Buffer.concat([array1, array2, array3], PAGE * 1.5);
+  const out3hex = out3.toString("hex");
+  expect(out3hex).toBe(array1.toString("hex") + array2.slice(0, PAGE * 0.5).toString("hex"));
+
+  array1.fill("d");
+  expect(out3.toString("hex")).toBe(out3hex);
 });
 
 it("read", () => {

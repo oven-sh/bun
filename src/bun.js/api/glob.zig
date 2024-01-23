@@ -8,8 +8,8 @@ const Syscall = @import("../../sys.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("../../bun.zig");
-const BunString = @import("../../bun.zig").String;
+const bun = @import("root").bun;
+const BunString = bun.String;
 const string = bun.string;
 const JSC = bun.JSC;
 const JSArray = @import("../bindings/bindings.zig").JSArray;
@@ -105,7 +105,6 @@ const ScanOpts = struct {
             }
 
             // Convert to an absolute path
-
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
@@ -376,7 +375,7 @@ pub fn constructor(
         return null;
     }
 
-    const pat_str: []u8 = pat_arg.toBunString(globalThis).toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return null).slice());
 
     const all_ascii = isAllAscii(pat_str);
 
@@ -529,8 +528,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
     const iter = CodepointIterator.init(pattern);
     var cursor = CodepointIterator.Cursor{};
-    var i: u32 = 0;
-    while (iter.next(&cursor)) : (i += 1) {
+    while (iter.next(&cursor)) {
         try codepoints.append(@intCast(cursor.c));
     }
 }

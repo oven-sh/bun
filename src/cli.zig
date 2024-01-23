@@ -256,7 +256,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
-            .result => |fd| std.fs.File{ .handle = bun.fdcast(fd) },
+            .result => |fd| fd.asFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -458,7 +458,7 @@ pub const Arguments = struct {
                     Output.prettyErrorln(
                         "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
                         .{
-                            strings.QuotedFormatter{
+                            bun.fmt.QuotedFormatter{
                                 .text = namePattern,
                             },
                         },
@@ -615,6 +615,10 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
+
+            if (args.option("--public-path")) |public_path| {
+                ctx.bundler_options.public_path = public_path;
+            }
 
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
@@ -1092,6 +1096,7 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
+            public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
@@ -1686,6 +1691,10 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".bun.sh")) {
+                            break :brk options.Loader.bunsh;
+                        }
+
                         if (!ctx.debug.loaded_bunfig) {
                             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
                         }
@@ -1763,9 +1772,13 @@ pub const Command = struct {
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                var winResolver = resolve_path.PosixToWinNormalizer{};
+                var win_resolver = resolve_path.PosixToWinNormalizer{};
+                var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                if (comptime Environment.isWindows) {
+                    resolved = resolve_path.normalizeString(resolved, true, .windows);
+                }
                 break :brk bun.openFile(
-                    winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"),
+                    resolved,
                     .{ .mode = .read_only },
                 );
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
@@ -1852,8 +1865,6 @@ pub const Command = struct {
         ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
-            // TODO: report zig compiler bug
-            //       moving the "&" before "comptime" causes compiler error.
             return comptime &switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
                 .RunCommand, .RunAsNodeCommand => Arguments.run_params,

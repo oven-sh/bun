@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
 import path, { join } from "path";
@@ -299,7 +300,7 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
 
 // FLAKY TEST
 // Since Bun.file is resolved lazily, this needs to specifically be checked
-it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
+it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
   var rewriter = new HTMLRewriter();
 
   rewriter.on("div", {

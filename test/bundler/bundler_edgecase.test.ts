@@ -1,3 +1,4 @@
+// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import dedent from "dedent";
 import { itBundled, testForFile } from "./expectBundled";
@@ -1038,4 +1039,14 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
+  const requireTranspilationListESM = [
+    // input, output:bun, output:node
+    ["require", "import.meta.require", "__require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+  ];
+
+  // itBundled('edgecase/RequireTranspilation')
 });

@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { it, expect, test, beforeAll, describe } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
@@ -29,6 +30,13 @@ describe("napi", () => {
     if (!build.success) {
       throw new Error("build failed");
     }
+  });
+
+  describe("issue_7685", () => {
+    it("works", () => {
+      const args = [...Array(20).keys()];
+      checkSameOutput("test_issue_7685", args);
+    });
   });
 
   describe("napi_get_value_string_utf8 with buffer", () => {
@@ -75,7 +83,9 @@ function runOn(executable: string, test: string, args: any[]) {
     env: bunEnv,
   });
   const errs = exec.stderr.toString();
-  expect(errs).toBe("");
+  if (errs !== "") {
+    throw new Error(errs);
+  }
   expect(exec.success).toBeTrue();
   return exec.stdout.toString();
 }

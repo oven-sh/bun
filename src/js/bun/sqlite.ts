@@ -426,10 +426,24 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     }
   };
 
+// This class is never actually thrown
+// so we implement instanceof so that it could theoretically be caught
+class SQLiteError extends Error {
+  static [Symbol.hasInstance](instance) {
+    return instance?.name === "SQLiteError";
+  }
+
+  constructor() {
+    super();
+    throw new Error("SQLiteError can only be constructed by bun:sqlite");
+  }
+}
+
 export default {
   __esModule: true,
   Database,
   Statement,
   constants,
   default: Database,
+  SQLiteError,
 };

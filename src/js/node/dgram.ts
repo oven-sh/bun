@@ -1,6 +1,6 @@
 // Hardcoded module "node:dgram"
 // This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("$shared");
+const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 function createSocket() {
   throwNotImplemented("node:dgram createSocket", 1630);

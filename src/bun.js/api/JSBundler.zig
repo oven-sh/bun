@@ -549,6 +549,10 @@ pub const JSBundler = struct {
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
+
+            pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
+                return null;
+            }
         };
 
         pub fn create(
@@ -827,14 +831,9 @@ pub const JSBundler = struct {
                     return;
                 }
             } else {
-                const buffer_or_string: JSC.Node.SliceOrBuffer = JSC.Node.SliceOrBuffer.fromJS(completion.globalThis, bun.default_allocator, source_code_value) orelse
-                    @panic("expected buffer or string");
-
-                const source_code = switch (buffer_or_string) {
-                    .buffer => |arraybuffer| bun.default_allocator.dupe(u8, arraybuffer.slice()) catch @panic("Out of memory in onLoad callback"),
-                    .string => |slice| (slice.cloneIfNeeded(bun.default_allocator) catch @panic("Out of memory in onLoad callback")).slice(),
-                };
-
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(completion.globalThis, source_code_value, bun.default_allocator) catch
+                // TODO:
+                    @panic("Unexpected: source_code is not a string");
                 this.value = .{
                     .success = .{
                         .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),

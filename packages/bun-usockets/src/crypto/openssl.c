@@ -499,7 +499,7 @@ restart:
     s = (struct us_internal_ssl_socket_t *)context->sc.on_writable(
         &s->s); // cast here!
     // if we are closed here, then exit
-    if (us_socket_is_closed(0, &s->s)) {
+    if (!s || us_socket_is_closed(0, &s->s)) {
       return s;
     }
   }
@@ -544,8 +544,13 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
                                                                0); // cast here!
   }
 
-  // should this one come before we have read? should it come always? spurious
-  // on_writable is okay
+
+  // Do not call on_writable if the socket is closed.
+  // on close means the socket data is no longer accessible
+  if (!s || us_socket_is_closed(0, &s->s)) {
+    return 0;
+  }
+
   s = context->on_writable(s);
 
   return s;
@@ -1215,13 +1220,16 @@ void us_internal_ssl_socket_context_add_server_name(
   /* Try and construct an SSL_CTX from options */
   SSL_CTX *ssl_context = create_ssl_context_from_options(options);
 
-  /* Attach the user data to this context */
-  if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-    printf("CANNOT SET EX DATA!\n");
-  }
-
-  /* We do not want to hold any nullptr's in our SNI tree */
   if (ssl_context) {
+    /* Attach the user data to this context */
+    if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
+      #if BUN_DEBUG
+        printf("CANNOT SET EX DATA!\n");
+        abort();
+      #endif
+    }
+
+    /* * We do not want to hold any nullptr's in our SNI tree */
     if (sni_add(context->sni, hostname_pattern, ssl_context)) {
       /* If we already had that name, ignore */
       free_ssl_context(ssl_context);

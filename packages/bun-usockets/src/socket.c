@@ -22,6 +22,10 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifndef WIN32
+#include <fcntl.h>
+#endif
+
 /* Shared with SSL */
 
 int us_socket_local_port(int ssl, struct us_socket_t *s) {
@@ -247,11 +251,13 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
 
-    us_internal_socket_context_link_socket(ctx, s);
-
-    if (ctx->on_open) {
-        ctx->on_open(s, 0, 0, 0);
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1) {
+        flags |= O_NONBLOCK;
+        fcntl(fd, F_SETFL, flags);
     }
+
+    us_internal_socket_context_link_socket(ctx, s);
 
     return s;
 #endif

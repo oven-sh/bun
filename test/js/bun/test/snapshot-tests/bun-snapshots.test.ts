@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { it, test, expect, describe } from "bun:test";
 
 test("it will create a snapshot file if it doesn't exist", () => {

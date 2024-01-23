@@ -247,11 +247,7 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
     result.* = array;
     return .ok;
 }
-pub export fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status {
-    log("napi_create_double", .{});
-    result.* = JSValue.jsNumber(value);
-    return .ok;
-}
+pub extern fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status;
 pub export fn napi_create_int32(_: napi_env, value: i32, result: *napi_value) napi_status {
     log("napi_create_int32", .{});
     result.* = JSValue.jsNumber(value);
@@ -291,16 +287,16 @@ pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length
 
     log("napi_create_string_latin1: {s}", .{slice});
 
-    var string = bun.String.createUninitializedLatin1(slice.len);
-    if (string.tag == .Dead) {
-        return .generic_failure;
+    if (slice.len == 0) {
+        setNapiValue(result, bun.String.empty.toJS(env));
+        return .ok;
     }
 
-    if (slice.len > 0) {
-        @memcpy(@constCast(string.latin1())[0..slice.len], slice);
-    }
-
+    var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
     defer string.deref();
+
+    @memcpy(bytes, slice);
+
     setNapiValue(result, string.toJS(env));
     return .ok;
 }
@@ -351,18 +347,17 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     };
 
     if (comptime bun.Environment.allow_assert)
-        log("napi_create_string_utf16: {d} {any}", .{ slice.len, strings.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+        log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
-    var string = bun.String.createUninitializedUTF16(slice.len);
-    if (string.tag == .Dead) {
-        return .generic_failure;
+    if (slice.len == 0) {
+        setNapiValue(result, bun.String.empty.toJS(env));
     }
 
-    if (slice.len > 0) {
-        @memcpy(@constCast(string.utf16())[0..slice.len], slice);
-    }
-
+    var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
     defer string.deref();
+
+    @memcpy(chars, slice);
+
     setNapiValue(result, string.toJS(env));
     return .ok;
 }
@@ -371,14 +366,7 @@ pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
-pub export fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status {
-    log("napi_get_value_double", .{});
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.coerceToDouble(env);
-    return .ok;
-}
+pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status;
 pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
     log("napi_get_value_int32", .{});
     if (!value.isNumber()) {
@@ -420,6 +408,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.latin1ByteLength();
@@ -473,6 +463,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.utf16ByteLength();

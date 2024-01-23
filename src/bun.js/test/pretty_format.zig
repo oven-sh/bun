@@ -415,12 +415,6 @@ pub const JestPrettyFormat = struct {
                     };
                 }
 
-                if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
-                    return .{
-                        .tag = .Private,
-                        .cell = js_type,
-                    };
-
                 // If we check an Object has a method table and it does not
                 // it will crash
                 if (js_type != .Object and value.isCallable(globalThis.vm())) {
@@ -653,7 +647,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    strings.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
                         self.failed = true;
                     };
                 }
@@ -792,7 +786,6 @@ pub const JestPrettyFormat = struct {
 
                     const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
-                    if (key.eqlComptime("call")) return;
 
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
@@ -2071,7 +2064,7 @@ pub const JestPrettyFormat = struct {
             this.quote_strings = original_quote_strings;
         } else if (value.as(expect.ExpectCustomAsymmetricMatcher)) |instance| {
             const printed = instance.customPrint(value, this.globalThis, writer_, true) catch unreachable;
-            if (!printed) { // default print (non-overriden by user)
+            if (!printed) { // default print (non-overridden by user)
                 const flags = instance.flags;
                 const args_value = expect.ExpectCustomAsymmetricMatcher.capturedArgsGetCached(value) orelse return true;
                 const matcher_fn = expect.ExpectCustomAsymmetricMatcher.matcherFnGetCached(value) orelse return true;

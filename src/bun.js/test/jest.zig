@@ -654,7 +654,7 @@ pub const TestScope = struct {
             vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
-        debug("test({})", .{strings.QuotedFormatter{ .text = this.label }});
+        debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
@@ -1080,7 +1080,7 @@ pub const DescribeScope = struct {
         defer callback.unprotect();
         this.push();
         defer this.pop();
-        debug("describe({})", .{strings.QuotedFormatter{ .text = this.label }});
+        debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         if (callback == .zero) {
             this.runTests(globalObject);
@@ -1537,7 +1537,7 @@ inline fn createScope(
 ) JSValue {
     const this = callframe.this();
     const arguments = callframe.arguments(3);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects a description or function", .{signature});
@@ -1678,7 +1678,7 @@ inline fn createIfScope(
     comptime is_skip: bool,
 ) JSValue {
     const arguments = callframe.arguments(1);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects a condition", .{signature});
@@ -1829,9 +1829,9 @@ fn consumeArg(
 ) !void {
     const allocator = getAllocator(globalThis);
     if (should_write) {
-        const owned_slice = try arg.*.toBunString(globalThis).toOwnedSlice(allocator);
-        defer allocator.free(owned_slice);
-        try array_list.*.appendSlice(allocator, owned_slice);
+        const owned_slice = arg.toSliceOrNull(globalThis) orelse return error.Failed;
+        defer owned_slice.deinit();
+        try array_list.appendSlice(allocator, owned_slice.slice());
     } else {
         try array_list.appendSlice(allocator, fallback);
     }
@@ -1875,7 +1875,7 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     args_idx += 1;
                 },
                 'p' => {
-                    var formatter = JSC.ZigConsoleClient.Formatter{
+                    var formatter = JSC.ConsoleObject.Formatter{
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
@@ -1916,7 +1916,7 @@ fn eachBind(
     const signature = "eachBind";
     const callee = callframe.callee();
     const arguments = callframe.arguments(3);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len < 2) {
         globalThis.throwPretty("{s} a description and callback function", .{signature});
@@ -2067,7 +2067,7 @@ inline fn createEach(
     comptime is_test: bool,
 ) JSValue {
     const arguments = callframe.arguments(1);
-    const args = arguments.ptr[0..arguments.len];
+    const args = arguments.slice();
 
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects an array", .{signature});

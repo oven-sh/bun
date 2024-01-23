@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import assert from "assert";
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
@@ -67,6 +68,16 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(1);
     const b = bunRun(join(temp_dir, "a.js"), env);
     expect(b.stdout == "a");
+    expect(newCacheCount()).toBe(0);
+  });
+  test("works with empty files", async () => {
+    writeFileSync(join(temp_dir, "a.js"), "//" + "a".repeat(50 * 1024 * 1.5));
+    const a = bunRun(join(temp_dir, "a.js"), env);
+    expect(a.stdout == "");
+    assert(existsSync(cache_dir));
+    expect(newCacheCount()).toBe(1);
+    const b = bunRun(join(temp_dir, "a.js"), env);
+    expect(b.stdout == "");
     expect(newCacheCount()).toBe(0);
   });
   test("ignores files under 50kb", async () => {

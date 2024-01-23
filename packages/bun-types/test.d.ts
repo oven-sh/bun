@@ -952,6 +952,45 @@ declare module "bun:test" {
      */
     toContain(expected: unknown): void;
     /**
+     * Asserts that an `object` contains a key.
+     *
+     * The value must be an object
+     *
+     * @example
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKey('a');
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKey('b');
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKey('c');
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKey('d');
+     *
+     * @param expected the expected value
+     */
+    toContainKey(expected: unknown): void;
+    /**
+     * Asserts that an `object` contains at least one of the provided keys.
+     * Asserts that an `object` contains all the provided keys.
+     *
+     * The value must be an object
+     *
+     * @example
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['a']);
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['b']);
+     * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['b', 'c']);
+     * expect({ a: 'hello', b: 'world' }).not.toContainAnyKeys(['c']);
+     *
+     * @param expected the expected value
+     */
+    toContainAnyKeys(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contains all the provided keys.
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);
+     * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKeys(['a', 'b', 'e']);
+     *
+     * @param expected the expected value
+     */
+    toContainKeys(expected: unknown): void;
+    /**
      * Asserts that a value contains and equals what is expected.
      *
      * This matcher will perform a deep equality check for members
@@ -1130,7 +1169,7 @@ declare module "bun:test" {
      *
      * @param expected the expected error, error message, or error pattern
      */
-    toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
+    toThrow(expected?: unknown): void;
     /**
      * Asserts that a value matches a regular expression or includes a substring.
      *
@@ -1141,6 +1180,14 @@ declare module "bun:test" {
      * @param expected the expected substring or pattern.
      */
     toMatch(expected: string | RegExp): void;
+    /**
+     * Asserts that a value matches the most recent snapshot.
+     *
+     * @example
+     * expect([1, 2, 3]).toMatchSnapshot('hint message');
+     * @param hint Hint used to identify the snapshot in the snapshot file.
+     */
+    toMatchSnapshot(hint?: string): void;
     /**
      * Asserts that a value matches the most recent snapshot.
      *
@@ -1173,6 +1220,14 @@ declare module "bun:test" {
      * expect(new Set()).toBeEmpty();
      */
     toBeEmpty(): void;
+    /**
+     * Asserts that a value is an empty `object`.
+     *
+     * @example
+     * expect({}).toBeEmptyObject();
+     * expect({ a: 'hello' }).not.toBeEmptyObject();
+     */
+    toBeEmptyObject(): void;
     /**
      * Asserts that a value is `null` or `undefined`.
      *
@@ -1269,6 +1324,15 @@ declare module "bun:test" {
      * expect(NaN).not.toBeInteger();
      */
     toBeInteger(): void;
+    /**
+     * Asserts that a value is an `object`.
+     *
+     * @example
+     * expect({}).toBeObject();
+     * expect("notAnObject").not.toBeObject();
+     * expect(NaN).not.toBeObject();
+     */
+    toBeObject(): void;
     /**
      * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
      *
@@ -1869,8 +1933,8 @@ declare namespace JestMock {
   export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
     ? SpiedClass<T>
     : T extends FunctionLike
-    ? SpiedFunction<T>
-    : never;
+      ? SpiedFunction<T>
+      : never;
 
   export type SpiedClass<T extends ClassLike = UnknownClass> = MockInstance<
     (...args: ConstructorParameters<T>) => InstanceType<T>
@@ -1911,8 +1975,8 @@ declare namespace JestMock {
     ): A extends "get"
       ? SpiedGetter<V>
       : A extends "set"
-      ? SpiedSetter<V>
-      : never;
+        ? SpiedSetter<V>
+        : never;
     <
       T_1 extends object,
       K_5 extends

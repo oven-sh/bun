@@ -11,8 +11,5 @@
   },
   "dependencies": {
     "@prisma/client": "5.1.1"
-  },
-  "scripts": {
-    "postinstall": "prisma generate --schema=./prisma/schema.prisma"
   }
 }

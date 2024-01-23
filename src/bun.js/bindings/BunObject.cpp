@@ -1,6 +1,7 @@
+
 #include "root.h"
 #include "ZigGlobalObject.h"
-
+#include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
 #include "helpers.h"
 #include "IDLTypes.h"
@@ -28,6 +29,7 @@
 #include "BunObject+exports.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
+#include "wtf/Compiler.h"
 
 namespace Bun {
 
@@ -35,6 +37,7 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
@@ -72,6 +75,15 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
     bool any_buffer = false;
     bool any_typed = false;
 
+    // Use an argument buffer to avoid calling `getIndex` more than once per element.
+    // This is a small optimization
+    MarkedArgumentBuffer args;
+    args.ensureCapacity(arrayLength);
+    if (UNLIKELY(args.hasOverflowed())) {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return JSValue::encode({});
+    }
+
     for (size_t i = 0; i < arrayLength; i++) {
         auto element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -81,8 +93,13 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
                 throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
                 return JSValue::encode(jsUndefined());
             }
-            byteLength += typedArray->byteLength();
+            size_t current = typedArray->byteLength();
             any_typed = true;
+            byteLength += current;
+
+            if (current > 0) {
+                args.append(typedArray);
+            }
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
             if (UNLIKELY(!impl)) {
@@ -90,8 +107,14 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
                 return JSValue::encode(jsUndefined());
             }
 
-            byteLength += impl->byteLength();
+            size_t current = impl->byteLength();
             any_buffer = true;
+
+            if (current > 0) {
+                args.append(arrayBuffer);
+            }
+
+            byteLength += current;
         } else {
             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
             return JSValue::encode(jsUndefined());
@@ -112,8 +135,8 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
     auto* head = reinterpret_cast<char*>(buffer->data());
 
     if (!any_buffer) {
-        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-            auto element = array->getIndex(lexicalGlobalObject, i);
+        for (size_t i = 0; i < args.size(); i++) {
+            auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             auto* view = JSC::jsCast<JSC::JSArrayBufferView*>(element);
             size_t length = std::min(remain, view->byteLength());
@@ -122,8 +145,8 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
             head += length;
         }
     } else if (!any_typed) {
-        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-            auto element = array->getIndex(lexicalGlobalObject, i);
+        for (size_t i = 0; i < args.size(); i++) {
+            auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             auto* view = JSC::jsCast<JSC::JSArrayBuffer*>(element);
             size_t length = std::min(remain, view->impl()->byteLength());
@@ -132,8 +155,8 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
             head += length;
         }
     } else {
-        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-            auto element = array->getIndex(lexicalGlobalObject, i);
+        for (size_t i = 0; i < args.size(); i++) {
+            auto element = args.at(i);
             RETURN_IF_EXCEPTION(throwScope, {});
             size_t length = 0;
             if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
@@ -200,6 +223,45 @@ extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
     return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
+}
+
+static JSValue constructBunShell(VM& vm, JSObject* bunObject)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    JSValue interpreter = BunObject_getter_wrap_ShellInterpreter(vm, bunObject);
+
+    JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto args = JSC::MarkedArgumentBuffer();
+    args.append(interpreter);
+    JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(!shell.isObject())) {
+        throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
+        return {};
+    }
+    auto* bunShell = shell.getObject();
+
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+    // auto mainShellFunc = shellShellCodeGenerator;
+    if (has_bun_garbage_collector_flag_enabled) {
+        auto parseIdent
+            = Identifier::fromString(vm, String("parse"_s));
+        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
+        bunShell->putDirect(vm, parseIdent, parseFunc);
+
+        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
+        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
+        bunShell->putDirect(vm, lexIdent, lexFunc);
+    }
+
+    return bunShell;
 }
 
 extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
@@ -272,8 +334,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
 {
     JSC::VM& vm = globalObject->vm();
 
-    RELEASE_ASSERT(callFrame->argumentCount() == 1);
-    JSPromise* promise = jsCast<JSC::JSPromise*>(callFrame->argument(0));
+    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(callFrame->argument(0));
     RELEASE_ASSERT(promise);
 
     promise->resolve(globalObject, JSC::jsUndefined());
@@ -371,13 +432,15 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue arg3 = callFrame->argument(2);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
+    MarkedArgumentBuffer gcBuffer;
 
     if (arg3.isBoolean() && arg3.asBoolean()) {
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, stack, &scope, true);
+
+        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, stack, &scope, true);
+        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
@@ -478,6 +541,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
 
 /* Source for BunObject.lut.h
 @begin bunObjectTable
+    $                                              constructBunShell                                                   ReadOnly|DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump  BunObject_callback_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump    DontEnum|DontDelete|Function 1

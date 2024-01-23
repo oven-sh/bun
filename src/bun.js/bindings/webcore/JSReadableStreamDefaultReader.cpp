@@ -122,6 +122,8 @@ void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamDefaultReader::info(), JSReadableStreamDefaultReaderPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    // As suggested by https://github.com/tc39/proposal-explicit-resource-management#relation-to-dom-apis
+    // putDirectWithoutTransition(vm, vm.propertyNames->disposeSymbol, get(globalObject(), PropertyName(Identifier::fromString(vm, "releaseLock"_s))), JSC::PropertyAttribute::DontEnum | 0);
 }
 
 const ClassInfo JSReadableStreamDefaultReader::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReader) };
@@ -139,7 +141,9 @@ void JSReadableStreamDefaultReader::finishCreation(VM& vm)
 
 JSObject* JSReadableStreamDefaultReader::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableStreamDefaultReaderPrototype::create(vm, &globalObject, JSReadableStreamDefaultReaderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableStreamDefaultReaderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableStreamDefaultReaderPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableStreamDefaultReader::prototype(VM& vm, JSDOMGlobalObject& globalObject)

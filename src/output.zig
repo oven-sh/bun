@@ -186,7 +186,7 @@ pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
-    return enable_ansi_colors and !Environment.isWindows;
+    return enable_ansi_colors;
 }
 
 pub fn isGithubAction() bool {
@@ -733,8 +733,10 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
 
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (Environment.isDebug)
+    if (Environment.isDebug) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
+        flush();
+    }
 }
 
 /// Print a red error message. The first argument takes an `error_name` value, which can be either

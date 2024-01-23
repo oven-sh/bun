@@ -880,6 +880,81 @@ pub const Encoder = struct {
         };
     }
 
+    pub fn toBunStringFromOwnedSlice(input: []u8, encoding: JSC.Node.Encoding) bun.String {
+        if (input.len == 0)
+            return bun.String.empty;
+
+        switch (encoding) {
+            .ascii => {
+                if (strings.isAllASCII(input)) {
+                    return bun.String.createExternalGloballyAllocated(.latin1, input);
+                }
+
+                defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                strings.copyLatin1IntoASCII(chars, input);
+                return str;
+            },
+            .latin1 => {
+                return bun.String.createExternalGloballyAllocated(.latin1, input);
+            },
+            .buffer, .utf8 => {
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    defer bun.default_allocator.free(input);
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                return bun.String.createExternalGloballyAllocated(.latin1, input);
+            },
+            .ucs2, .utf16le => {
+                // Avoid incomplete characters
+                if (input.len / 2 == 0) {
+                    bun.default_allocator.free(input);
+                    return bun.String.empty;
+                }
+
+                const as_u16 = std.mem.bytesAsSlice(u16, input);
+
+                return bun.String.createExternalGloballyAllocated(.utf16, @alignCast(as_u16));
+            },
+
+            .hex => {
+                defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
+
+                const wrote = strings.encodeBytesToHex(chars, input);
+
+                // Return an empty string in this case, just like node.
+                if (wrote < chars.len) {
+                    str.deref();
+                    return bun.String.empty;
+                }
+
+                return str;
+            },
+
+            // TODO: this is not right. There is an issue here. But it needs to
+            // be addressed separately because constructFromU8's base64url also
+            // appears inconsistent with Node.js.
+            .base64url => {
+                defer bun.default_allocator.free(input);
+                const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                _ = bun.base64.encodeURLSafe(chars, input);
+                return out;
+            },
+
+            .base64 => {
+                defer bun.default_allocator.free(input);
+                const to_len = bun.base64.encodeLen(input);
+                var to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
+            },
+        }
+    }
+
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
             return ZigString.Empty.toValue(global);
@@ -889,21 +964,17 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .ascii => {
-                if (bun.simdutf.validate.ascii(input)) {
-                    return ZigString.init(input).toValueGC(global);
-                }
-
-                var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var str, const chars = bun.String.createUninitialized(.latin1, len);
                 defer str.deref();
 
-                strings.copyLatin1IntoASCII(@constCast(str.latin1()), input);
+                strings.copyLatin1IntoASCII(chars, input);
                 return str.toJS(global);
             },
             .latin1 => {
-                var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var str, const chars = bun.String.createUninitialized(.latin1, len);
                 defer str.deref();
-                @memcpy(@constCast(str.latin1()), input_ptr[0..len]);
 
+                @memcpy(chars, input);
                 return str.toJS(global);
             },
             .buffer, .utf8 => {
@@ -920,9 +991,9 @@ pub const Encoder = struct {
                 // Avoid incomplete characters
                 if (len / 2 == 0) return ZigString.Empty.toValue(global);
 
-                var output = bun.String.createUninitialized(.utf16, len / 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var output, const chars = bun.String.createUninitialized(.utf16, len / 2);
                 defer output.deref();
-                var output_bytes = std.mem.sliceAsBytes(@constCast(output.utf16()));
+                var output_bytes = std.mem.sliceAsBytes(chars);
                 output_bytes[output_bytes.len - 1] = 0;
 
                 @memcpy(output_bytes, input_ptr[0..output_bytes.len]);
@@ -930,19 +1001,18 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                var str = bun.String.createUninitialized(.latin1, len * 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var str, const chars = bun.String.createUninitialized(.latin1, len * 2);
                 defer str.deref();
 
-                const output = @constCast(str.latin1());
-                const wrote = strings.encodeBytesToHex(output, input);
-                std.debug.assert(wrote == output.len);
+                const wrote = strings.encodeBytesToHex(chars, input);
+                std.debug.assert(wrote == chars.len);
                 return str.toJS(global);
             },
 
             .base64url => {
-                var out = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
                 defer out.deref();
-                _ = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
+                _ = bun.base64.encodeURLSafe(chars, input);
                 return out.toJS(global);
             },
 
@@ -1145,7 +1215,7 @@ pub const Encoder = struct {
     pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 
-        const allocator = VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .buffer => {
@@ -1197,7 +1267,7 @@ pub const Encoder = struct {
     pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 
-        const allocator = VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .utf8 => {
@@ -1210,7 +1280,7 @@ pub const Encoder = struct {
             },
             // string is already encoded, just need to copy the data
             .ucs2, .utf16le => {
-                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len * 2) catch return &[_]u8{});
+                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len) catch return &[_]u8{});
                 const bytes = std.mem.sliceAsBytes(input[0..len]);
                 @memcpy(to[0..bytes.len], bytes);
                 return to;
@@ -1252,12 +1322,4 @@ comptime {
     if (!JSC.is_bindgen) {
         std.testing.refAllDecls(Encoder);
     }
-}
-
-export fn Zig__Bun_base64URLEncodeToString(input_ptr: [*]const u8, len: usize, ret: *bun.String) void {
-    const input = input_ptr[0..len];
-    var out = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) orelse @panic("Out of memory");
-    defer out.deref();
-    _ = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
-    ret.* = out;
 }

@@ -2508,9 +2508,6 @@ pub const Process = struct {
             );
         }
 
-        if (vm.main.len > 0)
-            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
-
         defer allocator.free(args);
 
         if (vm.worker) |worker| {

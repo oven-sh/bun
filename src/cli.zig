@@ -511,7 +511,13 @@ pub const Arguments = struct {
         opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
-        ctx.passthrough = args.remaining();
+        {
+            var list = std.ArrayList(string).init(allocator);
+            errdefer list.deinit();
+            for (args.positionals()) |item| try list.append(item);
+            for (args.remaining()) |item| try list.append(item);
+            ctx.passthrough = list.items;
+        }
 
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {

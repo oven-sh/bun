@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
 
 #ifndef _WIN32
 //#define _GNU_SOURCE
@@ -751,6 +752,7 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
     struct addrinfo hints, *result;
+    char buf[16];
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -762,39 +764,29 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
         return LIBUS_SOCKET_ERROR;
     }
 
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (fd == LIBUS_SOCKET_ERROR) {
+    LIBUS_SOCKET_DESCRIPTOR connectFd = LIBUS_SOCKET_ERROR;
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+        LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        if (fd == LIBUS_SOCKET_ERROR) continue;
+        if (errno == ECONNREFUSED) continue;
+        if (bsd_do_connect(result, &fd) != 0) continue;
+
+        if ((inet_pton(AF_INET, host, buf) == 0) &&
+            (inet_pton(AF_INET6, host, buf) == 0) &&
+            (a->ai_family == AF_INET6)) {
+            continue;
+        }
+
+        connectFd = fd;
+        break;
+    }
+    if (connectFd == LIBUS_SOCKET_ERROR) {
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
-
-    if (source_host) {
-        struct addrinfo *interface_result;
-        if (!getaddrinfo(source_host, NULL, NULL, &interface_result)) {
-            int ret = bind(fd, interface_result->ai_addr, (socklen_t) interface_result->ai_addrlen);
-            freeaddrinfo(interface_result);
-            if (ret == LIBUS_SOCKET_ERROR) {
-                bsd_close_socket(fd);
-                freeaddrinfo(result);
-                return LIBUS_SOCKET_ERROR;
-            }
-        }
-
-        if (bsd_do_connect_raw(result, fd) != 0) {
-            bsd_close_socket(fd);
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
-    } else {
-        if (bsd_do_connect(result, &fd) != 0) {
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
-    }
-    
     
     freeaddrinfo(result);
-    return fd;
+    return connectFd;
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, int options) {

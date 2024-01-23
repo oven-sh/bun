@@ -15,7 +15,6 @@ const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
 const WIN32_FIND_DATAW = *const anyopaque;
 const LPFN_CONNECTEX = *const anyopaque;
-const O = std.os.O;
 const FILE = std.c.FILE;
 const CRITICAL_SECTION = *anyopaque;
 const INPUT_RECORD = *const anyopaque;
@@ -188,6 +187,45 @@ pub const UV__DT_FIFO = UV_DIRENT_FIFO;
 pub const UV__DT_SOCKET = UV_DIRENT_SOCKET;
 pub const UV__DT_CHAR = UV_DIRENT_CHAR;
 pub const UV__DT_BLOCK = UV_DIRENT_BLOCK;
+
+pub const O = struct {
+    pub const APPEND = UV_FS_O_APPEND;
+    pub const CREAT = UV_FS_O_CREAT;
+    pub const EXCL = UV_FS_O_EXCL;
+    pub const FILEMAP = UV_FS_O_FILEMAP;
+    pub const RANDOM = UV_FS_O_RANDOM;
+    pub const RDONLY = UV_FS_O_RDONLY;
+    pub const RDWR = UV_FS_O_RDWR;
+    pub const SEQUENTIAL = UV_FS_O_SEQUENTIAL;
+    pub const SHORT_LIVED = UV_FS_O_SHORT_LIVED;
+    pub const TEMPORARY = UV_FS_O_TEMPORARY;
+    pub const TRUNC = UV_FS_O_TRUNC;
+    pub const WRONLY = UV_FS_O_WRONLY;
+    pub const DIRECT = UV_FS_O_DIRECT;
+    pub const DIRECTORY = UV_FS_O_DIRECTORY;
+    pub const DSYNC = UV_FS_O_DSYNC;
+    pub const EXLOCK = UV_FS_O_EXLOCK;
+    pub const NOATIME = UV_FS_O_NOATIME;
+    pub const NOCTTY = UV_FS_O_NOCTTY;
+    pub const NOFOLLOW = UV_FS_O_NOFOLLOW;
+    pub const NONBLOCK = UV_FS_O_NONBLOCK;
+    pub const SYMLINK = UV_FS_O_SYMLINK;
+    pub const SYNC = UV_FS_O_SYNC;
+
+    pub fn fromStd(c_flags: i32) i32 {
+        var flags: i32 = 0;
+        if (c_flags & std.os.O.NONBLOCK != 0) flags |= NONBLOCK;
+        if (c_flags & std.os.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & std.os.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & std.os.O.WRONLY != 0) flags |= WRONLY;
+        if (c_flags & std.os.O.RDONLY != 0) flags |= RDONLY;
+        if (c_flags & std.os.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & std.os.O.TRUNC != 0) flags |= TRUNC;
+        if (c_flags & std.os.O.APPEND != 0) flags |= APPEND;
+
+        return flags;
+    }
+};
 
 // These **do not** map to std.os.O!
 pub const UV_FS_O_APPEND = 0x0008;

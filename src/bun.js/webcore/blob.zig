@@ -73,6 +73,7 @@ const WriteFileWaitFromLockedValueTask = @import("./blob/WriteFile.zig").WriteFi
 const NewReadFileHandler = @import("./blob/ReadFile.zig").NewReadFileHandler;
 const WriteFile = @import("./blob/WriteFile.zig").WriteFile;
 const ReadFile = @import("./blob/ReadFile.zig").ReadFile;
+const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
 
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
@@ -775,8 +776,23 @@ pub const Blob = struct {
                 .globalThis = ctx,
             });
 
+            if (comptime Environment.isWindows) {
+                var promise = JSPromise.create(ctx.ptr());
+                const promise_value = promise.asValue(ctx);
+                promise_value.ensureStillAlive();
+                write_file_promise.promise.strong.set(ctx, promise_value);
+                _ = WriteFileWindows.create(
+                    destination_blob.*,
+                    source_blob.*,
+                    *WriteFilePromise,
+                    write_file_promise,
+                    WriteFilePromise.run,
+                    mkdirp_if_not_exists,
+                );
+                return promise_value;
+            }
+
             const file_copier = WriteFile.create(
-                bun.default_allocator,
                 destination_blob.*,
                 source_blob.*,
                 *WriteFilePromise,
@@ -795,6 +811,7 @@ pub const Blob = struct {
         }
         // If this is file <> file, we can just copy the file
         else if (destination_type == .file and source_type == .file) {
+            if (comptime Environment.isWindows) @panic("TODO on Windows!");
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
                 destination_blob.store.?,

@@ -106,6 +106,44 @@ pub const Async = struct {
 
     pub const readdir_recursive = AsyncReaddirRecursiveTask;
 
+    /// Used internally. Not from JavaScript.
+    pub const AsyncMkdirp = struct {
+        completion_ctx: *anyopaque,
+        completion: *const fn (*anyopaque, JSC.Maybe(void)) void,
+
+        /// Memory is not owned by this struct
+        path: []const u8,
+
+        task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+            var this: *AsyncMkdirp = @fieldParentPtr(AsyncMkdirp, "task", task);
+
+            var node_fs = NodeFS{};
+            const result = node_fs.mkdirRecursive(
+                Arguments.Mkdir{
+                    .path = PathLike{ .string = PathString.init(this.path) },
+                    .recursive = true,
+                },
+                .sync,
+            );
+            switch (result) {
+                .err => |err| {
+                    this.completion(this.completion_ctx, err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()));
+                },
+                .result => {
+                    this.completion(this.completion_ctx, JSC.Maybe(void).success);
+                },
+            }
+        }
+
+        pub fn schedule(this: *AsyncMkdirp) void {
+            JSC.WorkPool.schedule(&this.task);
+        }
+    };
+
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
             promise: JSC.JSPromise.Strong,

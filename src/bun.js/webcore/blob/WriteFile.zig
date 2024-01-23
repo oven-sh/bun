@@ -89,14 +89,12 @@ pub const WriteFile = struct {
     }
 
     pub fn createWithCtx(
-        allocator: std.mem.Allocator,
         file_blob: Blob,
         bytes_blob: Blob,
         onWriteFileContext: *anyopaque,
         onCompleteCallback: OnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) !*WriteFile {
-        _ = allocator;
         const write_file = bun.new(WriteFile, WriteFile{
             .file_blob = file_blob,
             .bytes_blob = bytes_blob,
@@ -111,7 +109,6 @@ pub const WriteFile = struct {
     }
 
     pub fn create(
-        allocator: std.mem.Allocator,
         file_blob: Blob,
         bytes_blob: Blob,
         comptime Context: type,
@@ -126,7 +123,6 @@ pub const WriteFile = struct {
         };
 
         return try WriteFile.createWithCtx(
-            allocator,
             file_blob,
             bytes_blob,
             @as(*anyopaque, @ptrCast(context)),
@@ -351,6 +347,334 @@ pub const WriteFile = struct {
         }
 
         this.onFinish();
+    }
+};
+
+const uv = bun.windows.libuv;
+pub const WriteFileWindows = struct {
+    io_request: uv.fs_t,
+    file_blob: Blob,
+    bytes_blob: Blob,
+    onCompleteCallback: OnWriteFileCallback,
+    onCompleteCtx: *anyopaque,
+    mkdirp_if_not_exists: bool = false,
+    uv_bufs: [1]uv.uv_buf_t,
+
+    fd: uv.uv_file = -1,
+    err: ?bun.sys.Error = null,
+    total_written: usize = 0,
+    event_loop: *JSC.EventLoop,
+
+    owned_fd: bool = false,
+
+    const log = bun.Output.scoped(.WriteFile, true);
+
+    pub fn createWithCtx(
+        allocator: std.mem.Allocator,
+        file_blob: Blob,
+        bytes_blob: Blob,
+        event_loop: *bun.JSC.EventLoop,
+        onWriteFileContext: *anyopaque,
+        onCompleteCallback: OnWriteFileCallback,
+        mkdirp_if_not_exists: bool,
+    ) *WriteFile {
+        _ = allocator;
+        const write_file = WriteFileWindows.new(.{
+            .file_blob = file_blob,
+            .bytes_blob = bytes_blob,
+            .onCompleteCtx = onWriteFileContext,
+            .onCompleteCallback = onCompleteCallback,
+            .mkdirp_if_not_exists = mkdirp_if_not_exists and file_blob.store.?.data.file.pathlike == .path,
+            .io_request = std.mem.zeroes(uv.fs_t),
+            .uv_bufs = .{.{ .base = undefined, .len = 0 }},
+            .event_loop = event_loop,
+        });
+        file_blob.store.?.ref();
+        bytes_blob.store.?.ref();
+        write_file.io_request.loop = event_loop.virtual_machine.event_loop_handle.?;
+        write_file.io_request.data = write_file;
+
+        switch (file_blob.store.?.data.file.pathlike) {
+            .path => {
+                write_file.open();
+            },
+            .fd => {
+                write_file.fd = @intCast(file_blob.store.?.data.file.pathlike.fd);
+                write_file.doWriteLoop(event_loop.virtual_machine.event_loop_handle.?.get());
+            },
+        }
+
+        write_file.loop().refConcurrently();
+        return write_file;
+    }
+    pub const ResultType = WriteFile.ResultType;
+    pub const OnWriteFileCallback = WriteFile.OnWriteFileCallback;
+
+    pub inline fn loop(this: *WriteFileWindows) *uv.Loop {
+        return this.event_loop.virtual_machine.event_loop_handle.?.get().uv_loop;
+    }
+
+    pub fn open(this: *WriteFileWindows) void {
+        const path = this.file_blob.store.?.data.file.pathlike.path.slice();
+        const rc = uv.uv_fs_open(
+            this.event_loop.virtual_machine.event_loop_handle.?.get(),
+            &this.io_request,
+            std.os.toPosixPath(path.slice()) catch {
+                this.throw(bun.sys.Error{
+                    .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
+                    .path = path.slice(),
+                    .syscall = .open,
+                    // manually set,
+                    .from_libuv = false,
+                });
+                return;
+            },
+            uv.O.CREAT | uv.O.WRONLY | uv.O.TRUNC | uv.O.NOCTTY | uv.O.NONBLOCK,
+            @ptrCast(&onOpen),
+        );
+
+        // libuv always returns 0 when a callback is specified
+        if (rc.errno()) |err| {
+            std.debug.assert(err != .NOENT);
+
+            this.throw(.{
+                .errno = @intFromEnum(err),
+                .path = path.slice(),
+                .syscall = .open,
+                // manually set,
+                .from_libuv = false,
+            });
+        } else {
+            this.owned_fd = true;
+        }
+    }
+
+    const SuccessTask = struct {
+        callback: *const fn (*anyopaque) void,
+        ctx: *anyopaque,
+        any_task: JSC.AnyTask = .{ .callback = &runTask },
+        written: SizeType,
+
+        pub fn run(this: *const @This()) void {
+            const success = this.*;
+            this.destroy();
+            (success.callback)(success.ctx, .{ .result = success.written });
+        }
+
+        fn runTask(task: *JSC.AnyTask) void {
+            var success = @fieldParentPtr(@This(), "any_task", task);
+            success.run();
+        }
+
+        pub fn schedule(this: *const @This(), event_loop: *JSC.EventLoop) void {
+            event_loop.enqueueTask(JSC.Task.init(&this.any_task));
+        }
+
+        pub usingnamespace bun.New(@This());
+    };
+
+    const ErrorTask = struct {
+        callback: *const fn (*anyopaque) void,
+        ctx: *anyopaque,
+        any_task: JSC.AnyTask = .{ .callback = &runTask },
+        err: JSC.SystemError,
+
+        pub fn run(this: *const @This()) void {
+            const err = this.*;
+            this.destroy();
+            (err.callback)(err.ctx, .{ .err = err.err });
+        }
+
+        fn runTask(task: *JSC.AnyTask) void {
+            var err = @fieldParentPtr(@This(), "any_task", task);
+            err.run();
+        }
+
+        pub fn schedule(this: *const @This(), event_loop: *JSC.EventLoop) void {
+            event_loop.enqueueTask(JSC.Task.init(&this.any_task));
+        }
+
+        pub usingnamespace bun.New(@This());
+    };
+
+    pub fn onOpen(req: *uv.fs_t) callconv(.C) void {
+        var this: *WriteFileWindows = @fieldParentPtr(WriteFileWindows, "io_request", req);
+        std.debug.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        const rc = this.io_request.result;
+        log("onOpen({}) = {}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
+
+        if (rc.errno()) |err| {
+            if (err == .NOENT and this.mkdirp_if_not_exists) {
+                // cleanup the request so we can reuse it later.
+                uv.uv_fs_req_cleanup(req);
+
+                // attempt to create the directory on another thread
+                this.mkdirp();
+                return;
+            }
+
+            this.throw(.{
+                .errno = @intFromEnum(err),
+                .path = this.file_blob.store.?.data.file.pathlike.path.slice(),
+                .syscall = .open,
+            });
+            return;
+        }
+
+        this.fd = bun.FDImpl.fromUV(@intCast(rc.value));
+
+        // the loop must be copied
+        this.doWriteLoop(this.loop());
+    }
+
+    fn mkdirp(this: *WriteFileWindows) void {
+        log("mkdirp", .{});
+        this.mkdirp_if_not_exists = false;
+        this.loop().refConcurrently();
+
+        const path = this.file_blob.store.?.data.file.pathlike.path.slice();
+        JSC.Node.Async.AsyncMkdirp.new(.{
+            .completion = &onMkdirpCompleteConcurrent,
+            .completion_ctx = this,
+            .path = path,
+        }).schedule();
+    }
+
+    fn onMkdirpComplete(this: *WriteFileWindows) void {
+        this.loop().unrefConcurrently();
+
+        if (this.err) |err| {
+            this.throw(err);
+            bun.default_allocator.free(err.path);
+            return;
+        }
+
+        this.open();
+    }
+
+    fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: ?bun.sys.Error) void {
+        log("mkdirp complete", .{});
+        std.debug.assert(this.err == null);
+        this.err = err_;
+        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
+    }
+
+    fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
+        var this: *WriteFileWindows = @fieldParentPtr(WriteFileWindows, "io_request", req);
+        std.debug.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        const rc = this.io_request.result;
+        if (rc.errno()) |err| {
+            this.throw(err);
+            return;
+        }
+
+        this.total_written += @intCast(rc.value);
+        this.doWriteLoop(this.loop());
+    }
+
+    pub fn onFinish(container: *WriteFileWindows) void {
+        if (container.toSystemError()) |system_error| {
+            ErrorTask.new(.{
+                .callback = container.onCompleteCallback,
+                .ctx = container.onCompleteCtx,
+                .err = system_error,
+            }).schedule(container.event_loop);
+        } else {
+            SuccessTask.new(.{
+                .callback = container.onCompleteCallback,
+                .ctx = container.onCompleteCtx,
+                .written = @truncate(container.total_written),
+            }).schedule(container.event_loop);
+        }
+
+        container.loop().unrefConcurrently();
+        container.deinit();
+    }
+
+    pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) void {
+        std.debug.assert(this.err == null);
+        this.err = err;
+        this.onFinish();
+    }
+
+    pub fn toSystemError(this: *WriteFileWindows) ?JSC.SystemError {
+        if (this.err) |err| {
+            var sys_err = err;
+            if (this.owned_fd) {
+                sys_err = sys_err.withPath(this.file_blob.store.?.data.file.pathlike.path.slice());
+            } else {
+                sys_err = sys_err.withFd(this.file_blob.store.?.data.file.pathlike.fd);
+            }
+
+            return sys_err.toSystemError();
+        }
+        return null;
+    }
+
+    pub fn doWriteLoop(this: *WriteFileWindows, uv_loop: *uv.Loop) void {
+        while (true) {
+            var remain = this.bytes_blob.sharedView();
+            remain = remain[@min(this.total_written, remain.len)..];
+
+            if (remain.len == 0 or this.errno != null) {
+                break;
+            }
+
+            this.uv_bufs[0].base = @constCast(remain.ptr);
+            this.uv_bufs[0].len = @truncate(remain.len);
+
+            uv.uv_fs_req_cleanup(&this.io_request);
+            const rc = uv.uv_fs_write(uv_loop, &this.io_request, this.fd, &this.uv_bufs, 1, -1, &onWriteComplete);
+            if (rc.int() == 0) {
+                // EINPROGRESS
+                return;
+            }
+
+            if (rc.errno()) |err| {
+                this.throw(err);
+                return;
+            }
+
+            if (rc.int() != 0) bun.Output.panic("unexpected return code from uv_fs_write: {d}", .{rc.int()});
+        }
+
+        this.onFinish();
+    }
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn deinit(this: *@This()) void {
+        const fd = this.fd;
+        if (fd > 0 and this.owned_fd) {
+            bun.Async.Closer.close(fd, this.io_request.loop);
+        }
+        this.file_blob.store.?.deref();
+        this.bytes_blob.store.?.deref();
+        uv.uv_fs_req_cleanup(&this.io_request);
+        this.destroy();
+    }
+
+    pub fn create(
+        file_blob: Blob,
+        bytes_blob: Blob,
+        comptime Context: type,
+        context: Context,
+        comptime callback: fn (ctx: Context, bytes: ResultType) void,
+        mkdirp_if_not_exists: bool,
+    ) *WriteFileWindows {
+        const Handler = struct {
+            pub fn run(ptr: *anyopaque, bytes: ResultType) void {
+                callback(bun.cast(Context, ptr), bytes);
+            }
+        };
+
+        return WriteFileWindows.createWithCtx(
+            file_blob,
+            bytes_blob,
+            @as(*anyopaque, @ptrCast(context)),
+            Handler.run,
+            mkdirp_if_not_exists,
+        );
     }
 };
 

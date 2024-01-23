@@ -359,7 +359,9 @@ pub fn getVersion(buf: []u8) []const u8 {
         if (err != 0) {
             return "unknown";
         }
-        return bun.sliceTo(&info.version, 0);
+        const slice = bun.sliceTo(&info.version, 0);
+        @memcpy(buf[0..slice.len], slice);
+        return buf[0..slice.len];
     }
 }
 

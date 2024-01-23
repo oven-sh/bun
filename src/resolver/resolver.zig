@@ -3469,6 +3469,10 @@ pub const Resolver = struct {
                 }
             }
 
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsolute(file.path));
+            }
+
             return MatchResult{
                 .path_pair = .{ .primary = Path.init(file.path) },
                 .diff_case = file.diff_case,
@@ -3603,6 +3607,7 @@ pub const Resolver = struct {
 
     pub fn loadAsFile(r: *ThisResolver, path: string, extension_order: []const string) ?LoadResult {
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        std.debug.print("A:{s}\n", .{path});
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Attempting to load \"{s}\" as a file", .{path});
